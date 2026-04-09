@@ -1,0 +1,43 @@
+# Environment variables
+.env
+.env.local
+.env.*
+
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Build files and binaries
+*.exe
+tmp/
+*/tmp/
+.next/
+*.out
+*.test
+
+# Large files / archives
+*.zip
+*.rar
+*.tar.gz
+*.tar
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# IDEs and Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+GIT.IGNORE
+
+# Gemini Antigravity
+.gemini/

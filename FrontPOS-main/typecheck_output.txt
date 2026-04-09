@@ -1,0 +1,31 @@
+
+> nextn@0.1.0 typecheck
+> tsc --noEmit
+
+src/app/(app)/categories/page.tsx(217,30): error TS2552: Cannot find name 'AlertDialogTrigger'. Did you mean 'AlertDialogTitle'?
+src/app/(app)/categories/page.tsx(221,31): error TS2552: Cannot find name 'AlertDialogTrigger'. Did you mean 'AlertDialogTitle'?
+src/app/(app)/dashboard/closure/page.tsx(244,55): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(248,87): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(256,60): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(257,89): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(264,64): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(264,95): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(265,93): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(273,95): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(274,144): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(307,55): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(311,92): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(319,60): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(320,94): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(327,64): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(327,95): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(328,98): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(336,100): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(337,144): error TS2304: Cannot find name 'egress'.
+src/app/(app)/dashboard/closure/page.tsx(356,42): error TS2304: Cannot find name 'Banknote'.
+src/app/(app)/expenses/page.tsx(115,13): error TS2538: Type 'undefined' cannot be used as an index type.
+src/app/(app)/expenses/page.tsx(115,37): error TS2538: Type 'undefined' cannot be used as an index type.
+src/app/(app)/expenses/page.tsx(294,32): error TS2304: Cannot find name 'AlertDialogTrigger'.
+src/app/(app)/expenses/page.tsx(296,33): error TS2304: Cannot find name 'AlertDialogTrigger'.
+src/app/(app)/suppliers/page.tsx(230,30): error TS2304: Cannot find name 'AlertDialogTrigger'.
+src/app/(app)/suppliers/page.tsx(234,31): error TS2304: Cannot find name 'AlertDialogTrigger'.

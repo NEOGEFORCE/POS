@@ -1,0 +1,18 @@
+{
+  "name": "pos-master",
+  "version": "1.0.0",
+  "description": "Integrated Point of Sale (Go + Next.js)",
+  "scripts": {
+    "dev": "concurrently \"cd backPOS-go && go build -o server.exe ./cmd/api && .\\server.exe\" \"cd FrontPOS-main && npm run dev:mobile\"",
+    "tunnel": "npx localtunnel --port 9002 --local-host 127.0.0.1",
+    "install:all": "concurrently \"cd backPOS-go && go mod tidy\" \"cd FrontPOS-main && npm install\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "dependencies": {
+    "@heroui/react": "^3.0.2",
+    "@heroui/system": "^2.4.28",
+    "html5-qrcode": "^2.3.8"
+  }
+}

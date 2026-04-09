@@ -1,0 +1,47 @@
+package handlers
+
+import (
+	"net/http"
+	"strings"
+
+	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/services"
+	"github.com/gin-gonic/gin"
+)
+
+type ReturnHandler struct {
+	service *services.ReturnService
+}
+
+func NewReturnHandler(s *services.ReturnService) *ReturnHandler {
+	return &ReturnHandler{service: s}
+}
+
+func (h *ReturnHandler) Create(c *gin.Context) {
+	var ret models.Return
+	if err := c.ShouldBindJSON(&ret); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Mayúsculas y Metadatos
+	ret.Reason = strings.ToUpper(ret.Reason)
+	ret.ReturnType = strings.ToUpper(ret.ReturnType)
+	dni, _ := c.Get("dni")
+	ret.EmployeeDNI = dni.(string)
+
+	if err := h.service.CreateReturn(&ret); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, ret)
+}
+
+func (h *ReturnHandler) GetAll(c *gin.Context) {
+	returns, err := h.service.ListReturns()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, returns)
+}
