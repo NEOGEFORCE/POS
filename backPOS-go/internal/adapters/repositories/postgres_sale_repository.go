@@ -146,6 +146,7 @@ func (r *PostgresSaleRepository) GetTotalRevenue() (float64, error) {
 
 func (r *PostgresSaleRepository) UpdatePayment(id uint, sale *models.Sale) error {
 	return r.db.Model(&models.Sale{}).Where("\"saleId\" = ?", id).Updates(map[string]interface{}{
+		"clientDni":      sale.ClientDNI,
 		"paymentMethod":  sale.PaymentMethod,
 		"cashAmount":     sale.CashAmount,
 		"transferAmount": sale.TransferAmount,

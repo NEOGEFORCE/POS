@@ -120,59 +120,61 @@ export default function CategoriesPage() {
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col h-screen gap-2 p-2 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
+    <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
 
-      {/* HEADER QUE RESPETA CLARO/OSCURO */}
-      <header className="flex flex-col md:flex-row items-center justify-between gap-4 p-4 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm transition-colors">
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shadow-inner">
-            <LayoutGrid size={24} />
+      <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
+            <LayoutGrid size={16} />
           </div>
           <div className="flex flex-col">
-            <span className="text-xl font-black uppercase italic tracking-tighter leading-none">CATEGORÍAS</span>
-            <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-1">Taxonomy Engine V5.0</span>
+            <h1 className="text-sm font-black uppercase tracking-tighter leading-none">CATEGORÍAS</h1>
+            <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">ORGANIZACIÓN MAESTRA</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative w-full md:w-64 group">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
-            <Input
-              placeholder="BUSCAR DEPARTAMENTO..."
-              value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
-              classNames={{
-                inputWrapper: "h-10 pl-10 pr-4 rounded-xl bg-gray-100 dark:bg-black border border-gray-200 dark:border-white/5 focus-within:border-emerald-500/50 transition-colors shadow-inner",
-                input: "font-black text-xs uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
-              }}
-            />
-          </div>
-          <Button onPress={() => setAddDialogOpen(true)} className="bg-emerald-500 text-white font-black uppercase text-[10px] h-10 px-6 rounded-xl shrink-0 shadow-lg shadow-emerald-500/20 italic tracking-widest hover:scale-105 transition-transform">
-            <PlusCircle size={16} className="mr-1" /> NUEVA CATEGORÍA
+        <div className="flex items-center gap-2">
+          <Input
+            size="sm"
+            placeholder="BUSCAR..."
+            value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
+            classNames={{
+              inputWrapper: "h-8 px-3 rounded-md bg-transparent border border-gray-200 dark:border-white/10 transition-colors w-40 md:w-64 shadow-none",
+              input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent"
+            }}
+            startContent={<Search size={14} className="text-gray-400" />}
+          />
+          <Button
+            size="sm"
+            onPress={() => setAddDialogOpen(true)}
+            className="h-8 bg-emerald-500 text-white font-black uppercase text-[10px] px-4 rounded-md shadow-sm italic transition-transform active:scale-95"
+          >
+            <PlusCircle size={14} className="mr-1" /> NUEVA
           </Button>
         </div>
       </header>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 shrink-0">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-1 shrink-0">
         {[
           { label: "DEPARTAMENTOS", val: stats.total, color: "emerald", icon: Shapes },
-          { label: "TOP DENSIDAD", val: stats.topCat, color: "emerald", icon: Zap },
-          { label: "ARTÍCULOS ASIGNADOS", val: stats.totalProds, color: "emerald", icon: FolderTree }
+          { label: "TOP DENSIDAD", val: stats.topCat, color: "sky", icon: Zap },
+          { label: "ARTÍCULOS ASIGNADOS", val: stats.totalProds, color: "indigo", icon: FolderTree }
         ].map((k, i) => (
-          <div key={i} className="bg-white dark:bg-zinc-900 p-4 border border-gray-200 dark:border-white/5 rounded-2xl flex items-center justify-between shadow-sm transition-colors">
-            <div className="flex flex-col min-w-0 pr-2">
-              <span className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1">{k.label}</span>
-              <span className="text-2xl font-black tabular-nums text-emerald-500 italic leading-none tracking-tighter truncate">{k.val}</span>
+          <div key={i} className="bg-white dark:bg-zinc-900 p-2 border border-gray-200 dark:border-white/5 rounded-lg flex items-center justify-between shadow-sm transition-colors hover:border-emerald-500/30 cursor-pointer">
+            <div className="flex flex-col min-w-0 pr-1">
+              <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">{k.label}</span>
+              <span className={`text-sm font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-indigo-500'} italic leading-tight tracking-tighter truncate`}>{k.val}</span>
             </div>
-            <k.icon size={24} className="text-emerald-500 opacity-20 shrink-0" />
+            <k.icon size={14} className={`${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-indigo-500'} opacity-20 shrink-0`} />
           </div>
         ))}
       </div>
 
       {/* TABLA PRINCIPAL (DISEÑO SLIM) */}
-      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
+      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
         <div className="flex-1 overflow-auto custom-scrollbar">
-          <Table isCompact removeWrapper aria-label="Jerarquía de Categorías" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-12 py-2 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-3 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" }}>
+          <Table isCompact removeWrapper aria-label="Jerarquía de Categorías" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-pointer" }}>
             <TableHeader>
               <TableColumn className="pl-6">DEPARTAMENTO MAESTRO</TableColumn>
               <TableColumn align="center">DENSIDAD STOCK</TableColumn>
@@ -256,8 +258,10 @@ export default function CategoriesPage() {
                     value={addDialogOpen ? newCategoryName : editingCategory?.name}
                     onValueChange={(v) => addDialogOpen ? setNewCategoryName(v.toUpperCase()) : setEditingCategory(p => p ? { ...p, name: v.toUpperCase() } : null)}
                     onKeyDown={(e) => e.key === 'Enter' && (addDialogOpen ? handleAddCategory() : handleEditCategory())}
-                    placeholder="EJ: BEBIDAS FRÍAS..."
-                    classNames={{ inputWrapper: "h-16 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-2xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-base uppercase italic text-gray-900 dark:text-white" }}
+                    classNames={{ 
+                      inputWrapper: "h-16 bg-transparent border border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 shadow-none transition-all", 
+                      input: "font-black text-base uppercase italic text-gray-900 dark:text-white bg-transparent" 
+                    }}
                   />
                 </div>
               </ModalBody>
@@ -289,7 +293,7 @@ export default function CategoriesPage() {
                 <span className="text-rose-500 dark:text-rose-400 font-black text-xs mt-3 block">Los productos asociados podrían perder su clasificación.</span>
               </ModalBody>
               <ModalFooter className="p-6 border-t border-gray-100 dark:border-white/5 flex gap-3">
-                <Button variant="flat" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white" onPress={onClose}>DESCARTAR</Button>
+                <Button variant="flat" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest bg-transparent border border-gray-200 dark:border-white/10 text-gray-900 dark:text-white" onPress={onClose}>CANCELAR / VOLVER</Button>
                 <Button color="danger" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest shadow-xl shadow-rose-500/20" onPress={handleDeleteCategory}>SÍ, ELIMINAR</Button>
               </ModalFooter>
             </>

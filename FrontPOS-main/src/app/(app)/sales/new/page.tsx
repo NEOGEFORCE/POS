@@ -32,7 +32,7 @@ export default function NewSalePage() {
     const { toast } = useToast();
     const [loading, setLoading] = useState(true);
 
-    const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'BANCOLOMBIA' | 'credit'>('cash');
+    const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'credit'>('cash');
     const [dialogAmount, setDialogAmount] = useState('');
     const [lastChange, setLastChange] = useState(0);
 
@@ -76,7 +76,7 @@ export default function NewSalePage() {
     const [barcodeInput, setBarcodeInput] = useState('');
     const [feedbackCode, setFeedbackCode] = useState('');
     const [isFeedbackError, setIsFeedbackError] = useState(false);
-    const [autoFiadoTriggered, setAutoFiadoTriggered] = useState(false);
+
     const [lastReceipt, setLastReceipt] = useState<any>(null);
 
     // --- FEEDBACK CLEANER ---
@@ -139,7 +139,7 @@ export default function NewSalePage() {
     const handleAddPayment = () => {
         const val = currentDialogVal > 0 ? currentDialogVal : remaining;
         if (val > 0) {
-            if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA' || activePaymentTab === 'BANCOLOMBIA') {
+            if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
                 setTransferPaid(prev => String((Number(prev) || 0) + Math.min(val, remaining)));
                 setTransferSource(activePaymentTab);
                 setActivePaymentTab('cash');
@@ -230,7 +230,7 @@ export default function NewSalePage() {
                 setCarts(prev => {
                     const current = [...(prev[activeCartKey] || [])];
                     const idx = current.findIndex(item => item.barcode === product.barcode);
-                    if (idx > -1) current[idx].cartQuantity += scaleWeight; else current.push({ ...product, cartQuantity: scaleWeight });
+                    if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + scaleWeight }; else current.push({ ...product, cartQuantity: scaleWeight });
                     return { ...prev, [activeCartKey]: current };
                 }); setSelectedItemId(product.barcode); setSearchQuery(''); returnFocusToScanner(); return;
             }
@@ -241,7 +241,7 @@ export default function NewSalePage() {
             const idx = current.findIndex(item => item.barcode === product.barcode);
             if (idx > -1) {
                 if (current[idx].cartQuantity >= product.quantity && !product.isWeighted) return prev;
-                current[idx].cartQuantity += 1;
+                current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
             } else current.push({ ...product, cartQuantity: 1 });
             return { ...prev, [activeCartKey]: current };
         }); setSelectedItemId(product.barcode); setSearchQuery(''); returnFocusToScanner();
@@ -351,7 +351,7 @@ export default function NewSalePage() {
             const rem = Math.max(0, total - curCollected);
 
             if (rem > 0) {
-                if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA' || activePaymentTab === 'BANCOLOMBIA') {
+                if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
                     numTransfer += rem; tSource = activePaymentTab;
                 } else if (activePaymentTab === 'credit') {
                     numCredit += rem;
@@ -430,7 +430,7 @@ export default function NewSalePage() {
             setCarts(prev => {
                 const current = [...(prev[activeCartKey] || [])];
                 const idx = current.findIndex(item => item.barcode === manualWeightProduct.barcode);
-                if (idx > -1) current[idx].cartQuantity += weight;
+                if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + weight };
                 else current.push({ ...manualWeightProduct, cartQuantity: weight });
                 return { ...prev, [activeCartKey]: current };
             });
@@ -462,30 +462,7 @@ export default function NewSalePage() {
         if (!loading) saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni);
     }, [carts, activeCartKey, selectedCustomerDni, loading]);
 
-    useEffect(() => {
-        if (!isPaymentDialogOpen) {
-            setAutoFiadoTriggered(false);
-            return;
-        }
-        if (autoFiadoTriggered) return;
-        if (selectedCustomerDni === '0') return;
-        const client = customers.find(c => c.dni === selectedCustomerDni);
-        if (!client) return;
-        const available = (client.creditLimit || 0) - (client.currentCredit || 0);
-        if (available <= 0) return;
 
-        const timer = setTimeout(() => {
-            const numCash = Number(cashPaid) || 0;
-            const numTransfer = Number(transferPaid) || 0;
-            const remainingVal = total - numCash - numTransfer;
-            if (remainingVal > 0 && remainingVal <= available) {
-                setCreditPaid(String(remainingVal));
-                setAutoFiadoTriggered(true);
-                toast({ title: "Fiado Automático", description: `Se fiará $${remainingVal.toLocaleString()} a ${client.name}` });
-            }
-        }, 800);
-        return () => clearTimeout(timer);
-    }, [isPaymentDialogOpen, total, selectedCustomerDni, customers, autoFiadoTriggered, toast, cashPaid, transferPaid]);
 
     if (loading) return <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner size="lg" color="success" /></div>;
 
@@ -575,7 +552,7 @@ export default function NewSalePage() {
                                     </TableHeader>
                                     <TableBody emptyContent={<div className="py-10 text-gray-400 text-xs font-bold uppercase tracking-widest text-center">Carrito vacío</div>}>
                                         {currentCart.map((item) => (
-                                            <TableRow key={item.barcode} className={selectedItemId === item.barcode ? "bg-emerald-50/80 dark:bg-emerald-500/10" : ""} onClick={() => { setSelectedItemId(item.barcode); returnFocusToSearch(); }}>
+                                            <TableRow key={item.barcode} className={selectedItemId === item.barcode ? "bg-emerald-500/20 dark:bg-emerald-500/30 border-l-4 border-emerald-500" : ""} onClick={() => { setSelectedItemId(item.barcode); returnFocusToSearch(); }}>
                                                 <TableCell>
                                                     <div className="text-[10px] sm:text-[11px] font-bold text-gray-900 dark:text-white uppercase leading-tight truncate max-w-[100px] sm:max-w-none">{item.productName}</div>
                                                     <div className="text-[8px] sm:text-[9px] text-gray-400 dark:text-zinc-500 font-mono">{item.barcode}</div>
@@ -725,7 +702,6 @@ export default function NewSalePage() {
                                     { id: 'cash', icon: Banknote, label: 'Efectivo', color: 'emerald' },
                                     { id: 'NEQUI', icon: Zap, label: 'Nequi', color: 'pink', logo: '/logos/nequi.png' },
                                     { id: 'DAVIPLATA', icon: Zap, label: 'Daviplata', color: 'red', logo: '/logos/daviplata.png' },
-                                    { id: 'BANCOLOMBIA', icon: Zap, label: 'Bancolombia', color: 'amber' },
                                     { id: 'credit', icon: Users, label: 'Fiado', color: 'rose' }
                                 ].map(tab => (
                                     <button
@@ -733,7 +709,7 @@ export default function NewSalePage() {
                                         onClick={() => {
                                             if (dialogAmount !== '') {
                                                 const val = Number(dialogAmount);
-                                                if (tab.id === 'NEQUI' || tab.id === 'DAVIPLATA' || tab.id === 'BANCOLOMBIA') {
+                                                if (tab.id === 'NEQUI' || tab.id === 'DAVIPLATA') {
                                                     setTransferPaid(prev => String((Number(prev) || 0) + val));
                                                     setTransferSource(tab.id);
                                                 } else if (tab.id === 'credit') {
@@ -746,7 +722,6 @@ export default function NewSalePage() {
                                                 toast({ title: "Monto Agregado", description: `${tab.label}: $${val.toLocaleString()}` });
                                             } else {
                                                 setActivePaymentTab(tab.id as any);
-                                                if (tab.id !== 'credit') handleConfirmSale();
                                             }
                                         }}
                                         className={`h-10 lg:h-12 px-3 lg:px-4 rounded-lg flex items-center gap-2 lg:gap-3 border transition-all shrink-0 ${activePaymentTab === tab.id ? `bg-gray-50 dark:bg-zinc-800 border-b-2 lg:border-b-0 lg:border-l-4 border-${tab.color}-500 lg:border-l-${tab.color}-500 border-x-gray-200 lg:border-x-transparent border-t-gray-200 lg:border-t-transparent dark:border-y-white/5 dark:border-r-white/5 text-gray-900 dark:text-white shadow-sm font-black` : 'border-transparent text-gray-500 hover:bg-gray-50 dark:hover:bg-zinc-800/50'}`}
@@ -766,7 +741,7 @@ export default function NewSalePage() {
                                             <User className="h-4 w-4 mr-2 shrink-0" /> <span className="truncate">{selectedCustomer.name}</span>
                                         </Button>
                                     </div>
-                                    <Button variant="flat" color="danger" className="w-full h-10 font-bold uppercase text-[10px] rounded-lg bg-rose-50 dark:bg-rose-500/10 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors" onPress={onClose}>Cancelar</Button>
+                                    <Button variant="flat" color="danger" className="w-full h-10 font-bold uppercase text-[10px] rounded-lg bg-rose-50 dark:bg-rose-500/10 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors" onPress={onClose}>CANCELAR</Button>
                                 </div>
                             </div>
 
@@ -793,7 +768,7 @@ export default function NewSalePage() {
                                                 <button
                                                     key={bill.v}
                                                     className="h-16 bg-white dark:bg-zinc-900 hover:ring-2 hover:ring-emerald-500 rounded-xl overflow-hidden border border-gray-200 dark:border-white/10 transition-all active:scale-95 shadow-sm"
-                                                    onClick={() => handleConfirmSale(bill.v)}
+                                                    onClick={() => setDialogAmount(prev => String(Number(prev || 0) + bill.v))}
                                                 >
                                                     <img src={bill.img} alt={`$${bill.v}`} className="w-full h-full object-cover" />
                                                 </button>
@@ -801,7 +776,22 @@ export default function NewSalePage() {
                                         </div>
                                     </div>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center flex-1 py-10 lg:py-0"><div className="h-16 w-16 lg:h-24 lg:w-24 rounded-full flex items-center justify-center bg-rose-100 dark:bg-rose-500/10 text-rose-500 mb-4 font-bold uppercase tracking-widest text-[8px] lg:text-[10px]"><Zap className="h-6 w-6 lg:h-10 lg:w-10 fill-current" /></div><h3 className="text-lg lg:text-xl font-black uppercase text-gray-900 dark:text-white mb-1">{activePaymentTab}</h3></div>
+                                    <div className="flex flex-col items-center justify-center flex-1 py-10 lg:py-0">
+                                        {activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA' ? (
+                                            <div className="h-32 w-32 lg:h-48 lg:w-48 mb-6 animate-in fade-in zoom-in duration-500 flex items-center justify-center">
+                                                <img
+                                                    src={activePaymentTab === 'NEQUI' ? '/logos/nequi.png' : '/logos/daviplata.png'}
+                                                    alt={activePaymentTab}
+                                                    className="w-full h-full object-contain filter drop-shadow-2xl"
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="h-16 w-16 lg:h-24 lg:w-24 rounded-full flex items-center justify-center bg-rose-100 dark:bg-rose-500/10 text-rose-500 mb-4 font-bold uppercase tracking-widest text-[8px] lg:text-[10px]">
+                                                <Zap className="h-6 w-6 lg:h-10 lg:w-10 fill-current" />
+                                            </div>
+                                        )}
+                                        <h3 className="text-lg lg:text-xl font-black uppercase text-gray-900 dark:text-white mb-1 tracking-tight">{activePaymentTab}</h3>
+                                    </div>
                                 )}
                             </div>
 
@@ -816,7 +806,7 @@ export default function NewSalePage() {
                                     ))}
                                 </div>
                                 <div className="lg:hidden grid grid-cols-2 gap-2 mt-2">
-                                    <Button variant="flat" color="danger" className="h-12 font-bold uppercase text-[10px] rounded-xl" onPress={onClose}>Cancelar</Button>
+                                    <Button variant="flat" color="danger" className="h-12 font-bold uppercase text-[10px] rounded-xl" onPress={onClose}>CANCELAR</Button>
                                     <Button className={`h-12 font-black text-xs uppercase rounded-xl shadow-md ${isReadyToFinalize ? 'bg-emerald-500 text-white' : 'bg-sky-500 text-white'}`} onPress={handleNumpadAction} isLoading={submitting}>{isReadyToFinalize ? 'FINALIZAR' : 'CARGAR'}</Button>
                                 </div>
                                 <Button className={`hidden lg:flex h-16 font-black text-sm uppercase rounded-xl shadow-md ${isReadyToFinalize ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-sky-500 text-white hover:bg-sky-600'}`} onPress={handleNumpadAction} isLoading={submitting}>{isReadyToFinalize ? 'FINALIZAR' : 'CARGAR'}</Button>

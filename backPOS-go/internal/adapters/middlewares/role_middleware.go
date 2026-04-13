@@ -9,10 +9,16 @@ import (
 
 func RoleMiddleware(requiredRole string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userRoleVal, _ := c.Get("role")
+		userRoleVal, exists := c.Get("role")
+		if !exists || userRoleVal == nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Rol de usuario no encontrado en la sesión. Inicie sesión nuevamente."})
+			c.Abort()
+			return
+		}
+
 		userRole, ok := userRoleVal.(string)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "Formato de rol inválido"})
+			c.JSON(http.StatusForbidden, gin.H{"error": "Formato de rol inválido en la sesión. Inicie sesión nuevamente."})
 			c.Abort()
 			return
 		}

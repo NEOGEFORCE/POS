@@ -8,7 +8,8 @@
     "install:all": "concurrently \"cd backPOS-go && go mod tidy\" \"cd FrontPOS-main && npm install\""
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "docx": "^9.1.1"
   },
   "dependencies": {
     "@heroui/react": "^3.0.2",

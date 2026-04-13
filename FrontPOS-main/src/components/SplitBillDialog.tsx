@@ -275,7 +275,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
 
                 <div className="p-3 bg-gray-50 dark:bg-black border-t border-gray-200 dark:border-white/5 flex gap-2 shrink-0">
                     <Button variant="outline" className="flex-1 h-10 rounded-xl border-gray-200 dark:border-white/5 bg-white dark:bg-zinc-900 text-gray-500 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest hover:bg-rose-50 dark:hover:bg-rose-500/10 hover:border-rose-200 hover:text-rose-600 dark:hover:text-rose-500 shadow-sm transition-all" onClick={onClose}>
-                        <X className="h-3 w-3 mr-1" /> CANCELAR
+                        <ChevronLeft className="h-3 w-3 mr-1" /> VOLVER / CANCELAR
                     </Button>
                     <Button className="flex-[2] h-10 rounded-xl bg-emerald-500 text-white dark:text-black font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 dark:hover:bg-emerald-400 active:scale-95 disabled:opacity-50 shadow-md transition-all" disabled={rightItems.length === 0} onClick={() => onConfirm(leftItems, rightItems)}>
                         <Check className="h-4 w-4 mr-1 stroke-[3]" /> CONFIRMAR

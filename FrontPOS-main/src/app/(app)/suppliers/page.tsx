@@ -134,62 +134,67 @@ export default function SuppliersPage() {
     } catch (error: any) { toast({ variant: 'destructive', title: 'Error al purgar registro' }); }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-[#0a0a0a]"><Spinner color="success" size="lg" /></div>;
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 transition-colors duration-500"><Spinner color="success" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col h-[100dvh] w-full max-w-full min-w-0 gap-3 p-3 bg-[#0a0a0a] text-white overflow-hidden select-none">
+    <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white transition-colors duration-500 overflow-hidden select-none">
 
-      {/* HEADER MASTER (VERDE ESMERALDA) */}
-      <header className="flex flex-col md:flex-row items-center justify-between gap-4 p-4 bg-zinc-950 border border-white/5 rounded-2xl shrink-0">
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-black shadow-lg shadow-emerald-500/20">
-            <Truck size={20} />
+      {/* Header Compacto V4.2 */}
+      <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
+            <Truck size={16} />
           </div>
           <div className="flex flex-col">
-            <span className="text-lg font-black uppercase italic tracking-tighter leading-none">PROVEEDORES</span>
-            <span className="text-[10px] font-bold text-emerald-500 uppercase tracking-widest mt-1">Supply Chain V4.0</span>
+            <h1 className="text-sm font-black uppercase tracking-tighter leading-none">PROVEEDORES</h1>
+            <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">COBERTURA MAESTRA</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative w-full md:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500" />
-            <Input
-              placeholder="BUSCAR..."
-              value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
-              classNames={{
-                inputWrapper: "h-10 pl-9 pr-4 rounded-xl bg-zinc-900 border border-white/5 focus-within:border-emerald-500/50 transition-colors",
-                input: "font-black text-[11px] uppercase italic text-white placeholder:text-zinc-600"
-              }}
-            />
-          </div>
-          <Button onPress={() => setAddDialogOpen(true)} className="bg-emerald-500 text-black font-black uppercase text-[10px] h-10 px-6 rounded-xl shrink-0 shadow-lg shadow-emerald-500/20">
+        <div className="flex items-center gap-2">
+          <Input
+            size="sm"
+            placeholder="BUSCAR..."
+            value={filter}
+            onValueChange={setFilter}
+            classNames={{
+              inputWrapper: "h-8 px-3 rounded-md bg-transparent border border-gray-200 dark:border-white/10 transition-colors w-40 md:w-64 shadow-none",
+              input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent"
+            }}
+            startContent={<Search size={14} className="text-gray-400" />}
+          />
+          <Button
+            size="sm"
+            onPress={() => setAddDialogOpen(true)}
+            className="h-8 bg-emerald-500 text-white font-black uppercase text-[10px] px-4 rounded-md shadow-sm italic transition-transform active:scale-95"
+          >
             <PlusCircle size={14} className="mr-1" /> NUEVA FIRMA
           </Button>
         </div>
       </header>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 shrink-0">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-1 shrink-0">
         {[
-          { label: "ABASTECEDORES ACTIVOS", val: stats.total, color: "emerald", icon: Building2 },
-          { label: "LÍNEAS DE CONTACTO", val: stats.withPhone, color: "emerald", icon: Phone },
-          { label: "ESTADO DE CONECTIVIDAD", val: "ESTABLE", color: "white", icon: Zap }
+          { label: "ABASTECEDORES ACTIVOS", val: stats.total, color: "emerald", icon: Zap },
+          { label: "LÍNEAS DE CONTACTO", val: stats.withPhone, color: "sky", icon: Phone },
+          { label: "ESTADO CONECTIVIDAD", val: "ESTABLE", color: "emerald", icon: Sparkles },
+          { label: "AUDITORIA", val: "ACT", color: "amber", icon: Building2 }
         ].map((k, i) => (
-          <div key={i} className="bg-zinc-950 p-4 border border-white/5 rounded-2xl flex items-center justify-between group">
-            <div className="flex flex-col">
-              <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1">{k.label}</span>
-              <span className={`text-2xl font-black tabular-nums text-${k.color}-500 ${k.color !== 'white' && 'italic'} leading-none tracking-tighter`}>{k.val}</span>
+          <div key={i} className="bg-white dark:bg-zinc-900 p-2 border border-gray-200 dark:border-white/5 rounded-lg flex items-center justify-between shadow-sm transition-colors cursor-pointer hover:border-emerald-500/30">
+            <div className="flex flex-col min-w-0 pr-1">
+              <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">{k.label}</span>
+              <span className={`text-sm font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} italic leading-tight tracking-tighter truncate`}>{k.val}</span>
             </div>
-            <k.icon size={24} className={`text-${k.color}-500 opacity-20`} />
+            <k.icon size={14} className={`${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} opacity-20 shrink-0`} />
           </div>
         ))}
       </div>
 
       {/* TABLA PRINCIPAL */}
-      <div className="flex-1 bg-zinc-950 border border-white/5 rounded-2xl overflow-hidden flex flex-col min-h-0 min-w-0 w-full">
+      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 min-w-0 w-full shadow-sm transition-colors">
         <div className="flex-1 overflow-y-auto overflow-x-hidden w-full custom-scrollbar">
-          <Table isCompact removeWrapper aria-label="Directorio Proveedores" classNames={{ th: "bg-zinc-950 text-zinc-500 font-black uppercase text-[9px] tracking-widest h-12 py-2 border-b border-white/5 sticky top-0 z-10", td: "py-4 font-medium border-b border-white/5", tr: "hover:bg-white/5 transition-colors" }}>
+          <Table isCompact removeWrapper aria-label="Directorio Proveedores" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10" }}>
             <TableHeader>
               <TableColumn className="pl-3 md:pl-6">RAZÓN SOCIAL</TableColumn>
               <TableColumn align="center">CONTACTO</TableColumn>
@@ -201,19 +206,19 @@ export default function SuppliersPage() {
                 <TableRow key={supplier.id}>
                   <TableCell className="pl-3 md:pl-6">
                     <div className="flex items-center gap-3 md:gap-4">
-                      <div className="h-8 w-8 md:h-10 md:w-10 rounded-xl bg-zinc-900 border border-white/5 flex items-center justify-center text-emerald-500 shrink-0">
+                      <div className="h-8 w-8 md:h-10 md:w-10 rounded-xl bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-white/5 flex items-center justify-center text-emerald-500 shrink-0">
                         <Building2 size={16} className="md:w-[18px] md:h-[18px]" />
                       </div>
                       <div className="flex flex-col min-w-0">
-                        <span className="text-xs md:text-sm font-black text-white uppercase leading-tight italic truncate max-w-[120px] md:max-w-[400px]">{supplier.name}</span>
-                        <span className="text-[8px] md:text-[9px] text-zinc-500 font-mono tracking-widest mt-0.5 md:mt-1">ID: #{supplier.id}</span>
+                        <span className="text-xs md:text-sm font-black text-gray-900 dark:text-white uppercase leading-tight italic truncate max-w-[120px] md:max-w-[400px]">{supplier.name}</span>
+                        <span className="text-[8px] md:text-[9px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest mt-0.5 md:mt-1">ID: #{supplier.id}</span>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-center px-1 md:px-3">
-                    <div className="inline-flex items-center gap-1.5 md:gap-2 px-2 py-1 md:px-3 md:py-1.5 rounded-lg bg-zinc-900 border border-white/5">
-                      <Phone size={10} className="text-zinc-500 md:w-3 md:h-3" />
-                      <span className="text-[10px] md:text-xs font-black text-white tabular-nums tracking-widest italic">{supplier.phone || 'S.T.'}</span>
+                    <div className="inline-flex items-center gap-1.5 md:gap-2 px-2 py-1 md:px-3 md:py-1.5 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-white/5">
+                      <Phone size={10} className="text-gray-400 md:w-3 md:h-3" />
+                      <span className="text-[10px] md:text-xs font-black text-gray-900 dark:text-white tabular-nums tracking-widest italic">{supplier.phone || 'S.T.'}</span>
                     </div>
                   </TableCell>
                   <TableCell className="hidden sm:table-cell">
@@ -224,10 +229,10 @@ export default function SuppliersPage() {
                   </TableCell>
                   <TableCell className="pr-3 md:pr-6">
                     <div className="flex justify-end gap-1.5 md:gap-2">
-                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 md:h-9 md:w-9 bg-zinc-900 text-emerald-500 rounded-xl hover:bg-emerald-500 hover:text-black border border-white/5" onPress={() => { setEditingSupplier(supplier); setEditDialogOpen(true); }}>
+                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 md:h-9 md:w-9 bg-gray-100 dark:bg-zinc-800 text-emerald-500 rounded-xl hover:bg-emerald-500 hover:text-black border border-gray-200 dark:border-white/5 shadow-sm" onPress={() => { setEditingSupplier(supplier); setEditDialogOpen(true); }}>
                         <Edit size={14} />
                       </Button>
-                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 md:h-9 md:w-9 bg-zinc-900 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white border border-white/5" onPress={() => { setDeletingId(supplier.id); setDeleteDialogOpen(true); }}>
+                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 md:h-9 md:w-9 bg-gray-100 dark:bg-zinc-800 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white border border-gray-200 dark:border-white/5 shadow-sm" onPress={() => { setDeletingId(supplier.id); setDeleteDialogOpen(true); }}>
                         <Trash2 size={14} />
                       </Button>
                     </div>
@@ -240,18 +245,18 @@ export default function SuppliersPage() {
 
         {/* PAGINACIÓN */}
         {filteredSuppliers.length > 0 && (
-          <div className="px-6 py-3 flex items-center justify-between border-t border-white/5 bg-zinc-950 shrink-0">
-            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest leading-none">
-              VISTA: <span className="text-white italic">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, filteredSuppliers.length)}</span> / <span className="text-emerald-500 italic">{filteredSuppliers.length}</span>
+          <div className="px-6 py-3 flex items-center justify-between border-t border-gray-200 dark:border-white/5 bg-gray-50 dark:bg-zinc-900 shrink-0 transition-colors">
+            <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">
+              VISTA: <span className="text-gray-900 dark:text-white italic">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, filteredSuppliers.length)}</span> / <span className="text-emerald-500 italic">{filteredSuppliers.length}</span>
             </p>
             <div className="flex items-center gap-4">
-              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} className="h-7 bg-zinc-900 text-zinc-400 text-[9px] font-black uppercase tracking-widest px-2 outline-none rounded-lg border border-white/5 cursor-pointer">
-                {[10, 20, 50, 100].map(n => <option key={n} value={n} className="bg-black">{n} REGISTROS</option>)}
+              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} className="h-7 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 text-[9px] font-black uppercase tracking-widest px-2 outline-none rounded-lg border border-gray-200 dark:border-white/5 cursor-pointer">
+                {[10, 20, 50, 100].map(n => <option key={n} value={n} className="bg-white dark:bg-black">{n} REGISTROS</option>)}
               </select>
               <div className="flex items-center gap-1">
-                <Button size="sm" variant="flat" onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))} isDisabled={currentPage === 1} className="h-7 px-3 bg-zinc-900 text-white font-black text-[9px] uppercase border border-white/5 rounded-lg hover:bg-zinc-800">PREV</Button>
-                <span className="text-[10px] font-black text-white italic px-2 tabular-nums">{currentPage} / {totalPages}</span>
-                <Button size="sm" variant="flat" onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} isDisabled={currentPage === totalPages || totalPages === 0} className="h-7 px-3 bg-zinc-900 text-white font-black text-[9px] uppercase border border-white/5 rounded-lg hover:bg-zinc-800">NEXT</Button>
+                <Button size="sm" variant="flat" onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))} isDisabled={currentPage === 1} className="h-7 px-3 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-white font-black text-[9px] uppercase border border-gray-200 dark:border-white/5 rounded-lg hover:bg-gray-200 dark:hover:bg-zinc-700">PREV</Button>
+                <span className="text-[10px] font-black text-gray-900 dark:text-white italic px-2 tabular-nums">{currentPage} / {totalPages}</span>
+                <Button size="sm" variant="flat" onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} isDisabled={currentPage === totalPages || totalPages === 0} className="h-7 px-3 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-white font-black text-[9px] uppercase border border-gray-200 dark:border-white/5 rounded-lg hover:bg-gray-200 dark:hover:bg-zinc-700">NEXT</Button>
               </div>
             </div>
           </div>
@@ -259,16 +264,16 @@ export default function SuppliersPage() {
       </div>
 
       {/* MODAL CREAR/EDITAR */}
-      <Modal placement="top-center" isOpen={addDialogOpen || editDialogOpen} onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); } }} backdrop="blur" size="2xl" classNames={{ base: "bg-[#0a0a0a] rounded-3xl border border-white/10", closeButton: "text-zinc-500 hover:text-white" }}>
+      <Modal placement="top-center" isOpen={addDialogOpen || editDialogOpen} onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); } }} backdrop="blur" size="2xl" classNames={{ base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl", closeButton: "text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors" }}>
         <ModalContent>
           {(onClose) => (
             <>
-              <ModalHeader className="flex flex-col gap-1 p-6 border-b border-white/5 bg-zinc-950">
-                <h2 className="text-2xl font-black text-white italic tracking-tighter uppercase leading-none flex items-center gap-3">
+              <ModalHeader className="flex flex-col gap-1 p-8 border-b border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-zinc-950">
+                <h2 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter uppercase leading-none flex items-center gap-3">
                   <div className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl"><Truck size={24} /></div>
                   {addDialogOpen ? "Nuevo " : "Actualizar "} <span className="text-emerald-500">Vínculo</span>
                 </h2>
-                <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mt-2 ml-[3.5rem]">Arquitectura de Suministro Maestro</p>
+                <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-2 ml-[4.5rem]">Arquitectura de Suministro Maestro</p>
               </ModalHeader>
 
               <ModalBody className="p-8 gap-6">
@@ -280,8 +285,7 @@ export default function SuppliersPage() {
                       if (addDialogOpen) setNewSupplier(p => ({ ...p, name: v.toUpperCase() }));
                       else setEditingSupplier(p => p ? { ...p, name: v.toUpperCase() } : null);
                     }}
-                    placeholder="EJ: DISTRIBUIDORA GLOBAL S.A.S..."
-                    classNames={{ inputWrapper: "h-14 bg-zinc-950 border border-white/10 rounded-xl focus-within:border-emerald-500/50", input: "font-black text-sm uppercase italic text-white" }}
+                    classNames={{ inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 shadow-none transition-all", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" }}
                   />
                 </div>
 
@@ -294,9 +298,8 @@ export default function SuppliersPage() {
                         if (addDialogOpen) setNewSupplier(p => ({ ...p, phone: v }));
                         else setEditingSupplier(p => p ? { ...p, phone: v } : null);
                       }}
-                      placeholder="+57..."
-                      startContent={<Phone size={14} className="text-zinc-600 mr-1" />}
-                      classNames={{ inputWrapper: "h-14 bg-zinc-950 border border-white/10 rounded-xl focus-within:border-emerald-500/50", input: "font-black text-sm uppercase italic text-white" }}
+                      startContent={<Phone size={14} className="text-gray-400 mr-1" />}
+                      classNames={{ inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 shadow-none transition-all", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" }}
                     />
                   </div>
                   <div className="space-y-2">
@@ -307,15 +310,14 @@ export default function SuppliersPage() {
                         if (addDialogOpen) setNewSupplier(p => ({ ...p, address: v.toUpperCase() }));
                         else setEditingSupplier(p => p ? { ...p, address: v.toUpperCase() } : null);
                       }}
-                      placeholder="CIUDAD, CALLE..."
-                      startContent={<MapPin size={14} className="text-zinc-600 mr-1" />}
-                      classNames={{ inputWrapper: "h-14 bg-zinc-950 border border-white/10 rounded-xl focus-within:border-emerald-500/50", input: "font-black text-sm uppercase italic text-white" }}
+                      startContent={<MapPin size={14} className="text-gray-400 mr-1" />}
+                      classNames={{ inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 shadow-none transition-all", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" }}
                     />
                   </div>
                 </div>
               </ModalBody>
 
-              <ModalFooter className="p-6 border-t border-white/5 bg-zinc-950">
+              <ModalFooter className="p-8 border-t border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-zinc-950">
                 <Button
                   className="w-full h-14 bg-white text-black hover:bg-emerald-500 hover:text-black font-black uppercase text-xs tracking-widest rounded-xl transition-all shadow-xl hover:shadow-emerald-500/20"
                   onPress={addDialogOpen ? handleAddSupplier : handleEditSupplier}
@@ -330,7 +332,7 @@ export default function SuppliersPage() {
       </Modal>
 
       {/* MODAL ELIMINAR */}
-      <Modal isOpen={deleteDialogOpen} onOpenChange={setDeleteDialogOpen} backdrop="blur" classNames={{ base: "bg-[#0a0a0a] rounded-3xl border border-white/10", closeButton: "text-zinc-500" }}>
+      <Modal isOpen={deleteDialogOpen} onOpenChange={setDeleteDialogOpen} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl", closeButton: "text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors" }}>
         <ModalContent>
           {(onClose) => (
             <>
@@ -340,9 +342,9 @@ export default function SuppliersPage() {
               <ModalBody className="p-6 text-center text-xs font-bold text-zinc-500 uppercase leading-relaxed tracking-widest italic">
                 ¿Seguro que desea eliminar permanentemente este proveedor del directorio maestro? Perderá el rastro de sus despachos.
               </ModalBody>
-              <ModalFooter className="p-6 pt-2 flex gap-2 border-t border-white/5">
-                <Button variant="flat" className="flex-1 font-black text-[10px] bg-zinc-900 text-white" onPress={onClose}>MANTENER ENLACE</Button>
-                <Button color="danger" className="flex-1 font-black text-[10px] bg-rose-600 text-white" onPress={handleDeleteSupplier}>SÍ, PURGAR</Button>
+              <ModalFooter className="p-8 pt-4 flex gap-3 border-t border-gray-100 dark:border-white/5">
+                <Button variant="flat" className="flex-1 h-12 font-black text-xs uppercase tracking-widest bg-transparent border border-gray-200 dark:border-white/10 text-gray-900 dark:text-white rounded-xl" onPress={onClose}>CANCELAR / VOLVER</Button>
+                <Button color="danger" className="flex-1 h-12 font-black text-xs uppercase tracking-widest bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-600/20" onPress={handleDeleteSupplier}>SÍ, PURGAR</Button>
               </ModalFooter>
             </>
           )}

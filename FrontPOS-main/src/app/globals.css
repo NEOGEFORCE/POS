@@ -191,4 +191,60 @@
       font-size: 16px !important;
     }
   }
+
+  /* =========================================
+     CORRECCIÓN GLOBAL DE TRANSPARENCIA (ZERO FRICTION)
+     ========================================= */
+  
+  /* Forzar transparencia en Autofill de navegadores */
+  input:-webkit-autofill,
+  input:-webkit-autofill:hover, 
+  input:-webkit-autofill:focus, 
+  input:-webkit-autofill:active {
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: currentColor;
+    transition: background-color 5000s ease-in-out 0s;
+    box-shadow: inset 0 0 20px 20px transparent !important;
+  }
+
+  /* Estilo Global para el contenedor de Input de HeroUI */
+  [data-slot="input-wrapper"], 
+  .heroui-input-wrapper {
+    background-color: transparent !important;
+    backdrop-filter: blur(10px);
+    transition: all 0.3s ease;
+    border: 1px solid hsl(var(--border) / 0.5) !important; /* Borde sutil y constante */
+  }
+
+  /* Asegurar mayor visibilidad en Dark Mode (como solicitó el usuario) */
+  .dark [data-slot="input-wrapper"],
+  .dark .heroui-input-wrapper {
+    border-color: rgba(255, 255, 255, 0.1) !important;
+  }
+
+  /* Quitar bordes pesados y sombras intrusivas al enfocar (Zero Friction) */
+  input:focus, 
+  .heroui-input-wrapper:focus-within,
+  [data-slot="input-wrapper"][data-focus="true"],
+  [data-slot="input-wrapper"][data-focus-visible="true"] {
+    outline: none !important;
+    box-shadow: none !important;
+    border-color: hsl(var(--border) / 1) !important; /* Un poco más visible pero sin color extra */
+  }
+
+  .dark [data-slot="input-wrapper"][data-focus="true"],
+  .dark .heroui-input-wrapper:focus-within {
+    border-color: rgba(255, 255, 255, 0.2) !important; /* Brillo sutil al escribir en dark mode */
+  }
+
+  /* Si se desea una interacción sutil, podemos usar un after o un borde inferior muy fino, 
+     pero por ahora seguimos el estándar de transparencia total solicitado. */
+
+  /* Ajuste de etiquetas para evitar el efecto "amontonado" */
+  [data-slot="label"] {
+    margin-bottom: 0.5rem !important;
+    font-weight: 900 !important;
+    letter-spacing: 0.05em !important;
+    color: hsl(var(--foreground)) !important;
+  }
 }

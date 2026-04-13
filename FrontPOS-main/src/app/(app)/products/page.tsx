@@ -46,6 +46,7 @@ export default function ProductsPage() {
     });
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
+    const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
 
     const [newMargin, setNewMargin] = useState(20);
     const [editMargin, setEditMargin] = useState(0);
@@ -149,73 +150,73 @@ export default function ProductsPage() {
     if (productsLoading || categoriesLoading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
 
     return (
-        <div className="flex flex-col h-screen gap-2 p-2 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
+        <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
 
             {/* HEADER QUE RESPETA CLARO/OSCURO */}
-            <header className="flex flex-col md:flex-row items-center justify-between gap-4 p-4 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm transition-colors">
-                <div className="flex items-center gap-3 w-full md:w-auto">
-                    <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shadow-inner">
-                        <Package size={24} />
+            <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
+                <div className="flex items-center gap-2">
+                    <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
+                        <Package size={16} />
                     </div>
                     <div className="flex flex-col">
-                        <span className="text-xl font-black uppercase italic tracking-tighter leading-none">INVENTARIO</span>
-                        <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-1">Vault V5.0</span>
+                        <span className="text-sm font-black uppercase tracking-tighter leading-none">INVENTARIO</span>
+                        <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5">VAULT V4.2</span>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 w-full md:w-auto">
-                    {/* BOTÓN DE ALERTAS DE STOCK */}
+                <div className="flex items-center gap-2">
                     <Button
+                        size="sm"
+                        variant="flat"
                         onPress={() => setAlertsDialogOpen(true)}
-                        className={`h-10 px-4 rounded-xl font-black text-[10px] tracking-widest uppercase italic transition-all ${stats.lowStock > 0
-                                ? 'bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 border border-amber-200 dark:border-amber-500/20 animate-pulse'
-                                : 'bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-500 border border-gray-200 dark:border-white/5'
+                        className={`h-8 px-3 rounded-md font-black text-[10px] tracking-widest uppercase transition-all ${stats.lowStock > 0
+                                ? 'bg-amber-500 text-white animate-pulse shadow-lg shadow-amber-500/20'
+                                : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-500'
                             }`}
                     >
-                        <AlertTriangle size={14} className="mr-1" />
-                        {stats.lowStock > 0 && <span className="bg-amber-500 text-white dark:text-black px-1.5 py-0.5 rounded mr-1 leading-none">{stats.lowStock}</span>}
+                        <AlertTriangle size={12} className="mr-1" />
+                        {stats.lowStock > 0 && <span className="bg-white text-amber-500 dark:bg-black px-1 rounded mr-1 leading-none">{stats.lowStock}</span>}
                         ALERTAS
                     </Button>
 
-                    <div className="relative w-full md:w-64 group">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
-                        <Input
-                            placeholder="BUSCAR REFERENCIA..."
-                            value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
-                            classNames={{
-                                inputWrapper: "h-10 pl-10 pr-4 rounded-xl bg-gray-100 dark:bg-black border border-gray-200 dark:border-white/5 focus-within:border-emerald-500/50 transition-colors shadow-inner",
-                                input: "font-black text-xs uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
-                            }}
-                        />
-                    </div>
-                    <Button onPress={() => setAddDialogOpen(true)} className="bg-emerald-500 text-white font-black uppercase text-[10px] h-10 px-6 rounded-xl shrink-0 shadow-lg shadow-emerald-500/20 italic tracking-widest hover:scale-105 transition-transform">
-                        <PlusCircle size={16} className="mr-1" /> NUEVA REF
+                    <Input
+                        size="sm"
+                        placeholder="BUSCAR..."
+                        value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
+                        classNames={{
+                            inputWrapper: "h-8 px-3 rounded-md bg-transparent border border-gray-200 dark:border-white/10 transition-colors w-40 md:w-64 shadow-none focus-within:border-emerald-500/50",
+                            input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+                        }}
+                        startContent={<Search size={14} className="text-gray-400" />}
+                    />
+                    <Button onPress={() => setAddDialogOpen(true)} className="bg-emerald-500 text-white font-black uppercase text-[10px] h-8 px-4 rounded-md shrink-0 shadow-sm tracking-widest transition-transform active:scale-95">
+                        <PlusCircle size={14} className="mr-1" /> NUEVA REF
                     </Button>
                 </div>
             </header>
 
             {/* KPIs */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 shrink-0">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-1 shrink-0">
                 {[
                     { label: "VALOR VENTA", val: `$${formatCOP(stats.totalRetailValue)}`, color: "emerald", icon: BarChart3 },
                     { label: "VALOR COSTO", val: `$${formatCOP(stats.totalCostValue)}`, color: "sky", icon: Shapes },
                     { label: "REFERENCIAS", val: stats.totalItems, color: "emerald", icon: Zap },
                     { label: "EN ALERTA", val: stats.lowStock, color: "amber", icon: TrendingDown }
                 ].map((k, i) => (
-                    <div key={i} className={`bg-white dark:bg-zinc-900 p-3 md:p-4 border border-gray-200 dark:border-white/5 rounded-2xl flex items-center justify-between shadow-sm transition-colors cursor-pointer hover:border-${k.color}-500/30`} onClick={() => i === 3 && setAlertsDialogOpen(true)}>
-                        <div className="flex flex-col min-w-0 pr-2">
-                            <span className="text-[8px] md:text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-0.5 md:mb-1">{k.label}</span>
-                            <span className={`text-lg md:text-2xl font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} italic leading-none tracking-tighter truncate`}>{k.val}</span>
+                    <div key={i} className={`bg-white dark:bg-zinc-900 p-2 border border-gray-200 dark:border-white/5 rounded-lg flex items-center justify-between shadow-sm transition-colors cursor-pointer hover:border-${k.color}-500/30`} onClick={() => i === 3 && setAlertsDialogOpen(true)}>
+                        <div className="flex flex-col min-w-0 pr-1">
+                            <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">{k.label}</span>
+                            <span className={`text-sm font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} italic leading-tight tracking-tighter truncate`}>{k.val}</span>
                         </div>
-                        <k.icon size={20} className={`${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} opacity-20 hidden sm:block shrink-0`} />
+                        <k.icon size={14} className={`${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} opacity-20 shrink-0`} />
                     </div>
                 ))}
             </div>
 
             {/* TABLA PRINCIPAL (DISEÑO SLIM) */}
-            <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
+            <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
                 <div className="flex-1 overflow-x-hidden overflow-y-auto custom-scrollbar">
-                    <Table isCompact removeWrapper aria-label="Inventario" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-12 py-2 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-3 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" }}>
+                    <Table isCompact removeWrapper aria-label="Inventario" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" }}>
                         <TableHeader>
                             <TableColumn className="pl-3 md:pl-6">PRODUCTO</TableColumn>
                             <TableColumn align="center">STOCK</TableColumn>
@@ -226,15 +227,23 @@ export default function ProductsPage() {
                             {paginatedProducts.map((p: Product) => {
                                 const isCritical = !p.isWeighted && p.quantity <= 5;
                                 return (
-                                    <TableRow key={p.barcode} className="group">
-                                        <TableCell className="pl-3 md:pl-6">
-                                            <div className="flex items-center gap-2 md:gap-4">
-                                                <div className="hidden sm:flex h-10 w-10 shrink-0 bg-gray-100 dark:bg-black border border-gray-200 dark:border-white/5 rounded-xl items-center justify-center text-gray-400 dark:text-zinc-600">
-                                                    <Barcode size={18} />
+                                    <TableRow 
+                                        key={p.barcode} 
+                                        onClick={() => setSelectedItemId(p.barcode)}
+                                        className={`group cursor-pointer transition-all border-l-4 ${
+                                            selectedItemId === p.barcode 
+                                            ? 'bg-emerald-500/10 border-emerald-500' 
+                                            : 'border-transparent hover:bg-gray-50 dark:hover:bg-white/5 hover:border-emerald-500/30'
+                                        }`}
+                                    >
+                                        <TableCell className="pl-3 md:pl-4">
+                                            <div className="flex items-center gap-2">
+                                                <div className="hidden sm:flex h-8 w-8 shrink-0 bg-gray-100 dark:bg-black border border-gray-200 dark:border-white/5 rounded-lg items-center justify-center text-gray-400 dark:text-zinc-600">
+                                                    <Barcode size={14} />
                                                 </div>
                                                 <div className="flex flex-col min-w-0">
-                                                    <span className="text-xs md:text-sm font-black text-gray-900 dark:text-white uppercase leading-tight italic truncate max-w-[100px] sm:max-w-[200px] md:max-w-[400px]">{p.productName}</span>
-                                                    <span className="text-[8px] md:text-[9px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest mt-0.5 md:mt-1 truncate">#{p.barcode}</span>
+                                                    <span className="text-[11px] font-black text-gray-900 dark:text-white uppercase leading-tight italic truncate max-w-[100px] sm:max-w-[200px] md:max-w-[300px]">{p.productName}</span>
+                                                    <span className="text-[8px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest mt-0.5 truncate">#{p.barcode}</span>
                                                 </div>
                                             </div>
                                         </TableCell>
@@ -361,8 +370,7 @@ export default function ProductsPage() {
                                                     if (addDialogOpen) setNewProduct(p => ({ ...p, barcode: v.toUpperCase() }));
                                                     else setEditingProduct(p => p ? { ...p, barcode: v.toUpperCase() } : null);
                                                 }}
-                                                placeholder="ESCANEE CÓDIGO..."
-                                                classNames={{ inputWrapper: "h-12 md:h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-xs md:text-sm uppercase italic text-gray-900 dark:text-white" }}
+                                                classNames={{ inputWrapper: "h-12 md:h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-none", input: "font-black text-xs md:text-sm uppercase italic text-gray-900 dark:text-white" }}
                                             />
                                             <Button isIconOnly size="sm" onPress={() => setIsScannerOpen(true)} className="absolute right-2 top-1/2 -translate-y-1/2 h-8 w-8 md:h-10 md:w-10 bg-emerald-500 text-white rounded-lg shadow-lg"><Camera size={16} /></Button>
                                         </div>
@@ -375,8 +383,7 @@ export default function ProductsPage() {
                                                 if (addDialogOpen) setNewProduct(p => ({ ...p, productName: v.toUpperCase() }));
                                                 else setEditingProduct(p => p ? { ...p, productName: v.toUpperCase() } : null);
                                             }}
-                                            placeholder="EJ: HARINA PAN..."
-                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-xs md:text-sm uppercase italic text-gray-900 dark:text-white" }}
+                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-none", input: "font-black text-xs md:text-sm uppercase italic text-gray-900 dark:text-white" }}
                                         />
                                     </div>
                                 </div>
@@ -396,7 +403,7 @@ export default function ProductsPage() {
                                                     setEditingProduct(p => p ? { ...p, purchasePrice: val, salePrice: applyRounding(val * (1 + editMargin / 100)) } : null);
                                                 }
                                             }}
-                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-gray-50 dark:bg-black border-b-2 border-gray-300 dark:border-white/10 rounded-xl", input: "font-black text-base md:text-lg tabular-nums italic text-gray-900 dark:text-white" }}
+                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-transparent border-b-2 border-gray-200 dark:border-white/10 rounded-xl shadow-none focus-within:border-emerald-500/50", input: "font-black text-base md:text-lg tabular-nums italic text-gray-900 dark:text-white" }}
                                         />
                                     </div>
 
@@ -416,7 +423,7 @@ export default function ProductsPage() {
                                                     setEditingProduct(p => p ? { ...p, marginPercentage: val, salePrice: applyRounding(p.purchasePrice * (1 + val / 100)) } : null);
                                                 }
                                             }}
-                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-sky-50 dark:bg-sky-500/10 border-b-2 border-sky-500/50 rounded-xl", input: "font-black text-base md:text-lg tabular-nums text-sky-600 dark:text-sky-400 italic text-center" }}
+                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-transparent border-b-2 border-sky-500/50 rounded-xl shadow-none", input: "font-black text-base md:text-lg tabular-nums text-sky-600 dark:text-sky-400 italic text-center" }}
                                         />
                                     </div>
 
@@ -431,7 +438,7 @@ export default function ProductsPage() {
                                                 if (addDialogOpen) setNewProduct(p => ({ ...p, salePrice: val }));
                                                 else setEditingProduct(p => p ? { ...p, salePrice: val } : null);
                                             }}
-                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-emerald-50 dark:bg-emerald-500/10 border-b-2 border-emerald-500/50 rounded-xl", input: "font-black text-lg md:text-xl tabular-nums text-emerald-600 dark:text-emerald-400 italic" }}
+                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-transparent border-b-2 border-emerald-500/50 rounded-xl shadow-none", input: "font-black text-lg md:text-xl tabular-nums text-emerald-600 dark:text-emerald-400 italic" }}
                                         />
                                     </div>
 
@@ -447,7 +454,7 @@ export default function ProductsPage() {
                                                 if (addDialogOpen) setNewProduct(p => ({ ...p, quantity: val }));
                                                 else setEditingProduct(p => p ? { ...p, quantity: val } : null);
                                             }}
-                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl shadow-inner", input: "font-black text-base md:text-lg tabular-nums text-center text-gray-900 dark:text-white" }}
+                                            classNames={{ inputWrapper: "h-12 md:h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl shadow-none focus-within:border-emerald-500/50", input: "font-black text-base md:text-lg tabular-nums text-center text-gray-900 dark:text-white" }}
                                         />
                                     </div>
                                 </div>
@@ -463,7 +470,7 @@ export default function ProductsPage() {
                                                 else setEditingProduct(p => p ? { ...p, categoryId: v } : null);
                                             }}
                                             classNames={{ 
-                                                trigger: "h-12 md:h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl shadow-inner", 
+                                                trigger: "h-12 md:h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl shadow-none focus-within:border-emerald-500/50", 
                                                 value: "font-black text-xs md:text-sm uppercase italic text-gray-900 dark:text-white",
                                                 popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-xl"
                                             }}
@@ -471,7 +478,7 @@ export default function ProductsPage() {
                                             {categories.map(c => <SelectItem key={String(c.id)} textValue={c.name.toUpperCase()}>{c.name.toUpperCase()}</SelectItem>)}
                                         </Select>
                                     </div>
-                                    <div className="flex items-center gap-3 bg-gray-50 dark:bg-black p-3 md:p-4 rounded-xl border border-gray-200 dark:border-white/10 shadow-inner">
+                                    <div className="flex items-center gap-3 bg-transparent p-3 md:p-4 rounded-xl border border-gray-200 dark:border-white/10 shadow-none">
                                         <Checkbox
                                             size="lg"
                                             isSelected={addDialogOpen ? newProduct.isWeighted : (editingProduct?.isWeighted || false)}
@@ -516,7 +523,7 @@ export default function ProductsPage() {
                                 ¿Seguro que desea eliminar permanentemente la referencia <span className="text-rose-500 font-mono">#{deletingBarcode}</span> del Vault maestro?
                             </ModalBody>
                             <ModalFooter className="p-6 border-t border-gray-100 dark:border-white/5 flex gap-3">
-                                <Button variant="flat" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white" onPress={onClose}>DESCARTAR</Button>
+                                <Button variant="flat" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white" onPress={onClose}>CANCELAR</Button>
                                 <Button color="danger" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest shadow-xl shadow-rose-500/20" onPress={handleDelete}>SÍ, ELIMINAR</Button>
                             </ModalFooter>
                         </>

@@ -131,7 +131,7 @@ export default function LabelsPage() {
                             <Input
                                 placeholder="NOMBRE O CÓDIGO..."
                                 value={filter} onValueChange={setFilter}
-                                classNames={{ inputWrapper: "h-12 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/5 rounded-xl shadow-inner focus-within:border-emerald-500/50", input: "font-black text-xs uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600" }}
+                                classNames={{ inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl shadow-none focus-within:border-emerald-500/50", input: "font-black text-xs uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600" }}
                             />
                         </div>
 

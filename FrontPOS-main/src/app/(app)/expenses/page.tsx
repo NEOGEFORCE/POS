@@ -130,17 +130,36 @@ export default function ExpensesPage() {
   return (
     <div className="flex flex-col h-screen gap-1 p-1 bg-gray-100 dark:bg-zinc-950 overflow-hidden select-none transition-colors duration-500">
 
-      <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm">
+      <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
         <div className="flex items-center gap-2">
-          <div className="bg-rose-500 p-2 rounded-md text-white"><TrendingDown size={16} /></div>
+          <div className="h-8 w-8 rounded-md bg-rose-500 flex items-center justify-center text-white shadow-sm shrink-0">
+            <TrendingDown size={16} />
+          </div>
           <div className="flex flex-col">
-            <span className="text-sm font-black dark:text-white uppercase leading-none italic">EGRESOS</span>
-            <span className="text-[9px] font-bold text-rose-500 uppercase tracking-widest italic">AUDIT V4.0</span>
+            <h1 className="text-sm font-black uppercase tracking-tighter leading-none italic">EGRESOS</h1>
+            <p className="text-[9px] font-black text-rose-500 uppercase tracking-widest mt-0.5 opacity-80 italic">COBERTURA DE GASTOS</p>
           </div>
         </div>
+
         <div className="flex items-center gap-2">
-          <Input size="sm" placeholder="BUSCAR..." value={filter} onValueChange={setFilter} startContent={<Search size={14} className="text-gray-400" />} classNames={{ inputWrapper: "h-8 bg-gray-50 dark:bg-zinc-800 border-none", input: "text-[10px] font-bold" }} />
-          <Button size="sm" onPress={() => setAddDialogOpen(true)} className="h-8 bg-rose-500 text-white font-black text-[10px] rounded-md shadow-lg italic">NUEVA SALIDA</Button>
+          <Input
+            size="sm"
+            placeholder="BUSCAR..."
+            value={filter}
+            onValueChange={setFilter}
+            classNames={{
+              inputWrapper: "h-8 px-3 rounded-md bg-transparent border border-gray-200 dark:border-white/10 transition-colors w-40 md:w-64 shadow-none focus-within:border-rose-500/50",
+              input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+            }}
+            startContent={<Search size={14} className="text-gray-400" />}
+          />
+          <Button
+            size="sm"
+            onPress={() => setAddDialogOpen(true)}
+            className="h-8 bg-rose-500 text-white font-black uppercase text-[10px] px-4 rounded-md shadow-sm italic transition-transform active:scale-95"
+          >
+            <PlusCircle size={14} className="mr-1" /> NUEVA SALIDA
+          </Button>
         </div>
       </header>
 
@@ -150,9 +169,9 @@ export default function ExpensesPage() {
         <div className="bg-white dark:bg-zinc-900 p-2 border border-gray-200 dark:border-white/5 rounded-lg flex flex-col items-center"><span className="text-[8px] font-black text-gray-400 uppercase tracking-widest">OPERACIONES</span><span className="text-sm font-black text-emerald-500 tabular-nums">{stats.count}</span></div>
       </div>
 
-      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 shadow-sm">
+      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
         <div className="flex-1 overflow-auto custom-scrollbar">
-          <Table isCompact removeWrapper classNames={{ th: "bg-gray-50 dark:bg-zinc-800 text-gray-500 font-bold uppercase text-[9px] tracking-widest h-8 py-1 border-b border-gray-200 sticky top-0 z-10", td: "py-1 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-gray-50 transition-colors group" }}>
+          <Table isCompact removeWrapper aria-label="Historial de Egresos" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-1 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-rose-500/5 transition-colors border-l-4 border-transparent hover:border-rose-500 active:bg-rose-500/10 cursor-pointer" }}>
             <TableHeader>
               <TableColumn className="pl-6">CONCEPTO</TableColumn>
               <TableColumn align="center">FECHA</TableColumn>
@@ -221,10 +240,9 @@ export default function ExpensesPage() {
                   <div className="space-y-1.5">
                     <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] pl-2 italic">Descripción del Movimiento</label>
                     <Input
-                      placeholder="Ej: COCACOLA, PAGO LUZ, PROVEEDOR..."
                       value={addDialogOpen ? newExpense.description : editingExpense?.description}
                       onValueChange={(v) => addDialogOpen ? setNewExpense(p => ({ ...p, description: v })) : setEditingExpense(p => p ? { ...p, description: v } : null)}
-                      classNames={{ inputWrapper: "h-12 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-xl px-4 shadow-sm", input: "font-black text-sm uppercase italic dark:text-white" }}
+                      classNames={{ inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl px-4 shadow-none focus-within:border-rose-500/50", input: "font-black text-sm uppercase italic dark:text-white" }}
                     />
                   </div>
 
@@ -256,7 +274,6 @@ export default function ExpensesPage() {
                     <label className="text-[9px] font-black text-gray-400 uppercase tracking-[0.2em] pl-2 italic">Cuantía de la Operación</label>
                     <Input
                       type="text"
-                      placeholder="0"
                       value={addDialogOpen ? newExpense.amount : String(editingExpense?.amount || '')}
                       onValueChange={(v) => {
                         const raw = v.replace(/\D/g, '');
@@ -264,7 +281,7 @@ export default function ExpensesPage() {
                       }}
                       startContent={<span className="text-4xl font-black italic text-rose-500 select-none mr-1">$</span>}
                       classNames={{
-                        inputWrapper: "h-20 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shadow-inner px-6",
+                        inputWrapper: "h-20 bg-transparent border border-gray-200 dark:border-white/10 rounded-2xl shadow-none px-6 focus-within:border-rose-500/50",
                         input: "text-4xl font-black italic text-gray-900 dark:text-white tabular-nums"
                       }}
                     />
@@ -297,7 +314,7 @@ export default function ExpensesPage() {
                 <p className="text-sm font-bold text-gray-600 dark:text-zinc-400 uppercase tracking-tight leading-relaxed">¿Desea eliminar permanentemente este registro?</p>
               </ModalBody>
               <ModalFooter className="p-6 pt-2 flex gap-2 border-t border-gray-100 dark:border-white/5">
-                <Button variant="flat" className="flex-1 font-black uppercase text-[10px]" onPress={() => setDeleteDialogOpen(false)}>MANTENER</Button>
+                <Button variant="flat" className="flex-1 font-black uppercase text-[10px]" onPress={() => setDeleteDialogOpen(false)}>VOLVER / MANTENER</Button>
                 <Button color="danger" className="flex-1 font-black uppercase text-[10px]" onPress={handleDeleteExpense}>ELIMINAR</Button>
               </ModalFooter>
             </>

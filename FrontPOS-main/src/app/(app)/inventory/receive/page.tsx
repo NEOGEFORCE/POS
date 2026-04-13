@@ -181,19 +181,16 @@ export default function ReceiveInventoryPage() {
         } catch (err) { console.error(err); } finally { setSubmitting(false); }
     };
 
-    if (loading) return <div className="h-screen flex items-center justify-center bg-black"><Loader2 className="h-10 w-10 animate-spin text-emerald-500" /></div>;
+    if (loading) return <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-zinc-950 transition-colors duration-500"><Loader2 className="h-10 w-10 animate-spin text-emerald-500" /></div>;
 
     return (
         <div className="flex flex-col h-screen bg-gray-50 dark:bg-zinc-950 text-white overflow-hidden transition-colors duration-500">
             {/* Header */}
-            <header className="px-6 py-3 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-white/5 flex justify-between items-center shrink-0 shadow-lg z-30">
-                <div className="flex items-center gap-4">
-                    <Button isIconOnly variant="flat" size="sm" onPress={() => router.push('/products')} className="rounded-xl bg-gray-100 dark:bg-zinc-800 dark:text-white">
-                        <ArrowLeft size={18} />
-                    </Button>
+            <header className="px-3 py-1 bg-white dark:bg-zinc-900 border-b border-gray-200 dark:border-white/5 flex justify-between items-center shrink-0 shadow-sm z-30">
+                <div className="flex items-center gap-2">
                     <div>
-                        <h1 className="text-xl font-black text-gray-900 dark:text-white uppercase tracking-tighter italic leading-none">Carga <span className="text-emerald-500">Maestra</span></h1>
-                        <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mt-1">Audit Ledger V9.0</p>
+                        <h1 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tighter italic leading-none">Carga <span className="text-emerald-500">Maestra</span></h1>
+                        <p className="text-[7px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">Audit Ledger V9.0</p>
                     </div>
                 </div>
 
@@ -205,30 +202,16 @@ export default function ReceiveInventoryPage() {
                         </div>
                     )}
                     <div className="flex items-center gap-2">
-                        <Badge color="success" variant="shadow" className="font-black h-7 border-none">{receiveList.length} ART</Badge>
+                        <Badge color="success" variant="flat" size="sm" className="font-black h-5 border-none text-[8px]">{receiveList.length} ART</Badge>
                         
-                        {/* BOTÓN DE VACIAR TODO (Como en ventas) */}
                         {receiveList.length > 0 && (
-                            <Button 
-                                isIconOnly 
-                                variant="flat" 
-                                color="danger" 
-                                size="md" 
-                                onPress={() => {
-                                    if(confirm("¿VACIAR TODA LA LISTA?")) {
-                                        setReceiveList([]);
-                                        localStorage.removeItem('org-pos-reception-list');
-                                        toast({ title: "LISTA VACIADA" });
-                                    }
-                                }}
-                                className="bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-xl border border-rose-500/20"
-                            >
-                                <Trash2 size={20} />
+                            <Button isIconOnly variant="flat" color="danger" size="sm" onPress={() => { if(confirm("¿VACIAR TODA LA LISTA?")) { setReceiveList([]); localStorage.removeItem('org-pos-reception-list'); toast({ title: "LISTA VACIADA" }); } }} className="bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg h-7 w-7 min-w-0">
+                                <Trash2 size={12} />
                             </Button>
                         )}
 
-                        <Button onPress={() => setIsScannerOpen(true)} className="bg-emerald-500 text-white font-black uppercase text-[10px] h-10 px-5 rounded-xl shadow-lg shadow-emerald-500/20 italic">
-                            <Camera size={18} className="mr-2" /> CÁMARA
+                        <Button size="sm" onPress={() => setIsScannerOpen(true)} className="bg-emerald-500 text-white font-black uppercase text-[9px] h-7 px-3 rounded-lg shadow-sm italic">
+                            <Camera size={12} className="mr-1" /> CÁMARA
                         </Button>
                     </div>
                 </div>
@@ -243,14 +226,14 @@ export default function ReceiveInventoryPage() {
                     </div>
                 ) : (
                     receiveList.map((item, idx) => (
-                        <div key={item.barcode} className="flex flex-col lg:flex-row lg:items-center gap-4 p-4 lg:p-3 bg-white dark:bg-black transition-colors h-auto lg:h-[70px]">
+                        <div key={item.barcode} className="flex flex-col lg:flex-row lg:items-center gap-2 p-2 bg-white dark:bg-black transition-colors min-h-[50px] border-b border-gray-100 dark:border-white/5">
                             {/* Info Base */}
-                            <div className="flex-1 min-w-0 flex items-center justify-between gap-3">
-                                <div className="flex items-center gap-3 min-w-0">
-                                    <div className="h-10 w-10 rounded-xl bg-gray-100 dark:bg-zinc-900 flex items-center justify-center text-emerald-500 shrink-0"><Barcode size={18} /></div>
+                            <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <div className="h-7 w-7 rounded-lg bg-gray-100 dark:bg-zinc-900 flex items-center justify-center text-emerald-500 shrink-0"><Barcode size={14} /></div>
                                     <div className="min-w-0">
-                                        <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase italic leading-tight truncate">{item.productName}</h3>
-                                        <p className="text-[10px] font-black text-gray-400 dark:text-zinc-600 font-mono mt-1 tracking-tighter">#{item.barcode}</p>
+                                        <h3 className="text-[11px] font-black text-gray-900 dark:text-white uppercase italic leading-tight truncate">{item.productName}</h3>
+                                        <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 font-mono mt-0.5 tracking-tighter">#{item.barcode}</p>
                                     </div>
                                 </div>
                                 
@@ -266,7 +249,7 @@ export default function ReceiveInventoryPage() {
                             </div>
 
                             {/* Selector de Protocolo */}
-                            <div className="flex bg-gray-100 dark:bg-zinc-900 rounded-xl gap-1 p-1 shrink-0">
+                            <div className="flex bg-gray-100 dark:bg-zinc-900 rounded-lg gap-0.5 p-0.5 shrink-0">
                                 {[
                                     { id: 'purchase', icon: Truck, color: 'emerald', label: 'PAGO' },
                                     { id: 'gift', icon: Gift, color: 'pink', label: 'GRATIS' },
@@ -275,10 +258,10 @@ export default function ReceiveInventoryPage() {
                                     <button
                                         key={btn.id}
                                         onClick={() => setReceiveList(p => p.map((it, i) => i === idx ? { ...it, entryType: btn.id as any } : it))}
-                                        className={`flex items-center gap-2 px-3 py-2 rounded-lg transition-all ${item.entryType === btn.id ? `bg-${btn.color}-500 text-white shadow-lg` : 'text-gray-400 dark:text-zinc-500'}`}
+                                        className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all ${item.entryType === btn.id ? `bg-${btn.color}-500 text-white shadow-sm` : 'text-gray-400 dark:text-zinc-500'}`}
                                     >
-                                        <btn.icon size={13} />
-                                        <span className="text-[8px] font-black uppercase">{btn.label}</span>
+                                        <btn.icon size={10} />
+                                        <span className="text-[7px] font-black uppercase">{btn.label}</span>
                                     </button>
                                 ))}
                             </div>
@@ -287,17 +270,17 @@ export default function ReceiveInventoryPage() {
                             <div className="flex items-center justify-between lg:justify-end gap-5 shrink-0">
                                 <div className="space-y-0.5">
                                     <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest ml-1">CANTIDAD</span>
-                                    <div className="flex items-center bg-gray-100 dark:bg-zinc-900 rounded-lg h-9 px-1.5 gap-2 border border-gray-200 dark:border-white/5">
+                                    <div className="flex items-center bg-gray-100 dark:bg-zinc-900 rounded-lg h-7 px-1 gap-1 border border-gray-200 dark:border-white/5">
                                         <button onClick={() => {
                                             const newQty = Math.max(1, item.addedQuantity - 1);
                                             setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: newQty } : it))
-                                        }} className="text-rose-500"><Minus size={14} /></button>
-                                        <input type="number" className="bg-transparent w-8 text-center text-xs font-black text-gray-900 dark:text-white border-none outline-none focus:ring-0" value={item.addedQuantity}
+                                        }} className="text-rose-500"><Minus size={12} /></button>
+                                        <input type="number" className="bg-transparent w-6 text-center text-[10px] font-black text-gray-900 dark:text-white border-none outline-none focus:ring-0" value={item.addedQuantity}
                                             onChange={(e) => {
                                                 const q = Number(e.target.value);
                                                 setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: q } : it))
                                             }} />
-                                        <button onClick={() => setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: it.addedQuantity + 1 } : it))} className="text-emerald-500"><Plus size={14} /></button>
+                                        <button onClick={() => setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: it.addedQuantity + 1 } : it))} className="text-emerald-500"><Plus size={12} /></button>
                                     </div>
                                 </div>
 
@@ -305,7 +288,7 @@ export default function ReceiveInventoryPage() {
                                 <div className="space-y-0.5">
                                     <span className="text-[7px] font-black text-indigo-500 uppercase tracking-widest ml-1 flex items-center gap-1"><Calculator size={8} /> TOTAL PRODUCTO</span>
                                     <Input size="sm" variant="flat" className="w-28"
-                                        classNames={{ input: "text-sm font-black italic tabular-nums text-indigo-600 dark:text-indigo-400", inputWrapper: "h-9 bg-indigo-50/50 dark:bg-indigo-500/10 border-b-2 border-indigo-200 dark:border-indigo-500/30 rounded-none shadow-none" }}
+                                        classNames={{ input: "text-sm font-black italic tabular-nums text-indigo-600 dark:text-indigo-400", inputWrapper: "h-9 bg-transparent border-b-2 border-indigo-500/30 rounded-none shadow-none focus-within:border-indigo-500" }}
                                         startContent={<span className="text-[9px] text-indigo-500 font-black">$</span>}
                                         value={String(item.newPurchasePrice * item.addedQuantity)}
                                         isDisabled={item.entryType === 'gift'}
@@ -323,7 +306,7 @@ export default function ReceiveInventoryPage() {
 
                                 <div className="space-y-0.5">
                                     <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest ml-1">COSTO UND</span>
-                                    <Input size="sm" variant="flat" className="w-24" classNames={{ input: "text-sm font-black italic tabular-nums text-gray-900 dark:text-white", inputWrapper: "h-9 bg-transparent border-b-2 border-gray-100 dark:border-white/10 rounded-none shadow-none" }} startContent={<span className="text-[9px] text-rose-500 font-black">$</span>}
+                                    <Input size="sm" variant="flat" className="w-24" classNames={{ input: "text-sm font-black italic tabular-nums text-gray-900 dark:text-white", inputWrapper: "h-9 bg-transparent border-b-2 border-gray-200 dark:border-white/10 rounded-none shadow-none focus-within:border-emerald-500/50" }} startContent={<span className="text-[9px] text-rose-500 font-black">$</span>}
                                         value={String(item.newPurchasePrice)}
                                         isDisabled={item.entryType === 'gift'}
                                         onValueChange={(val) => {
@@ -382,7 +365,7 @@ export default function ReceiveInventoryPage() {
                             ref={searchRef}
                             placeholder="ESCRIBA NOMBRE O CÓDIGO PARA AGREGAR..."
                             classNames={{
-                                inputWrapper: "h-16 pl-16 pr-8 rounded-[1.2rem] bg-gray-100 dark:bg-black border border-gray-200 dark:border-white/5",
+                                inputWrapper: "h-16 pl-16 pr-8 rounded-[1.2rem] bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:border-emerald-500",
                                 input: "font-black text-xl uppercase italic dark:text-white placeholder:text-zinc-300 dark:placeholder:text-zinc-800"
                             }}
                             value={searchQuery}
@@ -410,7 +393,7 @@ export default function ReceiveInventoryPage() {
 
                 <div className="max-w-7xl mx-auto w-full">
                     <select
-                        className="w-full bg-gray-100 dark:bg-black text-gray-400 dark:text-zinc-500 h-10 text-[9px] font-black rounded-lg px-5 border border-gray-200 dark:border-white/5 outline-none uppercase cursor-pointer italic appearance-none"
+                        className="w-full bg-transparent text-gray-400 dark:text-zinc-500 h-10 text-[9px] font-black rounded-lg px-5 border border-gray-200 dark:border-white/10 outline-none uppercase cursor-pointer italic appearance-none"
                         value={selectedGlobalSupplier}
                         onChange={(e) => setSelectedGlobalSupplier(e.target.value)}
                     >

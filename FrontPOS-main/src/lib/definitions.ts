@@ -96,7 +96,6 @@ export interface CashierClosure {
   totalTransfer: number;
   totalNequi: number;
   totalDaviplata: number;
-  totalBancolombia: number;
   totalOtherTransfer: number;
   totalExpenses: number;
   totalReturns: number;

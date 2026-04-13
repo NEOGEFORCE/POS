@@ -110,9 +110,9 @@ export function ScannerOverlay({
                     </h2>
                     <button
                         onClick={onClose}
-                        className="h-10 w-10 bg-black/50 hover:bg-rose-500 text-white rounded-xl backdrop-blur-md flex items-center justify-center transition-all border border-white/10"
+                        className="px-4 h-10 bg-black/50 hover:bg-rose-500 text-white rounded-xl backdrop-blur-md flex items-center gap-2 transition-all border border-white/10 font-black uppercase text-[10px] tracking-widest"
                     >
-                        <X className="h-5 w-5" />
+                        <X className="h-4 w-4" /> VOLVER
                     </button>
                 </div>
 
@@ -134,9 +134,9 @@ export function ScannerOverlay({
                                 </button>
                                 <button
                                     onClick={onIgnoreError}
-                                    className="w-full h-12 bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-xl font-black uppercase text-xs hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
+                                    className="w-full h-12 bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white rounded-xl font-black uppercase text-[10px] tracking-widest hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
                                 >
-                                    IGNORAR
+                                    VOLVER / IGNORAR
                                 </button>
                             </div>
                         </div>

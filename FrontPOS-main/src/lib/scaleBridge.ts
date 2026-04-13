@@ -1,5 +1,5 @@
 const WS_URL = process.env.NEXT_PUBLIC_SCALE_WS_URL || 'ws://localhost:9876';
-const RECONNECT_DELAY = 2000;
+const RECONNECT_DELAY = 10000;
 
 interface ScaleState {
     weight: number;

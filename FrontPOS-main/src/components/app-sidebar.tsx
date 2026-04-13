@@ -74,32 +74,37 @@ export function AppSidebar() {
           <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.3em] mb-3 px-2">Menú Principal</p>
           <SidebarMenu className="space-y-0.5">
             {menuItems.map(
-              (item) =>
-                (!item.adminOnly || isAdmin) && (
+              (item) => {
+                const isActive = item.href === "/dashboard" 
+                  ? pathname === "/dashboard" 
+                  : pathname.startsWith(item.href);
+
+                return (!item.adminOnly || isAdmin) && (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
                       asChild
-                      isActive={pathname.startsWith(item.href)}
+                      isActive={isActive}
                       tooltip={item.label}
                       onClick={() => {
                         setOpenMobile(false);
                         setOpen(false);
                       }}
-                      className={`h-9 rounded-xl px-4 transition-all duration-300 relative group/btn ${pathname.startsWith(item.href)
-                          ? 'bg-emerald-500 text-white dark:text-black shadow-lg scale-[1.01]'
+                      className={`h-10 rounded-xl px-4 transition-all duration-300 relative group/btn ${isActive
+                          ? 'bg-emerald-500 text-white dark:bg-emerald-500/10 dark:text-emerald-500 dark:border-l-4 dark:border-emerald-500 shadow-lg scale-[1.01]'
                           : 'text-gray-500 dark:text-zinc-500 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'
                         }`}
                     >
                       <Link href={item.href} className="flex items-center gap-3">
-                        <item.icon className={`h-4 w-4 flex-shrink-0 transition-transform duration-300 group-hover/btn:scale-110 ${pathname.startsWith(item.href) ? 'text-white dark:text-black' : 'text-gray-400 dark:text-zinc-600 group-hover/btn:text-emerald-600 dark:group-hover/btn:text-emerald-500'}`} />
+                        <item.icon className={`h-4 w-4 flex-shrink-0 transition-transform duration-300 group-hover/btn:scale-110 ${isActive ? 'text-white dark:text-emerald-500' : 'text-gray-400 dark:text-zinc-600 group-hover/btn:text-emerald-600 dark:group-hover/btn:text-emerald-500'}`} />
                         <span className="text-[10px] font-black uppercase tracking-widest truncate">{item.label}</span>
-                        {pathname.startsWith(item.href) && (
-                          <div className="absolute right-2 h-1 w-1 rounded-full bg-black/20" />
+                        {isActive && (
+                          <div className="absolute right-2 h-1.5 w-1.5 rounded-full bg-white/40 dark:bg-emerald-500 animate-pulse" />
                         )}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
-                )
+                );
+              }
             )}
           </SidebarMenu>
         </div>

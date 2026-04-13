@@ -167,59 +167,61 @@ export default function UsersPage() {
   if (user?.role !== 'administrador') return null;
 
   return (
-    <div className="flex flex-col h-screen gap-2 p-2 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
+    <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
 
-      {/* HEADER QUE RESPETA CLARO/OSCURO */}
-      <header className="flex flex-col md:flex-row items-center justify-between gap-4 p-4 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm transition-colors">
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center text-emerald-500 shadow-inner">
-            <Users size={24} />
+      <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
+        <div className="flex items-center gap-2">
+          <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
+            <Users size={16} />
           </div>
           <div className="flex flex-col">
-            <span className="text-xl font-black uppercase italic tracking-tighter leading-none">EMPLEADOS</span>
-            <span className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-1">Staff Control V5.0</span>
+            <h1 className="text-sm font-black uppercase tracking-tighter leading-none">USUARIOS</h1>
+            <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">CENTRAL DE ACCESOS</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 w-full md:w-auto">
-          <div className="relative w-full md:w-64 group">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
-            <Input
-              placeholder="BUSCAR EMPLEADO..."
-              value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
-              classNames={{
-                inputWrapper: "h-10 pl-10 pr-4 rounded-xl bg-gray-100 dark:bg-black border border-gray-200 dark:border-white/5 focus-within:border-emerald-500/50 transition-colors shadow-inner",
-                input: "font-black text-xs uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
-              }}
-            />
-          </div>
-          <Button onPress={() => setAddDialogOpen(true)} className="bg-emerald-500 text-white font-black uppercase text-[10px] h-10 px-6 rounded-xl shrink-0 shadow-lg shadow-emerald-500/20 italic tracking-widest hover:scale-105 transition-transform">
-            <PlusCircle size={16} className="mr-1" /> NUEVO ACCESO
+        <div className="flex items-center gap-2">
+          <Input
+            size="sm"
+            placeholder="BUSCAR..."
+            value={filter} onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
+            classNames={{
+              inputWrapper: "h-8 px-3 rounded-md bg-transparent border border-gray-200 dark:border-white/10 transition-colors w-40 md:w-64 shadow-none",
+              input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent"
+            }}
+            startContent={<Search size={14} className="text-gray-400" />}
+          />
+          <Button
+            size="sm"
+            onPress={() => setAddDialogOpen(true)}
+            className="h-8 bg-emerald-500 text-white font-black uppercase text-[10px] px-4 rounded-md shadow-sm italic transition-transform active:scale-95"
+          >
+            <PlusCircle size={14} className="mr-1" /> NUEVO ACCESO
           </Button>
         </div>
       </header>
 
       {/* KPIs */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-2 shrink-0">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-1 shrink-0">
         {[
           { label: "PERSONAL AUTORIZADO", val: stats.total, color: "emerald", icon: ShieldCheck },
           { label: "ADMINISTRADORES", val: stats.admins, color: "emerald", icon: ShieldAlert },
           { label: "EMPLEADOS DE TURNO", val: stats.employees, color: "zinc", icon: UserCircle }
         ].map((k, i) => (
-          <div key={i} className="bg-white dark:bg-zinc-900 p-4 border border-gray-200 dark:border-white/5 rounded-2xl flex items-center justify-between shadow-sm transition-colors">
+          <div key={i} className="bg-white dark:bg-zinc-900 p-2 border border-gray-200 dark:border-white/5 rounded-lg flex items-center justify-between shadow-sm transition-colors">
             <div className="flex flex-col">
-              <span className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1">{k.label}</span>
-              <span className={`text-2xl font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : 'text-gray-900 dark:text-white'} italic leading-none tracking-tighter`}>{k.val}</span>
+              <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none mb-0.5">{k.label}</span>
+              <span className={`text-sm font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : 'text-gray-900 dark:text-white'} italic leading-tight tracking-tighter`}>{k.val}</span>
             </div>
-            <k.icon size={24} className={`${k.color === 'emerald' ? 'text-emerald-500' : 'text-gray-400 dark:text-zinc-600'} opacity-20`} />
+            <k.icon size={14} className={`${k.color === 'emerald' ? 'text-emerald-500' : 'text-gray-400 dark:text-zinc-600'} opacity-20`} />
           </div>
         ))}
       </div>
 
       {/* TABLA PRINCIPAL (DISEÑO SLIM) */}
-      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
+      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
         <div className="flex-1 overflow-auto custom-scrollbar">
-          <Table isCompact removeWrapper aria-label="Directorio Empleados" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-12 py-2 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-3 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" }}>
+          <Table isCompact removeWrapper aria-label="Directorio Empleados" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-pointer" }}>
             <TableHeader>
               <TableColumn className="pl-6">IDENTIDAD</TableColumn>
               <TableColumn align="center">PERMISOS / ROL</TableColumn>
@@ -307,26 +309,36 @@ export default function UsersPage() {
               <ModalBody className="p-8 gap-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1 flex items-center gap-1"><UserCircle size={12} /> Documento (DNI)</label>
                     <Input
                       autoFocus
+                      label="Documento (DNI)"
+                      labelPlacement="outside"
                       value={addDialogOpen ? newUser.dni : editingUser?.dni}
                       onValueChange={(v) => addDialogOpen ? setNewUser(p => ({ ...p, dni: v })) : null}
                       isDisabled={!addDialogOpen}
-                      placeholder="AUTOGENERADO SI SE OMITE"
-                      classNames={{ inputWrapper: "h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white" }}
+                      startContent={<UserCircle size={12} className="text-gray-400 dark:text-zinc-500 mr-1" />}
+                      classNames={{ 
+                        label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic mb-2",
+                        inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 transition-all shadow-none", 
+                        input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" 
+                      }}
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1">Nivel de Rol</label>
                     <Select
+                      label="Nivel de Rol"
+                      labelPlacement="outside"
                       selectedKeys={addDialogOpen ? [newUser.role] : [String(editingUser?.role || 'empleado')]}
                       onSelectionChange={(keys) => {
                         const v = Array.from(keys)[0] as string;
                         if (addDialogOpen) setNewUser(p => ({ ...p, role: v }));
                         else setEditingUser(p => p ? { ...p, role: v as any } : null);
                       }}
-                      classNames={{ trigger: "h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", value: "font-black text-sm uppercase italic text-gray-900 dark:text-white" }}
+                      classNames={{ 
+                        label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic mb-2",
+                        trigger: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 transition-all shadow-none", 
+                        value: "font-black text-sm uppercase italic text-gray-900 dark:text-white" 
+                      }}
                     >
                       <SelectItem key="empleado" textValue="EMPLEADO (Ventas)">EMPLEADO (Ventas)</SelectItem>
                       <SelectItem key="administrador" textValue="ADMINISTRADOR (Total)">ADMINISTRADOR (Total)</SelectItem>
@@ -335,41 +347,55 @@ export default function UsersPage() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1">Nombre Completo</label>
                   <Input
+                    label="Nombre Completo"
+                    labelPlacement="outside"
                     value={addDialogOpen ? newUser.name : editingUser?.name}
                     onValueChange={(v) => {
                       if (addDialogOpen) setNewUser(p => ({ ...p, name: v.toUpperCase() }));
                       else setEditingUser(p => p ? { ...p, name: v.toUpperCase() } : null);
                     }}
-                    placeholder="EJ: JUAN PÉREZ..."
-                    classNames={{ inputWrapper: "h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white" }}
+                    classNames={{ 
+                      label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic mb-2",
+                      inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 transition-all shadow-none", 
+                      input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" 
+                    }}
                   />
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1 flex items-center gap-1"><Mail size={12} /> Email (Opcional)</label>
                     <Input
+                      label="Email (Opcional)"
+                      labelPlacement="outside"
                       value={addDialogOpen ? newUser.email : editingUser?.email}
                       onValueChange={(v) => {
                         if (addDialogOpen) setNewUser(p => ({ ...p, email: v }));
                         else setEditingUser(p => p ? { ...p, email: v } : null);
                       }}
-                      placeholder="USUARIO@EMAIL.COM"
-                      classNames={{ inputWrapper: "h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-sm italic text-gray-900 dark:text-white" }}
+                      startContent={<Mail size={12} className="text-gray-400 dark:text-zinc-500 mr-1" />}
+                      classNames={{ 
+                        label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic mb-2",
+                        inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 transition-all shadow-none", 
+                        input: "font-black text-sm italic text-gray-900 dark:text-white bg-transparent" 
+                      }}
                     />
                   </div>
 
                   {addDialogOpen && (
                     <div className="space-y-1.5">
-                      <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1 flex items-center gap-1"><KeyRound size={12} /> Contraseña Acceso</label>
                       <Input
                         type="password"
+                        label="Contraseña Acceso"
+                        labelPlacement="outside"
                         value={newUser.password}
                         onValueChange={(v) => setNewUser(p => ({ ...p, password: v }))}
-                        placeholder="***"
-                        classNames={{ inputWrapper: "h-14 bg-gray-50 dark:bg-black border border-gray-200 dark:border-white/10 rounded-xl focus-within:border-emerald-500/50 shadow-inner", input: "font-black text-lg text-gray-900 dark:text-white tracking-widest" }}
+                        startContent={<KeyRound size={12} className="text-gray-400 dark:text-zinc-500 mr-1" />}
+                        classNames={{ 
+                          label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic mb-2",
+                          inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 transition-all shadow-none", 
+                          input: "font-black text-lg text-gray-900 dark:text-white tracking-widest bg-transparent" 
+                        }}
                       />
                     </div>
                   )}
@@ -410,7 +436,7 @@ export default function UsersPage() {
                 ¿Seguro que desea revocar permanentemente los permisos? Este empleado no podrá volver a ingresar al sistema POS.
               </ModalBody>
               <ModalFooter className="p-6 border-t border-gray-100 dark:border-white/5 flex gap-3">
-                <Button variant="flat" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white" onPress={onClose}>MANTENER ACTIVO</Button>
+                <Button variant="flat" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest bg-gray-100 dark:bg-zinc-900 text-gray-900 dark:text-white" onPress={onClose}>CANCELAR / MANTENER</Button>
                 <Button color="danger" className="flex-1 h-14 rounded-xl font-black text-[11px] tracking-widest shadow-xl shadow-rose-500/20" onPress={handleDeleteUser}>SÍ, REVOCAR</Button>
               </ModalFooter>
             </>

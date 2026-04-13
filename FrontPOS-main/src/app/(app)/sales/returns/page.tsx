@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
-import { Search, RotateCcw, CheckCircle2, AlertCircle, ShoppingCart, Camera, History } from 'lucide-react';
+import { Search, RotateCcw, CheckCircle2, AlertCircle, ShoppingCart, Camera, History, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Sale, Product } from '@/lib/definitions';
 import { ScannerOverlay } from '@/components/ScannerOverlay';
@@ -10,7 +10,7 @@ import { ScannerOverlay } from '@/components/ScannerOverlay';
 import {
     Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
     Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-    Select, SelectItem, Pagination, Chip, Card, CardHeader, CardBody
+    Select, SelectItem, Pagination, Chip, Card, CardHeader, CardBody, CardFooter, Spinner
 } from "@heroui/react";
 
 export default function ReturnsPage() {
@@ -20,6 +20,8 @@ export default function ReturnsPage() {
     const [searchResultsPage, setSearchResultsPage] = useState(1);
     const [searchResultsTotal, setSearchResultsTotal] = useState(0);
     const [recentSales, setRecentSales] = useState<Sale[]>([]);
+    const [recentReturns, setRecentReturns] = useState<any[]>([]);
+    const [isHistoryLoading, setIsHistoryLoading] = useState(false);
     const [isResultsDialogOpen, setIsResultsDialogOpen] = useState(false);
     const [sale, setSale] = useState<Sale | null>(null);
     const [loading, setLoading] = useState(false);
@@ -28,9 +30,13 @@ export default function ReturnsPage() {
     const [productSearch, setProductSearch] = useState('');
     const [products, setProducts] = useState<Product[]>([]);
     const [allProducts, setAllProducts] = useState<Product[]>([]);
-    const [returnDialogOpen, setReturnDialogOpen] = useState(false);
     const [returnReason, setReturnReason] = useState('');
     const [returnType, setReturnType] = useState('REFUND'); // 'REFUND' or 'EXCHANGE'
+    const [productSoldStats, setProductSoldStats] = useState<{ cash: number, transfer: number, lastSaleId?: number }>({ cash: 0, transfer: 0 });
+    const [selectedProductMain, setSelectedProductMain] = useState<Product | null>(null);
+    const [returnDialogOpen, setReturnDialogOpen] = useState(false);
+    const [exchangeSearch, setExchangeSearch] = useState('');
+    const [exchangeProducts, setExchangeProducts] = useState<Product[]>([]);
 
     const searchRef = useRef<HTMLInputElement>(null);
     const directSearchRef = useRef<HTMLInputElement>(null);
@@ -38,6 +44,26 @@ export default function ReturnsPage() {
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [barcodeInput, setBarcodeInput] = useState('');
     const { toast } = useToast();
+
+    // Helper para determinar el método de pago legible
+    const getPaymentBadge = (s: Sale | null) => {
+        if (!s) return null;
+        const hasCash = s.cashAmount > 0 || s.paymentMethod?.toUpperCase().includes('EFECTIVO');
+        const hasTransfer = s.transferAmount > 0 || s.paymentMethod?.toUpperCase().includes('TRANSFER');
+        if (hasCash && hasTransfer) return { label: 'MIXTO', color: 'warning' };
+        if (hasCash) return { label: 'EFECTIVO', color: 'success' };
+        if (hasTransfer) return { label: 'TRANSFERENCIA', color: 'primary' };
+        return { label: 'DESCONOCIDO', color: 'default' };
+    };
+
+    const paymentInfo = getPaymentBadge(sale);
+
+    // --- TRADUCCIONES DE ESTADOS ---
+    const getReturnTypeLabel = (type: string) => {
+        if (type === 'REFUND') return 'EFECTIVO / REEMBOLSO';
+        if (type === 'EXCHANGE') return 'CAMBIO POR PRODUCTO';
+        return type;
+    };
 
     // --- LÓGICA DE NEGOCIO (Intacta) ---
     const fetchRecentSales = async () => {
@@ -52,6 +78,28 @@ export default function ReturnsPage() {
             }
         } catch (error) {
             console.error("Error fetching recent sales", error);
+        }
+    };
+
+    const fetchRecentReturns = async () => {
+        const token = localStorage.getItem('org-pos-token');
+        if (!token) return;
+        setIsHistoryLoading(true);
+        try {
+            // Correct backend route is /returns/all for both list and history
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/returns/all`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const items = Array.isArray(data) ? data : (data.items || []);
+                // Frontend sorting: newest first
+                setRecentReturns([...items].sort((a: any, b: any) => b.id - a.id));
+            }
+        } catch (error) { 
+            console.error("Error fetching returns:", error); 
+        } finally { 
+            setIsHistoryLoading(false); 
         }
     };
 
@@ -73,6 +121,7 @@ export default function ReturnsPage() {
     useEffect(() => {
         searchRef.current?.focus();
         fetchRecentSales();
+        fetchRecentReturns();
         fetchAllProducts();
     }, []);
 
@@ -110,24 +159,34 @@ export default function ReturnsPage() {
                     const data = await res.json();
                     loadSale(data);
                 } else {
-                    const p = allProducts.find(x => x.barcode === searchId);
+                    const p = allProducts.find(x => 
+                        x.barcode === searchId || 
+                        x.productName.toLowerCase().includes(searchId.toLowerCase())
+                    );
                     if (p) {
-                        toast({ title: 'Producto Detectado', description: 'Buscando ventas que contengan este producto...' });
-                        const resByProd = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?barcode=${searchId}&page=1&pageSize=20`, {
+                        toast({ title: 'Producto Detectado', description: `Buscando ventas que contengan ${p.productName}...` });
+                        // Backend sales/history doesn't support barcode filter, so we fetch latest and filter locally
+                        const resByProd = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=50`, {
                             headers: { 'Authorization': `Bearer ${token}` }
                         });
                         if (resByProd.ok) {
                             const data = await resByProd.json();
-                            if (data.items && data.items.length > 0) {
-                                setSearchResults(data.items);
-                                setSearchResultsTotal(data.total || 0);
+                            const allSales = data.items || [];
+                            // Filter sales that contain this product
+                            const filteredSales = allSales.filter((s: Sale) => 
+                                s.details.some(d => d.barcode === p.barcode)
+                            );
+
+                            if (filteredSales.length > 0) {
+                                setSearchResults(filteredSales);
+                                setSearchResultsTotal(filteredSales.length);
                                 setSearchResultsPage(1);
                                 setIsResultsDialogOpen(true);
                                 return;
                             }
                         }
                     }
-                    throw new Error('No se encontró venta con ese ID o DNI');
+                    throw new Error('No se encontró venta ni producto recientemente vendido');
                 }
             }
         } catch (error: any) {
@@ -151,6 +210,59 @@ export default function ReturnsPage() {
         })));
         setSearchId(saleData.id.toString());
         setIsResultsDialogOpen(false);
+        // Al cargar una venta, asumimos que estamos en un retorno específico de esa factura
+        // Pero el usuario quiere que sea "general". Si cargamos una venta, nos limitamos solo a esa por seguridad,
+        // pero limpiaremos la selección global para evitar confusiones.
+        setSelectedProductMain(null);
+    };
+
+    const fetchSoldStats = async (product: Product): Promise<{ cash: number, transfer: number, lastSaleId?: number }> => {
+        const token = localStorage.getItem('org-pos-token');
+        try {
+            // We fetch last 100 sales and filter locally because backend doesn't support barcode query
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=100`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const allSales = data.items || [];
+                
+                // Filter sales that contain the product barcode
+                const productSales = allSales.filter((s: Sale) => 
+                    s.details.some(d => d.barcode === product.barcode)
+                );
+
+                let cash = 0;
+                let transfer = 0;
+                let lastSaleId = 0;
+
+                if (productSales.length > 0) {
+                    // Get latest sale ID for association
+                    lastSaleId = productSales[0].id;
+                }
+
+                productSales.forEach((s: Sale) => {
+                    const detail = s.details.find(d => d.barcode === product.barcode);
+                    if (detail) {
+                        const available = detail.quantity - (detail.returnedQty || 0);
+                        if (available > 0) {
+                            const isCash = s.paymentMethod?.toUpperCase().includes('EFECTIVO') || s.cashAmount > 0;
+                            const isTransfer = s.paymentMethod?.toUpperCase().includes('TRANSFERENCIA') || s.transferAmount > 0;
+                            
+                            if (isCash && !isTransfer) cash += available;
+                            else if (isTransfer && !isCash) transfer += available;
+                            else if (isCash && isTransfer) cash += available; 
+                        }
+                    }
+                });
+
+                setProductSoldStats({ cash, transfer, lastSaleId });
+                return { cash, transfer, lastSaleId };
+            }
+        } catch (error) {
+            console.error("Error fetching sold stats", error);
+        }
+        return { cash: 0, transfer: 0 };
     };
 
     const handleQtyChange = (barcode: string, qty: number, isExchange = false) => {
@@ -164,8 +276,8 @@ export default function ReturnsPage() {
                     max = prod ? prod.quantity : 999999;
                 } else {
                     if (item.isManual) {
-                        const prod = allProducts.find(p => p.barcode === barcode);
-                        max = prod ? prod.quantity : 999999;
+                        // El límite para retorno manual es el total de unidades vendidas históricamente detectadas
+                        max = item.totalAvailable || (item.cashAvailable || 0) + (productSoldStats?.transfer || 0);
                     } else {
                         const alreadyReturned = item.returnedQty || 0;
                         max = (item.quantity || 0) - alreadyReturned;
@@ -174,8 +286,8 @@ export default function ReturnsPage() {
 
                 const finalQty = Math.min(Math.max(0, qty), max);
 
-                if (!isExchange && finalQty > max && max >= 0) {
-                    toast({ variant: 'destructive', title: 'Límite excedido', description: `Solo puedes devolver hasta ${max} unidades.` });
+                if (!isExchange && qty > max && max >= 0) {
+                    toast({ variant: 'destructive', title: 'Límite excedido', description: `Solo puedes devolver hasta ${max} unidades que han sido vendidas.` });
                 }
 
                 return { ...item, returnQty: finalQty, cartQuantity: finalQty };
@@ -184,11 +296,21 @@ export default function ReturnsPage() {
         }).filter(item => (item.returnQty > 0 || item.cartQuantity > 0 || !item.isManual)));
     };
 
-    const addProductToReturn = (p: any, isExchange = false) => {
-        if (sale && !isExchange) {
-            const isInSale = sale.details.some((d: any) => d.barcode === p.barcode);
-            if (!isInSale) {
-                toast({ variant: 'destructive', title: 'Producto no válido', description: 'Este producto no forma parte de la factura seleccionada.' });
+    const addProductToReturn = async (p: any, isExchange = false) => {
+        let cashAvailableForThisProduct = 999999;
+        let totalAvailableForThisProduct = 999999;
+        
+        if (!isExchange && !sale) {
+            setLoading(true);
+            const stats = await fetchSoldStats(p);
+            setLoading(false);
+            cashAvailableForThisProduct = stats.cash;
+            totalAvailableForThisProduct = stats.cash + stats.transfer;
+            p.lastSaleId = stats.lastSaleId || 0;
+            setSelectedProductMain(p);
+            
+            if (totalAvailableForThisProduct <= 0) {
+                toast({ variant: 'destructive', title: 'Sin ventas', description: 'No hay unidades vendidas de este producto para devolver.' });
                 return;
             }
         }
@@ -204,23 +326,29 @@ export default function ReturnsPage() {
                     const alreadyReturned = existing.returnedQty || 0;
                     max = (existing.quantity || 0) - alreadyReturned;
                 } else {
-                    max = p.quantity || 999999;
+                    max = existing.totalAvailable || totalAvailableForThisProduct;
                 }
 
-                if (!isExchange && (existing.returnQty || 0) >= max) {
-                    toast({ variant: 'destructive', title: 'Límite alcanzado', description: `No puedes devolver más de ${max} unidades.` });
+                const newQty = (existing.returnQty || existing.cartQuantity || 0) + 1;
+                if (!isExchange && newQty > max) {
+                    toast({ variant: 'destructive', title: 'Límite alcanzado', description: `No puedes devolver más de las ${max} unidades que se han vendido.` });
                     return prev;
                 }
-                return prev.map(i => i.barcode === p.barcode ? { ...i, returnQty: (i.returnQty || 0) + 1, cartQuantity: (i.cartQuantity || 0) + 1 } : i);
+                return prev.map(i => i.barcode === p.barcode ? 
+                    { ...i, returnQty: isExchange ? 0 : newQty, cartQuantity: isExchange ? newQty : 0 } : i
+                );
             }
 
             return [...prev, {
                 ...p,
-                returnQty: 1,
-                cartQuantity: 1,
-                isManual: !sale || isExchange,
-                unitPrice: isExchange ? p.salePrice : (p.salePrice || 0),
-                productName: p.productName
+                barcode: p.barcode,
+                productName: p.productName,
+                unitPrice: p.salePrice || 0,
+                returnQty: isExchange ? 0 : 1,
+                cartQuantity: isExchange ? 1 : 0,
+                isManual: !sale,
+                cashAvailable: cashAvailableForThisProduct,
+                totalAvailable: totalAvailableForThisProduct
             }];
         });
         setProductSearch('');
@@ -233,13 +361,29 @@ export default function ReturnsPage() {
     const totalExchange = exchangeItems.reduce((acc, item) => acc + (item.unitPrice * (item.cartQuantity || 0)), 0);
     const balance = totalReturned - totalExchange;
 
-    const isTransfer = sale?.paymentMethod?.toUpperCase().includes('TRANSFER') || sale?.paymentMethod?.toUpperCase().includes('MIXTO');
+    // Cálculo del pool de efectivo disponible para reembolso
+    const cashRefundablePool = returningItems.reduce((acc, item) => {
+        if (sale) {
+            // En una venta específica, el límite es el monto pagado en efectivo en esa venta
+            const saleCashAmount = Number(sale.cashAmount) || 0;
+            const saleTotal = Number(sale.total) || 1;
+            // Proporcionalmente o simplemente el total de efectivo de la factura
+            return saleCashAmount; 
+        } else {
+            // En modo global, sumamos el valor de las unidades que fueron históricamente en efectivo
+            return acc + (item.unitPrice * Math.min(item.returnQty || 0, item.cashAvailable || 0));
+        }
+    }, 0);
+
+    const isTransfer = sale?.paymentMethod?.toUpperCase().includes('TRANSFER') || 
+                      sale?.paymentMethod?.toUpperCase().includes('MIXTO') ||
+                      (balance > cashRefundablePool && !sale);
 
     useEffect(() => {
-        if (returnDialogOpen && isTransfer && balance > 0) {
+        if (returnDialogOpen && isTransfer && balance > cashRefundablePool) {
             setReturnType('EXCHANGE');
         }
-    }, [returnDialogOpen, isTransfer, balance]);
+    }, [returnDialogOpen, isTransfer, balance, cashRefundablePool]);
 
     const processReturn = async () => {
         if (returningItems.every(i => i.returnQty === 0)) {
@@ -279,8 +423,9 @@ export default function ReturnsPage() {
             }))
         ];
 
+        const effectiveSaleId = Number(sale?.id) || returningItems.find(i => (i.lastSaleId || 0) > 0)?.lastSaleId || 0;
         const returnData = {
-            saleId: Number(sale?.id) || 0,
+            saleId: effectiveSaleId,
             totalReturned: totalReturned,
             reason: returnReason,
             returnType: returnType,
@@ -311,6 +456,7 @@ export default function ReturnsPage() {
             setReturningItems([]);
             setExchangeItems([]);
             fetchRecentSales();
+            fetchRecentReturns();
         } catch (error: any) {
             toast({ variant: 'destructive', title: 'Error', description: error.message });
         }
@@ -330,113 +476,240 @@ export default function ReturnsPage() {
     }, [returningItems.length, exchangeItems.length, returnDialogOpen]);
 
     useEffect(() => {
-        if (productSearch.length >= 8 && /^\d+$/.test(productSearch)) {
-            const p = allProducts.find(x => x.barcode === productSearch);
-            if (p) {
-                addProductToReturn(p);
-                setProductSearch('');
-                return;
+        const checkSearch = async () => {
+            if (productSearch.length >= 8 && /^\d+$/.test(productSearch)) {
+                const p = allProducts.find(x => x.barcode === productSearch);
+                if (p) {
+                    await addProductToReturn(p);
+                    setProductSearch('');
+                    return;
+                }
             }
-        }
 
-        if (productSearch.length > 0) {
-            const filtered = allProducts.filter((p: Product) =>
-                p.productName.toLowerCase().includes(productSearch.toLowerCase()) ||
-                p.barcode.includes(productSearch)
-            );
-            setProducts(filtered);
-        } else {
-            setProducts([]);
-        }
+            if (productSearch.length > 0) {
+                const filtered = allProducts.filter((p: Product) =>
+                    p.productName.toLowerCase().includes(productSearch.toLowerCase()) ||
+                    p.barcode.includes(productSearch)
+                );
+                setProducts(filtered);
+            } else {
+                setProducts([]);
+            }
+        };
+        checkSearch();
     }, [productSearch, allProducts]);
 
-    const [exchangeSearch, setExchangeSearch] = useState('');
-    const [exchangeProducts, setExchangeProducts] = useState<Product[]>([]);
-
     useEffect(() => {
-        if (exchangeSearch.length >= 8 && /^\d+$/.test(exchangeSearch)) {
-            const p = allProducts.find(x => x.barcode === exchangeSearch);
-            if (p) {
-                addProductToReturn(p, true);
-                setExchangeSearch('');
-                return;
+        const checkExchangeSearch = async () => {
+            if (exchangeSearch.length >= 8 && /^\d+$/.test(exchangeSearch)) {
+                const p = allProducts.find(x => x.barcode === exchangeSearch);
+                if (p) {
+                    await addProductToReturn(p, true);
+                    setExchangeSearch('');
+                    return;
+                }
             }
-        }
 
-        if (exchangeSearch.length > 0) {
-            setExchangeProducts(allProducts.filter((p: Product) =>
-                p.productName.toLowerCase().includes(exchangeSearch.toLowerCase()) ||
-                p.barcode.includes(exchangeSearch)
-            ));
-        } else {
-            setExchangeProducts([]);
-        }
+            if (exchangeSearch.length > 0) {
+                setExchangeProducts(allProducts.filter((p: Product) =>
+                    p.productName.toLowerCase().includes(exchangeSearch.toLowerCase()) ||
+                    p.barcode.includes(exchangeSearch)
+                ));
+            } else {
+                setExchangeProducts([]);
+            }
+        };
+        checkExchangeSearch();
     }, [exchangeSearch, allProducts]);
 
-    const handleCodeSubmit = (code: string) => {
+    const handleCodeSubmit = async (code: string) => {
         if (!code) return;
         const p = allProducts.find(x => x.barcode === code);
-        if (p) addProductToReturn(p);
+        if (p) await addProductToReturn(p);
         else toast({ variant: 'destructive', title: 'Error', description: 'Producto no encontrado' });
     };
 
     return (
-        <div className="flex flex-col gap-6 p-4 md:p-8 w-full min-h-screen bg-gray-50 dark:bg-zinc-950 transition-colors duration-500 font-sans">
-
-            {/* Header (Soporta Claro/Oscuro) */}
-            <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-8 py-6 bg-white dark:bg-zinc-900/60 backdrop-blur-xl rounded-[2.5rem] border border-gray-200 dark:border-white/5 shadow-xl">
-                <div className="flex items-center gap-5">
-                    <div className="h-16 w-16 rounded-[1.5rem] bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center border border-emerald-200 dark:border-emerald-500/20 shadow-inner">
-                        <RotateCcw className="h-8 w-8 text-emerald-600 dark:text-emerald-500" />
+        <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-all duration-500">
+            {/* Dashboard Header & Search Toolbox */}
+            <header className="flex flex-col gap-1 p-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-all">
+                <div className="flex items-center justify-between px-2 py-1">
+                    <div className="flex items-center gap-2">
+                        <div className="h-8 w-8 rounded bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-500">
+                            <RotateCcw size={16} />
+                        </div>
+                        <div className="flex flex-col">
+                            <h1 className="text-sm font-black uppercase tracking-tight leading-tight text-gray-900 dark:text-white italic">DEVOLUCIONES</h1>
+                            <p className="text-[9px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest opacity-60">AUDIT LEDGER V5.1</p>
+                        </div>
                     </div>
-                    <div>
-                        <h1 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tighter">
-                            Gestión de <span className="text-emerald-600 dark:text-emerald-500">Devoluciones</span>
-                        </h1>
-                        <p className="text-[10px] text-gray-500 dark:text-zinc-400 font-black uppercase tracking-[0.2em] mt-1">
-                            Retornos, cambios y garantías
-                        </p>
+
+                    <div className="flex items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="flat"
+                            className={`font-black uppercase tracking-widest text-[9px] h-9 px-4 rounded-xl transition-all ${isScannerOpen ? "bg-emerald-500 text-white" : "bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400"}`}
+                            onPress={() => setIsScannerOpen(!isScannerOpen)}
+                        >
+                            <Camera size={14} className="mr-2" /> SCANNER
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Toolbar Unificada */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 px-1 pb-1">
+                    <div className="relative">
+                        <Input
+                            size="sm"
+                            placeholder="ESCRIBIR ID DE FACTURA..."
+                            aria-label="Buscar factura por ID"
+                            value={searchId}
+                            onValueChange={setSearchId}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                            classNames={{ 
+                                inputWrapper: "h-8 bg-gray-50/50 dark:bg-zinc-800/50 border border-gray-200 dark:border-white/5 rounded-lg text-xs font-bold uppercase transition-all shadow-none",
+                                input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+                            }}
+                            startContent={<FileText size={14} className="text-gray-300 dark:text-zinc-600" />}
+                        />
+                    </div>
+                    <div className="relative">
+                        <Input
+                            size="sm"
+                            type="date"
+                            placeholder="FECHA..."
+                            aria-label="Filtrar por fecha"
+                            value={searchDate}
+                            onValueChange={(val) => {
+                                setSearchDate(val);
+                                if (val) handleSearch(true);
+                            }}
+                            classNames={{ 
+                                inputWrapper: "h-8 bg-gray-50/50 dark:bg-zinc-800/50 border border-gray-200 dark:border-white/5 rounded-lg text-xs font-bold uppercase transition-all shadow-none",
+                                input: "font-black text-[10px] uppercase text-gray-900 dark:text-white"
+                            }}
+                        />
+                    </div>
+                    <div className="relative">
+                        <Input
+                            size="sm"
+                            placeholder="PRODUCTO O BARCODE..."
+                            aria-label="Buscar producto o código de barras"
+                            value={productSearch}
+                            onValueChange={setProductSearch}
+                            classNames={{ 
+                                inputWrapper: "h-8 bg-gray-50/50 dark:bg-zinc-800/50 border border-gray-200 dark:border-white/5 rounded-lg text-xs font-bold uppercase transition-all shadow-none",
+                                input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+                            }}
+                            startContent={<Search size={14} className="text-gray-300 dark:text-zinc-600" />}
+                        />
+                         {productSearch.length > 0 && products.length > 0 && (
+                            <div className="absolute z-[100] left-0 right-0 top-10 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-lg shadow-2xl overflow-hidden backdrop-blur-3xl">
+                                {products.slice(0, 5).map(p => (
+                                    <button
+                                        key={p.barcode}
+                                        className="w-full p-3 flex justify-between hover:bg-emerald-500/10 transition-colors text-left border-b border-gray-100 dark:border-white/5 last:border-0"
+                                        onClick={() => addProductToReturn(p)}
+                                    >
+                                        <div className="flex flex-col">
+                                            <span className="font-bold text-xs text-gray-900 dark:text-white uppercase">{p.productName}</span>
+                                            <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-mono">{p.barcode}</span>
+                                        </div>
+                                        <span className="font-black text-emerald-500 text-xs tabular-nums">${p.salePrice.toLocaleString()}</span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto space-y-6 pb-40 md:pb-32 custom-scrollbar">
+            {/* Banner de Contexto de Venta Activa */}
+            {sale && (
+                <div className="flex items-center gap-4 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl animate-in fade-in zoom-in-95 duration-300">
+                    <div className="h-12 w-12 rounded-xl bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-500/20">
+                        <CheckCircle2 size={24} />
+                    </div>
+                    <div className="flex-1 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                        <div>
+                            <div className="flex items-center gap-3 mb-2">
+                                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
+                                <Chip size="sm" variant="shadow" color={paymentInfo?.color as any || 'default'} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
+                                    PAGADO EN: {paymentInfo?.label}
+                                </Chip>
+                            </div>
+                            <h2 className="text-xl font-black text-gray-900 dark:text-white uppercase leading-tight">
+                                #{sale.id} · {sale.client?.name || 'CONSUMIDOR FINAL'}
+                            </h2>
+                        </div>
+                        <div className="flex items-center gap-8">
+                            <div className="text-right">
+                                <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1">TOTAL VENTA</p>
+                                <p className="text-lg font-black text-gray-900 dark:text-white tabular-nums leading-none tracking-tighter">${sale.total.toLocaleString()}</p>
+                            </div>
+                            <Button isIconOnly size="sm" variant="flat" color="danger" className="h-8 w-8 rounded-lg" onPress={() => setSale(null)}>X</Button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
-                {/* SECCIÓN DE PRODUCTOS SELECCIONADOS */}
-                {(returningItems.length > 0 || exchangeItems.length > 0) && (
-                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-
-                        {/* TABLA: PRODUCTOS A DEVOLVER */}
-                        <Card className="rounded-[2rem] bg-white dark:bg-zinc-900/60 backdrop-blur-xl border-gray-200 dark:border-white/5 shadow-xl overflow-hidden">
-                            <CardHeader className="px-6 py-5 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-transparent">
-                                <h3 className="text-emerald-600 dark:text-emerald-500 text-sm font-black uppercase tracking-widest flex items-center gap-3">
-                                    <RotateCcw className="h-4 w-4" /> PRODUCTOS A DEVOLVER
+            <div className="flex-1 overflow-y-auto custom-scrollbar pb-24 pr-1">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-1">
+                    {/* COLUMNA IZQUIERDA: LO QUE EL CLIENTE TRAE */}
+                    <div className="space-y-2">
+                        <Card className="rounded-xl bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden min-h-[450px]">
+                            <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
+                                <h3 className="text-emerald-500 text-[12px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                                    <RotateCcw size={16} /> REINGRESANDO
                                 </h3>
+                                <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">Artículos para stock</p>
                             </CardHeader>
                             <CardBody className="p-0">
-                                <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                                    <Table aria-label="Devoluciones" isCompact removeWrapper classNames={{ th: "bg-gray-100 dark:bg-zinc-800/80 text-gray-500 dark:text-zinc-400 font-bold uppercase text-[10px] tracking-widest sticky top-0 z-10", td: "py-4 border-b border-gray-100 dark:border-white/5" }}>
+                                {returningItems.length > 0 ? (
+                                    <Table aria-label="Devoluciones" isHeaderSticky isCompact removeWrapper classNames={{ 
+                                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest h-8 py-0.5 px-3 border-b border-gray-200 dark:border-white/5", 
+                                        td: "px-3 py-0.5 border-b border-gray-100 dark:border-white/5", 
+                                        tr: "hover:bg-emerald-500/5 transition-colors" 
+                                    }}>
                                         <TableHeader>
-                                            <TableColumn>ARTÍCULO</TableColumn>
-                                            <TableColumn align="center">CANT.</TableColumn>
-                                            <TableColumn align="end">TOTAL</TableColumn>
+                                            <TableColumn>PRODUCTO</TableColumn>
+                                            <TableColumn align="center">CANT</TableColumn>
+                                            <TableColumn align="end">SUBTOTAL</TableColumn>
                                         </TableHeader>
                                         <TableBody>
                                             {returningItems.map((item) => (
                                                 <TableRow key={item.barcode}>
                                                     <TableCell>
-                                                        <div className="font-bold text-gray-900 dark:text-white text-xs uppercase">{item.productName}</div>
-                                                        <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono mt-1">{item.barcode}</div>
+                                                        <div className="font-bold text-gray-900 dark:text-white text-[9px] uppercase leading-tight truncate max-w-[120px]">{item.productName}</div>
+                                                        <div className="text-[7px] text-gray-400 dark:text-zinc-600 font-mono font-bold italic">{item.barcode}</div>
                                                     </TableCell>
                                                     <TableCell>
-                                                        <div className="flex items-center justify-center gap-2">
-                                                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-white" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) - 1)}>-</Button>
-                                                            <span className="font-black text-sm text-gray-900 dark:text-white min-w-[1.5rem] text-center tabular-nums">{item.returnQty}</span>
-                                                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-white" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) + 1)}>+</Button>
+                                                        <div className="flex items-center justify-center gap-1.5">
+                                                            {item.isWeighted || item.product?.isWeighted ? (
+                                                                <Input
+                                                                    type="number"
+                                                                    size="sm"
+                                                                    step="0.001"
+                                                                    aria-label="Cantidad a devolver"
+                                                                    value={(item.returnQty || 0).toString()}
+                                                                    onValueChange={(val) => handleQtyChange(item.barcode, parseFloat(val) || 0)}
+                                                                    className="w-20"
+                                                                    classNames={{
+                                                                        inputWrapper: "h-6 bg-gray-100 dark:bg-zinc-800 border-none rounded-md px-1 min-h-unit-5",
+                                                                        input: "text-[10px] font-black tabular-nums text-center"
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <>
+                                                                    <Button isIconOnly size="sm" variant="flat" className="h-5 w-5 bg-gray-100 dark:bg-zinc-800 text-gray-500 rounded-md min-w-unit-5" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) - 1)}>-</Button>
+                                                                    <span className="font-black text-[10px] tabular-nums min-w-[0.8rem] text-center">{item.returnQty}</span>
+                                                                    <Button isIconOnly size="sm" variant="flat" className="h-5 w-5 bg-gray-100 dark:bg-zinc-800 text-gray-500 rounded-md min-w-unit-5" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) + 1)}>+</Button>
+                                                                </>
+                                                            )}
                                                         </div>
                                                     </TableCell>
                                                     <TableCell className="text-right">
-                                                        <div className="font-black text-gray-900 dark:text-white text-sm tabular-nums">
+                                                        <div className="font-black text-gray-900 dark:text-white text-[10px] tabular-nums tracking-tighter italic">
                                                             ${(item.unitPrice * (item.returnQty || 0)).toLocaleString()}
                                                         </div>
                                                     </TableCell>
@@ -444,353 +717,392 @@ export default function ReturnsPage() {
                                             ))}
                                         </TableBody>
                                     </Table>
-                                </div>
-                                <div className="p-6 bg-gray-50 dark:bg-zinc-900/30 border-t border-gray-100 dark:border-white/5 flex justify-between items-center">
-                                    <span className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Total Devolución</span>
-                                    <span className="text-2xl font-black text-emerald-600 dark:text-emerald-500 tracking-tighter tabular-nums">${totalReturned.toLocaleString()}</span>
-                                </div>
+                                ) : (
+                                    <div className="flex flex-col items-center justify-center py-20 opacity-20 italic font-black text-gray-400 uppercase tracking-[0.4em] text-center">
+                                        <RotateCcw size={64} className="mb-4" />
+                                        <span>Buscando Devolución</span>
+                                    </div>
+                                )}
                             </CardBody>
-                        </Card>
-
-                        {/* TABLA: PRODUCTOS A LLEVAR (CAMBIOS) */}
-                        <Card className="rounded-[2rem] bg-white dark:bg-zinc-900/60 backdrop-blur-xl border-gray-200 dark:border-white/5 shadow-xl overflow-hidden">
-                            <CardHeader className="px-6 py-5 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-transparent flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                                <h3 className="text-emerald-600 dark:text-emerald-500 text-sm font-black uppercase tracking-widest">PRODUCTOS A LLEVAR (CAMBIO)</h3>
-                                <div className="relative w-full sm:w-64">
-                                    <Input
-                                        size="sm"
-                                        placeholder="Escanear o buscar..."
-                                        value={exchangeSearch}
-                                        onValueChange={setExchangeSearch}
-                                        classNames={{ inputWrapper: "bg-gray-100 dark:bg-zinc-800 border-gray-200 dark:border-white/10" }}
-                                    />
-                                    {exchangeSearch.length > 2 && exchangeProducts.length > 0 && (
-                                        <div className="absolute z-50 left-0 right-0 top-12 bg-white dark:bg-zinc-800 border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl p-2 max-h-60 overflow-y-auto custom-scrollbar">
-                                            {exchangeProducts.map(p => (
-                                                <button key={p.barcode} className="w-full p-3 text-left hover:bg-emerald-50 dark:hover:bg-emerald-500/20 rounded-xl flex justify-between items-center group transition-colors" onClick={() => { addProductToReturn(p, true); setExchangeSearch(''); }}>
-                                                    <div className="flex flex-col">
-                                                        <span className="font-bold text-xs uppercase text-gray-900 dark:text-white">{p.productName}</span>
-                                                        <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono">{p.barcode}</span>
-                                                    </div>
-                                                    <span className="font-black text-emerald-600 dark:text-emerald-500 text-xs tabular-nums">${p.salePrice.toLocaleString()}</span>
-                                                </button>
-                                            ))}
+                             {returningItems.length > 0 && (
+                                <div className="p-3 bg-gray-50/50 dark:bg-zinc-900/30 border-t border-gray-100 dark:border-white/5">
+                                    <div className="flex justify-between items-end">
+                                        <div>
+                                            <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL REINGRESO</p>
+                                            <p className="text-xl font-black text-emerald-500 tracking-tighter italic leading-none tabular-nums">${totalReturned.toLocaleString()}</p>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
+                             )}
+                        </Card>
+                    </div>
+
+                    {/* COLUMNA DERECHA: LO QUE EL CLIENTE SE LLEVA / REEMBOLSO */}
+                    <div className="space-y-2">
+                        <Card className={`rounded-xl bg-white dark:bg-zinc-900 border transition-all shadow-xl shadow-black/5 overflow-hidden min-h-[450px] ${returnType === 'EXCHANGE' ? 'border-blue-500/10' : 'border-emerald-500/10'}`}>
+                            <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
+                                <h3 className={`text-[12px] font-black uppercase tracking-[0.2em] flex items-center gap-2 ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-emerald-500'}`}>
+                                    {returnType === 'EXCHANGE' ? <ShoppingCart size={16} /> : <RotateCcw size={16} className="rotate-180" />}
+                                    {returnType === 'EXCHANGE' ? "PRODUCTOS QUE SE LLEVA" : "REEMBOLSO DINERO / SALDO"}
+                                </h3>
+                                <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">
+                                    {returnType === 'EXCHANGE' ? "Salida de inventario nuevo" : "Dinero a entregar al cliente"}
+                                </p>
                             </CardHeader>
-                            <CardBody className="p-0">
-                                <div className="max-h-[300px] overflow-y-auto custom-scrollbar">
-                                    <Table aria-label="Cambios" isCompact removeWrapper classNames={{ th: "bg-gray-100 dark:bg-zinc-800/80 text-gray-500 dark:text-zinc-400 font-bold uppercase text-[10px] tracking-widest sticky top-0 z-10", td: "py-4 border-b border-gray-100 dark:border-white/5" }}>
+                            <CardBody className="p-2 space-y-2">
+                                <div className="space-y-1">
+                                    <label className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.2em] pl-1 block italic">Gestión</label>
+                                    <Select
+                                        size="sm"
+                                        aria-label="Tipo de retorno"
+                                        selectedKeys={new Set([returnType])}
+                                        onSelectionChange={(keys) => setReturnType(Array.from(keys)[0] as string)}
+                                        variant="flat"
+                                        labelPlacement="outside"
+                                        classNames={{ 
+                                            trigger: "h-7 bg-gray-100/50 dark:bg-zinc-800/50 rounded-md border-none shadow-sm px-2 min-h-unit-6",
+                                            value: "text-[9px] font-black uppercase italic"
+                                        }}
+                                    >
+                                        <SelectItem key="REFUND" textValue="Reembolso Directo" className="font-bold uppercase text-[9px]">💸 REEMBOLSO</SelectItem>
+                                        <SelectItem key="EXCHANGE" textValue="Cambio de Artículo" className="font-bold uppercase text-[9px]">🔄 CAMBIO</SelectItem>
+                                    </Select>
+                                </div>
+                                  {returnType === 'EXCHANGE' && (
+                                    <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
+                                        <div className="relative">
+                                            <Input
+                                                size="sm"
+                                                placeholder="BUSCAR ARTÍCULO..."
+                                                aria-label="Buscar artículo para cambio"
+                                                label="PRODUCTO PARA CAMBIO"
+                                                labelPlacement="outside"
+                                                value={exchangeSearch}
+                                                onValueChange={setExchangeSearch}
+                                                classNames={{ 
+                                                    label: "hidden",
+                                                    inputWrapper: "h-7 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-500/10 rounded-md font-bold text-[9px] uppercase min-h-unit-6" 
+                                                }}
+                                                startContent={<Search size={14} className="text-blue-500/50" />}
+                                            />
+                                            {exchangeSearch.length > 2 && exchangeProducts.length > 0 && (
+                                                <div className="absolute z-[100] left-0 right-0 top-8 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl p-1 max-h-48 overflow-y-auto custom-scrollbar">
+                                                    {exchangeProducts.map(p => (
+                                                        <button key={p.barcode} className="w-full p-2 text-left hover:bg-blue-500/10 rounded-lg flex justify-between items-center group transition-colors border-b border-gray-100 dark:border-white/5 last:border-none" onClick={() => { addProductToReturn(p, true); setExchangeSearch(''); }}>
+                                                            <div className="flex flex-col">
+                                                                <span className="font-bold text-[10px] uppercase text-gray-900 dark:text-white leading-tight">{p.productName}</span>
+                                                                <span className="text-[8px] text-gray-400 dark:text-zinc-500 font-mono font-bold">{p.barcode}</span>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <span className="font-black text-blue-500 text-[10px] tabular-nums">${p.salePrice.toLocaleString()}</span>
+                                                                <p className="text-[7px] text-gray-400 uppercase font-black tracking-widest">STK: {p.quantity}</p>
+                                                            </div>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        <div className="rounded-2xl border border-gray-100 dark:border-white/5 overflow-hidden">
+                                            <Table isCompact removeWrapper aria-label="Items Cambio" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-[8px] font-black uppercase tracking-widest h-8 px-4", td: "px-4 py-1 border-b border-gray-50 dark:border-white/5" }}>
+                                                <TableHeader>
+                                                    <TableColumn>PRODUCTO</TableColumn>
+                                                    <TableColumn align="center">CANT</TableColumn>
+                                                    <TableColumn align="end">SUBTOTAL</TableColumn>
+                                                </TableHeader>
+                                                <TableBody emptyContent={<div className="text-center py-10 text-[10px] uppercase font-black text-gray-300 italic">No hay productos añadidos para el cambio</div>}>
+                                                    {exchangeItems.map(item => (
+                                                        <TableRow key={item.barcode}>
+                                                            <TableCell className="text-[10px] font-bold uppercase leading-tight">{item.productName}</TableCell>
+                                                            <TableCell>
+                                                                <div className="flex items-center justify-center gap-1.5">
+                                                                    {item.isWeighted || item.product?.isWeighted ? (
+                                                                        <Input
+                                                                            type="number"
+                                                                            size="sm"
+                                                                            step="0.001"
+                                                                            aria-label="Cantidad para cambio"
+                                                                            value={(item.cartQuantity || 0).toString()}
+                                                                            onValueChange={(val) => handleQtyChange(item.barcode, parseFloat(val) || 0, true)}
+                                                                            className="w-16"
+                                                                            classNames={{
+                                                                                inputWrapper: "h-6 bg-blue-50/50 dark:bg-blue-900/10 border-none rounded-md px-1 min-h-unit-5",
+                                                                                input: "text-[10px] font-black tabular-nums text-center text-blue-500"
+                                                                            }}
+                                                                        />
+                                                                    ) : (
+                                                                        <>
+                                                                            <Button isIconOnly size="sm" variant="flat" className="h-6 w-6 rounded-md" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) - 1, true)}>-</Button>
+                                                                            <span className="text-xs font-black tabular-nums">{item.cartQuantity}</span>
+                                                                            <Button isIconOnly size="sm" variant="flat" className="h-6 w-6 rounded-md" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) + 1, true)}>+</Button>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                            </TableCell>
+                                                            <TableCell className="text-right text-[10px] font-black italic tabular-nums">${(item.unitPrice * (item.cartQuantity || 0)).toLocaleString()}</TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {returnType === 'REFUND' && (
+                                     <div className="h-full flex flex-col items-center justify-center space-y-4 py-10 bg-emerald-500/5 rounded-[2.5rem] border border-dashed border-emerald-500/20 animate-in fade-in duration-500">
+                                        <div className="h-16 w-16 rounded-3xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                            <RotateCcw size={32} />
+                                        </div>
+                                        <div className="text-center">
+                                            <p className="text-xs font-black uppercase text-gray-900 dark:text-white tracking-widest italic">MODALIDAD DE REEMBOLSO ACTIVA</p>
+                                            <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-widest mt-1 max-w-[200px] mx-auto">El valor de los items retornados se reintegrará al pool de caja.</p>
+                                        </div>
+                                    </div>
+                                )}
+                            </CardBody>
+                            <CardFooter className="px-4 py-3 border-t border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-transparent">
+                                <div className="w-full flex justify-between items-end">
+                                    <div>
+                                        <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL SALIDA / CAMBIO</p>
+                                        <p className={`text-xl font-black tracking-tighter italic leading-none tabular-nums ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-emerald-500/50'}`}>
+                                            ${totalExchange.toLocaleString()}
+                                        </p>
+                                    </div>
+                                </div>
+                            </CardFooter>
+                        </Card>
+                    </div>
+                </div>
+
+                               {/* HISTORIAL RECIENTE DOBLE COLUMNA: VENTAS VS DEVOLUCIONES */}
+                {!sale && (recentSales.length > 0 || recentReturns.length > 0) && (
+                    <div className="mt-4 px-1 pb-24 animate-in fade-in slide-in-from-bottom-5 duration-700">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            
+                            {/* COLUMNA IZQUIERDA: VENTAS PARA GESTIÓN */}
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3 pl-1">
+                                    <div className="h-6 w-6 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 shadow-inner">
+                                        <History size={14} />
+                                    </div>
+                                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 dark:text-zinc-500">Ventas para Gestión</h3>
+                                    <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
+                                </div>
+                                
+                                <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
+                                    <Table isCompact removeWrapper aria-label="Ventas Recientes" classNames={{ 
+                                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest h-10 py-1 px-4 border-b border-gray-100 dark:border-white/5", 
+                                        td: "py-2 px-4 border-b border-gray-50 dark:border-white/5 whitespace-nowrap",
+                                        tr: "hover:bg-emerald-500/5 transition-colors cursor-pointer group"
+                                    }}>
                                         <TableHeader>
-                                            <TableColumn>ARTÍCULO</TableColumn>
-                                            <TableColumn align="center">CANT.</TableColumn>
-                                            <TableColumn align="end">SUBTOTAL</TableColumn>
+                                            <TableColumn>FACTURA</TableColumn>
+                                            <TableColumn>CLIENTE</TableColumn>
+                                            <TableColumn align="end">TOTAL</TableColumn>
+                                            <TableColumn align="center" width={40}></TableColumn>
                                         </TableHeader>
-                                        <TableBody>
-                                            {exchangeItems.map((item) => (
-                                                <TableRow key={item.barcode}>
+                                        <TableBody emptyContent="SIN VENTAS">
+                                            {recentSales.map((s) => (
+                                                <TableRow key={s.id} onClick={() => loadSale(s)}>
                                                     <TableCell>
-                                                        <div className="font-bold text-gray-900 dark:text-white text-xs uppercase">{item.productName}</div>
-                                                        <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono mt-1">{item.barcode}</div>
-                                                    </TableCell>
-                                                    <TableCell>
-                                                        <div className="flex items-center justify-center gap-2">
-                                                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-white" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) - 1, true)}>-</Button>
-                                                            <span className="font-black text-sm text-gray-900 dark:text-white min-w-[1.5rem] text-center tabular-nums">{item.cartQuantity}</span>
-                                                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:text-gray-900 dark:hover:text-white" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) + 1, true)}>+</Button>
+                                                        <div className="flex flex-col">
+                                                            <span className="font-black text-[10px] dark:text-white">#{s.id}</span>
+                                                            <span className="text-[7px] font-bold text-gray-400 uppercase">{new Date(s.date).toLocaleDateString('es-CO')}</span>
                                                         </div>
                                                     </TableCell>
-                                                    <TableCell className="text-right">
-                                                        <div className="font-black text-gray-900 dark:text-white text-sm tabular-nums">
-                                                            ${(item.unitPrice * (item.cartQuantity || 0)).toLocaleString()}
-                                                        </div>
+                                                    <TableCell>
+                                                      <span className="text-[9px] font-black uppercase italic dark:text-zinc-300 max-w-[120px] truncate block">
+                                                          {s.client?.name || 'CONSU. FINAL'}
+                                                      </span>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <span className="text-[11px] font-black italic tabular-nums dark:text-white">
+                                                            ${s.total.toLocaleString()}
+                                                        </span>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <RotateCcw size={12} className="text-emerald-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                                                     </TableCell>
                                                 </TableRow>
                                             ))}
                                         </TableBody>
                                     </Table>
-                                    {exchangeItems.length === 0 && <div className="text-center py-12 text-gray-400 dark:text-zinc-600 font-bold uppercase text-xs">Sin productos para cambio</div>}
-                                </div>
-                                <div className="p-6 bg-gray-50 dark:bg-zinc-900/30 border-t border-gray-100 dark:border-white/5 flex justify-between items-center">
-                                    <span className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Total a Llevar</span>
-                                    <span className="text-2xl font-black text-gray-900 dark:text-white tracking-tighter tabular-nums">${totalExchange.toLocaleString()}</span>
-                                </div>
-                            </CardBody>
-                        </Card>
-                    </div>
-                )}
-
-                {/* BUSCADORES PRINCIPALES */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card className="rounded-[2rem] bg-white dark:bg-zinc-900/60 backdrop-blur-xl border-gray-200 dark:border-white/5 shadow-xl">
-                        <CardHeader className="px-6 py-5 border-b border-gray-100 dark:border-white/5">
-                            <h3 className="text-emerald-600 dark:text-emerald-500 flex items-center gap-3 text-sm font-bold uppercase tracking-widest">
-                                <Search className="h-5 w-5" /> LOCALIZAR FACTURA
-                            </h3>
-                        </CardHeader>
-                        <CardBody className="p-6">
-                            <div className="flex gap-3">
-                                <Input
-                                    ref={searchRef}
-                                    placeholder="ID de venta o DNI de cliente..."
-                                    value={searchId}
-                                    onValueChange={setSearchId}
-                                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                                    variant="faded"
-                                    classNames={{ inputWrapper: "h-14 bg-gray-100 dark:bg-zinc-800 border-gray-200 dark:border-white/10 group-hover:border-emerald-500/50 transition-all font-bold text-sm" }}
-                                />
-                                <Button
-                                    className="h-14 px-8 bg-gray-900 dark:bg-white text-white dark:text-black font-black uppercase tracking-widest text-xs rounded-2xl shadow-lg hover:scale-105 active:scale-95 transition-all"
-                                    onPress={() => handleSearch(false)}
-                                    isLoading={loading}
-                                >
-                                    LOCALIZAR
-                                </Button>
+                                </Card>
                             </div>
-                        </CardBody>
-                    </Card>
 
-                    <Card className="rounded-[2rem] bg-white dark:bg-zinc-900/60 backdrop-blur-xl border-gray-200 dark:border-white/5 shadow-xl overflow-visible">
-                        <CardHeader className="px-6 py-5 border-b border-gray-100 dark:border-white/5 flex items-center justify-between">
-                            <h3 className="text-emerald-600 dark:text-emerald-500 flex items-center gap-3 text-sm font-bold uppercase tracking-widest">
-                                <ShoppingCart className="h-5 w-5" /> DEVOLUCIÓN DIRECTA
-                            </h3>
-                            <Button
-                                variant="flat"
-                                size="sm"
-                                className={`font-black uppercase tracking-widest text-[10px] ${isScannerOpen ? "bg-emerald-500 text-white" : "bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400"}`}
-                                onPress={() => setIsScannerOpen(!isScannerOpen)}
-                            >
-                                <Camera className="h-4 w-4 mr-2" /> SCANNER
-                            </Button>
-                        </CardHeader>
-                        <CardBody className="p-6 relative overflow-visible">
-                            <Input
-                                ref={directSearchRef}
-                                placeholder="ESCANEÉ O BUSQUE POR NOMBRE..."
-                                value={productSearch}
-                                onValueChange={setProductSearch}
-                                variant="faded"
-                                classNames={{ inputWrapper: "h-14 bg-gray-100 dark:bg-zinc-800 border-gray-200 dark:border-white/10 group-hover:border-emerald-500/50 transition-all font-bold text-sm" }}
-                            />
-                            {products.length > 0 && (
-                                <div className="absolute z-[100] left-6 right-6 top-[85px] bg-white dark:bg-zinc-800 border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-3xl">
-                                    {products.slice(0, 5).map(p => (
-                                        <button
-                                            key={p.barcode}
-                                            className="w-full p-4 flex justify-between hover:bg-emerald-50 dark:hover:bg-emerald-500/20 group transition-colors text-left border-b border-gray-100 dark:border-white/5 last:border-0"
-                                            onClick={() => addProductToReturn(p)}
-                                        >
-                                            <div>
-                                                <div className="font-bold text-xs text-gray-900 dark:text-white uppercase">{p.productName}</div>
-                                                <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono mt-1">{p.barcode}</div>
-                                            </div>
-                                            <div className="font-black text-emerald-600 dark:text-emerald-500 text-sm tabular-nums">${p.salePrice.toLocaleString()}</div>
-                                        </button>
-                                    ))}
+                            {/* COLUMNA DERECHA: AUDITORÍA DEVOLUCIONES */}
+                            <div className="space-y-4">
+                                <div className="flex items-center gap-3 pl-1">
+                                    <div className="h-6 w-6 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500 shadow-inner">
+                                        <RotateCcw size={14} className="rotate-180" />
+                                    </div>
+                                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 dark:text-zinc-500">Auditoría Devoluciones</h3>
+                                    <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
-                            )}
-                        </CardBody>
-                    </Card>
-                </div>
+                                
+                                <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
+                                    <Table isCompact removeWrapper aria-label="Devoluciones Recientes" classNames={{ 
+                                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest h-10 py-1 px-4 border-b border-gray-100 dark:border-white/5", 
+                                        td: "py-2 px-4 border-b border-gray-50 dark:border-white/5 whitespace-nowrap",
+                                        tr: "hover:bg-rose-500/5 transition-colors cursor-default group"
+                                    }}>
+                                        <TableHeader>
+                                            <TableColumn>TICKET</TableColumn>
+                                            <TableColumn>ORIGEN / PRODUCTOS</TableColumn>
+                                            <TableColumn align="center">MODALIDAD</TableColumn>
+                                            <TableColumn align="end">VALOR</TableColumn>
+                                        </TableHeader>
+                                        <TableBody emptyContent={isHistoryLoading ? <Spinner size="sm" color="danger" /> : "SIN DEVOLUCIONES"}>
+                                            {recentReturns.map((r: any) => (
+                                                <TableRow key={r.id}>
+                                                    <TableCell>
+                                                        <div className="flex flex-col">
+                                                            <span className="font-black text-[10px] dark:text-white">#{r.id}</span>
+                                                            <span className="text-[7px] font-bold text-gray-400 uppercase">{new Date(r.date || r.createdAt).toLocaleDateString('es-CO')}</span>
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-[9px] font-black text-emerald-500 uppercase italic">INV #{r.saleId || r.sale_id}</span>
+                                                            {(r.details || r.items)?.length > 0 && (
+                                                                <span className="text-[7px] text-gray-400 dark:text-zinc-600 truncate max-w-[120px] font-bold uppercase tracking-tighter">
+                                                                    {(r.details || r.items).map((d: any) => `${d.quantity}x ${d.productName || d.product?.productName || '...'}`).join(', ')}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <Chip size="sm" variant="flat" className={`h-4 text-[7px] font-black uppercase tracking-widest ${r.returnType === 'EXCHANGE' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                                                            {getReturnTypeLabel(r.returnType || 'REFUND')}
+                                                        </Chip>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <span className="text-[11px] font-black italic tabular-nums dark:text-white">
+                                                            ${(r.totalReturned || r.amount || 0).toLocaleString()}
+                                                        </span>
+                                                    </TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                </Card>
+                            </div>
 
-                {/* HISTORIAL RECIENTE */}
-                {!sale && recentSales.length > 0 && (
-                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-                        <Card className="rounded-[2.5rem] bg-white dark:bg-zinc-900/40 border-gray-200 dark:border-white/5 shadow-2xl overflow-hidden">
-                            <CardHeader className="px-8 py-6 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-transparent">
-                                <h3 className="text-gray-500 dark:text-zinc-400 flex items-center gap-3 text-xs font-black uppercase tracking-widest">
-                                    <History className="h-4 w-4 text-emerald-600 dark:text-emerald-500" /> HISTORIAL RECIENTE
-                                </h3>
-                            </CardHeader>
-                            <CardBody className="p-0">
-                                <div className="flex flex-col">
-                                    {recentSales.map((s) => (
-                                        <button
-                                            key={s.id}
-                                            onClick={() => loadSale(s)}
-                                            className="py-5 px-8 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors border-b border-gray-100 dark:border-white/5 last:border-0 group text-left"
-                                        >
-                                            <div className="flex items-center gap-6">
-                                                <span className="font-black text-sm text-gray-400 dark:text-zinc-500 group-hover:text-emerald-600 dark:group-hover:text-emerald-500 w-12 transition-colors">#{s.id}</span>
-                                                <div className="flex flex-col">
-                                                    <span className="font-bold text-sm text-gray-900 dark:text-white uppercase">
-                                                        {s.client?.name || 'Consumidor Final'}
-                                                    </span>
-                                                    <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-widest mt-1">
-                                                        {new Date(s.date).toLocaleDateString()} · {new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                    </span>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-6">
-                                                <span className="font-black text-lg text-gray-900 dark:text-white tabular-nums tracking-tighter">
-                                                    ${s.total.toLocaleString()}
-                                                </span>
-                                                <Chip size="sm" variant="flat" className="font-bold tracking-widest text-[9px] uppercase bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 group-hover:bg-gray-900 group-hover:text-white dark:group-hover:bg-white dark:group-hover:text-black transition-all">
-                                                    Gestionar
-                                                </Chip>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            </CardBody>
-                        </Card>
+                        </div>
                     </div>
                 )}
-            </div>
 
-            {/* BARRA INFERIOR DE ACCIÓN (FIXED) - Adaptable a Claro/Oscuro */}
+            {/* BARRA INFERIOR DE ACCIÓN (FIXED) */}
             {(returningItems.length > 0 || exchangeItems.length > 0) && (
-                <div className="fixed bottom-0 left-0 right-0 md:left-4 md:right-4 md:bottom-6 z-40 animate-in slide-in-from-bottom-full duration-500">
-                    <div className="bg-white dark:bg-zinc-950/90 backdrop-blur-xl p-5 md:p-6 rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] dark:shadow-2xl border border-gray-200 dark:border-white/10 flex flex-col md:flex-row items-center justify-between gap-6 max-w-7xl mx-auto w-full transition-colors">
-                        <div className="flex items-center justify-between w-full md:w-auto gap-8">
-                            <div className="space-y-2">
-                                <div className="flex items-center gap-3">
-                                    <h3 className="font-black text-base md:text-lg tracking-tight text-gray-500 dark:text-zinc-400 uppercase">RESUMEN</h3>
-                                    {sale && (
-                                        <div className="flex gap-2">
-                                            <Chip size="sm" color={isTransfer ? "warning" : "default"} variant="flat" className="font-bold uppercase tracking-widest text-[10px]">
-                                                {sale.paymentMethod}
-                                            </Chip>
-                                            {sale.details.every((d: any) => (d.quantity - (d.returnedQty || 0)) <= 0) && (
-                                                <Chip size="sm" color="danger" variant="shadow" className="font-black uppercase tracking-widest text-[10px] animate-pulse">
-                                                    YA DEVUELTA COMPLETAMENTE
-                                                </Chip>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="flex items-center gap-6">
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest">Devueltos:</span>
-                                        <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums">{returningItems.reduce((acc, i) => acc + (i.returnQty || 0), 0)}</span>
-                                    </div>
-                                    <div className="w-px h-4 bg-gray-200 dark:bg-white/10" />
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest">Cambios:</span>
-                                        <span className="text-sm font-bold text-gray-900 dark:text-white tabular-nums">{exchangeItems.reduce((acc, i) => acc + (i.cartQuantity || 0), 0)}</span>
-                                    </div>
+                <div className="fixed bottom-0 left-0 right-0 z-40 animate-in slide-in-from-bottom-full duration-500 px-2 pb-2">
+                    <div className="bg-white/80 dark:bg-zinc-950/90 backdrop-blur-2xl p-2 border border-gray-200 dark:border-white/10 flex items-center justify-between max-w-7xl mx-auto w-full rounded-xl shadow-2xl transition-all">
+                        <div className="flex items-center gap-6 pl-4">
+                            <div className="flex flex-col">
+                                <span className={`text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center gap-2 ${balance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                    <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${balance >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                    {balance >= 0 ? "REINTEGRO" : "EXCEDENTE"}
+                                </span>
+                                <div className={`text-2xl font-black tabular-nums tracking-tighter leading-none ${balance >= 0 ? 'text-gray-900 dark:text-white' : 'text-rose-500'} italic`}>
+                                    {balance >= 0 ? `$${balance.toLocaleString()}` : `-$${Math.abs(balance).toLocaleString()}`}
                                 </div>
                             </div>
-
-                            <div className="text-right flex flex-col justify-center">
-                                <div className={`text-[10px] font-black uppercase tracking-widest mb-1 flex items-center justify-end gap-2 ${balance >= 0 ? 'text-emerald-600 dark:text-emerald-500' : 'text-rose-500'}`}>
-                                    <div className={`h-2 w-2 rounded-full animate-pulse ${balance >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                                    {balance >= 0 ? "Saldo a favor cliente" : "Diferencia a cobrar"}
-                                </div>
-                                <div className={`text-3xl md:text-4xl font-black tabular-nums tracking-tighter ${balance >= 0 ? 'text-gray-900 dark:text-white' : 'text-rose-500 animate-pulse'}`}>
-                                    {balance >= 0 ? `$${balance.toLocaleString()}` : `-$${Math.abs(balance).toLocaleString()}`}
+                            
+                            <div className="hidden md:flex flex-col gap-0.5 border-l border-gray-100 dark:border-white/5 pl-6">
+                                <p className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Resumen</p>
+                                <div className="flex gap-3">
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="h-1 w-1 rounded-full bg-emerald-500" />
+                                        <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">+{totalReturned.toLocaleString()}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className="h-1 w-1 rounded-full bg-blue-500" />
+                                        <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">-{totalExchange.toLocaleString()}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <Button
-                            className={`h-16 md:h-20 px-8 md:px-12 text-lg font-black rounded-[2rem] shadow-xl w-full md:w-auto transition-all ${balance >= 0
-                                    ? "bg-emerald-500 text-white hover:bg-emerald-600 hover:shadow-emerald-500/30"
-                                    : "bg-gray-900 dark:bg-white text-white dark:text-black hover:scale-105"
-                                }`}
-                            onPress={() => setReturnDialogOpen(true)}
-                            isDisabled={(returningItems.length === 0 && exchangeItems.length === 0) || (sale?.details.every((d: any) => (d.quantity - (d.returnedQty || 0)) <= 0))}
-                            startContent={<CheckCircle2 className="h-6 w-6" />}
-                        >
-                            <span className="uppercase tracking-widest">{balance >= 0 ? 'FINALIZAR DEVOLUCIÓN' : 'COBRAR SALDO'}</span>
-                        </Button>
+                            <Button
+                                className={`h-14 px-10 text-xs font-black rounded-lg shadow-2xl transition-all hover:scale-[1.02] active:scale-95 ${balance >= 0
+                                        ? "bg-emerald-600 text-white shadow-emerald-500/20"
+                                        : "bg-rose-600 text-white shadow-rose-500/20"
+                                    }`}
+                                onPress={() => setReturnDialogOpen(true)}
+                                isDisabled={(returningItems.length === 0 && exchangeItems.length === 0)}
+                            >
+                                <span className="uppercase tracking-[0.2em]">{balance >= 0 ? 'PROCESAR DEVOLUCIÓN' : 'COBRAR EXCEDENTE Y FINALIZAR'}</span>
+                            </Button>
                     </div>
                 </div>
             )}
 
-            {/* MODAL: CONFIRMAR DEVOLUCIÓN */}
-            <Modal isOpen={returnDialogOpen} onOpenChange={setReturnDialogOpen} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-2xl", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
+            {/* MODAL: CONFIRMAR DEVOLUCIÓN (Corregido traslapes) */}
+            <Modal isOpen={returnDialogOpen} onOpenChange={setReturnDialogOpen} backdrop="blur" size="2xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[3rem] shadow-2xl", header: "p-10 pb-4 border-none", body: "p-10 py-6", footer: "p-10 pt-4 border-none" }}>
                 <ModalContent>
                     {(onClose) => (
                         <>
-                            <ModalHeader className="flex flex-col gap-2">
-                                <div className="h-12 w-12 rounded-2xl bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center border border-emerald-200 dark:border-emerald-500/20 mb-2">
-                                    <RotateCcw className="h-6 w-6 text-emerald-600 dark:text-emerald-500" />
+                            <ModalHeader className="flex flex-col gap-3">
+                                <div className="h-14 w-14 rounded-[1.5rem] bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20">
+                                    <RotateCcw size={28} />
                                 </div>
-                                <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight">Confirmar Devolución</h2>
-                                <p className="text-[10px] text-gray-500 dark:text-zinc-400 font-bold uppercase tracking-widest leading-relaxed">
-                                    Verifique la modalidad y justificación contable.
-                                </p>
-
-                                <div className="mt-4 p-4 rounded-xl bg-rose-50 dark:bg-rose-500/10 border border-rose-200 dark:border-rose-500/20 flex gap-3 items-start">
-                                    <AlertCircle className="h-5 w-5 text-rose-500 shrink-0 mt-0.5" />
-                                    <div className="space-y-1">
-                                        <p className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-widest">AVISO SANITARIO</p>
-                                        <p className="text-[10px] font-bold text-rose-600/80 dark:text-rose-200/80 leading-tight">
-                                            Productos cárnicos o lácteos NO tienen cambio por normativas de salubridad.
-                                        </p>
-                                    </div>
-                                </div>
+                                <h2 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tighter leading-none italic">VALORACIÓN CONTABLE</h2>
+                                <p className="text-[11px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest opacity-80 leading-none mt-2">Finalización de Auditoría de Retorno</p>
                             </ModalHeader>
-                            <ModalBody className="flex flex-col gap-5">
-                                {isTransfer && (
-                                    <div className={`p-4 rounded-xl flex items-start gap-3 border ${balance > 0 ? 'bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-white/5' : 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20'}`}>
-                                        <AlertCircle className={`h-5 w-5 shrink-0 mt-0.5 ${balance > 0 ? 'text-gray-500 dark:text-zinc-500' : 'text-amber-500'}`} />
-                                        <div className="space-y-1">
-                                            <p className={`text-xs font-black uppercase ${balance > 0 ? 'text-gray-900 dark:text-white' : 'text-amber-600 dark:text-amber-500'}`}>
-                                                Venta por Transferencia
-                                            </p>
-                                            <p className={`text-[10px] font-bold leading-relaxed ${balance > 0 ? 'text-gray-500 dark:text-zinc-400' : 'text-amber-700 dark:text-amber-200/80'}`}>
-                                                {balance > 0
-                                                    ? `No se permite reintegro en efectivo. Cliente debe llevar productos por $${balance.toLocaleString()}.`
-                                                    : "Sin devoluciones parciales por transferencia."}
-                                            </p>
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest pl-1">Modalidad de Reintegro</label>
+                            <ModalBody className="flex flex-col gap-8">
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest pl-1 italic">Modalidad de Reintegro Sugerida</label>
                                     <Select
                                         selectedKeys={new Set([returnType])}
                                         onSelectionChange={(keys) => setReturnType(Array.from(keys)[0] as string)}
                                         isDisabled={balance > 0 && isTransfer}
-                                        variant="faded"
-                                        classNames={{ trigger: "h-14 bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-white/10" }}
+                                        aria-label="Modalidad de reintegro"
+                                        variant="flat"
+                                        labelPlacement="outside"
+                                        classNames={{ 
+                                            trigger: "h-16 bg-gray-50 dark:bg-zinc-900 rounded-2xl border-2 border-emerald-500/10 px-6",
+                                            value: "text-base font-black uppercase italic"
+                                        }}
                                     >
-                                        {(!(balance > 0 && isTransfer)) ? (
-                                            <SelectItem key="REFUND" textValue="Reembolso Efectivo" className="font-bold uppercase text-xs">
-                                                💵 Reembolso Efectivo
-                                            </SelectItem>
-                                        ) : <SelectItem key="HIDDEN" className="hidden">Oculto</SelectItem>}
-                                        <SelectItem key="EXCHANGE" textValue="Cambio de Artículo" className="font-bold uppercase text-xs">
-                                            🔄 Cambio de Artículo
-                                        </SelectItem>
+                                        <SelectItem key="REFUND" textValue="Reembolso Efectivo" className="font-black uppercase text-xs">💸 REEMBOLSO EN EFECTIVO</SelectItem>
+                                        <SelectItem key="EXCHANGE" textValue="Cambio de Artículo" className="font-black uppercase text-xs">🔄 CAMBIO POR OTROS PRODUCTOS</SelectItem>
                                     </Select>
                                 </div>
-                                <div className="space-y-2">
-                                    <label className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest pl-1">Motivo</label>
+                                <div className="space-y-4">
+                                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest pl-1">Justificación del Retorno</label>
                                     <Input
                                         value={returnReason}
                                         onValueChange={setReturnReason}
-                                        placeholder="Ej. Defecto de fábrica..."
-                                        variant="faded"
-                                        classNames={{ inputWrapper: "h-14 bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-white/10 text-sm font-bold" }}
+                                        placeholder="Ej. DEFECTO DE FÁBRICA / CAMBIO POR TALLA..."
+                                        aria-label="Justificación del retorno"
+                                        variant="flat"
+                                        classNames={{ inputWrapper: "h-16 bg-gray-50 dark:bg-zinc-900 rounded-2xl border-none font-bold text-sm uppercase px-6" }}
                                     />
                                 </div>
 
-                                {balance < 0 && (
-                                    <div className="p-5 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 rounded-2xl text-center">
-                                        <div className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest mb-1">Excedente a Cobrar</div>
-                                        <div className="text-3xl font-black text-gray-900 dark:text-white tracking-tighter tabular-nums">${Math.abs(balance).toLocaleString()}</div>
+                                {balance !== 0 && (
+                                    <div className={`p-8 rounded-[2rem] text-center border-2 ${balance > 0 ? 'bg-emerald-50 dark:bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-50 dark:bg-rose-500/5 border-rose-500/20'} animate-in zoom-in-95 duration-300`}>
+                                        <div className={`text-[11px] font-black uppercase tracking-widest mb-2 ${balance > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                            Neto de la Operación
+                                        </div>
+                                        <div className="text-5xl font-black text-gray-900 dark:text-white tracking-tighter tabular-nums italic">
+                                            ${Math.abs(balance).toLocaleString()}
+                                        </div>
                                     </div>
                                 )}
                             </ModalBody>
-                            <ModalFooter>
-                                <Button variant="light" color="danger" onPress={onClose} className="font-bold uppercase text-[10px] tracking-widest h-12 px-8">
-                                    Cancelar
+                            <ModalFooter className="flex justify-between items-center bg-gray-50/50 dark:bg-zinc-900/50 p-10 rounded-b-[3rem]">
+                                <Button variant="light" color="danger" onPress={onClose} className="font-black uppercase text-[11px] tracking-[0.3em] h-14 px-10 rounded-2xl">
+                                    CANCELAR
                                 </Button>
                                 <Button
                                     onPress={processReturn}
                                     isDisabled={balance > 0 && isTransfer}
-                                    className={`h-12 px-8 font-black uppercase text-[10px] tracking-widest rounded-2xl shadow-xl transition-all ${balance > 0 && isTransfer
-                                            ? "bg-gray-200 text-gray-400 dark:bg-zinc-800 dark:text-zinc-500"
-                                            : "bg-emerald-500 text-white hover:bg-emerald-600"
+                                    className={`h-16 px-16 font-black uppercase text-[11px] tracking-[0.3em] rounded-2xl shadow-2xl transition-all ${balance > 0 && isTransfer
+                                            ? "bg-gray-100 text-gray-400 dark:bg-zinc-800 dark:text-zinc-500"
+                                            : "bg-emerald-500 text-white hover:scale-105 active:scale-95"
                                         }`}
                                 >
-                                    {balance > 0 && isTransfer ? 'Falta Saldo' : (balance >= 0 ? 'Procesar Retorno' : 'Cobrar y Finalizar')}
+                                    {balance > 0 && isTransfer ? 'PENDIENTE POR CAMBIO' : 'CONFIRMAR Y FINALIZAR'}
                                 </Button>
                             </ModalFooter>
                         </>
@@ -928,5 +1240,6 @@ export default function ReturnsPage() {
                 }}
             />
         </div>
-    );
+    </div>
+);
 }

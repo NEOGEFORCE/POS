@@ -51,7 +51,7 @@ export default function CustomersPage() {
   const [deletingDni, setDeletingDni] = useState<string | null>(null);
 
   // Estados de Pago
-  const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'BANCOLOMBIA'>('cash');
+  const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA'>('cash');
   const [dialogAmount, setDialogAmount] = useState('');
   const [cashTendered, setCashTendered] = useState<string>('');
   const [lastChange, setLastChange] = useState(0);
@@ -197,7 +197,7 @@ export default function CustomersPage() {
           <div className="flex flex-col"><span className="text-sm font-black dark:text-white uppercase leading-none">CLIENTES</span><span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest">CARTERA</span></div>
         </div>
         <div className="flex items-center gap-2">
-          <Input size="sm" placeholder="BUSCAR..." value={filter} onValueChange={(v) => setFilter(v.toUpperCase())} startContent={<Search size={14} className="text-gray-400" />} classNames={{ inputWrapper: "h-8 bg-gray-50 dark:bg-zinc-800 border-none", input: "text-[10px] font-bold" }} />
+          <Input size="sm" placeholder="BUSCAR..." value={filter} onValueChange={(v) => setFilter(v.toUpperCase())} startContent={<Search size={14} className="text-gray-400" />} classNames={{ inputWrapper: "h-8 bg-transparent border border-gray-200 dark:border-white/10 shadow-none", input: "text-[10px] font-bold bg-transparent" }} />
           <Button size="sm" onPress={() => setAddDialogOpen(true)} className="h-8 bg-emerald-500 text-white font-black text-[10px] rounded-md">NUEVO</Button>
         </div>
       </header>
@@ -262,7 +262,7 @@ export default function CustomersPage() {
               )}
               <div className="w-[180px] bg-white dark:bg-zinc-900 border-r border-gray-200 dark:border-white/5 p-4 flex flex-col gap-2">
                 <h3 className="text-[9px] font-black text-gray-400 uppercase tracking-widest mb-1 italic">MÉTODO</h3>
-                {(['cash', 'NEQUI', 'DAVIPLATA', 'BANCOLOMBIA'] as const).map(tab => (
+                {(['cash', 'NEQUI', 'DAVIPLATA'] as const).map(tab => (
                   <button key={tab} onClick={() => { setActivePaymentTab(tab); setDialogAmount(''); setCashTendered(''); }} className={`h-11 px-4 rounded-lg flex items-center gap-3 border transition-all ${activePaymentTab === tab ? 'bg-emerald-500 text-white border-emerald-500 shadow-md' : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500'}`}>
                     {tab === 'cash' ? <Banknote size={16} /> : <Zap size={16} />}
                     <span className="text-[10px] font-black uppercase italic">{tab === 'cash' ? 'Efectivo' : tab}</span>
@@ -310,12 +310,49 @@ export default function CustomersPage() {
               <ModalHeader className="font-black uppercase text-sm border-b dark:text-white p-4 italic">{addDialogOpen ? 'Nuevo Registro' : 'Editar Datos'}</ModalHeader>
               <ModalBody className="p-4 gap-3">
                 <div className="grid grid-cols-2 gap-2">
-                  <Input size="sm" label="DNI" value={addDialogOpen ? newClient.dni : editingClient?.dni} onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, dni: v })) : setEditingClient(p => p ? { ...p, dni: v } : null)} isDisabled={!!editDialogOpen} />
-                  <Input size="sm" label="NOMBRE" value={addDialogOpen ? newClient.name : editingClient?.name} onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, name: v })) : setEditingClient(p => p ? { ...p, name: v } : null)} />
+                  <Input 
+                    size="sm" 
+                    label="DNI" 
+                    labelPlacement="outside"
+                    value={addDialogOpen ? newClient.dni : editingClient?.dni} 
+                    onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, dni: v })) : setEditingClient(p => p ? { ...p, dni: v } : null)} 
+                    isDisabled={!!editDialogOpen} 
+                    classNames={{ inputWrapper: "bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:!border-emerald-500", input: "bg-transparent font-bold capitalize" }}
+                  />
+                  <Input 
+                    size="sm" 
+                    label="NOMBRE" 
+                    labelPlacement="outside"
+                    value={addDialogOpen ? newClient.name : editingClient?.name} 
+                    onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, name: v })) : setEditingClient(p => p ? { ...p, name: v } : null)} 
+                    classNames={{ inputWrapper: "bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:!border-emerald-500", input: "bg-transparent font-bold capitalize" }}
+                  />
                 </div>
-                <Input size="sm" label="TELÉFONO" value={addDialogOpen ? newClient.phone : editingClient?.phone} onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, phone: v })) : setEditingClient(p => p ? { ...p, phone: v } : null)} />
-                <Input size="sm" label="DIRECCIÓN" value={addDialogOpen ? newClient.address : editingClient?.address} onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, address: v })) : setEditingClient(p => p ? { ...p, address: v } : null)} />
-                <Input size="sm" label="CRÉDITO" type="number" value={String(addDialogOpen ? newClient.creditLimit : (editingClient?.creditLimit || '0'))} onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, creditLimit: v })) : setEditingClient(p => p ? { ...p, creditLimit: Number(v) } : null)} />
+                <Input 
+                  size="sm" 
+                  label="TELÉFONO" 
+                  labelPlacement="outside"
+                  value={addDialogOpen ? newClient.phone : editingClient?.phone} 
+                  onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, phone: v })) : setEditingClient(p => p ? { ...p, phone: v } : null)} 
+                  classNames={{ inputWrapper: "bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:!border-emerald-500", input: "bg-transparent font-bold" }}
+                />
+                <Input 
+                  size="sm" 
+                  label="DIRECCIÓN" 
+                  labelPlacement="outside"
+                  value={addDialogOpen ? newClient.address : editingClient?.address} 
+                  onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, address: v })) : setEditingClient(p => p ? { ...p, address: v } : null)} 
+                  classNames={{ inputWrapper: "bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:!border-emerald-500", input: "bg-transparent font-bold capitalize" }}
+                />
+                <Input 
+                  size="sm" 
+                  label="CRÉDITO" 
+                  labelPlacement="outside"
+                  type="number" 
+                  value={String(addDialogOpen ? newClient.creditLimit : (editingClient?.creditLimit || '0'))} 
+                  onValueChange={(v) => addDialogOpen ? setNewClient(p => ({ ...p, creditLimit: v })) : setEditingClient(p => p ? { ...p, creditLimit: Number(v) } : null)} 
+                  classNames={{ inputWrapper: "bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:!border-emerald-500", input: "bg-transparent font-bold" }}
+                />
               </ModalBody>
               <ModalFooter className="p-4 border-t"><Button className="w-full bg-emerald-500 text-white font-black italic" onPress={addDialogOpen ? handleAddCustomer : handleEditCustomer}>GUARDAR REGISTRO</Button></ModalFooter>
             </>
@@ -329,7 +366,7 @@ export default function CustomersPage() {
             <>
               <ModalHeader className="text-rose-500 font-black uppercase text-sm p-4 border-b border-gray-100 dark:border-white/5 italic">Confirmar Eliminación</ModalHeader>
               <ModalBody className="p-6 text-center text-xs font-bold text-gray-400 uppercase tracking-widest">¿Desea purgar este cliente del sistema maestro?</ModalBody>
-              <ModalFooter className="p-4 flex gap-2"><Button variant="flat" size="sm" className="flex-1 font-black uppercase text-[10px]" onPress={() => setDeleteDialogOpen(false)}>Cancelar</Button><Button color="danger" size="sm" className="flex-1 font-black uppercase text-[10px]" onPress={handleDeleteCustomer}>SÍ, ELIMINAR</Button></ModalFooter>
+              <ModalFooter className="p-4 flex gap-2"><Button variant="flat" size="sm" className="flex-1 font-black uppercase text-[10px] bg-transparent border border-gray-200 dark:border-white/10" onPress={() => setDeleteDialogOpen(false)}>CANCELAR</Button><Button color="danger" size="sm" className="flex-1 font-black uppercase text-[10px]" onPress={handleDeleteCustomer}>SÍ, ELIMINAR</Button></ModalFooter>
             </>
           )}
         </ModalContent>

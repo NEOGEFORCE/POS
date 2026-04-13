@@ -19,6 +19,7 @@ import {
   ModalBody,
   ModalFooter
 } from "@heroui/react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export default function LoginPage() {
   const { login, user } = useAuth();
@@ -97,6 +98,11 @@ export default function LoginPage() {
   return (
     // Contenedor principal Responsive (Mobile-First) con transición de colores
     <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-[#09090b] p-4 relative overflow-hidden transition-colors duration-500">
+      
+      {/* Selector de Tema en la esquina superior derecha */}
+      <div className="absolute top-4 right-4 z-50">
+        <ThemeToggle />
+      </div>
 
       {/* Background Glow (Brillo dinámico detrás de la tarjeta) */}
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] sm:w-[500px] h-[300px] sm:h-[500px] bg-emerald-500/10 dark:bg-emerald-500/15 blur-[100px] sm:blur-[120px] rounded-full pointer-events-none" />
@@ -120,25 +126,29 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit}>
           <CardBody className="space-y-5 px-4 sm:px-6 py-6 sm:py-8 overflow-hidden">
-            {/* HeroUI Input para Usuario */}
-            <Input
-              id="username"
-              type="text"
-              label="Usuario"
-              labelPlacement="outside"
-              placeholder="Ingresa tu usuario"
-              isRequired
-              value={username}
-              onValueChange={setUsername}
-              isDisabled={isLoading}
-              variant="faded"
-              radius="lg"
-              classNames={{
-                label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider",
-                input: "font-bold text-gray-900 dark:text-white",
-                inputWrapper: "h-14 bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 hover:border-emerald-500/50 focus-within:!border-emerald-500 transition-colors",
-              }}
-            />
+            <div className="space-y-1">
+              <div className="px-1 mb-2">
+                <label className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider">
+                  Usuario
+                </label>
+              </div>
+              <Input
+                id="username"
+                name="pos-user"
+                autoComplete="off"
+                type="text"
+                isRequired
+                value={username}
+                onValueChange={setUsername}
+                isDisabled={isLoading}
+                variant="flat"
+                radius="lg"
+                classNames={{
+                  input: "font-bold text-gray-900 dark:text-white bg-transparent",
+                  inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
+                }}
+              />
+            </div>
 
             <div className="space-y-1">
               <div className="flex items-center justify-between px-1 mb-2">
@@ -157,13 +167,14 @@ export default function LoginPage() {
               {/* HeroUI Input para Contraseña con botón de visibilidad */}
               <Input
                 id="password"
+                name="pos-password"
+                autoComplete="new-password"
                 type={isVisible ? "text" : "password"}
-                placeholder="••••••••"
                 isRequired
                 value={password}
                 onValueChange={setPassword}
                 isDisabled={isLoading}
-                variant="faded"
+                variant="flat"
                 radius="lg"
                 endContent={
                   <button className="focus:outline-none" type="button" onClick={toggleVisibility}>
@@ -175,8 +186,8 @@ export default function LoginPage() {
                   </button>
                 }
                 classNames={{
-                  input: "font-bold text-gray-900 dark:text-white",
-                  inputWrapper: "h-14 bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 hover:border-emerald-500/50 focus-within:!border-emerald-500 transition-colors",
+                  input: "font-bold text-gray-900 dark:text-white bg-transparent",
+                  inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
                 }}
               />
             </div>
@@ -227,17 +238,16 @@ export default function LoginPage() {
                   type="email"
                   label="Correo Electrónico"
                   labelPlacement="outside"
-                  placeholder="correo@ejemplo.com"
                   isRequired
                   value={forgotEmail}
                   onValueChange={setForgotEmail}
                   isDisabled={isForgotLoading}
-                  variant="faded"
+                  variant="flat"
                   startContent={<Mail className="text-gray-400 dark:text-zinc-500 w-4 h-4 mr-2" />}
                   classNames={{
-                    label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider",
-                    input: "font-bold text-gray-900 dark:text-white",
-                    inputWrapper: "h-14 bg-gray-50 dark:bg-white/5 border-gray-200 dark:border-white/5 hover:border-emerald-500/50 focus-within:!border-emerald-500 transition-colors",
+                    label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
+                    input: "font-bold text-gray-900 dark:text-white bg-transparent",
+                    inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-colors shadow-none",
                   }}
                 />
               </ModalBody>

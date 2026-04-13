@@ -44,7 +44,7 @@ func main() {
 	authService := services.NewAuthService(adminRepo)
 	categoryService := services.NewCategoryService(categoryRepo)
 	supplierService := services.NewSupplierService(supplierRepo)
-	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo)
+	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo)
 	inventoryService := services.NewInventoryService(productRepo)
 	clientService := services.NewClientService(clientRepo, creditRepo)
 	expenseService := services.NewExpenseService(expenseRepo)
@@ -89,6 +89,10 @@ func main() {
 
 		c.Next()
 	})
+
+	// Servir archivos estáticos (Logos para el Dashboard y Pagos)
+	// Se asume que el servidor corre desde la raíz de backPOS-go
+	r.Static("/logos", "../FrontPOS-main/public/logos")
 
 	// Add a simple request logger for visibility in a professional way
 	r.Use(func(c *gin.Context) {
@@ -167,9 +171,9 @@ func main() {
 
 			// Dashboard
 			protected.GET("/dashboard/overview", middlewares.RoleMiddleware("admin"), dashboardHandler.GetOverview)
-			protected.GET("/dashboard/cashier-closure", middlewares.RoleMiddleware("admin"), dashboardHandler.GetCashierClosure)
-			protected.POST("/dashboard/cashier-closure", middlewares.RoleMiddleware("admin"), dashboardHandler.SaveClosure)
-			protected.GET("/dashboard/cashier-history", middlewares.RoleMiddleware("admin"), dashboardHandler.GetClosuresHistory)
+			protected.GET("/dashboard/cashier-closure", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetCashierClosure)
+			protected.POST("/dashboard/cashier-closure", middlewares.RoleMiddleware("empleado"), dashboardHandler.SaveClosure)
+			protected.GET("/dashboard/cashier-history", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetClosuresHistory)
 
 			// Admin
 			adminGroup := protected.Group("/admin")
