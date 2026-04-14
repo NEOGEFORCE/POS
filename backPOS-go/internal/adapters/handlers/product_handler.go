@@ -123,9 +123,14 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 
 func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 	var body struct {
-		Barcode          string  `json:"barcode" binding:"required"`
-		AddedQuantity    float64 `json:"addedQuantity" binding:"required"`
-		NewPurchasePrice float64 `json:"newPurchasePrice"`
+		Barcode          string   `json:"barcode" binding:"required"`
+		AddedQuantity    float64  `json:"addedQuantity" binding:"required"`
+		NewPurchasePrice float64  `json:"newPurchasePrice"`
+		NewSalePrice     float64  `json:"newSalePrice"`
+		SupplierID       *uint    `json:"supplierId"`
+		Iva              float64  `json:"iva"`
+		Icui             float64  `json:"icui"`
+		Ibua             float64  `json:"ibua"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -133,7 +138,7 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.ReceiveStock(body.Barcode, body.AddedQuantity, body.NewPurchasePrice, 0, nil); err != nil {
+	if err := h.service.ReceiveStock(body.Barcode, body.AddedQuantity, body.NewPurchasePrice, body.NewSalePrice, body.SupplierID, body.Iva, body.Icui, body.Ibua); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

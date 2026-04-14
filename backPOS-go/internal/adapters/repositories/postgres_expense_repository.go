@@ -49,3 +49,24 @@ func (r *PostgresExpenseRepository) Count() (int64, error) {
 func (r *PostgresExpenseRepository) Update(id uint, expense *models.Expense) error {
 	return r.db.Model(&models.Expense{}).Where("id = ?", id).Updates(expense).Error
 }
+func (r *PostgresExpenseRepository) GetMonthlyTotals() (map[string]float64, error) {
+	results := make(map[string]float64)
+	rows, err := r.db.Table("expenses").
+		Select("TO_CHAR(date, 'YYYY-MM') as month, SUM(amount) as total").
+		Group("month").
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var month string
+		var total float64
+		if err := rows.Scan(&month, &total); err != nil {
+			return nil, err
+		}
+		results[month] = total
+	}
+	return results, nil
+}

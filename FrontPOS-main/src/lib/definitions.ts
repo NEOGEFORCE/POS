@@ -5,10 +5,11 @@ export type User = {
   dni: string;
   name: string;
   email: string;
-  role: 'administrador' | 'empleado';
+  role: 'administrador' | 'empleado' | string;
   status: 'Activo' | 'Inactivo';
   lastLogin: string;
-  avatar?: string; // made optional
+  avatar?: string;
+  password?: string;
 };
 
 export type Customer = {
@@ -41,16 +42,21 @@ export type Product = {
   salePrice: number;
   categoryId: string;
   supplierId?: number;
+  imageUrl?: string;
+  minStock?: number;
 };
 
+
+export type ExpenseCategory = 'Proveedores' | 'Servicios Públicos' | 'Daños y Arreglos' | 'Otros';
 
 export type Expense = {
   id: string;
   description: string;
-  category?: string;
+  category: ExpenseCategory;
   amount: number;
   date: string;
   paymentSource?: string;
+  supplierId?: string | number;
 };
 
 export type Sale = {
@@ -72,6 +78,7 @@ export type SaleDetail = {
   id: number;
   barcode: string;
   quantity: number;
+  returnedQty?: number;
   unitPrice: number;
   subtotal: number;
   product?: Product;
@@ -83,6 +90,7 @@ export type Supplier = {
   phone?: string;
   address?: string;
   status?: 'Activo' | 'Inactivo';
+  imageUrl?: string;
 };
 
 export interface CashierClosure {

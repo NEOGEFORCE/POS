@@ -6,6 +6,8 @@ import * as PopoverPrimitive from "@radix-ui/react-popover"
 import { cn } from "@/lib/utils"
 
 const Popover = PopoverPrimitive.Root
+// Para evitar bloqueos de aria-hidden en NextUI/HeroUI, a veces es mejor modal={false}
+// Lo dejamos como est pero permitimos que el consumidor lo pase, o lo forzamos a false si es crtico.
 
 const PopoverTrigger = PopoverPrimitive.Trigger
 

@@ -28,6 +28,21 @@ const nextConfig: NextConfig = {
       },
     ]
   },
+  experimental: {
+    optimizePackageImports: [
+      '@heroui/react', 
+      'lucide-react', 
+      'framer-motion', 
+      'recharts', 
+      'date-fns'
+    ],
+  },
+  onDemandEntries: {
+    maxInactiveAge: 15 * 60 * 1000,
+    pagesBufferLength: 20,
+  },
+  transpilePackages: ['@heroui/react', 'lucide-react', '@ericblade/quagga2'],
+  allowedDevOrigins: ['192.168.1.21', 'localhost:9002'],
 };
 
 export default nextConfig;

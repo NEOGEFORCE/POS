@@ -9,4 +9,5 @@ type ExpenseRepository interface {
 	Delete(id uint) error
 	Count() (int64, error)
 	Update(id uint, expense *models.Expense) error
+	GetMonthlyTotals() (map[string]float64, error)
 }

@@ -12,9 +12,13 @@ type Expense struct {
 	Amount        float64        `gorm:"type:decimal(10,2);not null;column:amount" json:"amount"`
 	Date          time.Time      `gorm:"default:now();not null;column:date" json:"date"`
 	PaymentSource string         `gorm:"column:paymentSource;default:'EFECTIVO'" json:"paymentSource"`
+	Category      string         `gorm:"type:varchar(100);column:category;default:'Otros'" json:"category"`
+	SupplierID    *uint          `gorm:"column:supplier_id" json:"supplierId"`
+	Supplier      *Supplier      `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
 	CreatedByDNI  string         `gorm:"not null;index;column:createdByDni" json:"createdByDni"`
 	Creator       Employee       `gorm:"foreignKey:CreatedByDNI;references:DNI" json:"creator,omitempty"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	NewSupplierName string       `gorm:"-" json:"newSupplierName,omitempty"` // For quick creation
 }
 
 func (Expense) TableName() string {

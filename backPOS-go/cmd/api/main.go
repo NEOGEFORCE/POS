@@ -36,18 +36,19 @@ func main() {
 	closureRepo := repositories.NewClosureRepository(repositories.DB)
 	shiftRepo := repositories.NewActiveShiftRepository(repositories.DB)
 	creditRepo := repositories.NewPostgresCreditPaymentRepository(repositories.DB)
+	movementRepo := repositories.NewPostgresStockMovementRepository(repositories.DB)
 
 	// Initialize Services
 	printService := services.NewPrintService()
-	productService := services.NewProductService(productRepo)
-	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, printService)
+	productService := services.NewProductService(productRepo, movementRepo)
+	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService)
 	authService := services.NewAuthService(adminRepo)
 	categoryService := services.NewCategoryService(categoryRepo)
 	supplierService := services.NewSupplierService(supplierRepo)
-	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo)
+	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo)
 	inventoryService := services.NewInventoryService(productRepo)
 	clientService := services.NewClientService(clientRepo, creditRepo)
-	expenseService := services.NewExpenseService(expenseRepo)
+	expenseService := services.NewExpenseService(expenseRepo, supplierRepo)
 	adminService := services.NewAdminService(adminRepo)
 	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo)
 
@@ -174,6 +175,12 @@ func main() {
 			protected.GET("/dashboard/cashier-closure", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetCashierClosure)
 			protected.POST("/dashboard/cashier-closure", middlewares.RoleMiddleware("empleado"), dashboardHandler.SaveClosure)
 			protected.GET("/dashboard/cashier-history", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetClosuresHistory)
+			protected.GET("/dashboard/reports/ranking", middlewares.RoleMiddleware("admin"), dashboardHandler.GetRankingReport)
+			protected.GET("/dashboard/reports/categories", middlewares.RoleMiddleware("admin"), dashboardHandler.GetCategoryReport)
+			protected.GET("/dashboard/reports/clients-vip", middlewares.RoleMiddleware("admin"), dashboardHandler.GetVIPClientsReport)
+			protected.GET("/dashboard/reports/voids", middlewares.RoleMiddleware("admin"), dashboardHandler.GetVoidsReport)
+			protected.GET("/dashboard/reports/pnl", middlewares.RoleMiddleware("admin"), dashboardHandler.GetPnLReport)
+			protected.GET("/dashboard/reports/movements", middlewares.RoleMiddleware("admin"), dashboardHandler.GetInventoryMovements)
 
 			// Admin
 			adminGroup := protected.Group("/admin")

@@ -29,4 +29,6 @@ type ProductRepository interface {
 	BatchUpdateQuantities(updates map[string]float64) error
 	Count() (int64, error)
 	GetInventoryStats(from, to string) ([]InventoryStat, error)
+	UpdateSupplierPrice(productBarcode string, supplierID uint, price float64) error
+	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
 }

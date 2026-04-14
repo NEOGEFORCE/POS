@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Button, Input, Badge, Spinner, Avatar } from "@heroui/react";
+import { Button, Input, Badge, Spinner, Avatar, Select, SelectItem } from "@heroui/react";
 import {
     ArrowLeft, Search, Plus, Minus, Camera, Truck,
     Trash2, AlertCircle, Package, ShieldCheck, Gift, ArrowDownLeft, X, Barcode, ChevronRight, Loader2, Calculator
@@ -19,16 +19,23 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import Link from 'next/link';
-import { ScannerOverlay } from '@/components/ScannerOverlay';
+import dynamic from 'next/dynamic';
+import Cookies from 'js-cookie';
 
-interface ReceiveItem {
+const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
+const ReceptionRow = dynamic(() => import('./components/ReceptionRow'), { ssr: false });
+
+export interface ReceiveItem {
     barcode: string;
     productName: string;
     addedQuantity: number;
-    newPurchasePrice: number; // Precio Unitario
+    newPurchasePrice: number; // Precio Unitario BASE
     newSalePrice: number;
     marginPercentage: number;
     entryType: 'purchase' | 'gift' | 'return';
+    iva: number;
+    icui: number;
+    ibua: number;
 }
 
 export default function ReceiveInventoryPage() {
@@ -49,7 +56,7 @@ export default function ReceiveInventoryPage() {
     const searchRef = useRef<HTMLInputElement>(null);
 
     const loadData = useCallback(async () => {
-        const token = localStorage.getItem('org-pos-token');
+        const token = Cookies.get('org-pos-token');
         if (!token) { router.push('/login'); return; }
         try {
             const [pRes, sRes] = await Promise.all([
@@ -139,15 +146,26 @@ export default function ReceiveInventoryPage() {
                 newPurchasePrice: Number(product.purchasePrice),
                 newSalePrice: applyRounding(Number(product.salePrice)),
                 marginPercentage: product.purchasePrice > 0 ? ((product.salePrice / product.purchasePrice) - 1) * 100 : 30,
-                entryType: 'purchase'
+                entryType: 'purchase',
+                iva: Number(product.iva || 0),
+                icui: Number(product.icui || 0),
+                ibua: Number(product.ibua || 0)
             }, ...prev];
         });
         setSearchQuery('');
     }, []);
 
+    const updateItem = useCallback((barcode: string, updates: Partial<ReceiveItem>) => {
+        setReceiveList(prev => prev.map(item => item.barcode === barcode ? { ...item, ...updates } : item));
+    }, []);
+
+    const deleteItem = useCallback((barcode: string) => {
+        setReceiveList(prev => prev.filter(item => item.barcode !== barcode));
+    }, []);
+
     const totalOrderValue = useMemo(() => {
         return receiveList.reduce((sum, item) => {
-            const cost = item.newPurchasePrice * item.addedQuantity;
+            const cost = (Number(item.newPurchasePrice) + Number(item.iva) + Number(item.icui) + Number(item.ibua)) * item.addedQuantity;
             if (item.entryType === 'purchase') return sum + cost;
             if (item.entryType === 'return') return sum - cost;
             return sum;
@@ -157,14 +175,17 @@ export default function ReceiveInventoryPage() {
     const handleConfirmReceive = async () => {
         if (receiveList.length === 0) return;
         setSubmitting(true);
-        const token = localStorage.getItem('org-pos-token');
+        const token = Cookies.get('org-pos-token');
         try {
             const entries = receiveList.map(item => ({
                 barcode: item.barcode,
                 addedQuantity: item.entryType === 'return' ? -Number(item.addedQuantity) : Number(item.addedQuantity),
                 newPurchasePrice: (item.entryType === 'gift') ? 0 : Number(item.newPurchasePrice),
                 newSalePrice: Number(item.newSalePrice),
-                supplierId: selectedGlobalSupplier !== 'none' ? Number(selectedGlobalSupplier) : undefined
+                supplierId: selectedGlobalSupplier !== 'none' ? Number(selectedGlobalSupplier) : undefined,
+                iva: Number(item.iva),
+                icui: Number(item.icui),
+                ibua: Number(item.ibua)
             }));
             const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/bulk-receive`, {
                 method: 'POST',
@@ -218,126 +239,20 @@ export default function ReceiveInventoryPage() {
             </header>
 
             {/* Listado de Productos - DISEÑO AL RAS CON CALCULADORA */}
-            <div className="flex-1 overflow-y-auto p-2 bg-gray-100 dark:bg-zinc-950 custom-scrollbar divide-y divide-white/5">
+            <div className="flex-1 overflow-y-auto p-2 lg:p-4 bg-gray-100 dark:bg-zinc-950 custom-scrollbar divide-y divide-white/5 space-y-1">
                 {receiveList.length === 0 ? (
                     <div className="h-full flex flex-col items-center justify-center opacity-20 text-zinc-500">
                         <Package size={80} strokeWidth={0.5} />
                         <p className="text-[10px] font-black uppercase tracking-[0.5em] mt-4 italic">Lista Vacía</p>
                     </div>
                 ) : (
-                    receiveList.map((item, idx) => (
-                        <div key={item.barcode} className="flex flex-col lg:flex-row lg:items-center gap-2 p-2 bg-white dark:bg-black transition-colors min-h-[50px] border-b border-gray-100 dark:border-white/5">
-                            {/* Info Base */}
-                            <div className="flex-1 min-w-0 flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0">
-                                    <div className="h-7 w-7 rounded-lg bg-gray-100 dark:bg-zinc-900 flex items-center justify-center text-emerald-500 shrink-0"><Barcode size={14} /></div>
-                                    <div className="min-w-0">
-                                        <h3 className="text-[11px] font-black text-gray-900 dark:text-white uppercase italic leading-tight truncate">{item.productName}</h3>
-                                        <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 font-mono mt-0.5 tracking-tighter">#{item.barcode}</p>
-                                    </div>
-                                </div>
-                                
-                                <Button 
-                                    isIconOnly 
-                                    variant="flat" 
-                                    size="sm" 
-                                    onClick={() => setReceiveList(p => p.filter((_, i) => i !== idx))} 
-                                    className="h-8 w-8 min-w-8 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all border border-rose-500/10 shadow-sm lg:hidden"
-                                >
-                                    <Trash2 size={14} />
-                                </Button>
-                            </div>
-
-                            {/* Selector de Protocolo */}
-                            <div className="flex bg-gray-100 dark:bg-zinc-900 rounded-lg gap-0.5 p-0.5 shrink-0">
-                                {[
-                                    { id: 'purchase', icon: Truck, color: 'emerald', label: 'PAGO' },
-                                    { id: 'gift', icon: Gift, color: 'pink', label: 'GRATIS' },
-                                    { id: 'return', icon: ArrowDownLeft, color: 'rose', label: 'DEVOL.' }
-                                ].map(btn => (
-                                    <button
-                                        key={btn.id}
-                                        onClick={() => setReceiveList(p => p.map((it, i) => i === idx ? { ...it, entryType: btn.id as any } : it))}
-                                        className={`flex items-center gap-1.5 px-2 py-1 rounded-md transition-all ${item.entryType === btn.id ? `bg-${btn.color}-500 text-white shadow-sm` : 'text-gray-400 dark:text-zinc-500'}`}
-                                    >
-                                        <btn.icon size={10} />
-                                        <span className="text-[7px] font-black uppercase">{btn.label}</span>
-                                    </button>
-                                ))}
-                            </div>
-
-                            {/* CALCULADORA DE COSTOS E INPUTS */}
-                            <div className="flex items-center justify-between lg:justify-end gap-5 shrink-0">
-                                <div className="space-y-0.5">
-                                    <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest ml-1">CANTIDAD</span>
-                                    <div className="flex items-center bg-gray-100 dark:bg-zinc-900 rounded-lg h-7 px-1 gap-1 border border-gray-200 dark:border-white/5">
-                                        <button onClick={() => {
-                                            const newQty = Math.max(1, item.addedQuantity - 1);
-                                            setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: newQty } : it))
-                                        }} className="text-rose-500"><Minus size={12} /></button>
-                                        <input type="number" className="bg-transparent w-6 text-center text-[10px] font-black text-gray-900 dark:text-white border-none outline-none focus:ring-0" value={item.addedQuantity}
-                                            onChange={(e) => {
-                                                const q = Number(e.target.value);
-                                                setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: q } : it))
-                                            }} />
-                                        <button onClick={() => setReceiveList(p => p.map((it, i) => i === idx ? { ...it, addedQuantity: it.addedQuantity + 1 } : it))} className="text-emerald-500"><Plus size={12} /></button>
-                                    </div>
-                                </div>
-
-                                {/* TOTAL RENGLÓN (Pones cuánto valieron las 12 botellas) */}
-                                <div className="space-y-0.5">
-                                    <span className="text-[7px] font-black text-indigo-500 uppercase tracking-widest ml-1 flex items-center gap-1"><Calculator size={8} /> TOTAL PRODUCTO</span>
-                                    <Input size="sm" variant="flat" className="w-28"
-                                        classNames={{ input: "text-sm font-black italic tabular-nums text-indigo-600 dark:text-indigo-400", inputWrapper: "h-9 bg-transparent border-b-2 border-indigo-500/30 rounded-none shadow-none focus-within:border-indigo-500" }}
-                                        startContent={<span className="text-[9px] text-indigo-500 font-black">$</span>}
-                                        value={String(item.newPurchasePrice * item.addedQuantity)}
-                                        isDisabled={item.entryType === 'gift'}
-                                        onValueChange={(val) => {
-                                            const totalRow = parseFloat(val) || 0;
-                                            const costUnd = totalRow / Math.max(1, item.addedQuantity);
-                                            setReceiveList(p => p.map((it, i) => i === idx ? {
-                                                ...it,
-                                                newPurchasePrice: costUnd,
-                                                newSalePrice: applyRounding(costUnd * (1 + it.marginPercentage / 100))
-                                            } : it));
-                                        }}
-                                    />
-                                </div>
-
-                                <div className="space-y-0.5">
-                                    <span className="text-[7px] font-black text-gray-400 uppercase tracking-widest ml-1">COSTO UND</span>
-                                    <Input size="sm" variant="flat" className="w-24" classNames={{ input: "text-sm font-black italic tabular-nums text-gray-900 dark:text-white", inputWrapper: "h-9 bg-transparent border-b-2 border-gray-200 dark:border-white/10 rounded-none shadow-none focus-within:border-emerald-500/50" }} startContent={<span className="text-[9px] text-rose-500 font-black">$</span>}
-                                        value={String(item.newPurchasePrice)}
-                                        isDisabled={item.entryType === 'gift'}
-                                        onValueChange={(val) => {
-                                            const cost = parseFloat(val) || 0;
-                                            setReceiveList(p => p.map((it, i) => i === idx ? { ...it, newPurchasePrice: cost, newSalePrice: applyRounding(cost * (1 + it.marginPercentage / 100)) } : it));
-                                        }}
-                                    />
-                                </div>
-
-                                <div className="space-y-0.5">
-                                    <span className="text-[7px] font-black text-emerald-500 uppercase tracking-widest ml-1 italic">PVP SUGERIDO</span>
-                                    <Input size="sm" variant="flat" className="w-24" classNames={{ input: "text-sm font-black italic tabular-nums text-emerald-600 dark:text-emerald-500", inputWrapper: "h-9 bg-transparent border-b-2 border-emerald-500/20 rounded-none shadow-none" }} startContent={<span className="text-[9px] text-emerald-500 font-black">$</span>}
-                                        value={String(item.newSalePrice)} // Ya viene redondeado por applyRounding en los setters
-                                        onValueChange={(val) => {
-                                            const sale = applyRounding(parseFloat(val) || 0);
-                                            setReceiveList(p => p.map((it, i) => i === idx ? { ...it, newSalePrice: sale, marginPercentage: it.newPurchasePrice > 0 ? ((sale / it.newPurchasePrice) - 1) * 100 : it.marginPercentage } : it));
-                                        }}
-                                    />
-                                </div>
-
-                                <Button 
-                                    isIconOnly 
-                                    variant="flat" 
-                                    size="sm" 
-                                    onClick={() => setReceiveList(p => p.filter((_, i) => i !== idx))} 
-                                    className="h-8 w-8 min-w-8 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all border border-rose-500/10 shadow-sm hidden lg:flex"
-                                >
-                                    <Trash2 size={14} />
-                                </Button>
-                            </div>
-                        </div>
+                    receiveList.map((item) => (
+                        <ReceptionRow 
+                            key={item.barcode}
+                            item={item}
+                            onUpdate={updateItem}
+                            onDelete={deleteItem}
+                        />
                     ))
                 )}
             </div>
@@ -363,43 +278,75 @@ export default function ReceiveInventoryPage() {
                         <Search className="absolute left-6 top-1/2 -translate-y-1/2 h-6 w-6 text-gray-400 group-focus-within:text-emerald-500 transition-colors" />
                         <Input
                             ref={searchRef}
-                            placeholder="ESCRIBA NOMBRE O CÓDIGO PARA AGREGAR..."
+                            aria-label="Buscar producto por nombre o código"
+                            placeholder="PRODUCTO O CÓDIGO..."
                             classNames={{
-                                inputWrapper: "h-16 pl-16 pr-8 rounded-[1.2rem] bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:border-emerald-500",
-                                input: "font-black text-xl uppercase italic dark:text-white placeholder:text-zinc-300 dark:placeholder:text-zinc-800"
+                                inputWrapper: "h-14 lg:h-16 pl-10 lg:pl-16 pr-8 rounded-[1rem] lg:rounded-[1.2rem] bg-transparent border border-gray-200 dark:border-white/10 shadow-none focus-within:border-emerald-500 transition-all",
+                                input: "font-black text-sm lg:text-xl uppercase italic dark:text-white placeholder:text-zinc-300 dark:placeholder:text-zinc-800"
                             }}
                             value={searchQuery}
                             onValueChange={setSearchQuery}
                         />
                     </div>
 
-                    <div className="w-full lg:w-[450px] flex gap-4">
-                        <div className="flex-1 bg-gray-100 dark:bg-black rounded-[1.2rem] p-3 border border-gray-200 dark:border-white/5 flex flex-col justify-center shadow-inner">
-                            <span className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1 italic text-center">Inversión Factura</span>
+                    <div className="w-full lg:w-[450px] flex gap-2 sm:gap-4">
+                        <div className="flex-1 bg-gray-100 dark:bg-black rounded-[1rem] lg:rounded-[1.2rem] p-2 lg:p-3 border border-gray-200 dark:border-white/5 flex flex-col justify-center shadow-inner">
+                            <span className="text-[8px] lg:text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1 italic text-center">Inversión Factura</span>
                             <div className="flex items-baseline justify-center gap-1">
-                                <span className="text-xs font-black text-emerald-500 italic">$</span>
-                                <span className="text-3xl font-black italic text-gray-900 dark:text-white tabular-nums tracking-tighter">{formatCurrency(totalOrderValue)}</span>
+                                <span className="text-[10px] lg:text-xs font-black text-emerald-500 italic">$</span>
+                                <span className="text-xl lg:text-3xl font-black italic text-gray-900 dark:text-white tabular-nums tracking-tighter">{formatCurrency(totalOrderValue)}</span>
                             </div>
                         </div>
                         <Button
                             onPress={handleConfirmReceive}
                             isDisabled={receiveList.length === 0 || submitting}
-                            className="h-16 flex-1 rounded-[1.2rem] bg-gray-900 dark:bg-white text-white dark:text-black font-black uppercase text-xs tracking-widest shadow-2xl hover:scale-105 active:scale-95 italic transition-all"
+                            className="h-14 lg:h-16 flex-1 rounded-[1rem] lg:rounded-[1.2rem] bg-gray-900 dark:bg-white text-white dark:text-black font-black uppercase text-[10px] lg:text-xs tracking-widest shadow-2xl hover:scale-105 active:scale-95 italic transition-all shrink-0"
                         >
-                            SINCRONIZAR <ShieldCheck size={20} className="ml-2" />
+                            <span className="hidden sm:inline">SINCRONIZAR</span><span className="sm:hidden">ENVIAR</span> <ShieldCheck size={18} className="ml-2" />
                         </Button>
                     </div>
                 </div>
 
                 <div className="max-w-7xl mx-auto w-full">
-                    <select
-                        className="w-full bg-transparent text-gray-400 dark:text-zinc-500 h-10 text-[9px] font-black rounded-lg px-5 border border-gray-200 dark:border-white/10 outline-none uppercase cursor-pointer italic appearance-none"
-                        value={selectedGlobalSupplier}
-                        onChange={(e) => setSelectedGlobalSupplier(e.target.value)}
+                    <Select
+                        size="sm"
+                        aria-label="Seleccionar Proveedor"
+                        placeholder="➜ SELECCIONAR PROVEEDOR"
+                        selectedKeys={selectedGlobalSupplier !== 'none' ? new Set([selectedGlobalSupplier]) : new Set()}
+                        onSelectionChange={(keys) => setSelectedGlobalSupplier(Array.from(keys)[0] as string)}
+                        variant="bordered"
+                        classNames={{
+                            trigger: "h-11 bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/10 rounded-xl shadow-sm hover:border-emerald-500/50 transition-colors",
+                            value: "text-[10px] font-black uppercase italic text-gray-400 dark:text-zinc-500",
+                            popoverContent: "bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-2xl p-1"
+                        }}
+                        renderValue={(items: any[]) => {
+                            return items.map((item: any) => (
+                                <div key={item.key} className="flex items-center gap-2">
+                                    <div className="h-4 w-4 rounded bg-emerald-500/10 flex items-center justify-center text-emerald-500"><Truck size={10} /></div>
+                                    <span className="text-[10px] font-black italic">{item.textValue}</span>
+                                </div>
+                            ));
+                        }}
                     >
-                        <option value="none">➜ SELECCIONAR PROVEEDOR</option>
-                        {suppliers.map(s => <option key={s.id} value={s.id}>{s.name.toUpperCase()}</option>)}
-                    </select>
+                        {suppliers.map((s) => (
+                            <SelectItem 
+                                key={s.id} 
+                                textValue={s.name.toUpperCase()}
+                                className="group p-2 rounded-xl hover:bg-emerald-500/10 transition-colors"
+                            >
+                                <div className="flex items-center gap-3">
+                                    <div className="h-7 w-7 rounded-lg bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-gray-400 group-hover:text-emerald-500 transition-colors">
+                                        <Truck size={14} />
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <span className="text-[10px] font-black dark:text-white uppercase italic">{s.name}</span>
+                                        <span className="text-[8px] text-gray-400 font-bold tracking-widest">ID: #{s.id}</span>
+                                    </div>
+                                </div>
+                            </SelectItem>
+                        ))}
+                    </Select>
                 </div>
             </div>
 

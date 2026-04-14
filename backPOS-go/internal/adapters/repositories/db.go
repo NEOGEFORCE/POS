@@ -125,6 +125,8 @@ func ConnectDB() {
 		&models.CashierClosure{},
 		&models.ActiveShift{},
 		&models.CreditPayment{},
+		&models.ProductSupplier{},
+		&models.StockMovement{},
 	}
 
 	// Sesión especial para migraciones: sin transacciones y en modo SILENCIOSO para evitar ruido en el terminal

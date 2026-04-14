@@ -4,10 +4,10 @@ const {heroui} = require("@heroui/react");
 export default {
   darkMode: ['class'],
   content: [
-    './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
-    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
-    './src/app/**/*.{js,ts,jsx,tsx,mdx}',
-    "./node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}",
+    './src/pages/**/*.{ts,tsx,mdx}',
+    './src/components/**/*.{ts,tsx,mdx}',
+    './src/app/**/*.{ts,tsx,mdx}',
+    "./node_modules/@heroui/theme/dist/components/*.js",
   ],
   theme: {
     extend: {

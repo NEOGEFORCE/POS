@@ -1,9 +1,10 @@
 import useSWR, { SWRConfiguration } from 'swr';
+import Cookies from 'js-cookie';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 const fetcher = async (url: string) => {
-  const token = localStorage.getItem('org-pos-token');
+  const token = Cookies.get('org-pos-token');
   const res = await fetch(`${API_URL}${url}`, {
     headers: {
       'Authorization': `Bearer ${token}`,

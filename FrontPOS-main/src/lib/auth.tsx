@@ -1,8 +1,8 @@
-
 "use client";
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import Cookies from 'js-cookie';
 
 type User = {
   dni: string;
@@ -23,6 +23,9 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Claves sensibles identificadas para purga
+const SENSITIVE_KEYS = ['accessToken', 'last-sale', 'org-pos-token', 'org-pos-user'];
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,25 +33,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      const storedUser = localStorage.getItem('org-pos-user');
-      const token = localStorage.getItem('org-pos-token');
+      // 1. Limpieza de claves obsoletas/sensibles en localStorage
+      const legacyToken = localStorage.getItem('org-pos-token');
+      const legacyUser = localStorage.getItem('org-pos-user');
+
+      // Si existen en localStorage, moverlos a Cookies (solo la primera vez) y eliminar
+      if (legacyToken && !Cookies.get('org-pos-token')) {
+        Cookies.set('org-pos-token', legacyToken, { expires: 1, secure: true, sameSite: 'strict' });
+      }
+      if (legacyUser && !Cookies.get('org-pos-user')) {
+        Cookies.set('org-pos-user', legacyUser, { expires: 1, secure: true, sameSite: 'strict' });
+      }
+
+      // Purga definitiva de localStorage para estas claves
+      localStorage.removeItem('org-pos-token');
+      localStorage.removeItem('org-pos-user');
+      localStorage.removeItem('accessToken');
+      localStorage.removeItem('last-sale');
+
+      // 2. Recuperar sesión desde cookies
+      const storedUser = Cookies.get('org-pos-user');
+      const token = Cookies.get('org-pos-token');
+      
       if (storedUser && token) {
         setUser(JSON.parse(storedUser));
-      } else {
-        // If no user but there's a token, something is wrong, clear it.
-        if(token) localStorage.removeItem('org-pos-token');
       }
     } catch (error) {
-      console.error("Failed to parse user from localStorage", error);
-      localStorage.removeItem('org-pos-user');
-      localStorage.removeItem('org-pos-token');
+      console.error("Failed to recover session from cookies", error);
+      Cookies.remove('org-pos-token');
+      Cookies.remove('org-pos-user');
     } finally {
       setLoading(false);
     }
   }, []);
 
   const login = async (credentials: { username: string, password?: string }) => {
-    console.log("Intentando login con:", credentials);
     const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, {
         method: 'POST',
         headers: {
@@ -57,11 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(credentials),
     });
 
-    console.log("Respuesta del servidor (Status):", response.status);
-
     if (!response.ok) {
         const text = await response.text();
-        console.error("Cuerpo del error (Raw):", text);
         let errorMsg = 'Login failed';
         try {
             const errorData = JSON.parse(text);
@@ -71,13 +87,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = await response.json();
-    console.log("Login exitoso, datos recibidos:", data);
-    
     const { token, user: userData } = data;
     
     if (userData && token) {
-      localStorage.setItem('org-pos-user', JSON.stringify(userData));
-      localStorage.setItem('org-pos-token', token);
+      // Guardar en Cookies (Seguro y Volátil) en lugar de localStorage
+      Cookies.set('org-pos-user', JSON.stringify(userData), { expires: 1, secure: true, sameSite: 'strict' });
+      Cookies.set('org-pos-token', token, { expires: 1, secure: true, sameSite: 'strict' });
+      
       setUser(userData);
       
       const role = userData.role?.toLowerCase() || userData.Role?.toLowerCase() || "";
@@ -92,8 +108,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    localStorage.removeItem('org-pos-user');
-    localStorage.removeItem('org-pos-token');
+    Cookies.remove('org-pos-user');
+    Cookies.remove('org-pos-token');
     setUser(null);
     router.push('/login');
   };

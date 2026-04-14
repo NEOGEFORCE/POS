@@ -1,17 +1,20 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import {
-  Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Button, Input, Spinner
-} from "@heroui/react";
-import {
-  Truck, PlusCircle, Edit, Trash2, Search, AlertTriangle,
-  Building2, Zap, Sparkles, X, Phone, MapPin
+import dynamic from 'next/dynamic';
+import { Button, Input, Spinner } from "@heroui/react";
+import { 
+  Truck, Search, PlusCircle, Clock, Sparkles 
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Supplier } from '@/lib/definitions';
+import Cookies from 'js-cookie';
+
+// Dinámicos para optimización de carga
+const SupplierStats = dynamic(() => import('./components/SupplierStats'), { ssr: false });
+const SupplierTable = dynamic(() => import('./components/SupplierTable'), { ssr: false });
+const SupplierFormModal = dynamic(() => import('./components/SupplierFormModal'), { ssr: false });
+const DeleteSupplierModal = dynamic(() => import('./components/DeleteSupplierModal'), { ssr: false });
 
 async function fetchSuppliers(token: string): Promise<Supplier[]> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/all-suppliers`, {
@@ -23,28 +26,36 @@ async function fetchSuppliers(token: string): Promise<Supplier[]> {
 }
 
 export default function SuppliersPage() {
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(true);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [filter, setFilter] = useState('');
+
+  // Paginación
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  // Modales
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
+  // Estados de Datos
   const [newSupplier, setNewSupplier] = useState<Partial<Supplier>>({ name: '', phone: '', address: '' });
   const [editingSupplier, setEditingSupplier] = useState<Supplier | null>(null);
   const [deletingId, setDeletingId] = useState<string | number | null>(null);
 
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('');
-  const { toast } = useToast();
-
-  // PAGINACIÓN
-  const [pageSize, setPageSize] = useState(10);
-  const [currentPage, setCurrentPage] = useState(1);
-
-  const loadSuppliers = useCallback(() => {
-    const token = localStorage.getItem('org-pos-token');
+  const loadSuppliers = useCallback(async () => {
+    const token = Cookies.get('org-pos-token');
     if (!token) { setLoading(false); return; }
-    setLoading(true);
-    fetchSuppliers(token).then(setSuppliers).catch(() => toast({ variant: "destructive", title: "Error de conexión" })).finally(() => setLoading(false));
+    try {
+      const data = await fetchSuppliers(token);
+      setSuppliers(data);
+    } catch {
+      toast({ variant: "destructive", title: "ERROR", description: "FALLO AL SINCRONIZAR PROVEEDORES." });
+    } finally {
+      setLoading(false);
+    }
   }, [toast]);
 
   useEffect(() => { loadSuppliers(); }, [loadSuppliers]);
@@ -58,298 +69,156 @@ export default function SuppliersPage() {
     );
   }, [suppliers, filter]);
 
-  const paginatedSuppliers = useMemo(() => filteredSuppliers.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredSuppliers, currentPage, pageSize]);
+  const paginatedSuppliers = useMemo(() => 
+    filteredSuppliers.slice((currentPage - 1) * pageSize, currentPage * pageSize),
+    [filteredSuppliers, currentPage, pageSize]
+  );
+
   const totalPages = Math.ceil(filteredSuppliers.length / pageSize || 1);
 
-  const stats = useMemo(() => {
-    return { total: suppliers.length, withPhone: suppliers.filter(s => !!s.phone).length };
-  }, [suppliers]);
+  const stats = useMemo(() => ({
+    total: suppliers.length,
+    withPhone: suppliers.filter(s => !!s.phone).length
+  }), [suppliers]);
 
+  // Handlers
   const handleAddSupplier = async () => {
-    const token = localStorage.getItem('org-pos-token');
-    const finalName = newSupplier.name?.trim().toUpperCase();
-    if (!finalName) {
-      toast({ variant: 'destructive', title: 'Error', description: 'La razón social no puede estar vacía' });
-      return;
-    }
-
-    if (suppliers.some(s => s.name.toUpperCase().trim() === finalName)) {
-      toast({ variant: 'destructive', title: 'Registro Bloqueado', description: `La firma ${finalName} ya está en la base de datos.` });
-      return;
-    }
-
+    const name = newSupplier.name?.trim().toUpperCase();
+    if (!name) return toast({ variant: 'destructive', title: 'ERROR', description: 'NOMBRE REQUERIDO' });
+    
+    const token = Cookies.get('org-pos-token');
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/create-suppliers`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...newSupplier, name: finalName })
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ ...newSupplier, name })
       });
-      if (!res.ok) throw new Error('Error');
-      toast({ title: 'Éxito', description: 'Proveedor registrado.' });
+      if (!res.ok) throw new Error();
+      toast({ variant: 'success', title: 'ÉXITO', description: 'VÍNCULO CREADO CORRECTAMENTE' });
       setAddDialogOpen(false);
       setNewSupplier({ name: '', phone: '', address: '' });
       loadSuppliers();
-    } catch (error: any) { toast({ variant: 'destructive', title: 'Error al registrar' }); }
+    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO EN OPERACIÓN' }); }
   };
 
   const handleEditSupplier = async () => {
     if (!editingSupplier) return;
-    const token = localStorage.getItem('org-pos-token');
-    
-    const finalName = editingSupplier.name?.trim().toUpperCase();
-    if (!finalName) {
-      toast({ variant: 'destructive', title: 'Error', description: 'La razón social no puede estar vacía' });
-      return;
-    }
-
-    if (suppliers.some(s => s.id !== editingSupplier.id && s.name.toUpperCase().trim() === finalName)) {
-      toast({ variant: 'destructive', title: 'Edición Bloqueada', description: `Esa razón social ya pertenece a otro proveedor registrado.` });
-      return;
-    }
-
+    const name = editingSupplier.name?.trim().toUpperCase();
+    const token = Cookies.get('org-pos-token');
     try {
-      const { id, ...data } = editingSupplier;
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/update-suppliers/${id}`, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...data, name: finalName })
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/update-suppliers/${editingSupplier.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ ...editingSupplier, name })
       });
-      if (!res.ok) throw new Error('Error');
-      toast({ title: 'Éxito', description: 'Proveedor actualizado.' });
+      if (!res.ok) throw new Error();
+      toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ACTUALIZADO' });
       setEditDialogOpen(false);
       loadSuppliers();
-    } catch (error: any) { toast({ variant: 'destructive', title: 'Error al actualizar' }); }
+    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL GUARDAR' }); }
   };
 
   const handleDeleteSupplier = async () => {
     if (!deletingId) return;
-    const token = localStorage.getItem('org-pos-token');
+    const token = Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token');
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/delete-suppliers/${deletingId}`, {
-        method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error('Error');
-      toast({ title: 'PURGA COMPLETADA' });
+      if (!res.ok) throw new Error();
+      toast({ variant: 'success', title: 'ÉXITO', description: 'VÍNCULO ELIMINADO' });
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadSuppliers();
-    } catch (error: any) { toast({ variant: 'destructive', title: 'Error al purgar registro' }); }
+    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL ELIMINAR' }); }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 transition-colors duration-500"><Spinner color="success" size="lg" /></div>;
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white transition-colors duration-500 overflow-hidden select-none">
-
-      {/* Header Compacto V4.2 */}
-      <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
-        <div className="flex items-center gap-2">
-          <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
-            <Truck size={16} />
+    <div className="flex flex-col min-h-screen gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20">
+      
+      {/* Header Premium Zero Friction */}
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm relative overflow-hidden">
+        <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150"><Truck size={120} /></div>
+        
+        <div className="flex items-center gap-4 relative z-10">
+          <div className="bg-emerald-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-500/20 rotate-3">
+            <Truck size={24} />
           </div>
           <div className="flex flex-col">
-            <h1 className="text-sm font-black uppercase tracking-tighter leading-none">PROVEEDORES</h1>
-            <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">COBERTURA MAESTRA</p>
+            <h1 className="text-xl font-black dark:text-white uppercase leading-none italic tracking-tighter">
+              Directorio de <span className="text-emerald-500">Proveedores</span>
+            </h1>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[9px] font-black text-emerald-500 uppercase tracking-[0.3em]">Red de Abastecimiento</span>
+              <div className="h-1 w-1 bg-gray-300 rounded-full" />
+              <div className="flex items-center gap-1 text-[9px] font-bold text-gray-400 uppercase tracking-widest italic">
+                <Clock size={10} /> {new Date().toLocaleDateString()}
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Input
-            size="sm"
-            placeholder="BUSCAR..."
-            value={filter}
-            onValueChange={setFilter}
-            classNames={{
-              inputWrapper: "h-8 px-3 rounded-md bg-transparent border border-gray-200 dark:border-white/10 transition-colors w-40 md:w-64 shadow-none",
-              input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent"
-            }}
-            startContent={<Search size={14} className="text-gray-400" />}
-          />
-          <Button
-            size="sm"
-            onPress={() => setAddDialogOpen(true)}
-            className="h-8 bg-emerald-500 text-white font-black uppercase text-[10px] px-4 rounded-md shadow-sm italic transition-transform active:scale-95"
+        <div className="flex items-center gap-3 relative z-10">
+          <div className="relative group/search">
+            <Input 
+              size="sm" 
+              placeholder="RASTREAR FIRMA O SEDE..." 
+              value={filter} 
+              onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
+              startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
+              classNames={{ 
+                inputWrapper: "h-11 w-full md:w-80 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-focus-within/search:border-emerald-500/50 transition-all", 
+                input: "text-[11px] font-black bg-transparent tracking-widest italic uppercase" 
+              }} 
+            />
+          </div>
+          <Button 
+            size="sm" 
+            onPress={() => setAddDialogOpen(true)} 
+            className="h-11 px-6 bg-emerald-500 text-white font-black text-[11px] rounded-xl shadow-lg shadow-emerald-500/20 hover:scale-105 active:scale-95 transition-all italic tracking-widest uppercase"
           >
-            <PlusCircle size={14} className="mr-1" /> NUEVA FIRMA
+            <PlusCircle size={16} className="mr-1" /> NUEVA FIRMA
           </Button>
         </div>
       </header>
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-1 shrink-0">
-        {[
-          { label: "ABASTECEDORES ACTIVOS", val: stats.total, color: "emerald", icon: Zap },
-          { label: "LÍNEAS DE CONTACTO", val: stats.withPhone, color: "sky", icon: Phone },
-          { label: "ESTADO CONECTIVIDAD", val: "ESTABLE", color: "emerald", icon: Sparkles },
-          { label: "AUDITORIA", val: "ACT", color: "amber", icon: Building2 }
-        ].map((k, i) => (
-          <div key={i} className="bg-white dark:bg-zinc-900 p-2 border border-gray-200 dark:border-white/5 rounded-lg flex items-center justify-between shadow-sm transition-colors cursor-pointer hover:border-emerald-500/30">
-            <div className="flex flex-col min-w-0 pr-1">
-              <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">{k.label}</span>
-              <span className={`text-sm font-black tabular-nums ${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} italic leading-tight tracking-tighter truncate`}>{k.val}</span>
-            </div>
-            <k.icon size={14} className={`${k.color === 'emerald' ? 'text-emerald-500' : k.color === 'sky' ? 'text-sky-500' : 'text-amber-500'} opacity-20 shrink-0`} />
-          </div>
-        ))}
-      </div>
+      <SupplierStats total={stats.total} withPhone={stats.withPhone} />
 
-      {/* TABLA PRINCIPAL */}
-      <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg overflow-hidden flex flex-col min-h-0 min-w-0 w-full shadow-sm transition-colors">
-        <div className="flex-1 overflow-y-auto overflow-x-hidden w-full custom-scrollbar">
-          <Table isCompact removeWrapper aria-label="Directorio Proveedores" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10", td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10" }}>
-            <TableHeader>
-              <TableColumn className="pl-3 md:pl-6">RAZÓN SOCIAL</TableColumn>
-              <TableColumn align="center">CONTACTO</TableColumn>
-              <TableColumn align="start" className="hidden sm:table-cell">SEDE FÍSICA</TableColumn>
-              <TableColumn align="end" className="pr-3 md:pr-6">ACCIONES</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent={<div className="py-20 text-[11px] font-black text-zinc-600 uppercase text-center italic tracking-widest">Sin abastecedores registrados</div>}>
-              {paginatedSuppliers.map((supplier) => (
-                <TableRow key={supplier.id}>
-                  <TableCell className="pl-3 md:pl-6">
-                    <div className="flex items-center gap-3 md:gap-4">
-                      <div className="h-8 w-8 md:h-10 md:w-10 rounded-xl bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-white/5 flex items-center justify-center text-emerald-500 shrink-0">
-                        <Building2 size={16} className="md:w-[18px] md:h-[18px]" />
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-xs md:text-sm font-black text-gray-900 dark:text-white uppercase leading-tight italic truncate max-w-[120px] md:max-w-[400px]">{supplier.name}</span>
-                        <span className="text-[8px] md:text-[9px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest mt-0.5 md:mt-1">ID: #{supplier.id}</span>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-center px-1 md:px-3">
-                    <div className="inline-flex items-center gap-1.5 md:gap-2 px-2 py-1 md:px-3 md:py-1.5 rounded-lg bg-gray-100 dark:bg-zinc-800 border border-gray-200 dark:border-white/5">
-                      <Phone size={10} className="text-gray-400 md:w-3 md:h-3" />
-                      <span className="text-[10px] md:text-xs font-black text-gray-900 dark:text-white tabular-nums tracking-widest italic">{supplier.phone || 'S.T.'}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    <div className="flex items-center gap-2">
-                      <MapPin size={12} className="text-zinc-600 shrink-0" />
-                      <span className="text-[10px] font-black text-zinc-400 uppercase tracking-tighter italic truncate max-w-[150px] md:max-w-[250px]">{supplier.address || 'NO REGISTRADA'}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell className="pr-3 md:pr-6">
-                    <div className="flex justify-end gap-1.5 md:gap-2">
-                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 md:h-9 md:w-9 bg-gray-100 dark:bg-zinc-800 text-emerald-500 rounded-xl hover:bg-emerald-500 hover:text-black border border-gray-200 dark:border-white/5 shadow-sm" onPress={() => { setEditingSupplier(supplier); setEditDialogOpen(true); }}>
-                        <Edit size={14} />
-                      </Button>
-                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 md:h-9 md:w-9 bg-gray-100 dark:bg-zinc-800 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white border border-gray-200 dark:border-white/5 shadow-sm" onPress={() => { setDeletingId(supplier.id); setDeleteDialogOpen(true); }}>
-                        <Trash2 size={14} />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+      {/* Main Table Content */}
+      <SupplierTable 
+        suppliers={paginatedSuppliers}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        pageSize={pageSize}
+        totalFiltered={filteredSuppliers.length}
+        onEdit={(s) => { setEditingSupplier({...s}); setEditDialogOpen(true); }}
+        onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
+        onPageChange={setCurrentPage}
+        onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
+      />
 
-        {/* PAGINACIÓN */}
-        {filteredSuppliers.length > 0 && (
-          <div className="px-6 py-3 flex items-center justify-between border-t border-gray-200 dark:border-white/5 bg-gray-50 dark:bg-zinc-900 shrink-0 transition-colors">
-            <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">
-              VISTA: <span className="text-gray-900 dark:text-white italic">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, filteredSuppliers.length)}</span> / <span className="text-emerald-500 italic">{filteredSuppliers.length}</span>
-            </p>
-            <div className="flex items-center gap-4">
-              <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }} className="h-7 bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 text-[9px] font-black uppercase tracking-widest px-2 outline-none rounded-lg border border-gray-200 dark:border-white/5 cursor-pointer">
-                {[10, 20, 50, 100].map(n => <option key={n} value={n} className="bg-white dark:bg-black">{n} REGISTROS</option>)}
-              </select>
-              <div className="flex items-center gap-1">
-                <Button size="sm" variant="flat" onPress={() => setCurrentPage(prev => Math.max(1, prev - 1))} isDisabled={currentPage === 1} className="h-7 px-3 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-white font-black text-[9px] uppercase border border-gray-200 dark:border-white/5 rounded-lg hover:bg-gray-200 dark:hover:bg-zinc-700">PREV</Button>
-                <span className="text-[10px] font-black text-gray-900 dark:text-white italic px-2 tabular-nums">{currentPage} / {totalPages}</span>
-                <Button size="sm" variant="flat" onPress={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} isDisabled={currentPage === totalPages || totalPages === 0} className="h-7 px-3 bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-white font-black text-[9px] uppercase border border-gray-200 dark:border-white/5 rounded-lg hover:bg-gray-200 dark:hover:bg-zinc-700">NEXT</Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      {/* Modals */}
+      <SupplierFormModal 
+        isOpen={addDialogOpen || editDialogOpen}
+        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); setNewSupplier({ name: '', phone: '', address: '' }); } }}
+        isEdit={editDialogOpen}
+        supplier={addDialogOpen ? newSupplier : editingSupplier}
+        setSupplier={addDialogOpen ? setNewSupplier : setEditingSupplier}
+        onSave={async () => {
+          if (addDialogOpen) await handleAddSupplier();
+          else await handleEditSupplier();
+        }}
+      />
 
-      {/* MODAL CREAR/EDITAR */}
-      <Modal placement="top-center" isOpen={addDialogOpen || editDialogOpen} onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); } }} backdrop="blur" size="2xl" classNames={{ base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl", closeButton: "text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors" }}>
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="flex flex-col gap-1 p-8 border-b border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-zinc-950">
-                <h2 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter uppercase leading-none flex items-center gap-3">
-                  <div className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl"><Truck size={24} /></div>
-                  {addDialogOpen ? "Nuevo " : "Actualizar "} <span className="text-emerald-500">Vínculo</span>
-                </h2>
-                <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-2 ml-[4.5rem]">Arquitectura de Suministro Maestro</p>
-              </ModalHeader>
-
-              <ModalBody className="p-8 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic ml-1">Razón Social o Nombre</label>
-                  <Input
-                    value={addDialogOpen ? newSupplier.name : editingSupplier?.name}
-                    onValueChange={(v) => {
-                      if (addDialogOpen) setNewSupplier(p => ({ ...p, name: v.toUpperCase() }));
-                      else setEditingSupplier(p => p ? { ...p, name: v.toUpperCase() } : null);
-                    }}
-                    classNames={{ inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 shadow-none transition-all", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" }}
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic ml-1">Canal Telefónico</label>
-                    <Input
-                      value={addDialogOpen ? newSupplier.phone : editingSupplier?.phone}
-                      onValueChange={(v) => {
-                        if (addDialogOpen) setNewSupplier(p => ({ ...p, phone: v }));
-                        else setEditingSupplier(p => p ? { ...p, phone: v } : null);
-                      }}
-                      startContent={<Phone size={14} className="text-gray-400 mr-1" />}
-                      classNames={{ inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 shadow-none transition-all", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" }}
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-zinc-500 uppercase tracking-widest italic ml-1">Sede Física / Dirección</label>
-                    <Input
-                      value={addDialogOpen ? newSupplier.address : editingSupplier?.address}
-                      onValueChange={(v) => {
-                        if (addDialogOpen) setNewSupplier(p => ({ ...p, address: v.toUpperCase() }));
-                        else setEditingSupplier(p => p ? { ...p, address: v.toUpperCase() } : null);
-                      }}
-                      startContent={<MapPin size={14} className="text-gray-400 mr-1" />}
-                      classNames={{ inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl focus-within:!border-emerald-500 shadow-none transition-all", input: "font-black text-sm uppercase italic text-gray-900 dark:text-white bg-transparent" }}
-                    />
-                  </div>
-                </div>
-              </ModalBody>
-
-              <ModalFooter className="p-8 border-t border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-zinc-950">
-                <Button
-                  className="w-full h-14 bg-white text-black hover:bg-emerald-500 hover:text-black font-black uppercase text-xs tracking-widest rounded-xl transition-all shadow-xl hover:shadow-emerald-500/20"
-                  onPress={addDialogOpen ? handleAddSupplier : handleEditSupplier}
-                >
-                  <Sparkles size={16} className="mr-2" />
-                  {addDialogOpen ? "VINCULAR ABASTECEDOR MAESTRO" : "SINCRONIZAR ACTUALIZACIÓN MAESTRA"}
-                </Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
-
-      {/* MODAL ELIMINAR */}
-      <Modal isOpen={deleteDialogOpen} onOpenChange={setDeleteDialogOpen} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl", closeButton: "text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors" }}>
-        <ModalContent>
-          {(onClose) => (
-            <>
-              <ModalHeader className="text-rose-500 font-black uppercase text-sm p-6 italic flex items-center gap-2">
-                <AlertTriangle size={18} /> Protocolo de Purga
-              </ModalHeader>
-              <ModalBody className="p-6 text-center text-xs font-bold text-zinc-500 uppercase leading-relaxed tracking-widest italic">
-                ¿Seguro que desea eliminar permanentemente este proveedor del directorio maestro? Perderá el rastro de sus despachos.
-              </ModalBody>
-              <ModalFooter className="p-8 pt-4 flex gap-3 border-t border-gray-100 dark:border-white/5">
-                <Button variant="flat" className="flex-1 h-12 font-black text-xs uppercase tracking-widest bg-transparent border border-gray-200 dark:border-white/10 text-gray-900 dark:text-white rounded-xl" onPress={onClose}>CANCELAR / VOLVER</Button>
-                <Button color="danger" className="flex-1 h-12 font-black text-xs uppercase tracking-widest bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-600/20" onPress={handleDeleteSupplier}>SÍ, PURGAR</Button>
-              </ModalFooter>
-            </>
-          )}
-        </ModalContent>
-      </Modal>
+      <DeleteSupplierModal 
+        isOpen={deleteDialogOpen}
+        onOpenChange={setDeleteDialogOpen}
+        onConfirm={handleDeleteSupplier}
+      />
     </div>
   );
 }

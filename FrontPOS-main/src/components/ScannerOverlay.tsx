@@ -4,8 +4,8 @@ import { createPortal } from 'react-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { ScanLine, X, AlertCircle, Plus } from 'lucide-react';
 
-interface ScannerOverlayProps {
-    isOpen: boolean;
+export interface ScannerOverlayProps {
+    isOpen?: boolean;
     onClose: () => void;
     onResult: (result: string) => void;
     title?: string;
@@ -16,7 +16,7 @@ interface ScannerOverlayProps {
 }
 
 export function ScannerOverlay({ 
-    isOpen, onClose, onResult, title, 
+    isOpen = true, onClose, onResult, title, 
     errorTitle, errorMessage, onIgnoreError, onCreateProduct 
 }: ScannerOverlayProps) {
     const [mounted, setMounted] = useState(false);
@@ -40,7 +40,8 @@ export function ScannerOverlay({
             // Se siente pantalla completa, pero evita procesar bordes inútiles.
             qrbox: (videoWidth: number, videoHeight: number) => {
                 const minEdge = Math.min(videoWidth, videoHeight);
-                return { width: minEdge * 0.85, height: minEdge * 0.85 };
+                const size = Math.max(minEdge * 0.85, 250); // Mínimo 250px para asegurar lectura
+                return { width: size, height: size };
             },
 
             formatsToSupport: [
@@ -87,14 +88,19 @@ export function ScannerOverlay({
     if (!isOpen || !mounted) return null;
 
     return createPortal(
-        <div className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-8 bg-black/90 backdrop-blur-md">
+        <div 
+            className="fixed inset-0 z-[99999] flex items-center justify-center p-4 sm:p-8 bg-black/90 backdrop-blur-md"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="scanner-title"
+        >
             <div className="relative w-full max-w-lg aspect-[3/4] sm:aspect-square bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
 
-                <div id="reader" className="w-full h-full object-cover"></div>
+                <div id="reader" className="w-full h-full object-cover min-h-[250px] min-w-[250px]"></div>
 
                 {/* INTERFAZ VISUAL DEL ESCÁNER */}
                 <div className="absolute inset-0 pointer-events-none z-10 flex items-center justify-center">
-                    <div className="w-[85%] h-[85%] border-2 border-emerald-500/30 rounded-[2rem] relative">
+                    <div className="w-[85%] h-[85%] min-w-[250px] min-h-[250px] border-2 border-emerald-500/30 rounded-[2rem] relative">
                         <div className="absolute top-0 left-0 w-10 h-10 border-t-4 border-l-4 border-emerald-500 rounded-tl-[2rem]"></div>
                         <div className="absolute top-0 right-0 w-10 h-10 border-t-4 border-r-4 border-emerald-500 rounded-tr-[2rem]"></div>
                         <div className="absolute bottom-0 left-0 w-10 h-10 border-b-4 border-l-4 border-emerald-500 rounded-bl-[2rem]"></div>
@@ -104,7 +110,7 @@ export function ScannerOverlay({
                 </div>
 
                 <div className="absolute top-6 left-6 right-6 flex justify-between items-center z-20 pointer-events-auto">
-                    <h2 className="text-white font-black uppercase tracking-widest text-sm drop-shadow-md flex items-center gap-2 bg-black/40 px-4 py-2 rounded-xl backdrop-blur-sm">
+                    <h2 id="scanner-title" className="text-white font-black uppercase tracking-widest text-sm drop-shadow-md flex items-center gap-2 bg-black/40 px-4 py-2 rounded-xl backdrop-blur-sm">
                         <ScanLine className="h-5 w-5 text-emerald-500" />
                         {title || 'ESCÁNER RÁPIDO'}
                     </h2>
@@ -152,10 +158,15 @@ export function ScannerOverlay({
                     90% { opacity: 1; }
                     100% { top: 95%; opacity: 0; }
                 }
+                #reader {
+                    min-height: 250px !important;
+                    min-width: 250px !important;
+                }
                 #reader img, #reader video { 
                     object-fit: cover !important; 
                     width: 100% !important; 
                     height: 100% !important; 
+                    min-height: 250px !important;
                 }
                 /* Ocultar UI nativa fea */
                 #reader__dashboard_section_csr, 

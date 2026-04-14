@@ -28,11 +28,16 @@ func (r *PostgresClientRepository) GetAll() ([]models.Client, error) {
 	
 	query := `
 		SELECT c.*, 
-		       COALESCE(SUM(s."totalAmount"), 0) as "totalSpent", 
-		       MAX(s."saleDate") as "lastPurchaseDate"
+		       COALESCE(s_agg.total_spent, 0) as "totalSpent", 
+		       s_agg.last_purchase_date as "lastPurchaseDate"
 		FROM clients c
-		LEFT JOIN sales s ON c.dni = s."clientDni"
-		GROUP BY c.dni, c.name, c.phone, c.address, c."createdByDni", c."createdByName", c."updatedByDni", c."updatedByName", c."creditLimit", c."currentCredit"
+		LEFT JOIN (
+			SELECT "clientDni", 
+			       SUM("totalAmount") as total_spent, 
+			       MAX("saleDate") as last_purchase_date
+			FROM sales
+			GROUP BY "clientDni"
+		) s_agg ON c.dni = s_agg."clientDni"
 	`
 	
 	err := r.db.Raw(query).Scan(&clients).Error

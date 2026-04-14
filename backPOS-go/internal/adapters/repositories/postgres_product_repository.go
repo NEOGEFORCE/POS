@@ -4,6 +4,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PostgresProductRepository struct {
@@ -123,4 +124,21 @@ func (r *PostgresProductRepository) GetInventoryStats(from, to string) ([]ports.
 	}
 
 	return stats, nil
+}
+
+func (r *PostgresProductRepository) UpdateSupplierPrice(barcode string, supplierID uint, price float64) error {
+	return r.db.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "productBarcode"}, {Name: "supplierId"}},
+		DoUpdates: clause.AssignmentColumns([]string{"purchasePrice", "updatedAt"}),
+	}).Create(&models.ProductSupplier{
+		ProductID:     barcode,
+		SupplierID:    supplierID,
+		PurchasePrice: price,
+	}).Error
+}
+
+func (r *PostgresProductRepository) GetSupplierPrices(barcode string) ([]models.ProductSupplier, error) {
+	var prices []models.ProductSupplier
+	err := r.db.Where("\"productBarcode\" = ?", barcode).Find(&prices).Error
+	return prices, err
 }

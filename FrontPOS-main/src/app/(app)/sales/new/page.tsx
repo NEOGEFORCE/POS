@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Cookies from 'js-cookie';
 
 import {
     Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -15,6 +16,9 @@ import {
     LayoutList, X, Scale3d, Keyboard, Scan, Ticket, RotateCcw, ChevronsUpDown
 } from 'lucide-react';
 
+import dynamic from 'next/dynamic';
+
+
 import { useToast } from '@/hooks/use-toast';
 import { Product, Customer, Category } from '@/lib/definitions';
 import { formatCurrency, parseCurrency, applyRounding } from "@/lib/utils";
@@ -22,6 +26,12 @@ import { ScannerOverlay } from '@/components/ScannerOverlay';
 import { useScale } from '@/hooks/useScale';
 import { SplitBillDialog } from '@/components/SplitBillDialog';
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
+
+// CARGA DINÁMICA DE COMPONENTES PESADOS
+const PaymentModal = dynamic(() => import('./components/PaymentModal'), { ssr: false });
+const ClientSelectionModal = dynamic(() => import('./components/ClientSelectionModal'), { ssr: false });
+const ManualWeightModal = dynamic(() => import('./components/ManualWeightModal'), { ssr: false });
+
 
 interface CartItem extends Product {
     cartQuantity: number;
@@ -145,7 +155,7 @@ export default function NewSalePage() {
                 setActivePaymentTab('cash');
             } else if (activePaymentTab === 'credit') {
                 if (selectedCustomerDni === '0') {
-                    toast({ variant: "destructive", title: "Cliente Requerido", description: "Asigna un cliente primero (no Consumidor Final) para poder fiar." });
+                    toast({ variant: "destructive", title: "ERROR", description: "VINCULAR CLIENTE" });
                     return;
                 }
                 setCreditPaid(prev => String((Number(prev) || 0) + Math.min(val, remaining)));
@@ -169,7 +179,7 @@ export default function NewSalePage() {
     const handleClientSelect = (dni: string) => { setSelectedCustomerDni(dni); setCartCustomers(prev => ({ ...prev, [activeCartKey]: dni })); };
 
     const addNewCart = () => {
-        if (currentCart.length === 0) { toast({ variant: "destructive", title: "Carrito vacío", description: "Agrega productos primero." }); returnFocusToScanner(); return; }
+        if (currentCart.length === 0) { toast({ variant: "destructive", title: "SISTEMA", description: "CARRITO VACÍO" }); returnFocusToScanner(); return; }
         const nextNum = cartKeys.length > 0 ? Math.max(...cartKeys.map(k => parseInt(k.split(' ')[1]) || 0)) + 1 : 1;
         const newKey = `Factura ${nextNum}`;
         setCartKeys([...cartKeys, newKey]); setCarts(prev => ({ ...prev, [newKey]: [] })); setCartCustomers(prev => ({ ...prev, [newKey]: '0' })); handleCartSwitch(newKey);
@@ -194,7 +204,7 @@ export default function NewSalePage() {
                 if (barcode === selectedItemId) setSelectedItemId(filtered[0]?.barcode || null);
                 return { ...prev, [activeCartKey]: filtered };
             }
-            if (newQty > current[index].quantity && !current[index].isWeighted) { toast({ variant: "destructive", title: "Stock Insuficiente" }); return prev; }
+            if (newQty > current[index].quantity && !current[index].isWeighted) { toast({ variant: "destructive", title: "ERROR", description: "STOCK INSUFICIENTE" }); return prev; }
             current[index] = { ...current[index], cartQuantity: newQty };
             return { ...prev, [activeCartKey]: current };
         });
@@ -220,11 +230,11 @@ export default function NewSalePage() {
             else { current.push({ ...miscProduct, cartQuantity: 1 }); }
             return { ...prev, [activeCartKey]: current };
         });
-        setSelectedItemId(miscProduct.barcode); toast({ title: "✓ Agregado", description: `Producto Vario: $${price.toLocaleString()}` }); returnFocusToScanner();
+        setSelectedItemId(miscProduct.barcode); toast({ variant: "success", title: "ÉXITO", description: "AGREGADO" }); returnFocusToScanner();
     }, [activeCartKey, toast, returnFocusToScanner]);
 
     const addToCart = useCallback((product: Product) => {
-        if (product.quantity <= 0 && !product.isWeighted) { toast({ variant: "destructive", title: "Sin Stock" }); setSearchQuery(''); return; }
+        if (product.quantity <= 0 && !product.isWeighted) { toast({ variant: "destructive", title: "SISTEMA", description: "SIN STOCK" }); setSearchQuery(''); return; }
         if (product.isWeighted) {
             if (scaleWeight >= 0.010 && isScaleOnline) {
                 setCarts(prev => {
@@ -269,7 +279,7 @@ export default function NewSalePage() {
                 for (let i = 0; i < qty; i++) addMiscItem(finalCode);
                 setFeedbackCode(finalCode); setIsFeedbackError(false); setSearchQuery('');
             } else {
-                setFeedbackCode(finalCode); setIsFeedbackError(true); toast({ variant: "destructive", title: "No encontrado", description: finalCode });
+                setFeedbackCode(finalCode); setIsFeedbackError(true); toast({ variant: "destructive", title: "ERROR", description: "NO ENCONTRADO" });
             }
         }
         setBarcodeInput(''); returnFocusToScanner();
@@ -333,7 +343,7 @@ export default function NewSalePage() {
         const itemsToPay = splitItemsToPay || currentCart;
 
         setSubmitting(true);
-        const token = localStorage.getItem('org-pos-token');
+        const token = Cookies.get('org-pos-token');
         try {
             let numCash = Number(cashPaid) || 0;
             let numTransfer = Number(transferPaid) || 0;
@@ -361,7 +371,7 @@ export default function NewSalePage() {
             }
 
             if (numCredit > 0 && selectedCustomerDni === '0') {
-                toast({ variant: "destructive", title: "Acción Inválida", description: "Imposible fiar a Consumidor Final. Selecciona un cliente registrado." });
+                toast({ variant: "destructive", title: "ERROR", description: "INVÁLIDO PARA C. FINAL" });
                 setSubmitting(false);
                 return;
             }
@@ -416,8 +426,8 @@ export default function NewSalePage() {
                 console.error('DEBUG: ERROR SERVIDOR:', errorBody);
                 throw new Error(errorBody.message || errorBody.error || "Error al registrar venta");
             }
-        } catch (err: any) {
-            toast({ variant: "destructive", title: "Error", description: err.message });
+        } catch {
+            toast({ variant: "destructive", title: "FALLO", description: "ERROR DE REGISTRO" });
         } finally {
             setSubmitting(false);
         }
@@ -425,7 +435,7 @@ export default function NewSalePage() {
 
     const confirmManualWeight = () => {
         const weight = parseFloat(manualWeightValue);
-        if (isNaN(weight) || weight <= 0) { toast({ variant: "destructive", title: "Error", description: "Ingrese un peso válido" }); return; }
+        if (isNaN(weight) || weight <= 0) { toast({ variant: "destructive", title: "ERROR", description: "PESO INVÁLIDO" }); return; }
         if (manualWeightProduct) {
             setCarts(prev => {
                 const current = [...(prev[activeCartKey] || [])];
@@ -440,7 +450,7 @@ export default function NewSalePage() {
 
     useEffect(() => {
         const loadData = async () => {
-            const token = localStorage.getItem('org-pos-token');
+            const token = Cookies.get('org-pos-token');
             if (!token) { router.replace('/login'); return; }
             try {
                 const [pRes, cuRes, caRes] = await Promise.all([
@@ -676,226 +686,47 @@ export default function NewSalePage() {
                 </div>
             </main>
 
-            {/* --- MODAL PAGO --- */}
-            <Modal isOpen={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen} backdrop="blur" size="full" classNames={{ base: "bg-gray-100 dark:bg-zinc-950 border border-gray-300 dark:border-white/5 rounded-none md:rounded-2xl w-[100vw] md:w-[95vw] max-w-[1000px] h-[100vh] md:h-auto md:max-h-[85vh]", closeButton: "hidden" }}>
-                <ModalContent className="flex flex-col p-0 overflow-hidden">
-                    {(onClose) => (
-                        <div className="flex flex-col lg:flex-row h-full min-h-0 lg:min-h-[400px] relative overflow-y-auto lg:overflow-hidden custom-scrollbar">
-                            {showSuccessScreen && (
-                                <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
-                                    <div className="h-28 w-28 rounded-full bg-emerald-500 text-white flex items-center justify-center mb-8 shadow-lg shadow-emerald-500/20">
-                                        <Check className="h-14 w-14 stroke-[4]" />
-                                    </div>
-                                    <h2 className="text-3xl font-black text-gray-900 dark:text-white uppercase tracking-widest mb-10">Venta Exitosa</h2>
-                                    <div className="bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 px-16 py-10 rounded-3xl text-center shadow-xl mb-12">
-                                        <p className="text-xs font-bold text-gray-500 uppercase tracking-widest mb-4">CAMBIO A ENTREGAR</p>
-                                        <p className="text-[5.5rem] font-black text-emerald-600 tabular-nums leading-none tracking-tighter">${formatCurrency(lastChange)}</p>
-                                    </div>
-                                    <Button className="h-16 px-12 font-black text-lg uppercase rounded-2xl shadow-md bg-emerald-500 text-white hover:bg-emerald-600 active:scale-95 transition-all" onPress={() => { setIsPaymentDialogOpen(false); setShowSuccessScreen(false); setTimeout(() => hiddenScannerRef.current?.focus(), 100); }}>
-                                        NUEVA VENTA (ENTER)
-                                    </Button>
-                                </div>
-                            )}
-                            <div className="w-full lg:w-[200px] bg-white dark:bg-zinc-900 border-b lg:border-r lg:border-b-0 border-gray-200 dark:border-white/5 p-2 pt-16 lg:pt-4 lg:p-4 flex flex-row lg:flex-col gap-1.5 lg:gap-2 overflow-x-auto lg:overflow-y-auto shrink-0 custom-scrollbar sticky top-0 z-10">
-                                <h3 className="hidden lg:block text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 pl-1">Pago</h3>
-                                {[
-                                    { id: 'cash', icon: Banknote, label: 'Efectivo', color: 'emerald' },
-                                    { id: 'NEQUI', icon: Zap, label: 'Nequi', color: 'pink', logo: '/logos/nequi.png' },
-                                    { id: 'DAVIPLATA', icon: Zap, label: 'Daviplata', color: 'red', logo: '/logos/daviplata.png' },
-                                    { id: 'credit', icon: Users, label: 'Fiado', color: 'rose' }
-                                ].map(tab => (
-                                    <button
-                                        key={tab.id}
-                                        onClick={() => {
-                                            if (dialogAmount !== '') {
-                                                const val = Number(dialogAmount);
-                                                if (tab.id === 'NEQUI' || tab.id === 'DAVIPLATA') {
-                                                    setTransferPaid(prev => String((Number(prev) || 0) + val));
-                                                    setTransferSource(tab.id);
-                                                } else if (tab.id === 'credit') {
-                                                    setCreditPaid(prev => String((Number(prev) || 0) + val));
-                                                } else {
-                                                    setCashPaid(prev => String((Number(prev) || 0) + val));
-                                                }
-                                                setDialogAmount('');
-                                                setActivePaymentTab('cash');
-                                                toast({ title: "Monto Agregado", description: `${tab.label}: $${val.toLocaleString()}` });
-                                            } else {
-                                                setActivePaymentTab(tab.id as any);
-                                            }
-                                        }}
-                                        className={`h-10 lg:h-12 px-3 lg:px-4 rounded-lg flex items-center gap-2 lg:gap-3 border transition-all shrink-0 ${activePaymentTab === tab.id ? `bg-gray-50 dark:bg-zinc-800 border-b-2 lg:border-b-0 lg:border-l-4 border-${tab.color}-500 lg:border-l-${tab.color}-500 border-x-gray-200 lg:border-x-transparent border-t-gray-200 lg:border-t-transparent dark:border-y-white/5 dark:border-r-white/5 text-gray-900 dark:text-white shadow-sm font-black` : 'border-transparent text-gray-500 hover:bg-gray-50 dark:hover:bg-zinc-800/50'}`}
-                                    >
-                                        {tab.logo ? (
-                                            <img src={tab.logo} alt={tab.label} className="h-4 w-4 lg:h-5 lg:w-5 object-contain rounded-sm" />
-                                        ) : (
-                                            <tab.icon className={`h-3.5 w-3.5 lg:h-4 lg:w-4 ${activePaymentTab === tab.id ? `text-${tab.color}-500` : ''}`} />
-                                        )}
-                                        <span className="text-[9px] lg:text-[10px] uppercase tracking-widest leading-none">{tab.label}</span>
-                                    </button>
-                                ))}
-                                <div className="hidden lg:flex mt-auto pt-4 border-t border-gray-200 dark:border-white/5 flex-col gap-2">
-                                    <div className="flex flex-col gap-1 mb-2">
-                                        <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest pl-1">Cliente Asignado</span>
-                                        <Button size="sm" variant="flat" onPress={() => setIsClientDialogOpen(true)} className="w-full justify-start h-10 px-3 rounded-lg font-bold text-[10px] uppercase bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 border border-sky-200 dark:border-sky-500/20 text-left overflow-hidden transition-colors">
-                                            <User className="h-4 w-4 mr-2 shrink-0" /> <span className="truncate">{selectedCustomer.name}</span>
-                                        </Button>
-                                    </div>
-                                    <Button variant="flat" color="danger" className="w-full h-10 font-bold uppercase text-[10px] rounded-lg bg-rose-50 dark:bg-rose-500/10 text-rose-500 hover:bg-rose-100 dark:hover:bg-rose-500/20 transition-colors" onPress={onClose}>CANCELAR</Button>
-                                </div>
-                            </div>
+            {/* --- MODALES DINÁMICOS --- */}
+            <PaymentModal 
+                isOpen={isPaymentDialogOpen}
+                onOpenChange={setIsPaymentDialogOpen}
+                showSuccessScreen={showSuccessScreen}
+                setShowSuccessScreen={setShowSuccessScreen}
+                lastChange={lastChange}
+                total={total}
+                remaining={remaining}
+                activePaymentTab={activePaymentTab}
+                setActivePaymentTab={setActivePaymentTab}
+                dialogAmount={dialogAmount}
+                setDialogAmount={setDialogAmount}
+                displayTendered={displayTendered}
+                displayChange={displayChange}
+                selectedCustomer={selectedCustomer}
+                isReadyToFinalize={isReadyToFinalize}
+                submitting={submitting}
+                handleNumpadAction={handleNumpadAction}
+                setIsClientDialogOpen={setIsClientDialogOpen}
+                onCloseComplete={returnFocusToScanner}
+            />
 
-                            <div className="flex-1 bg-gray-50 dark:bg-zinc-950 flex flex-col p-4 lg:p-6 min-h-0">
-                                <div className="flex flex-col md:flex-row gap-2 lg:gap-4 mb-4 lg:mb-6">
-                                    <div className="bg-white dark:bg-zinc-900 px-4 lg:px-6 py-3 lg:py-4 rounded-xl border border-gray-200 dark:border-white/5 flex-1 shadow-sm flex items-center lg:block gap-3 lg:gap-0"><p className="text-[8px] lg:text-[9px] font-bold text-gray-500 uppercase lg:mb-1">TOTAL VENTAS</p><p className="text-xl lg:text-2xl font-black text-gray-900 dark:text-white tabular-nums">${formatCurrency(total)}</p></div>
-                                    <div className="bg-sky-50 dark:bg-sky-500/10 px-4 lg:px-6 py-3 lg:py-4 rounded-xl border border-sky-100 dark:border-sky-500/20 flex-1 shadow-sm flex items-center lg:block gap-3 lg:gap-0"><p className="text-[8px] lg:text-[9px] font-bold text-sky-600 uppercase lg:mb-1">RESTANTE POR PAGAR</p><p className="text-xl lg:text-2xl font-black text-sky-600 tabular-nums">${formatCurrency(remaining)}</p></div>
-                                </div>
-                                {activePaymentTab === 'cash' ? (
-                                    <div className="flex flex-col flex-1 gap-2 lg:gap-0">
-                                        <div className="flex flex-col md:flex-row gap-2 lg:gap-4 mb-4 lg:mb-6 lg:flex-1">
-                                            <div className="bg-white dark:bg-zinc-900 p-4 lg:p-6 rounded-xl border border-gray-200 dark:border-white/5 flex-1 flex flex-row lg:flex-col justify-between lg:justify-center items-center lg:items-start shadow-sm"><p className="text-[9px] lg:text-[10px] font-bold text-gray-400 uppercase lg:mb-2">EFECTIVO RECIBIDO</p><p className="text-2xl lg:text-4xl font-black text-gray-900 dark:text-white tabular-nums">${formatCurrency(displayTendered)}</p></div>
-                                            <div className="bg-white dark:bg-zinc-900 p-4 lg:p-6 rounded-xl border border-gray-200 dark:border-white/5 flex-1 flex flex-row lg:flex-col justify-between lg:justify-center items-center lg:items-start shadow-sm"><p className="text-[9px] lg:text-[10px] font-bold text-gray-400 uppercase lg:mb-2">CAMBIO</p><p className="text-2xl lg:text-4xl font-black text-emerald-600 tabular-nums">${formatCurrency(displayChange)}</p></div>
-                                        </div>
-                                        <div className="grid grid-cols-2 lg:grid-cols-2 gap-2">
-                                            {[
-                                                { v: 100000, img: '/logos/100.000.jpg' },
-                                                { v: 50000, img: '/logos/50.000.jpg' },
-                                                { v: 20000, img: '/logos/20.000.jpg' },
-                                                { v: 10000, img: '/logos/10.000.jpg' },
-                                                { v: 5000, img: '/logos/5.000.jpg' },
-                                                { v: 2000, img: '/logos/2.000.png' }
-                                            ].map(bill => (
-                                                <button
-                                                    key={bill.v}
-                                                    className="h-16 bg-white dark:bg-zinc-900 hover:ring-2 hover:ring-emerald-500 rounded-xl overflow-hidden border border-gray-200 dark:border-white/10 transition-all active:scale-95 shadow-sm"
-                                                    onClick={() => setDialogAmount(prev => String(Number(prev || 0) + bill.v))}
-                                                >
-                                                    <img src={bill.img} alt={`$${bill.v}`} className="w-full h-full object-cover" />
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center flex-1 py-10 lg:py-0">
-                                        {activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA' ? (
-                                            <div className="h-32 w-32 lg:h-48 lg:w-48 mb-6 animate-in fade-in zoom-in duration-500 flex items-center justify-center">
-                                                <img
-                                                    src={activePaymentTab === 'NEQUI' ? '/logos/nequi.png' : '/logos/daviplata.png'}
-                                                    alt={activePaymentTab}
-                                                    className="w-full h-full object-contain filter drop-shadow-2xl"
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div className="h-16 w-16 lg:h-24 lg:w-24 rounded-full flex items-center justify-center bg-rose-100 dark:bg-rose-500/10 text-rose-500 mb-4 font-bold uppercase tracking-widest text-[8px] lg:text-[10px]">
-                                                <Zap className="h-6 w-6 lg:h-10 lg:w-10 fill-current" />
-                                            </div>
-                                        )}
-                                        <h3 className="text-lg lg:text-xl font-black uppercase text-gray-900 dark:text-white mb-1 tracking-tight">{activePaymentTab}</h3>
-                                    </div>
-                                )}
-                            </div>
+            <ClientSelectionModal 
+                isOpen={isClientDialogOpen}
+                onOpenChange={setIsClientDialogOpen}
+                clientSearch={clientSearch}
+                setClientSearch={setClientSearch}
+                filteredCustomers={filteredCustomers}
+                handleClientSelect={handleClientSelect}
+            />
 
-                            <div className="w-full lg:w-[260px] bg-white dark:bg-zinc-900 border-t lg:border-l lg:border-t-0 border-gray-200 dark:border-white/5 p-4 lg:p-6 flex flex-col gap-3 lg:gap-4 lg:min-h-0">
-                                <div className="bg-gray-50 dark:bg-zinc-950 p-3 lg:p-4 rounded-xl border border-gray-200 dark:border-white/5 text-right shadow-inner flex flex-row lg:flex-col justify-between lg:justify-center items-center lg:items-end">
-                                    <p className="text-[8px] lg:text-[9px] font-bold text-emerald-600 uppercase lg:mb-1">MONTO MANUAL</p>
-                                    <p className="text-xl lg:text-3xl font-black text-gray-900 dark:text-white tabular-nums lg:h-8">{dialogAmount ? `$${formatCurrency(dialogAmount)}` : ''}</p>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2 flex-1 min-h-[160px] lg:min-h-0">
-                                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
-                                        <Button key={n} className={`h-10 lg:h-full text-lg font-bold rounded-lg ${n === 'CE' ? 'text-rose-500 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-100 dark:hover:bg-rose-500/20' : 'text-gray-900 dark:text-white bg-gray-50 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 border border-gray-200 dark:border-white/5'}`} onPress={() => n === 'CE' ? setDialogAmount('') : setDialogAmount(p => p + String(n))}>{n}</Button>
-                                    ))}
-                                </div>
-                                <div className="lg:hidden grid grid-cols-2 gap-2 mt-2">
-                                    <Button variant="flat" color="danger" className="h-12 font-bold uppercase text-[10px] rounded-xl" onPress={onClose}>CANCELAR</Button>
-                                    <Button className={`h-12 font-black text-xs uppercase rounded-xl shadow-md ${isReadyToFinalize ? 'bg-emerald-500 text-white' : 'bg-sky-500 text-white'}`} onPress={handleNumpadAction} isLoading={submitting}>{isReadyToFinalize ? 'FINALIZAR' : 'CARGAR'}</Button>
-                                </div>
-                                <Button className={`hidden lg:flex h-16 font-black text-sm uppercase rounded-xl shadow-md ${isReadyToFinalize ? 'bg-emerald-500 text-white hover:bg-emerald-600' : 'bg-sky-500 text-white hover:bg-sky-600'}`} onPress={handleNumpadAction} isLoading={submitting}>{isReadyToFinalize ? 'FINALIZAR' : 'CARGAR'}</Button>
-                            </div>
-                        </div>
-                    )}
-                </ModalContent>
-            </Modal>
+            <ManualWeightModal 
+                isOpen={isManualWeightOpen}
+                onOpenChange={setIsManualWeightOpen}
+                manualWeightProduct={manualWeightProduct}
+                manualWeightValue={manualWeightValue}
+                setManualWeightValue={setManualWeightValue}
+                confirmManualWeight={confirmManualWeight}
+            />
 
-            {/* MODAL CLIENTES */}
-            <Modal isOpen={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 rounded-xl border border-gray-200 dark:border-white/10" }}>
-                <ModalContent>
-                    {(onClose) => (
-                        <>
-                            <ModalHeader className="text-gray-900 dark:text-white font-black uppercase text-base p-4 border-b border-gray-100 dark:border-white/5">Seleccionar Cliente</ModalHeader>
-                            <ModalBody className="p-4">
-                                <Input autoFocus placeholder="BUSCAR..." value={clientSearch} onValueChange={setClientSearch} size="sm" startContent={<Search className="h-3 w-3 text-gray-400" />} classNames={{ inputWrapper: "bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10" }} />
-                                <div className="max-h-60 overflow-y-auto mt-2 space-y-1 custom-scrollbar pr-2">
-                                    <Button variant="flat" className="w-full justify-start h-10 bg-sky-50 dark:bg-sky-500/10 text-gray-900 dark:text-white font-bold rounded-lg text-xs" onPress={() => { handleClientSelect('0'); onClose(); }}><User className="h-4 w-4 mr-2 text-sky-500" /> Consumidor Final</Button>
-                                    {filteredCustomers.map(c => (
-                                        <Button key={c.dni} variant="flat" className="w-full justify-start h-10 bg-gray-50 dark:bg-zinc-900 text-gray-900 dark:text-white font-bold rounded-lg text-xs hover:bg-gray-100 dark:hover:bg-white/5" onPress={() => { handleClientSelect(c.dni); onClose(); }}><User className="h-4 w-4 mr-2 text-gray-400 dark:text-zinc-500" /> {c.name}</Button>
-                                    ))}
-                                </div>
-                            </ModalBody>
-                        </>
-                    )}
-                </ModalContent>
-            </Modal>
-
-            {/* MODAL DE PESAJE MANUAL (ADAPTATIVO CLARO/OSCURO) */}
-            <Modal isOpen={isManualWeightOpen} onOpenChange={setIsManualWeightOpen} hideCloseButton backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2rem]", backdrop: "bg-black/60 backdrop-blur-md" }}>
-                <ModalContent>
-                    {(onClose) => (
-                        <>
-                            <ModalHeader className="pt-6 px-6 pb-2 flex justify-between items-center">
-                                <span className="text-sm font-black uppercase tracking-widest text-emerald-600 dark:text-emerald-500 italic truncate">
-                                    {manualWeightProduct?.productName || 'PRODUCTO'}
-                                </span>
-                                <Button isIconOnly size="sm" variant="light" onPress={onClose} className="text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white bg-gray-100 dark:bg-white/5 rounded-full"><X size={14} /></Button>
-                            </ModalHeader>
-                            <ModalBody className="p-6 pb-8 gap-6">
-                                {/* INPUT AREA CON BORDE AZUL NEÓN (Se adapta a claro/oscuro) */}
-                                <div className="relative w-full">
-                                    <Input
-                                        type="number"
-                                        step="0.001"
-                                        value={manualWeightValue}
-                                        onValueChange={setManualWeightValue}
-                                        onKeyDown={(e) => e.key === 'Enter' && confirmManualWeight()}
-                                        autoFocus
-                                        placeholder="0.000"
-                                        endContent={
-                                            <div className="flex items-center gap-1 text-gray-500 dark:text-gray-400 select-none pointer-events-none">
-                                                <ChevronsUpDown className="h-4 w-4" />
-                                                <span className="font-black italic text-sm">KG</span>
-                                            </div>
-                                        }
-                                        classNames={{
-                                            input: "text-center text-6xl font-black text-gray-900 dark:text-white h-24",
-                                            inputWrapper: "bg-gray-50 dark:bg-zinc-900 h-28 rounded-[2rem] border-2 border-sky-500 shadow-[0_0_15px_rgba(14,165,233,0.3)] dark:shadow-[0_0_15px_rgba(59,130,246,0.3)] px-6"
-                                        }}
-                                    />
-                                </div>
-
-                                {/* QUICK BUTTONS */}
-                                <div className="grid grid-cols-4 gap-3">
-                                    {[0.25, 0.5, 1.0, 2.0].map(w => (
-                                        <Button
-                                            key={w}
-                                            className="h-14 font-bold rounded-xl bg-gray-100 dark:bg-zinc-900 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-zinc-800 border border-gray-200 dark:border-white/5 shadow-sm"
-                                            onPress={() => setManualWeightValue(w.toFixed(3))}
-                                        >
-                                            {w}kg
-                                        </Button>
-                                    ))}
-                                </div>
-
-                                {/* BOTÓN AÑADIR */}
-                                <Button
-                                    className="w-full h-16 rounded-[2rem] font-black uppercase tracking-widest text-base bg-emerald-500 hover:bg-emerald-600 text-white shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all active:scale-95"
-                                    onPress={confirmManualWeight}
-                                >
-                                    AÑADIR AL CARRITO
-                                </Button>
-                            </ModalBody>
-                        </>
-                    )}
-                </ModalContent>
-            </Modal>
 
             <ScannerOverlay isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onResult={(res) => { handleCodeSubmit(res); setIsScannerOpen(false); }} title="Escáner POS" />
             <SplitBillDialog isOpen={isSplitDialogOpen} onClose={() => setIsSplitDialogOpen(false)} originalItems={currentCart} onConfirm={(l, r) => { setRemainingItemsAfterSplit(l); setSplitItemsToPay(r); setIsSplitDialogOpen(false); setIsPaymentDialogOpen(true); }} />

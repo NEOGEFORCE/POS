@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"errors"
@@ -8,14 +9,15 @@ import (
 )
 
 type SaleService struct {
-	saleRepo    ports.SaleRepository
-	productRepo ports.ProductRepository
-	clientRepo  ports.ClientRepository
+	saleRepo     ports.SaleRepository
+	productRepo  ports.ProductRepository
+	clientRepo   ports.ClientRepository
+	movementRepo ports.StockMovementRepository
 	printService *PrintService
 }
 
-func NewSaleService(sr ports.SaleRepository, pr ports.ProductRepository, cr ports.ClientRepository, ps *PrintService) *SaleService {
-	return &SaleService{saleRepo: sr, productRepo: pr, clientRepo: cr, printService: ps}
+func NewSaleService(sr ports.SaleRepository, pr ports.ProductRepository, cr ports.ClientRepository, mr ports.StockMovementRepository, ps *PrintService) *SaleService {
+	return &SaleService{saleRepo: sr, productRepo: pr, clientRepo: cr, movementRepo: mr, printService: ps}
 }
 
 func (s *SaleService) CreateSale(sale *models.Sale) error {
@@ -37,6 +39,7 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 		}
 
 		sale.SaleDetails[i].UnitPrice = product.SalePrice
+		sale.SaleDetails[i].CostPrice = product.PurchasePrice // Store current cost for historical profit accuracy
 		sale.SaleDetails[i].Subtotal = applyRounding(product.SalePrice * detail.Quantity)
 		total += sale.SaleDetails[i].Subtotal
 
@@ -78,6 +81,25 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 
 	if len(stockUpdates) > 0 {
 		s.productRepo.BatchUpdateQuantities(stockUpdates)
+
+		// 4.5. Log movements for Kárdex
+		for i := range sale.SaleDetails {
+			detail := sale.SaleDetails[i]
+			if strings.HasPrefix(detail.Barcode, "MISC-") {
+				continue
+			}
+			movement := &models.StockMovement{
+				Date:         sale.SaleDate,
+				Barcode:      detail.Barcode,
+				Quantity:     detail.Quantity,
+				Type:         "OUT",
+				Reason:       "SALE",
+				ReferenceID:  fmt.Sprintf("SALE-%d", sale.SaleID),
+				EmployeeDNI:  sale.EmployeeDNI,
+				EmployeeName: sale.Employee.Name,
+			}
+			_ = s.movementRepo.Save(movement)
+		}
 	}
 
 	// 5. Impresión automática directa (Backend)

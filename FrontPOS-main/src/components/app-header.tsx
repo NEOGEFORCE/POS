@@ -48,20 +48,20 @@ export function AppHeader() {
   const pathname = usePathname()
 
   return (
-    <header className="sticky top-0 z-50 flex h-14 items-center justify-between border-b border-divider dark:border-white/10 bg-white/80 dark:bg-zinc-900/90 backdrop-blur-lg px-4 shadow-sm transition-colors">
+    <header className="sticky top-0 z-50 flex h-12 items-center justify-between border-b border-divider dark:border-white/10 bg-white/80 dark:bg-zinc-900/90 backdrop-blur-lg px-3 shadow-sm transition-colors">
 
       <div className="flex items-center gap-2 md:gap-3">
-        <SidebarTrigger className="h-8 w-8 rounded-lg bg-default-100 dark:bg-zinc-800 border border-divider dark:border-white/5 shadow-sm text-foreground transition-all hover:bg-emerald-500 hover:border-emerald-500 hover:text-white active:scale-90 shrink-0" />
+        <SidebarTrigger className="h-7 w-7 rounded-lg bg-default-100 dark:bg-zinc-800 border border-divider dark:border-white/5 shadow-sm text-foreground transition-all hover:bg-emerald-500 hover:border-emerald-500 hover:text-white active:scale-90 shrink-0" />
         {pathname !== "/dashboard" && pathname !== "/" && (
-          <BackButton size="sm" showText={false} className="h-8 w-8" />
+          <BackButton size="sm" showText={false} className="h-7 w-7" />
         )}
         <div className="flex flex-col">
           {/* Branding removed: already present in sidebar */}
         </div>
       </div>
 
-      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden px-2">
-        <div className="flex items-center gap-3 bg-default-100/50 dark:bg-zinc-800/80 px-4 py-1.5 rounded-xl border border-divider dark:border-white/5 backdrop-blur-md">
+      <div className="flex-1 hidden md:flex flex-col items-center justify-center overflow-hidden px-2">
+        <div className="flex items-center gap-3 bg-default-100/50 dark:bg-zinc-800/80 px-4 py-1 rounded-xl border border-divider dark:border-white/5 backdrop-blur-md">
           <div className="flex flex-col items-center leading-none">
             <span className="text-[7px] font-black text-emerald-500 uppercase tracking-[0.3em] mb-0.5 opacity-80">Hora</span>
             <span className="text-sm font-black text-foreground tabular-nums tracking-tighter">{timeStr}</span>

@@ -25,7 +25,8 @@ import {
   Zap,
   LogOut,
   Truck,
-  Tag // <-- IMPORTAMOS EL ÍCONO TAG
+  Tag,
+  BarChart3
 } from "lucide-react"
 import { useAuth } from "@/lib/auth"
 import Link from "next/link"
@@ -33,6 +34,7 @@ import { usePathname } from "next/navigation"
 
 const menuItems = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, adminOnly: true },
+  { href: "/reports", label: "Reportes", icon: BarChart3, adminOnly: true },
   { href: "/sales/new", label: "Venta", icon: ShoppingCart },
   { href: "/sales", label: "Historial", icon: History },
   { href: "/sales/returns", label: "Devoluciones", icon: CreditCard },

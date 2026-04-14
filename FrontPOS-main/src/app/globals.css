@@ -31,8 +31,8 @@
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 152 76% 36%;
-    --radius: 1rem;
-    /* Bordes más redondeados (estilo iOS) */
+    --radius: 0.5rem;
+    /* Bordes más compactos y profesionales */
 
     /* Sombras Premium para Light Mode */
     --card-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.04), 0 4px 6px -4px rgba(0, 0, 0, 0.02);
@@ -100,23 +100,26 @@
      UTILIDADES DEL PUNTO DE VENTA (POS)
      ========================================= */
 
-  /* SCROLLBAR PREMIUM (Ultra delgado y elegante) */
-  .custom-scrollbar::-webkit-scrollbar {
+  /* SCROLLBAR PREMIUM (Unificado) */
+  ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
-
-  .custom-scrollbar::-webkit-scrollbar-track {
+  ::-webkit-scrollbar-track {
     background: transparent;
   }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb {
+  ::-webkit-scrollbar-thumb {
     background: hsl(var(--muted-foreground) / 0.3);
     border-radius: 10px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.5);
   }
 
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--primary) / 0.8);
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 6px;
   }
 
   /* EFECTO NEÓN (Para botones principales como "COBRAR") */
@@ -134,25 +137,10 @@
   }
 
   @keyframes scan-y {
-
-    0%,
-    100% {
-      top: 0%;
-      opacity: 0;
-    }
-
-    10% {
-      opacity: 1;
-    }
-
-    90% {
-      opacity: 1;
-    }
-
-    100% {
-      top: 100%;
-      opacity: 0;
-    }
+    0%, 100% { top: 0%; opacity: 0; }
+    10% { opacity: 1; }
+    90% { opacity: 1; }
+    100% { top: 100%; opacity: 0; }
   }
 
   /* Fix para imágenes pixeladas en pantallas grandes */
@@ -181,22 +169,29 @@
     @apply border-r transition-colors duration-300 shadow-sm;
   }
 
-  /* PREVENIR TODO TIPO DE ZOOM ACCIDENTAL EN MÓVILES */
+  /* PREVENIR TODO TIPO DE ZOOM ACCIDENTAL EN MÓVILES Y COMPORTAMIENTO NATIVO */
   html, body {
     touch-action: manipulation;
+    overflow-x: hidden !important;
+    width: 100vw;
+    overscroll-behavior: none;
   }
   
   @media screen and (max-width: 768px) {
     input, select, textarea, button {
-      font-size: 16px !important;
+      font-size: 14px !important;
     }
+    html, body {
+      font-size: 14px;
+    }
+    .p-5 { padding: 0.5rem !important; }
+    .p-4 { padding: 0.4rem !important; }
+    .p-3 { padding: 0.25rem !important; }
+    .gap-4 { gap: 0.5rem !important; }
+    .gap-3 { gap: 0.35rem !important; }
   }
 
-  /* =========================================
-     CORRECCIÓN GLOBAL DE TRANSPARENCIA (ZERO FRICTION)
-     ========================================= */
-  
-  /* Forzar transparencia en Autofill de navegadores */
+  /* Forzar transparencia en Autofill */
   input:-webkit-autofill,
   input:-webkit-autofill:hover, 
   input:-webkit-autofill:focus, 
@@ -213,38 +208,41 @@
     background-color: transparent !important;
     backdrop-filter: blur(10px);
     transition: all 0.3s ease;
-    border: 1px solid hsl(var(--border) / 0.5) !important; /* Borde sutil y constante */
+    border: 1px solid hsl(var(--border) / 0.5) !important;
   }
 
-  /* Asegurar mayor visibilidad en Dark Mode (como solicitó el usuario) */
   .dark [data-slot="input-wrapper"],
   .dark .heroui-input-wrapper {
     border-color: rgba(255, 255, 255, 0.1) !important;
   }
 
-  /* Quitar bordes pesados y sombras intrusivas al enfocar (Zero Friction) */
   input:focus, 
   .heroui-input-wrapper:focus-within,
   [data-slot="input-wrapper"][data-focus="true"],
   [data-slot="input-wrapper"][data-focus-visible="true"] {
     outline: none !important;
     box-shadow: none !important;
-    border-color: hsl(var(--border) / 1) !important; /* Un poco más visible pero sin color extra */
+    border-color: hsl(var(--border) / 1) !important;
   }
 
   .dark [data-slot="input-wrapper"][data-focus="true"],
   .dark .heroui-input-wrapper:focus-within {
-    border-color: rgba(255, 255, 255, 0.2) !important; /* Brillo sutil al escribir en dark mode */
+    border-color: rgba(255, 255, 255, 0.2) !important;
   }
 
-  /* Si se desea una interacción sutil, podemos usar un after o un borde inferior muy fino, 
-     pero por ahora seguimos el estándar de transparencia total solicitado. */
-
-  /* Ajuste de etiquetas para evitar el efecto "amontonado" */
+  /* Ajuste de etiquetas */
   [data-slot="label"] {
-    margin-bottom: 0.5rem !important;
+    margin-bottom: 0.25rem !important;
     font-weight: 900 !important;
     letter-spacing: 0.05em !important;
     color: hsl(var(--foreground)) !important;
+    font-size: 0.75rem !important;
   }
+
+  /* OPTIMIZACIÓN DE DENSIDAD 1440x900 */
+  .p-5 { padding: 0.75rem !important; }
+  .p-4 { padding: 0.625rem !important; }
+  .p-3 { padding: 0.5rem !important; }
+  .gap-4 { gap: 0.75rem !important; }
+  .gap-3 { gap: 0.5rem !important; }
 }

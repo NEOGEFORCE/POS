@@ -28,13 +28,26 @@ func (r *PostgresSaleRepository) CreateWithTx(tx interface{}, sale *models.Sale)
 
 func (r *PostgresSaleRepository) GetAll() ([]models.Sale, error) {
 	var sales []models.Sale
-	err := r.db.Preload("Client").Preload("SaleDetails.Product").Find(&sales).Error
+	err := r.db.Preload("Client").Preload("SaleDetails.Product.Category").Find(&sales).Error
 	return sales, err
 }
 
 func (r *PostgresSaleRepository) GetByDateRange(from, to string) ([]models.Sale, error) {
 	var sales []models.Sale
-	query := r.db.Preload("Client").Preload("SaleDetails.Product")
+	query := r.db.Preload("Client").Preload("SaleDetails.Product.Category")
+	if from != "" {
+		query = query.Where("\"saleDate\" >= ?", from)
+	}
+	if to != "" {
+		query = query.Where("\"saleDate\" <= ?", to)
+	}
+	err := query.Find(&sales).Error
+	return sales, err
+}
+
+func (r *PostgresSaleRepository) GetDeletedByDateRange(from, to string) ([]models.Sale, error) {
+	var sales []models.Sale
+	query := r.db.Unscoped().Where("\"deletedAt\" IS NOT NULL").Preload("Client").Preload("SaleDetails.Product.Category")
 	if from != "" {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
@@ -47,7 +60,7 @@ func (r *PostgresSaleRepository) GetByDateRange(from, to string) ([]models.Sale,
 
 func (r *PostgresSaleRepository) GetByID(id uint) (*models.Sale, error) {
 	var sale models.Sale
-	err := r.db.Preload("Client").Preload("SaleDetails.Product").First(&sale, id).Error
+	err := r.db.Preload("Client").Preload("SaleDetails.Product.Category").First(&sale, id).Error
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +120,7 @@ func (r *PostgresSaleRepository) FindAll(filter ports.SaleFilter) ([]models.Sale
 
 	// Búsqueda con Paginación (Paso 2: Preload y Limit)
 	offset := (filter.Page - 1) * filter.PageSize
-	err := query.Preload("Client").Preload("SaleDetails.Product").
+	err := query.Preload("Client").Preload("SaleDetails.Product.Category").
 		Order("\"saleDate\" DESC").
 		Limit(filter.PageSize).
 		Offset(offset).
@@ -155,4 +168,25 @@ func (r *PostgresSaleRepository) UpdatePayment(id uint, sale *models.Sale) error
 		"amountPaid":     sale.AmountPaid,
 		"change":         sale.Change,
 	}).Error
+}
+func (r *PostgresSaleRepository) GetMonthlyTotals() (map[string]float64, error) {
+	results := make(map[string]float64)
+	rows, err := r.db.Table("sales").
+		Select("TO_CHAR(\"saleDate\", 'YYYY-MM') as month, SUM(\"totalAmount\") as total").
+		Group("month").
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var month string
+		var total float64
+		if err := rows.Scan(&month, &total); err != nil {
+			return nil, err
+		}
+		results[month] = total
+	}
+	return results, nil
 }

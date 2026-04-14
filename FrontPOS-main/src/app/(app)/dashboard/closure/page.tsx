@@ -9,6 +9,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { CashierClosure } from '@/lib/definitions';
 import { formatCurrency, parseCurrency } from "@/lib/utils";
+import { useAuth } from '@/lib/auth';
+import Cookies from 'js-cookie';
 
 // Importaciones de HeroUI
 import {
@@ -26,6 +28,7 @@ import {
 } from "@heroui/react";
 
 export default function CashierClosurePage() {
+    const { logout } = useAuth();
     const [currentClosure, setCurrentClosure] = useState<CashierClosure | null>(null);
     const [history, setHistory] = useState<CashierClosure[]>([]);
     const [loading, setLoading] = useState(true);
@@ -41,7 +44,7 @@ export default function CashierClosurePage() {
 
     // ... [LÓGICA DE FETCHING OCULTA PARA EL EJEMPLO VISUAL] ...
     const fetchCurrent = async () => {
-        const token = localStorage.getItem('org-pos-token');
+        const token = Cookies.get('org-pos-token');
         if (!token) return;
         setLoading(true);
         try {
@@ -64,7 +67,7 @@ export default function CashierClosurePage() {
     };
 
     const fetchHistory = async () => {
-        const token = localStorage.getItem('org-pos-token');
+        const token = Cookies.get('org-pos-token');
         if (!token) return;
         setHistoryLoading(true);
         try {
@@ -82,8 +85,22 @@ export default function CashierClosurePage() {
         }
     };
 
+    // CÁLCULOS MATEMÁTICOS (Movidos arriba para evitar errores de inicialización)
+    const coinsTotal = Object.values(coinsCalculator).reduce((acc, val) => acc + (val || 0), 0);
+    const physicalCash = physicalBills + coinsTotal;
+
+    const effectiveSalariesPaidList = salaryEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0);
+    const nequiSalaries = salaryEgresses.filter(e => e.method === 'NEQUI').reduce((acc, e) => acc + e.amount, 0);
+    const daviSalaries = salaryEgresses.filter(e => e.method === 'DAVIPLATA').reduce((acc, e) => acc + e.amount, 0);
+
+    const cashExpenses = currentClosure?.expenses?.filter(e => !e.paymentSource || e.paymentSource === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0) || (currentClosure?.totalExpenses ?? 0);
+    const effectiveOperationalExpenses = operationalEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0);
+
+    const systemCash = (currentClosure?.openingCash ?? 0) + (currentClosure?.totalCash ?? 0) - cashExpenses - (currentClosure?.totalReturns ?? 0) - effectiveSalariesPaidList - effectiveOperationalExpenses;
+    const difference = physicalCash - systemCash;
+
     const saveClosure = async () => {
-        const token = localStorage.getItem('org-pos-token');
+        const token = Cookies.get('org-pos-token');
         if (!token) return;
 
         // Validar que se haya ingresado el conteo físico
@@ -112,10 +129,11 @@ export default function CashierClosurePage() {
             });
 
             if (res.ok) {
-                toast({ title: "ÉXITO", description: "Turno finalizado y sincronizado correctamente", variant: "default" });
+                toast({ title: "ÉXITO", description: "Turno finalizado y sincronizado correctamente. Cerrando sesión...", variant: "default" });
                 setConfirmOpen(false);
-                fetchCurrent(); // Reiniciar para el nuevo turno
-                fetchHistory();
+                setTimeout(() => {
+                    logout();
+                }, 1500);
             } else {
                 const err = await res.json();
                 toast({ title: "ERROR", description: err.error || "No se pudo guardar el cierre", variant: "destructive" });
@@ -157,32 +175,19 @@ export default function CashierClosurePage() {
     const removeOperationalEgress = (id: string) => setOperationalEgresses(prev => prev.filter(e => e.id !== id));
     const updateOperationalEgress = (id: string, updates: any) => setOperationalEgresses(prev => prev.map(e => e.id === id ? { ...e, ...updates } : e));
 
-    // CÁLCULOS MATEMÁTICOS
-    const coinsTotal = Object.values(coinsCalculator).reduce((acc, val) => acc + (val || 0), 0);
-    const physicalCash = physicalBills + coinsTotal;
-
-    const effectiveSalariesPaidList = salaryEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0);
-    const nequiSalaries = salaryEgresses.filter(e => e.method === 'NEQUI').reduce((acc, e) => acc + e.amount, 0);
-    const daviSalaries = salaryEgresses.filter(e => e.method === 'DAVIPLATA').reduce((acc, e) => acc + e.amount, 0);
-
-    const cashExpenses = currentClosure?.expenses?.filter(e => !e.paymentSource || e.paymentSource === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0) || (currentClosure?.totalExpenses ?? 0);
-    const effectiveOperationalExpenses = operationalEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0);
-
-    const systemCash = (currentClosure?.openingCash ?? 0) + (currentClosure?.totalCash ?? 0) - cashExpenses - (currentClosure?.totalReturns ?? 0) - effectiveSalariesPaidList - effectiveOperationalExpenses;
-    const difference = physicalCash - systemCash;
 
     return (
-        <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-colors duration-500">
+        <div className="flex flex-col min-h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white transition-colors duration-500 pb-20">
 
             {/* HEADER COMPACTO V4.0 */}
-            <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors">
+            <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors sticky top-0 z-50">
                 <div className="flex items-center gap-2">
                     <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
                         <LayoutDashboard size={16} />
                     </div>
                     <div className="flex flex-col">
-                        <h1 className="text-sm font-black uppercase tracking-tighter leading-none italic">CIERRE OPERATIVO</h1>
-                        <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">AUDITORÍA DE CAJA</p>
+                        <h1 className="text-sm font-black uppercase tracking-tighter leading-none italic">CIERRE</h1>
+                        <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">AUDITORÍA</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -192,7 +197,7 @@ export default function CashierClosurePage() {
                         onPress={fetchCurrent}
                         className="bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-emerald-500 uppercase tracking-widest text-[9px] font-black h-8 px-3 rounded-md border-none transition-transform active:scale-95"
                     >
-                        <RefreshCw size={14} className="mr-1" /> Sincronizar
+                        <RefreshCw size={14} />
                     </Button>
                     <Button
                         color="success"
@@ -200,14 +205,14 @@ export default function CashierClosurePage() {
                         onPress={() => setConfirmOpen(true)}
                         className="uppercase tracking-widest text-[9px] font-black bg-emerald-500 text-white shadow-sm h-8 px-4 rounded-md transition-transform active:scale-95 italic"
                     >
-                        <Save size={14} className="mr-1" /> FINALIZAR TURNO
+                        <Save size={14} className="mr-1" /> FINALIZAR
                     </Button>
                 </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 min-h-0">
+            <div className="flex flex-col gap-1">
                 {/* KPIs Financieros - MODO COMPACTO */}
-                <div className="grid gap-1 grid-cols-2 lg:grid-cols-4 shrink-0">
+                <div className="grid gap-1 grid-cols-2 lg:grid-cols-4">
                     {[
                         { label: "Ventas (Efe+Ban)", val: currentClosure?.totalSales || 0, icon: TrendingUp, color: "text-emerald-600 dark:text-emerald-400", border: "border-emerald-200 dark:border-emerald-400/20" },
                         { label: "Devoluciones", val: currentClosure?.totalReturns || 0, icon: RefreshCcw, color: "text-rose-500", border: "border-rose-200 dark:border-rose-500/20" },
@@ -229,12 +234,12 @@ export default function CashierClosurePage() {
                 </div>
 
                 {/* Panel Operativo Principal */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-1 min-h-0 flex-1">
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-1">
 
                     {/* IZQUIERDA: Egresos y Conteo de Billetes (60%) */}
-                    <div className="lg:col-span-7 flex flex-col gap-1 min-h-0">
-                        <Card className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 flex-1 flex flex-col h-full shadow-sm transition-colors rounded-lg" radius="sm">
-                            <CardBody className="p-2 flex flex-col gap-2 overflow-y-auto custom-scrollbar">
+                    <div className="lg:col-span-7 flex flex-col gap-1">
+                        <Card className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-sm transition-colors rounded-lg" radius="sm">
+                            <CardBody className="p-2 flex flex-col gap-4">
 
                                 {/* SECCIÓN: Nómina y Sueldos */}
                                 <div className="space-y-2">
@@ -256,11 +261,13 @@ export default function CashierClosurePage() {
                                                     </Button>
                                                     <Input
                                                         size="sm" variant="faded" placeholder="EMPLEADO..."
+                                                        aria-label="Nombre del empleado"
                                                         value={egress.description} onValueChange={(val) => updateSalaryEgress(egress.id, { description: val.toUpperCase() })}
                                                         classNames={{ inputWrapper: "bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 h-8 rounded-lg", input: "font-bold text-[11px]" }}
                                                     />
                                                     <Input
                                                         size="sm" variant="faded" startContent={<span className="text-emerald-500 font-black mr-1 text-[11px]">$</span>}
+                                                        aria-label="Monto de pago de nómina"
                                                         value={egress.amount ? formatCurrency(egress.amount) : ''}
                                                         onChange={(e) => updateSalaryEgress(egress.id, { amount: parseCurrency(e.target.value) })}
                                                         classNames={{ inputWrapper: "bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 h-8 rounded-lg sm:w-28 shrink-0", input: "tabular-nums font-black text-[11px]" }}
@@ -305,11 +312,13 @@ export default function CashierClosurePage() {
                                                     </Button>
                                                     <Input
                                                         size="sm" variant="faded" placeholder="CONCEPTO..."
+                                                        aria-label="Concepto de gasto operativo"
                                                         value={egress.description} onValueChange={(val) => updateOperationalEgress(egress.id, { description: val.toUpperCase() })}
                                                         classNames={{ inputWrapper: "bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 h-8 rounded-lg", input: "font-bold text-[11px]" }}
                                                     />
                                                     <Input
                                                         size="sm" variant="faded" startContent={<span className="text-amber-500 font-black mr-1 text-[11px]">$</span>}
+                                                        aria-label="Monto del gasto operativo"
                                                         value={egress.amount ? formatCurrency(egress.amount) : ''}
                                                         onChange={(e) => updateOperationalEgress(egress.id, { amount: parseCurrency(e.target.value) })}
                                                         classNames={{ inputWrapper: "bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 h-8 rounded-lg sm:w-28 shrink-0", input: "tabular-nums font-black text-[11px]" }}
@@ -343,6 +352,7 @@ export default function CashierClosurePage() {
                                         </label>
                                         <Input
                                             size="sm" variant="faded"
+                                            aria-label="Total efectivo en billetes"
                                             startContent={<span className="text-gray-400 dark:text-zinc-500 font-black text-xl mr-1">$</span>}
                                             value={physicalBills ? formatCurrency(physicalBills) : ''}
                                             onChange={(e) => setPhysicalBills(parseCurrency(e.target.value))}
@@ -364,6 +374,7 @@ export default function CashierClosurePage() {
                                                     <label className="text-[8px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest truncate">{coin.label}</label>
                                                     <Input
                                                         size="sm" variant="underlined"
+                                                        aria-label={`Cantidad en monedas de ${coin.label}`}
                                                         value={coinsCalculator[coin.key] ? formatCurrency(coinsCalculator[coin.key]) : ''}
                                                         onChange={(e) => setCoinsCalculator(prev => ({ ...prev, [coin.key]: parseCurrency(e.target.value) }))}
                                                         placeholder="0"

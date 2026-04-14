@@ -19,6 +19,7 @@ type DashboardService struct {
 	shiftRepo    ports.ActiveShiftRepository
 	creditRepo   ports.CreditPaymentRepository
 	categoryRepo ports.CategoryRepository
+	movementRepo ports.StockMovementRepository
 }
 
 func NewDashboardService(
@@ -31,6 +32,7 @@ func NewDashboardService(
 	sh ports.ActiveShiftRepository,
 	cr ports.CreditPaymentRepository,
 	cat ports.CategoryRepository,
+	mr ports.StockMovementRepository,
 ) *DashboardService {
 	return &DashboardService{
 		saleRepo:     s,
@@ -42,6 +44,7 @@ func NewDashboardService(
 		shiftRepo:    sh,
 		creditRepo:   cr,
 		categoryRepo: cat,
+		movementRepo: mr,
 	}
 }
 
@@ -63,7 +66,7 @@ type DashboardOverview struct {
 	TotalSalesAmount    float64                  `json:"totalSalesAmount"`
 	TotalExpensesAmount float64                  `json:"totalExpensesAmount"`
 	Profit              float64                  `json:"profit"`
-	TotalProductsSold   int64                    `json:"totalProductsSold"`
+	TotalProductsSold   float64                  `json:"totalProductsSold"`
 	TotalClients        int64                    `json:"totalClients"`
 	SalesByDay          map[string]float64       `json:"salesByDay"`
 	RecentSales         []map[string]interface{} `json:"recentSales"`
@@ -80,6 +83,56 @@ type DashboardOverview struct {
 	DailySalesLast7  []DailyPoint       `json:"dailySalesLast7"`
 }
 
+type ProductRankingItem struct {
+	Barcode  string  `json:"barcode"`
+	Name     string  `json:"name"`
+	Quantity float64 `json:"quantity"`
+	Total    float64 `json:"total"`
+}
+
+type CategoryReportItem struct {
+	Category string  `json:"category"`
+	Total    float64 `json:"total"`
+	Quantity float64 `json:"quantity"`
+}
+
+type VIPClientItem struct {
+	DNI      string  `json:"dni"`
+	Name     string  `json:"name"`
+	Total    float64 `json:"total"`
+	Count    int     `json:"count"`
+}
+
+type VoidReportItem struct {
+	SaleID    uint      `json:"saleId"`
+	Date      time.Time `json:"date"`
+	Total     float64   `json:"total"`
+	Employee  string    `json:"employee"`
+	VoidedAt  time.Time `json:"voidedAt"`
+}
+
+type PnLReport struct {
+	From             string  `json:"from"`
+	To               string  `json:"to"`
+	TotalRevenue     float64 `json:"totalRevenue"`
+	TotalCOGS        float64 `json:"totalCogs"`
+	GrossProfit      float64 `json:"grossProfit"`
+	TotalExpenses    float64 `json:"totalExpenses"`
+	NetProfit        float64 `json:"netProfit"`
+	MarginPercentage float64 `json:"marginPercentage"`
+}
+
+type StockMovementReportItem struct {
+	Date     time.Time `json:"date"`
+	Barcode  string    `json:"barcode"`
+	Name     string    `json:"name"`
+	Quantity float64   `json:"quantity"`
+	Type     string    `json:"type"`
+	Reason   string    `json:"reason"`
+	Employee string    `json:"employee"`
+	Ref      string    `json:"ref"`
+}
+
 func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	now := time.Now()
 	currentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -91,7 +144,7 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	clientCount, _ := s.clientRepo.Count()
 
 	var totalSalesAmount float64
-	var totalProductsSold int64
+	var totalProductsSold float64
 	var todaySalesAmount float64
 	var todaySalesCount int64
 	var todayExpenses float64
@@ -132,7 +185,7 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		}
 
 		for _, detail := range sale.SaleDetails {
-			totalProductsSold += int64(detail.Quantity)
+			totalProductsSold += detail.Quantity
 		}
 	}
 
@@ -172,16 +225,9 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		})
 	}
 
-	allTimeSales, _ := s.saleRepo.GetAll()
-	for _, sale := range allTimeSales {
-		monthKey := sale.SaleDate.Format("2006-01")
-		salesByMonth[monthKey] += sale.TotalAmount
-	}
-	allTimeExpenses, _ := s.expenseRepo.GetAll()
-	for _, expense := range allTimeExpenses {
-		monthKey := expense.Date.Format("2006-01")
-		expensesByMonth[monthKey] += expense.Amount
-	}
+	salesByMonth, _ = s.saleRepo.GetMonthlyTotals()
+	expensesByMonth, _ = s.expenseRepo.GetMonthlyTotals()
+	
 	for month, sAmount := range salesByMonth {
 		profitByMonth[month] = sAmount - expensesByMonth[month]
 	}
@@ -195,12 +241,18 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		if p.Quantity > 0 {
 			activeProducts++
 		}
-		if p.Quantity <= 5 {
+		
+		threshold := p.MinStock
+		if threshold <= 0 {
+			threshold = 5 // Default heuristic if not set
+		}
+
+		if p.Quantity <= threshold {
 			lowStockProducts = append(lowStockProducts, LowStockItem{
 				Barcode:  p.Barcode,
 				Name:     p.ProductName,
 				Stock:    p.Quantity,
-				MinStock: 5,
+				MinStock: threshold,
 			})
 		}
 	}
@@ -399,4 +451,228 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 
 func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error) {
 	return s.closureRepo.GetAll()
+}
+
+func (s *DashboardService) GetRankingReport(from, to string) ([]ProductRankingItem, error) {
+	sales, err := s.saleRepo.GetByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	rankingMap := make(map[string]*ProductRankingItem)
+	for _, sale := range sales {
+		for _, detail := range sale.SaleDetails {
+			if _, ok := rankingMap[detail.Barcode]; !ok {
+				name := detail.Barcode
+				if detail.Product.ProductName != "" {
+					name = detail.Product.ProductName
+				}
+				rankingMap[detail.Barcode] = &ProductRankingItem{
+					Barcode: detail.Barcode,
+					Name:    name,
+				}
+			}
+			rankingMap[detail.Barcode].Quantity += detail.Quantity
+			rankingMap[detail.Barcode].Total += detail.Subtotal
+		}
+	}
+
+	ranking := []ProductRankingItem{}
+	for _, item := range rankingMap {
+		ranking = append(ranking, *item)
+	}
+
+	sort.Slice(ranking, func(i, j int) bool {
+		return ranking[i].Quantity > ranking[j].Quantity
+	})
+
+	return ranking, nil
+}
+
+func (s *DashboardService) GetCategoryReport(from, to string) ([]CategoryReportItem, error) {
+	sales, err := s.saleRepo.GetByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	categoryMap := make(map[string]*CategoryReportItem)
+	for _, sale := range sales {
+		for _, detail := range sale.SaleDetails {
+			catName := detail.Product.Category.Name
+			if catName == "" {
+				catName = "SIN CATEGORÍA"
+			}
+			if _, ok := categoryMap[catName]; !ok {
+				categoryMap[catName] = &CategoryReportItem{
+					Category: catName,
+				}
+			}
+			categoryMap[catName].Quantity += detail.Quantity
+			categoryMap[catName].Total += detail.Subtotal
+		}
+	}
+
+	report := []CategoryReportItem{}
+	for _, item := range categoryMap {
+		report = append(report, *item)
+	}
+
+	return report, nil
+}
+
+func (s *DashboardService) GetVIPClientsReport(from, to string) ([]VIPClientItem, error) {
+	sales, err := s.saleRepo.GetByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	clientMap := make(map[string]*VIPClientItem)
+	for _, sale := range sales {
+		if sale.ClientDNI == "" {
+			continue
+		}
+		if _, ok := clientMap[sale.ClientDNI]; !ok {
+			name := "Cliente " + sale.ClientDNI
+			if sale.Client.Name != "" {
+				name = sale.Client.Name
+			}
+			clientMap[sale.ClientDNI] = &VIPClientItem{
+				DNI:  sale.ClientDNI,
+				Name: name,
+			}
+		}
+		clientMap[sale.ClientDNI].Total += sale.TotalAmount
+		clientMap[sale.ClientDNI].Count++
+	}
+
+	report := []VIPClientItem{}
+	for _, item := range clientMap {
+		report = append(report, *item)
+	}
+
+	sort.Slice(report, func(i, j int) bool {
+		return report[i].Total > report[j].Total
+	})
+
+	return report, nil
+}
+
+func (s *DashboardService) GetVoidsReport(from, to string) ([]VoidReportItem, error) {
+	returns, err := s.returnRepo.GetByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	deletedSales, err := s.saleRepo.GetDeletedByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	report := []VoidReportItem{}
+	
+	// Add returns
+	for _, r := range returns {
+		report = append(report, VoidReportItem{
+			SaleID:    r.SaleID,
+			Date:      r.Date, // Effective return date
+			Total:     r.TotalReturned,
+			Employee:  r.EmployeeDNI,
+			VoidedAt:  r.Date,
+		})
+	}
+
+	// Add deleted sales
+	for _, ds := range deletedSales {
+		report = append(report, VoidReportItem{
+			SaleID:    ds.SaleID,
+			Date:      ds.SaleDate,
+			Total:     ds.TotalAmount,
+			Employee:  ds.EmployeeDNI,
+			VoidedAt:  ds.DeletedAt.Time,
+		})
+	}
+
+	// Sort by voidedAt descending
+	sort.Slice(report, func(i, j int) bool {
+		return report[i].VoidedAt.After(report[j].VoidedAt)
+	})
+
+	return report, nil
+}
+
+func (s *DashboardService) GetPnLReport(from, to string) (*PnLReport, error) {
+	sales, err := s.saleRepo.GetByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	expenses, err := s.expenseRepo.GetByDateRange(from, to)
+	if err != nil {
+		expenses = []models.Expense{}
+	}
+
+	var revenue float64
+	var cogs float64
+	for _, sale := range sales {
+		revenue += sale.TotalAmount
+		for _, detail := range sale.SaleDetails {
+			// Usar el CostPrice guardado en la venta para integridad histórica
+			// Si no existe (ventas antiguas), usar el PurchasePrice actual del producto
+			cost := detail.CostPrice
+			if cost == 0 {
+				cost = detail.Product.PurchasePrice
+			}
+			cogs += detail.Quantity * cost
+		}
+	}
+
+	var totalExpenses float64
+	for _, e := range expenses {
+		totalExpenses += e.Amount
+	}
+
+	grossProfit := revenue - cogs
+	netProfit := grossProfit - totalExpenses
+	margin := 0.0
+	if revenue > 0 {
+		margin = (netProfit / revenue) * 100
+	}
+
+	return &PnLReport{
+		From:             from,
+		To:               to,
+		TotalRevenue:     revenue,
+		TotalCOGS:        cogs,
+		GrossProfit:      grossProfit,
+		TotalExpenses:    totalExpenses,
+		NetProfit:        netProfit,
+		MarginPercentage: margin,
+	}, nil
+}
+
+func (s *DashboardService) GetInventoryMovementsReport(from, to string) ([]StockMovementReportItem, error) {
+	movements, err := s.movementRepo.GetByDateRange(from, to)
+	if err != nil {
+		return nil, err
+	}
+
+	report := []StockMovementReportItem{}
+	for _, m := range movements {
+		name := m.Product.ProductName
+		if name == "" {
+			name = m.Barcode
+		}
+		report = append(report, StockMovementReportItem{
+			Date:     m.Date,
+			Barcode:  m.Barcode,
+			Name:     name,
+			Quantity: m.Quantity,
+			Type:     m.Type,
+			Reason:   m.Reason,
+			Employee: m.EmployeeName,
+			Ref:      m.ReferenceID,
+		})
+	}
+
+	return report, nil
 }

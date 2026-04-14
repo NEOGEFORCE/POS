@@ -26,6 +26,8 @@ class ScaleBridge {
     };
     private listeners: Set<Listener> = new Set();
     private subscriberCount = 0;
+    private throttleTimer: any = null;
+    private pendingWeight: number | null = null;
 
     private constructor() {}
 
@@ -76,7 +78,17 @@ class ScaleBridge {
                     const msg = JSON.parse(event.data);
                     switch (msg.type) {
                         case 'weight':
-                            this.updateState({ weight: msg.value ?? 0 });
+                            // THROTTLE 200ms para que el flujo de datos no mate al UI
+                            this.pendingWeight = msg.value ?? 0;
+                            if (!this.throttleTimer) {
+                                this.throttleTimer = setTimeout(() => {
+                                    if (this.pendingWeight !== null) {
+                                        this.updateState({ weight: this.pendingWeight });
+                                        this.pendingWeight = null;
+                                    }
+                                    this.throttleTimer = null;
+                                }, 200);
+                            }
                             break;
                         case 'status':
                             this.updateState({ isScaleOnline: msg.connected ?? false, port: msg.port ?? '' });
@@ -122,6 +134,10 @@ class ScaleBridge {
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
+        }
+        if (this.throttleTimer) {
+            clearTimeout(this.throttleTimer);
+            this.throttleTimer = null;
         }
         if (this.ws) {
             this.ws.close();

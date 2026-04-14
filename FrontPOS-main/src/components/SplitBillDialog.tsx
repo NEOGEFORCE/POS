@@ -169,7 +169,11 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-             <DialogContent className="max-w-[95vw] lg:max-w-[90vw] w-full lg:w-[900px] p-0 overflow-hidden bg-white dark:bg-zinc-950 border-gray-200 dark:border-white/5 rounded-3xl shadow-2xl h-[90vh] lg:h-[420px] flex flex-col">
+             <DialogContent 
+                aria-labelledby="split-bill-title"
+                aria-describedby="split-bill-description"
+                className="max-w-[95vw] lg:max-w-[90vw] w-full lg:w-[900px] p-0 overflow-hidden bg-white dark:bg-zinc-950 border-gray-200 dark:border-white/5 rounded-3xl shadow-2xl h-[90vh] lg:h-[420px] flex flex-col"
+            >
                 <DialogHeader className="p-3 bg-gray-50 dark:bg-black border-b border-gray-200 dark:border-white/5 shrink-0">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -177,8 +181,8 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
                                 <Zap className="h-4 w-4 text-black" />
                             </div>
                             <div>
-                                <DialogTitle className="text-sm font-black text-gray-900 dark:text-white italic uppercase tracking-tighter leading-none">Dividir Cuenta</DialogTitle>
-                                <DialogDescription className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">V4.0 DENSITY</DialogDescription>
+                                <DialogTitle id="split-bill-title" className="text-sm font-black text-gray-900 dark:text-white italic uppercase tracking-tighter leading-none">Dividir Cuenta</DialogTitle>
+                                <DialogDescription id="split-bill-description" className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">V4.0 DENSITY</DialogDescription>
                             </div>
                         </div>
                     </div>
