@@ -35,7 +35,7 @@ type SaleDetail struct {
 	Barcode   string         `gorm:"not null;index;column:barcode" json:"barcode"`
 	Quantity  float64        `gorm:"not null;column:quantity" json:"quantity"`
 	UnitPrice float64        `gorm:"type:decimal(10,2);not null;column:price" json:"unitPrice"`
-	CostPrice float64        `gorm:"type:decimal(10,2);not null;column:costPrice" json:"costPrice"`
+	CostPrice float64        `gorm:"type:decimal(10,2);default:0;not null;column:costPrice" json:"costPrice"`
 	Subtotal    float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`
 	ReturnedQty float64        `gorm:"-" json:"returnedQty"`
 	Product     Product        `gorm:"foreignKey:Barcode;references:Barcode" json:"product,omitempty"`

@@ -107,6 +107,11 @@ func ConnectDB() {
 			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='returns' AND column_name='updatedAt') THEN
 				ALTER TABLE "returns" DROP COLUMN "updatedAt";
 			END IF;
+
+			-- 5. BACKFILL PARA COSTPRICE (Evitar error 23502 en sale_details)
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sale_details' AND column_name='costPrice') THEN
+				UPDATE sale_details SET "costPrice" = 0 WHERE "costPrice" IS NULL;
+			END IF;
 		END $$;
 	`)
 
