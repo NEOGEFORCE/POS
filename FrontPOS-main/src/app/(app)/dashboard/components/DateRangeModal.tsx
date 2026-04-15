@@ -30,12 +30,6 @@ export default function DateRangeModal({
             size="lg"
             placement="center" 
             backdrop="blur"
-        <Modal 
-            isOpen={isOpen} 
-            onOpenChange={onOpenChange} 
-            size="lg"
-            placement="center" 
-            backdrop="blur"
             classNames={{
                 base: "bg-white dark:bg-zinc-950 border-2 border-emerald-500/20 rounded-[2rem] shadow-2xl",
                 header: "border-b border-gray-100 dark:border-white/5 p-8",
