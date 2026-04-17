@@ -37,16 +37,22 @@ func (r *PostgresProductRepository) GetAllWithLimit(limit int) ([]models.Product
 	return products, err
 }
 
-func (r *PostgresProductRepository) GetPaginated(page, pageSize int) ([]models.Product, int64, error) {
+func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search string) ([]models.Product, int64, error) {
 	var products []models.Product
 	var total int64
 
-	if err := r.db.Model(&models.Product{}).Count(&total).Error; err != nil {
+	query := r.db.Model(&models.Product{})
+	if search != "" {
+		searchTerm := "%" + search + "%"
+		query = query.Where("barcode ILIKE ? OR \"productName\" ILIKE ?", searchTerm, searchTerm)
+	}
+
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
 	offset := (page - 1) * pageSize
-	err := r.db.Preload("Category").
+	err := query.Preload("Category").
 		Order("\"productName\" ASC").
 		Limit(pageSize).
 		Offset(offset).
@@ -141,4 +147,12 @@ func (r *PostgresProductRepository) GetSupplierPrices(barcode string) ([]models.
 	var prices []models.ProductSupplier
 	err := r.db.Where("\"productBarcode\" = ?", barcode).Find(&prices).Error
 	return prices, err
+}
+
+func (r *PostgresProductRepository) GetBySupplier(supplierID uint) ([]models.Product, error) {
+	var products []models.Product
+	err := r.db.Preload("Category").
+		Where("\"supplierId\" = ?", supplierID).
+		Find(&products).Error
+	return products, err
 }

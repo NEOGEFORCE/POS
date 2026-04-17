@@ -36,3 +36,9 @@ func (r *PostgresSupplierRepository) Update(id uint, supplier *models.Supplier) 
 func (r *PostgresSupplierRepository) Delete(id uint) error {
 	return r.db.Delete(&models.Supplier{}, id).Error
 }
+
+func (r *PostgresSupplierRepository) GetByVisitDay(day string) ([]models.Supplier, error) {
+	var suppliers []models.Supplier
+	err := r.db.Where("visitDay = ?", day).Find(&suppliers).Error
+	return suppliers, err
+}

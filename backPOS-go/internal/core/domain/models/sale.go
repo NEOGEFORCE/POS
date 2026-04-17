@@ -18,6 +18,7 @@ type Sale struct {
 	TransferAmount float64        `gorm:"type:decimal(10,2);column:transferAmount" json:"transferAmount"`
 	TransferSource string         `gorm:"index;column:transferSource" json:"transferSource"`
 	CreditAmount   float64        `gorm:"type:decimal(10,2);column:creditAmount" json:"creditAmount"`
+	DebtPending    float64        `gorm:"type:decimal(10,2);column:debtPending" json:"debtPending"`
 	Change         float64        `gorm:"type:decimal(10,2);column:change" json:"change"`
 	Client         Client         `gorm:"foreignKey:ClientDNI;references:DNI" json:"client,omitempty"`
 	Employee       Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`

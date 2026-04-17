@@ -21,26 +21,26 @@ func NewSaleHandler(s *services.SaleService) *SaleHandler {
 func (h *SaleHandler) Create(c *gin.Context) {
 	var sale models.Sale
 	if err := c.ShouldBindJSON(&sale); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos de venta inválido", err)
 		return
 	}
 
 	// Inyectar metadatos (DNI del empleado que vende) de forma segura
 	dni, exists := c.Get("dni")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Usuario no autenticado"})
+		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "Usuario no autenticado", nil)
 		return
 	}
 
 	dniStr, ok := dni.(string)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error interno de autenticación"})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error interno de autenticación", nil)
 		return
 	}
 	sale.EmployeeDNI = dniStr
 
 	if err := h.service.CreateSale(&sale); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar venta", err)
 		return
 	}
 	c.JSON(http.StatusCreated, sale)
@@ -69,7 +69,7 @@ func (h *SaleHandler) GetAll(c *gin.Context) {
 
 	sales, total, err := h.service.ListSales(filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener ventas", err)
 		return
 	}
 
@@ -86,7 +86,7 @@ func (h *SaleHandler) GetByID(c *gin.Context) {
 	id, _ := strconv.ParseUint(idStr, 10, 32)
 	sale, err := h.service.GetSale(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Venta no encontrada"})
+		SendError(c, http.StatusNotFound, ErrNotFound, "Venta no encontrada", err)
 		return
 	}
 	c.JSON(http.StatusOK, sale)
@@ -96,7 +96,7 @@ func (h *SaleHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.ParseUint(idStr, 10, 32)
 	if err := h.service.DeleteSale(uint(id)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar venta", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Venta eliminada correctamente"})
@@ -107,11 +107,11 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 	id, _ := strconv.ParseUint(idStr, 10, 32)
 	var sale models.Sale
 	if err := c.ShouldBindJSON(&sale); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos de pago inválido", err)
 		return
 	}
 	if err := h.service.UpdateSalePayment(uint(id), &sale); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar pago", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})

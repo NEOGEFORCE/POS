@@ -26,4 +26,5 @@ type SaleRepository interface {
 	Count() (int64, error)
 	GetTotalRevenue() (float64, error)
 	GetMonthlyTotals() (map[string]float64, error)
+	GetSoldQuantityByProduct(barcode string, from, to string) (float64, error)
 }

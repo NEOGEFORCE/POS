@@ -9,6 +9,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Expense } from '@/lib/definitions';
 import Cookies from 'js-cookie';
+import { apiFetch } from '@/lib/api-error';
 
 // Dinámicos para optimización de carga y HMR
 const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: false });
@@ -17,11 +18,11 @@ const ExpenseFormModal = dynamic(() => import('./components/ExpenseFormModal'), 
 const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal'), { ssr: false });
 
 async function fetchExpenses(token: string): Promise<Expense[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/expenses/list`, {
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Failed to fetch expenses');
-  return res.json();
+  const data = await apiFetch('/expenses/list', {
+    method: 'GET',
+    fallbackError: 'FALLO AL CARGAR EGRESOS'
+  }, token);
+  return Array.isArray(data) ? data : [];
 }
 
 export default function ExpensesPage() {
@@ -84,15 +85,14 @@ export default function ExpensesPage() {
 
     try {
       const currentDate = new Date().toISOString();
-      const url = addDialogOpen
-        ? `${process.env.NEXT_PUBLIC_API_URL}/expenses/create`
-        : `${process.env.NEXT_PUBLIC_API_URL}/expenses/update/${editingExpense?.id}`;
+      const path = addDialogOpen
+        ? '/expenses/create'
+        : `/expenses/update/${editingExpense?.id}`;
 
       const method = addDialogOpen ? 'POST' : 'PUT';
 
-      const res = await fetch(url, {
+      await apiFetch(path, {
         method,
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
           description: data.description.toUpperCase(),
           amount: parseFloat(String(data.amount)),
@@ -100,10 +100,9 @@ export default function ExpensesPage() {
           paymentSource: data.paymentSource,
           category: data.category,
           supplierId: data.category === 'Proveedores' ? data.supplierId : null
-        })
-      });
-
-      if (!res.ok) throw new Error();
+        }),
+        fallbackError: 'FALLO AL REGISTRAR MOVIMIENTO'
+      }, token!);
 
       toast({ 
         title: "ÉXITO", 
@@ -112,13 +111,13 @@ export default function ExpensesPage() {
       });
       setAddDialogOpen(false);
       setEditDialogOpen(false);
-      setNewExpense({ description: '', amount: 0, paymentSource: 'EFECTIVO', category: '' });
+      setNewExpense({ description: '', amount: 0, paymentSource: 'EFECTIVO' });
       loadExpenses();
-    } catch { 
+    } catch (err: any) { 
       toast({ 
         variant: "destructive", 
         title: "FALLO OPERATIVO", 
-        description: "NO SE PUDO PROCESAR EL REGISTRO",
+        description: err.message || 'FALLO AL REGISTRAR MOVIMIENTO',
         className: "bg-rose-500 text-white border-none"
       }); 
     }
@@ -128,7 +127,10 @@ export default function ExpensesPage() {
     if (!deletingId) return;
     const token = Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token');
     try {
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/expenses/delete/${deletingId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+      await apiFetch(`/expenses/delete/${deletingId}`, {
+        method: 'DELETE',
+        fallbackError: 'FALLO AL ELIMINAR EGRESO'
+      }, token!);
       toast({ 
         title: "ÉXITO", 
         description: "REGISTRO ELIMINADO", 
@@ -136,11 +138,11 @@ export default function ExpensesPage() {
       });
       setDeleteDialogOpen(false);
       loadExpenses();
-    } catch { 
+    } catch (err: any) { 
       toast({ 
         variant: "destructive", 
         title: "FALLO AL ANULAR", 
-        description: "INTENTE NUEVAMENTE",
+        description: err.message || 'FALLO AL ELIMINAR EGRESO',
         className: "bg-rose-500 text-white border-none"
       }); 
     }
@@ -149,11 +151,11 @@ export default function ExpensesPage() {
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="danger" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col min-h-screen gap-2 p-2 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20">
-      
+    <div className="flex flex-col min-h-[100dvh] gap-2 p-2 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20 items-center">
+      <div className="w-full max-w-[1600px] flex flex-col gap-3">
       {/* Header Premium Zero Friction */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-4 opacity-5 text-rose-500 scale-150 rotate-12"><TrendingDown size={120} /></div>
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white/90 dark:bg-zinc-900/50 backdrop-blur-2xl border-b border-gray-200 dark:border-white/5 rounded-[2rem] shrink-0 shadow-xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-4 opacity-5 text-rose-500 scale-150 rotate-12 transition-transform duration-1000 group-hover:rotate-[24deg]"><TrendingDown size={120} /></div>
         
         <div className="flex items-center gap-3 relative z-10">
           <div className="bg-rose-500 p-2.5 rounded-xl text-white shadow-lg shadow-rose-500/20 -rotate-3">
@@ -182,7 +184,7 @@ export default function ExpensesPage() {
               onValueChange={(v) => setFilter(v.toUpperCase())} 
               startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-rose-500 transition-colors" />} 
               classNames={{ 
-                inputWrapper: "h-11 w-full md:w-80 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-focus-within/search:border-rose-500/50 transition-all", 
+                inputWrapper: "h-11 w-full md:w-80 bg-gray-50/50 dark:bg-black/20 backdrop-blur-md border border-gray-200 dark:border-white/10 shadow-inner rounded-2xl group-focus-within/search:border-rose-500/50 transition-all", 
                 input: "text-[11px] font-black bg-transparent tracking-widest italic uppercase" 
               }} 
             />
@@ -229,6 +231,7 @@ export default function ExpensesPage() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteExpense}
       />
+      </div>
     </div>
   );
 }

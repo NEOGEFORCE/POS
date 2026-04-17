@@ -3,7 +3,7 @@
 import React, { memo } from 'react';
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Button, Input
+  Button, Input, Select, SelectItem
 } from "@heroui/react";
 import { Truck, Phone, MapPin, Sparkles, X, Building2, Camera } from 'lucide-react';
 import { Supplier } from '@/lib/definitions';
@@ -34,7 +34,7 @@ const SupplierFormModal = memo(({
       backdrop="blur" 
       size="lg" 
       classNames={{ 
-        base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-visible mx-4 my-8", 
+        base: "bg-white/90 dark:bg-zinc-950/90 backdrop-blur-3xl rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-visible mx-4 my-8", 
         closeButton: "hover:bg-rose-500/10 hover:text-rose-500 transition-colors top-6 right-6" 
       }}
     >
@@ -153,6 +153,49 @@ const SupplierFormModal = memo(({
                       input: "font-black text-base uppercase italic text-gray-900 dark:text-white bg-transparent placeholder:text-gray-200 dark:placeholder:text-zinc-800" 
                     }}
                   />
+                </div>
+              </div>
+
+              {/* Logística (Días de Visita y Entrega) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 bg-emerald-500/5 dark:bg-emerald-500/10 p-6 rounded-[2rem] border border-emerald-500/10">
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 ml-1">
+                    <Truck size={14} className="text-emerald-500" />
+                    <label className="text-[11px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Día de Visita (Vendedor)</label>
+                  </div>
+                  <Select
+                    placeholder="Seleccionar día"
+                    selectedKeys={supplier?.visitDay ? [supplier.visitDay] : []}
+                    onSelectionChange={(keys) => setSupplier((p: any) => ({ ...p, visitDay: Array.from(keys)[0] }))}
+                    classNames={{
+                      trigger: "h-16 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-[1.25rem] shadow-sm",
+                      value: "font-black text-base uppercase italic text-gray-900 dark:text-white"
+                    }}
+                  >
+                    {["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"].map((day) => (
+                      <SelectItem key={day} className="font-bold uppercase italic">{day}</SelectItem>
+                    ))}
+                  </Select>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 ml-1">
+                    <Truck size={14} className="text-emerald-500" />
+                    <label className="text-[11px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Día de Entrega (Pedido)</label>
+                  </div>
+                  <Select
+                    placeholder="Seleccionar día"
+                    selectedKeys={supplier?.deliveryDay ? [supplier.deliveryDay] : []}
+                    onSelectionChange={(keys) => setSupplier((p: any) => ({ ...p, deliveryDay: Array.from(keys)[0] }))}
+                    classNames={{
+                      trigger: "h-16 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-[1.25rem] shadow-sm",
+                      value: "font-black text-base uppercase italic text-gray-900 dark:text-white"
+                    }}
+                  >
+                    {["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"].map((day) => (
+                      <SelectItem key={day} className="font-bold uppercase italic">{day}</SelectItem>
+                    ))}
+                  </Select>
                 </div>
               </div>
             </ModalBody>

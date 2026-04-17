@@ -42,8 +42,8 @@ func (s *ProductService) GetAllProducts() ([]models.Product, error) {
 	return s.repo.GetAll()
 }
 
-func (s *ProductService) GetPaginatedProducts(page, pageSize int) ([]models.Product, int64, error) {
-	return s.repo.GetPaginated(page, pageSize)
+func (s *ProductService) GetPaginatedProducts(page, pageSize int, search string) ([]models.Product, int64, error) {
+	return s.repo.GetPaginated(page, pageSize, search)
 }
 
 func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Product) error {
@@ -174,6 +174,18 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 	_ = s.movementRepo.Save(movement)
 
 	return nil
+}
+
+func (s *ProductService) AdjustStock(barcode string, amount float64) error {
+	product, err := s.repo.GetByBarcode(barcode)
+	if err != nil {
+		return err
+	}
+	newQuantity := product.Quantity + amount
+	if newQuantity < 0 {
+		newQuantity = 0
+	}
+	return s.repo.UpdateQuantity(barcode, newQuantity)
 }
 
 func (s *ProductService) FixAllProductPrices() error {

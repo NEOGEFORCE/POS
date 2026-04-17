@@ -22,7 +22,7 @@ export default function AppLayout({
         router.replace('/login');
       } else {
         const role = user.role?.toLowerCase() || user.Role?.toLowerCase() || "";
-        const isAdmin = role === "admin" || role === "administrador" || role === "auditor";
+        const isAdmin = role === "admin" || role === "administrador" || role === "superadmin" || role === "auditor";
         const pathname = window.location.pathname;
 
         // Rutas protegidas para No-Admins
@@ -53,9 +53,9 @@ export default function AppLayout({
   return (
     <SidebarProvider defaultOpen={false}>
       <AppSidebar />
-      <SidebarInset className="max-w-[100vw] min-w-0 w-full overflow-x-hidden overflow-y-auto">
+      <SidebarInset className="max-w-[100vw] min-w-0 w-full overflow-x-clip">
         {/* Contenedor principal con transición de Claro/Oscuro */}
-        <div className="flex flex-col min-h-[100dvh] bg-gray-50 dark:bg-[#09090b] transition-colors duration-500 relative min-w-0 w-full max-w-full">
+        <div className="flex flex-col min-h-full bg-gray-50 dark:bg-[#09090b] transition-colors duration-500 relative min-w-0 w-full max-w-full">
 
           {/* Resplandores de fondo (Glows) adaptados para ambos modos */}
           <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 dark:bg-emerald-500/10 blur-[100px] md:blur-[120px] rounded-full pointer-events-none transition-colors duration-500" />

@@ -9,6 +9,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Category } from '@/lib/definitions';
 import Cookies from 'js-cookie';
+import { extractApiError } from '@/lib/api-error';
 
 // Dinámicos para aligerar HMR y carga inicial
 const CategoryStats = dynamic(() => import('./components/CategoryStats'), { ssr: false });
@@ -94,12 +95,15 @@ export default function CategoriesPage() {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name: newCatName.toUpperCase() })
       });
-      if (!res.ok) throw new Error();
-      toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA ESTABLECIDA CORRECTAMENTE.' });
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "FALLO AL CREAR CATEGORÍA");
+        throw new Error(errorMsg);
+      }
+      toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA REGISTRADA.' });
       setAddDialogOpen(false);
       setNewCatName('');
       loadCategories();
-    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'NO SE PUDO CREAR LA CATEGORÍA' }); }
+    } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL CREAR" }); }
   };
 
   const handleEditCategory = async () => {
@@ -111,12 +115,15 @@ export default function CategoriesPage() {
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name: editingCategory.name.toUpperCase() })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CATEGORÍA");
+        throw new Error(errorMsg);
+      }
       toast({ variant: 'success', title: 'ÉXITO', description: 'NOMBRE DE CATEGORÍA SINCRONIZADO.' });
       setEditDialogOpen(false);
       setEditingCategory(null);
       loadCategories();
-    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'NO SE PUDO ACTUALIZAR LA CATEGORÍA' }); }
+    } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ACTUALIZAR" }); }
   };
 
   const handleDeleteCategory = async () => {
@@ -127,12 +134,15 @@ export default function CategoriesPage() {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "FALLO AL ELIMINAR CATEGORÍA");
+        throw new Error(errorMsg);
+      }
       toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ELIMINADO CORRECTAMENTE.' });
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadCategories();
-    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'ERROR CRÍTICO AL ELIMINAR' }); }
+    } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;

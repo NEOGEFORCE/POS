@@ -9,14 +9,35 @@ export default function Home() {
   const router = useRouter();
 
   useEffect(() => {
-    // Pequeño timeout opcional para que la animación de carga se alcance a ver (puedes quitarlo si prefieres que sea instantáneo)
-    const timer = setTimeout(() => {
+    const checkStatusWithRetry = async (retries = 3, delay = 1000) => {
+      for (let i = 0; i < retries; i++) {
+        try {
+          const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/check-setup`);
+          if (response.ok) {
+            return await response.json();
+          }
+        } catch (error) {
+          console.log(`Intento ${i + 1} de ${retries} falló. Reintentando en ${delay}ms...`);
+          if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+      return { needsSetup: false }; // Por defecto a login si falla todo
+    };
+
+    const initialize = async () => {
+      const { needsSetup } = await checkStatusWithRetry();
+
+      if (needsSetup) {
+        router.replace('/setup');
+        return;
+      }
+
       const userStr = localStorage.getItem('org-pos-user');
       if (userStr) {
         try {
           const user = JSON.parse(userStr);
           const role = (user.role || user.Role || "").toLowerCase();
-          if (role === 'admin' || role === 'administrador') {
+          if (role === 'admin' || role === 'administrador' || role === 'superadmin') {
             router.replace('/dashboard');
           } else {
             router.replace('/sales/new');
@@ -27,8 +48,9 @@ export default function Home() {
       } else {
         router.replace('/login');
       }
-    }, 600); // 600ms de carga visual
+    };
 
+    const timer = setTimeout(initialize, 500);
     return () => clearTimeout(timer);
   }, [router]);
 

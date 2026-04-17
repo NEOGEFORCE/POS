@@ -16,6 +16,8 @@ type Supplier struct {
 	Creator       Employee       `gorm:"foreignKey:CreatedByDNI;references:DNI" json:"creator,omitempty"`
 	Updater       Employee       `gorm:"foreignKey:UpdatedByDNI;references:DNI" json:"updater,omitempty"`
 	ImageUrl      string         `gorm:"type:text;column:imageUrl" json:"imageUrl"`
+	VisitDay      string         `gorm:"column:visitDay" json:"visitDay"`
+	DeliveryDay   string         `gorm:"column:deliveryDay" json:"deliveryDay"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

@@ -3,6 +3,7 @@ package services
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
@@ -20,6 +21,7 @@ type DashboardService struct {
 	creditRepo   ports.CreditPaymentRepository
 	categoryRepo ports.CategoryRepository
 	movementRepo ports.StockMovementRepository
+	adminRepo    ports.AdminRepository
 }
 
 func NewDashboardService(
@@ -33,6 +35,7 @@ func NewDashboardService(
 	cr ports.CreditPaymentRepository,
 	cat ports.CategoryRepository,
 	mr ports.StockMovementRepository,
+	ar ports.AdminRepository,
 ) *DashboardService {
 	return &DashboardService{
 		saleRepo:     s,
@@ -45,6 +48,7 @@ func NewDashboardService(
 		creditRepo:   cr,
 		categoryRepo: cat,
 		movementRepo: mr,
+		adminRepo:    ar,
 	}
 }
 
@@ -81,6 +85,8 @@ type DashboardOverview struct {
 	LowStockProducts []LowStockItem     `json:"lowStockProducts"`
 	SalesByPayment   map[string]float64 `json:"salesByPayment"`
 	DailySalesLast7  []DailyPoint       `json:"dailySalesLast7"`
+	TopProducts      []ProductRankingItem `json:"topProducts"`
+	MissingItems     []models.MissingItem `json:"missingItems"`
 }
 
 type ProductRankingItem struct {
@@ -303,7 +309,61 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		LowStockProducts: lowStockProducts,
 		SalesByPayment:   salesByPayment,
 		DailySalesLast7:  dailySalesLast7,
+		TopProducts:      s.calculateTopProductsFromSales(sales),
+		MissingItems:     s.fetchRecentMissingItems(),
 	}, nil
+}
+
+func (s *DashboardService) fetchRecentMissingItems() []models.MissingItem {
+	items, err := s.adminRepo.GetMissingItems()
+	if err != nil {
+		return []models.MissingItem{}
+	}
+	// Only return the 5 most recent pending items
+	filtered := []models.MissingItem{}
+	for _, item := range items {
+		if strings.ToUpper(item.Status) == "PENDIENTE" {
+			filtered = append(filtered, item)
+		}
+		if len(filtered) >= 5 {
+			break
+		}
+	}
+	return filtered
+}
+
+func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []ProductRankingItem {
+	rankingMap := make(map[string]*ProductRankingItem)
+	for _, sale := range sales {
+		for _, detail := range sale.SaleDetails {
+			if _, ok := rankingMap[detail.Barcode]; !ok {
+				name := detail.Barcode
+				if detail.Product.ProductName != "" {
+					name = detail.Product.ProductName
+				}
+				rankingMap[detail.Barcode] = &ProductRankingItem{
+					Barcode: detail.Barcode,
+					Name:    name,
+				}
+			}
+			rankingMap[detail.Barcode].Quantity += detail.Quantity
+			rankingMap[detail.Barcode].Total += detail.Subtotal
+		}
+	}
+
+	ranking := []ProductRankingItem{}
+	for _, item := range rankingMap {
+		ranking = append(ranking, *item)
+	}
+
+	sort.Slice(ranking, func(i, j int) bool {
+		return ranking[i].Quantity > ranking[j].Quantity
+	})
+
+	if len(ranking) > 5 {
+		ranking = ranking[:5]
+	}
+	return ranking
 }
 
 type CashierClosure struct {

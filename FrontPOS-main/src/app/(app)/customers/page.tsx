@@ -13,6 +13,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Customer } from '@/lib/definitions';
 import Cookies from 'js-cookie';
+import { extractApiError } from '@/lib/api-error';
 
 // Dinámicos para aligerar HMR y carga inicial
 const PayCreditModal = dynamic(() => import('./components/PayCreditModal'), { ssr: false });
@@ -117,12 +118,17 @@ export default function CustomersPage() {
           totalPaid: actualPaymentValue
         })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "Error al procesar pago");
+        throw new Error(errorMsg);
+      }
 
       setLastChange(displayChange);
       setShowSuccessScreen(true);
       loadCustomers();
-    } catch { toast({ variant: "destructive", title: "Error al procesar" }); }
+    } catch (err: any) { 
+        toast({ variant: "destructive", title: "Error al procesar", description: err.message || "ERROR INESPERADO" }); 
+    }
     finally { setSubmittingPayment(false); }
   };
 
@@ -134,10 +140,13 @@ export default function CustomersPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ ...newClient, creditLimit: Number(newClient.creditLimit) })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "FALLO AL CREAR CLIENTE");
+        throw new Error(errorMsg);
+      }
       toast({ title: "Cliente Creado" }); setAddDialogOpen(false);
       setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 }); loadCustomers();
-    } catch { toast({ variant: "destructive", title: "Error" }); }
+    } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL CREAR" }); }
   };
 
   const handleEditCustomer = async () => {
@@ -148,9 +157,12 @@ export default function CustomersPage() {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ ...editingClient, creditLimit: Number(editingClient.creditLimit) })
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CLIENTE");
+        throw new Error(errorMsg);
+      }
       toast({ title: "Actualizado" }); setEditDialogOpen(false); loadCustomers();
-    } catch { toast({ variant: "destructive", title: "Error" }); }
+    } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL ACTUALIZAR" }); }
   };
 
   const handleDeleteCustomer = async () => {
@@ -160,9 +172,12 @@ export default function CustomersPage() {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/delete-client/${deletingDni}`, {
         method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
       });
-      if (!res.ok) throw new Error();
+      if (!res.ok) {
+        const errorMsg = await extractApiError(res, "FALLO AL ELIMINAR CLIENTE");
+        throw new Error(errorMsg);
+      }
       toast({ title: "Eliminado" }); setDeleteDialogOpen(false); setDeletingDni(null); loadCustomers();
-    } catch { toast({ variant: "destructive", title: "Error al borrar" }); }
+    } catch (err: any) { toast({ variant: "destructive", title: "Error al borrar", description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
   // Teclado (mejorado)
@@ -185,11 +200,11 @@ export default function CustomersPage() {
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col min-h-screen gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20">
-      
+    <div className="flex flex-col min-h-[100dvh] gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20 items-center">
+      <div className="w-full max-w-[1600px] flex flex-col gap-3">
       {/* Header Premium Zero Friction */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150"><Users size={120} /></div>
+      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/90 dark:bg-zinc-900/50 backdrop-blur-2xl border-b border-gray-200 dark:border-white/5 rounded-[2rem] shrink-0 shadow-xl relative overflow-hidden group">
+        <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150 rotate-3 transition-transform duration-1000 group-hover:rotate-12"><Users size={120} /></div>
         
         <div className="flex items-center gap-4 relative z-10">
           <div className="bg-emerald-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-500/20 rotate-3">
@@ -218,7 +233,7 @@ export default function CustomersPage() {
               onValueChange={(v) => setFilter(v.toUpperCase())} 
               startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
               classNames={{ 
-                inputWrapper: "h-11 w-full md:w-80 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-focus-within/search:border-emerald-500/50 transition-all", 
+                inputWrapper: "h-11 w-full md:w-80 bg-gray-50/50 dark:bg-black/20 backdrop-blur-md border border-gray-200 dark:border-white/10 shadow-inner rounded-2xl group-focus-within/search:border-emerald-500/50 transition-all", 
                 input: "text-[11px] font-black bg-transparent tracking-widest italic" 
               }} 
             />
@@ -280,6 +295,7 @@ export default function CustomersPage() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteCustomer}
       />
+      </div>
     </div>
   );
 }

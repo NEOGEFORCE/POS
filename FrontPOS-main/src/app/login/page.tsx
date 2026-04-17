@@ -37,16 +37,31 @@ export default function LoginPage() {
 
   const toggleVisibility = () => setIsVisible(!isVisible);
 
-  // Redirigir si ya está autenticado
+  // Redirigir si ya está autenticado o si necesita setup
   useEffect(() => {
-    if (user) {
-      const role = (user.role || user.Role || "").toLowerCase();
-      if (role === 'admin' || role === 'administrador') {
-        router.replace('/dashboard');
-      } else {
-        router.replace('/sales/new');
+    const checkSetupAndAuth = async () => {
+      try {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/check-setup`);
+        const { needsSetup } = await response.json();
+
+        if (needsSetup) {
+          router.replace('/setup');
+          return;
+        }
+
+        if (user) {
+          const role = (user.role || user.Role || "").toLowerCase();
+          if (role === 'admin' || role === 'administrador' || role === 'superadmin') {
+            router.replace('/dashboard');
+          } else {
+            router.replace('/sales/new');
+          }
+        }
+      } catch (error) {
+        console.error("Error Checking Setup:", error);
       }
-    }
+    };
+    checkSetupAndAuth();
   }, [user, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {

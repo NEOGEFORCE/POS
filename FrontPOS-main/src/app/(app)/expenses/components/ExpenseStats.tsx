@@ -2,6 +2,18 @@
 
 import React, { memo } from 'react';
 import { TrendingDown, CreditCard, Activity, DollarSign } from 'lucide-react';
+import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+
+const dummyData = [
+    { pv: 4200 },
+    { pv: 7398 },
+    { pv: 2800 },
+    { pv: 5908 },
+    { pv: 1800 },
+    { pv: 6800 },
+    { pv: 3300 },
+];
+
 
 interface StatsProps {
   totalMonth: number;
@@ -46,12 +58,27 @@ const ExpenseStats = memo(({ totalMonth, topSource, count }: StatsProps) => {
       {kpis.map((k, i) => (
         <div 
           key={i} 
-          className="group bg-white dark:bg-zinc-900 p-5 border border-gray-200 dark:border-white/5 rounded-2xl flex items-center justify-between shadow-sm transition-all hover:bg-rose-500/5 hover:border-rose-500/20 hover:scale-[1.02] cursor-pointer"
+          className="relative bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-5 border border-gray-200 dark:border-white/5 rounded-[2rem] flex items-center justify-between shadow-lg overflow-hidden group cursor-pointer transition-all hover:scale-[1.02] hover:border-rose-500/30"
         >
-          <div className="flex flex-col min-w-0 pr-1">
+          {/* Background Sparkline */}
+          <div className="absolute inset-0 opacity-10 dark:opacity-20 translate-y-4 group-hover:translate-y-2 group-hover:scale-y-110 transition-all duration-700 pointer-events-none">
+              <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={dummyData}>
+                      <Area 
+                          type="monotone" 
+                          dataKey="pv" 
+                          stroke={k.color === 'rose' ? '#f43f5e' : k.color === 'sky' ? '#0ea5e9' : k.color === 'emerald' ? '#10b981' : '#f59e0b'} 
+                          fill={k.color === 'rose' ? '#f43f5e' : k.color === 'sky' ? '#0ea5e9' : k.color === 'emerald' ? '#10b981' : '#f59e0b'}
+                          strokeWidth={2}
+                      />
+                  </AreaChart>
+              </ResponsiveContainer>
+          </div>
+
+          <div className="flex flex-col min-w-0 pr-1 relative z-10">
             <span className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none mb-2">{k.label}</span>
             <div className="flex items-baseline gap-2">
-              <span className={`text-2xl font-black tabular-nums ${
+              <span className={`text-3xl font-black tabular-nums ${
                 k.color === 'rose' ? 'text-rose-500' : 
                 k.color === 'sky' ? 'text-sky-500' : 
                 k.color === 'emerald' ? 'text-emerald-500' : 'text-amber-500'
@@ -59,16 +86,16 @@ const ExpenseStats = memo(({ totalMonth, topSource, count }: StatsProps) => {
                 {k.val}
               </span>
             </div>
-            <p className="text-[9px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-wider mt-2 italic group-hover:text-rose-500/60 transition-colors">
+            <p className="text-[9px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-wider mt-2 italic opacity-0 group-hover:opacity-100 transition-opacity">
               {k.desc}
             </p>
           </div>
-          <div className={`p-3 rounded-xl ${
-            k.color === 'rose' ? 'bg-rose-500/10 text-rose-500' : 
-            k.color === 'sky' ? 'bg-sky-500/10 text-sky-500' : 
-            k.color === 'emerald' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'
-          } group-hover:scale-110 transition-transform`}>
-            <k.icon size={24} />
+          <div className={`p-4 rounded-[1.2rem] shadow-xl backdrop-blur-md relative z-10 ${
+            k.color === 'rose' ? 'bg-rose-500/10 text-rose-500 shadow-rose-500/20' : 
+            k.color === 'sky' ? 'bg-sky-500/10 text-sky-500 shadow-sky-500/20' : 
+            k.color === 'emerald' ? 'bg-emerald-500/10 text-emerald-500 shadow-emerald-500/20' : 'bg-amber-500/10 text-amber-500 shadow-amber-500/20'
+          } transition-transform group-hover:-rotate-6`}>
+            <k.icon size={28} />
           </div>
         </div>
       ))}

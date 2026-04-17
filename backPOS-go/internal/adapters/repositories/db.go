@@ -4,13 +4,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
 	"backPOS-go/internal/core/domain/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"golang.org/x/crypto/bcrypt"
 	"strings"
 )
 
@@ -132,6 +130,8 @@ func ConnectDB() {
 		&models.CreditPayment{},
 		&models.ProductSupplier{},
 		&models.StockMovement{},
+		&models.AuditLog{},
+		&models.MissingItem{},
 	}
 
 	// Sesión especial para migraciones: sin transacciones y en modo SILENCIOSO para evitar ruido en el terminal
@@ -152,63 +152,27 @@ func ConnectDB() {
 	DB = db
 	log.Printf("✅ Database connection established: %s", dbname)
 
-	SeedAdmin(db)
-	SeedClient(db)
-	// SeedShift(db)
+	// SeedClient ya no se llama aquí, se llama en el flujo de Setup
 }
 
-func SeedAdmin(db *gorm.DB) {
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
-	admin := models.Employee{
-		DNI:      "12345678",
-		Name:     "Admin Inicial",
-		Email:    "admin@pos.com",
-		Password: string(hashedPassword),
-		Role:     "admin",
-	}
-	// Usamos Save para que si ya existe se actualice/mantenga, 
-	// asegurando que el DNI 12345678 esté presente para las llaves foráneas.
-	if err := db.Save(&admin).Error; err != nil {
-		log.Printf("⚠️ Warning: Failed to ensure default admin exists: %v", err)
-	} else {
-		log.Printf("👤 System Administrator (12345678) is ready.")
-	}
-}
 
-func SeedClient(db *gorm.DB) {
+func SeedClient(db *gorm.DB, adminDNI string) {
 	var count int64
 	db.Unscoped().Model(&models.Client{}).Where("\"dni\" = ?", "0").Count(&count)
 	if count == 0 {
 		client := models.Client{
 			DNI:          "0",
 			Name:         "CONSUMIDOR FINAL",
-			CreatedByDNI: "12345678", // Usamos el DNI del admin inicial que sí existe
-			UpdatedByDNI: "12345678",
+			CreatedByDNI: adminDNI,
+			UpdatedByDNI: adminDNI,
 		}
 		if err := db.Create(&client).Error; err != nil {
 			log.Printf("⚠️ Warning: Failed to seed default client: %v", err)
 		} else {
-			log.Printf("👥 Default Client (CONSUMIDOR FINAL) is ready.")
+			log.Printf("👥 Default Client (CONSUMIDOR FINAL) is ready for user %s.", adminDNI)
 		}
 	}
 }
 
-func SeedShift(db *gorm.DB) {
-	var count int64
-	db.Model(&models.ActiveShift{}).Where("status = ?", "OPEN").Count(&count)
-	if count == 0 {
-		shift := models.ActiveShift{
-			StartTime:   time.Now(),
-			OpeningCash: 120000,
-			CashierDNI:  "12345678",
-			CashierName: "Admin Inicial",
-			Status:      "OPEN",
-		}
-		if err := db.Create(&shift).Error; err != nil {
-			log.Printf("⚠️ Warning: Failed to seed default shift: %v", err)
-		} else {
-			log.Printf("🚀 Active Shift started with base $120.000.")
-		}
-	}
-}
+
 

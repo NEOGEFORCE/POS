@@ -23,7 +23,7 @@ func NewProductHandler(s *services.ProductService, i *services.InventoryService)
 func (h *ProductHandler) Create(c *gin.Context) {
 	var product models.Product
 	if err := c.ShouldBindJSON(&product); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
@@ -36,7 +36,13 @@ func (h *ProductHandler) Create(c *gin.Context) {
 	product.UpdatedByDNI = dniStr
 
 	if err := h.service.CreateProduct(&product); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") || 
+		   strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") {
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El código de barras ya está registrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al crear producto", err)
 		return
 	}
 	c.JSON(http.StatusCreated, product)
@@ -45,7 +51,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 func (h *ProductHandler) GetAll(c *gin.Context) {
 	products, err := h.service.GetAllProducts()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catálogo de productos", err)
 		return
 	}
 	c.JSON(http.StatusOK, products)
@@ -54,6 +60,7 @@ func (h *ProductHandler) GetAll(c *gin.Context) {
 func (h *ProductHandler) GetAllPaginated(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "100"))
+	search := c.Query("q")
 
 	if page <= 0 {
 		page = 1
@@ -62,10 +69,15 @@ func (h *ProductHandler) GetAllPaginated(c *gin.Context) {
 		pageSize = 100
 	}
 
-	products, total, err := h.service.GetPaginatedProducts(page, pageSize)
+	products, total, err := h.service.GetPaginatedProducts(page, pageSize, search)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener productos paginados", err)
 		return
+	}
+
+	// Dynamic calculation of NetProfit
+	for i := range products {
+		products[i].NetProfit = products[i].SalePrice - products[i].PurchasePrice
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -80,7 +92,7 @@ func (h *ProductHandler) GetByBarcode(c *gin.Context) {
 	barcode := c.Param("barcode")
 	product, err := h.service.GetProduct(barcode)
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Product not found"})
+		SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
 		return
 	}
 	c.JSON(http.StatusOK, product)
@@ -92,7 +104,7 @@ func (h *ProductHandler) GetInventory(c *gin.Context) {
 
 	data, err := h.inventoryService.GetInventory(from, to)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener inventario", err)
 		return
 	}
 	c.JSON(http.StatusOK, data)
@@ -102,11 +114,16 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	barcode := c.Param("barcode")
 	var product models.Product
 	if err := c.ShouldBindJSON(&product); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 	if err := h.service.UpdateProduct(barcode, &product); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar producto", err)
 		return
 	}
 	c.JSON(http.StatusOK, product)
@@ -115,7 +132,11 @@ func (h *ProductHandler) Update(c *gin.Context) {
 func (h *ProductHandler) Delete(c *gin.Context) {
 	barcode := c.Param("barcode")
 	if err := h.service.DeleteProduct(barcode); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar producto", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Product deleted"})
@@ -134,16 +155,36 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
 	if err := h.service.ReceiveStock(body.Barcode, body.AddedQuantity, body.NewPurchasePrice, body.NewSalePrice, body.SupplierID, body.Iva, body.Icui, body.Ibua); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar entrada de stock", err)
 		return
 	}
 
 	product, _ := h.service.GetProduct(body.Barcode)
+	c.JSON(http.StatusOK, product)
+}
+
+func (h *ProductHandler) AdjustStock(c *gin.Context) {
+	barcode := c.Param("barcode")
+	var body struct {
+		Amount float64 `json:"amount"`
+	}
+
+	if err := c.ShouldBindJSON(&body); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		return
+	}
+
+	if err := h.service.AdjustStock(barcode, body.Amount); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al ajustar stock", err)
+		return
+	}
+
+	product, _ := h.service.GetProduct(barcode)
 	c.JSON(http.StatusOK, product)
 }
 
@@ -153,12 +194,12 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
 	if err := h.service.BulkReceiveStock(body.Entries); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepción masiva", err)
 		return
 	}
 
@@ -166,7 +207,7 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 }
 func (h *ProductHandler) FixPrices(c *gin.Context) {
 	if err := h.service.FixAllProductPrices(); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al corregir precios", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Precios corregidos y redondeados exitosamente"})

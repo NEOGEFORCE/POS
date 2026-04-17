@@ -10,6 +10,7 @@ import { useState, useEffect, useCallback } from 'react';
 import Cookies from 'js-cookie';
 import { Sale } from '@/lib/definitions';
 import { useToast } from '@/hooks/use-toast';
+import { extractApiError } from '@/lib/api-error';
 
 interface SaleEditModalProps {
     isOpen: boolean;
@@ -124,7 +125,10 @@ export default function SaleEditModal({
                 body: JSON.stringify(payload)
             });
 
-            if (!res.ok) throw new Error('Error al actualizar pago');
+            if (!res.ok) {
+                const errorMsg = await extractApiError(res, "Error al actualizar pago");
+                throw new Error(errorMsg);
+            }
             
             setLastChange(finalChange);
             setShowSuccessScreen(true);
@@ -132,7 +136,7 @@ export default function SaleEditModal({
             toast({ title: "✓ Actualizado", description: "El método de pago ha sido corregido." });
             onSuccess(finalChange);
         } catch (err: any) {
-            toast({ variant: "destructive", title: "Error", description: err.message });
+            toast({ variant: "destructive", title: "Error", description: err.message || "Error al actualizar pago" });
         } finally {
             setIsUpdating(false);
         }
@@ -267,7 +271,7 @@ export default function SaleEditModal({
                                 <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1">Acciones</p>
                                 <Button size="sm" variant="flat" color="warning" className="w-full justify-start h-10 px-3 rounded-lg font-bold text-[10px] uppercase bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 hover:bg-amber-100 border border-amber-200 dark:border-amber-500/20" onPress={handleResetPayments}>
                                     <HistoryIcon className="h-4 w-4 mr-2" /> Limpiar Pagos
-                                </button>
+                                </Button>
                                 <button 
                                     className="w-full h-14 px-4 rounded-2xl flex items-center gap-3 border border-sky-100 dark:border-sky-500/20 bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 transition-all font-black uppercase text-[10px] tracking-widest italic" 
                                     onClick={onClientSelectorOpen}

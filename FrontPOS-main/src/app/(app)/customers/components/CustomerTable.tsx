@@ -23,15 +23,15 @@ interface TableProps {
 
 const CustomerTable = memo(({ customers, onPay, onEdit, onDelete }: TableProps) => {
     return (
-        <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col min-h-0 shadow-sm transition-colors">
+        <div className="flex-1 bg-white/90 dark:bg-zinc-950/60 backdrop-blur-3xl border border-gray-200 dark:border-white/10 rounded-[2.5rem] overflow-hidden flex flex-col min-h-0 shadow-2xl transition-all">
             <div className="flex-1 overflow-x-auto w-full custom-scrollbar">
                 <Table 
                     isCompact 
                     removeWrapper 
                     aria-label="Directorio Principal de Clientes"
                     classNames={{ 
-                        th: "bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] md:text-[9px] tracking-widest h-12 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-20 px-6", 
-                        td: "py-4 border-b border-gray-100 dark:border-white/5 px-6", 
+                        th: "bg-transparent text-gray-400 dark:text-emerald-500/50 font-black uppercase text-[9px] tracking-widest h-14 py-1 border-b border-emerald-500/10 sticky top-0 z-20 px-6", 
+                        td: "py-4 border-b border-emerald-500/5 px-6", 
                         tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-pointer group" 
                     }}
                 >

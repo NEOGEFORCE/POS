@@ -169,12 +169,10 @@
     @apply border-r transition-colors duration-300 shadow-sm;
   }
 
-  /* PREVENIR TODO TIPO DE ZOOM ACCIDENTAL EN MÓVILES Y COMPORTAMIENTO NATIVO */
+  /* COMPORTAMIENTO NATIVO DE SCROLL */
   html, body {
     touch-action: manipulation;
-    overflow-x: hidden !important;
-    width: 100vw;
-    overscroll-behavior: none;
+    min-height: 100%;
   }
   
   @media screen and (max-width: 768px) {
@@ -230,13 +228,23 @@
     border-color: rgba(255, 255, 255, 0.2) !important;
   }
 
-  /* Ajuste de etiquetas */
+  /* FIX CRÍTICO: Etiquetas de Input (Fix Overlap) */
   [data-slot="label"] {
-    margin-bottom: 0.25rem !important;
+    position: relative !important;
+    transform: none !important;
+    margin-bottom: 0.5rem !important;
+    display: block !important;
     font-weight: 900 !important;
     letter-spacing: 0.05em !important;
+    text-transform: uppercase !important;
     color: hsl(var(--foreground)) !important;
-    font-size: 0.75rem !important;
+    font-size: 0.7rem !important;
+    pointer-events: auto !important;
+  }
+
+  /* Asegurar que el contenedor del input deje espacio arriba si hay label */
+  [data-slot="input-wrapper"] {
+    margin-top: 0 !important;
   }
 
   /* OPTIMIZACIÓN DE DENSIDAD 1440x900 */

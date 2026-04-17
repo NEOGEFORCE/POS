@@ -26,7 +26,8 @@ import {
   LogOut,
   Truck,
   Tag,
-  BarChart3
+  BarChart3,
+  ShieldCheck
 } from "lucide-react"
 import { useAuth } from "@/lib/auth"
 import Link from "next/link"
@@ -47,6 +48,7 @@ const menuItems = [
   { href: "/expenses", label: "Gastos", icon: FileText },
   { href: "/labels", label: "Etiquetas", icon: Tag }, // <-- NUEVA LÍNEA AGREGADA
   { href: "/users", label: "Personal", icon: Users, adminOnly: true },
+  { href: "/audit", label: "Auditoría", icon: ShieldCheck, adminOnly: true },
 ]
 
 export function AppSidebar() {
@@ -55,7 +57,7 @@ export function AppSidebar() {
   const { setOpenMobile, setOpen } = useSidebar()
 
   const role = user?.role?.toLowerCase() || user?.Role?.toLowerCase() || "";
-  const isAdmin = role === "admin" || role === "administrador" || role === "auditor";
+  const isAdmin = role === "admin" || role === "administrador" || role === "superadmin" || role === "auditor";
 
   return (
     <Sidebar className="border-r border-gray-200 dark:border-white/5 bg-white dark:bg-zinc-950 backdrop-blur-3xl shadow-2xl overflow-hidden transition-colors duration-500">

@@ -32,3 +32,7 @@ func (s *SupplierService) UpdateSupplier(id uint, supplier *models.Supplier) err
 func (s *SupplierService) DeleteSupplier(id uint) error {
 	return s.repo.Delete(id)
 }
+
+func (s *SupplierService) GetSuppliersByVisitDay(day string) ([]models.Supplier, error) {
+	return s.repo.GetByVisitDay(day)
+}

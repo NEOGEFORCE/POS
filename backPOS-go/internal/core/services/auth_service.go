@@ -2,24 +2,32 @@ package services
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
 
+	"backPOS-go/internal/adapters/repositories"
+	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
-
 type AuthService struct {
-	repo ports.AdminRepository
+	repo         ports.AdminRepository
+	emailService *EmailService
+	auditService *AuditService
 }
 
-func NewAuthService(repo ports.AdminRepository) *AuthService {
-	return &AuthService{repo: repo}
+func NewAuthService(repo ports.AdminRepository, emailService *EmailService, auditService *AuditService) *AuthService {
+	return &AuthService{
+		repo:         repo,
+		emailService: emailService,
+		auditService: auditService,
+	}
 }
 
-func (s *AuthService) Login(identifier string, password string) (string, interface{}, error) {
+func (s *AuthService) Login(identifier string, password string, ip string) (string, interface{}, error) {
 	// Normalizar identificador para búsqueda (El sistema guarda nombres y DNI en mayúsculas)
 	identifier = strings.ToUpper(strings.TrimSpace(identifier))
 
@@ -38,10 +46,24 @@ func (s *AuthService) Login(identifier string, password string) (string, interfa
 		return "", nil, errors.New("credenciales incorrectas")
 	}
 
+	// 3. Verificar si el usuario ha sido borrado (Soft Delete)
+	if user.DeletedAt.Valid {
+		s.auditService.Log(user.DNI, "LOGIN_BLOCKED", "AUTH", "Intento de acceso en cuenta eliminada", ip)
+		return "", nil, errors.New("tu cuenta ha sido removida del sistema. contacta al administrador")
+	}
+
+	// 4. Verificar si el usuario está activo
+	if !user.IsActive {
+		s.auditService.Log(user.DNI, "LOGIN_BLOCKED", "AUTH", "Intento de acceso en cuenta inactiva", ip)
+		return "", nil, errors.New("tu cuenta ha sido desactivada. contacta al administrador")
+	}
+
+	s.auditService.Log(user.DNI, "LOGIN_SUCCESS", "AUTH", fmt.Sprintf("Acceso exitoso como %s", user.Role), ip)
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"dni":  user.DNI,
 		"role": user.Role,
-		"exp":  time.Now().Add(time.Hour * 72).Unix(),
+		"exp":  time.Now().Add(time.Hour * 12).Unix(),
 	})
 
 	tokenString, err := token.SignedString([]byte(os.Getenv("SECRET_KEY")))
@@ -53,13 +75,108 @@ func (s *AuthService) Login(identifier string, password string) (string, interfa
 }
 
 func (s *AuthService) ForgotPassword(email string) error {
-	_, err := s.repo.FindByEmail(email)
+	user, err := s.repo.FindByEmail(email)
 	if err != nil {
-		return errors.New("si el correo existe, recibirás instrucciones")
+		// Por seguridad, no revelamos si el correo no existe en el handler, 
+		// pero aquí retornamos el error para que el handler decida.
+		return err
 	}
 
-	// Simulación de envío de correo
-	// En un entorno real, aquí se generaría un token de reset y se enviaría un email
-	// models.LogActivity("Password reset requested for: " + user.Email)
+	// 1. Generar token de recuperación (JWT de corta duración)
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"dni":   user.DNI,
+		"action": "password_reset",
+		"exp":    time.Now().Add(time.Hour * 1).Unix(),
+	})
+
+	tokenString, err := token.SignedString([]byte(os.Getenv("SECRET_KEY")))
+	if err != nil {
+		return err
+	}
+
+	// 2. Construir enlace de recuperación
+	// El frontend manejará esta ruta
+	resetLink := fmt.Sprintf("%s/reset-password?token=%s", os.Getenv("FRONTEND_URL"), tokenString)
+
+	// 3. Enviar correo real
+	return s.emailService.SendResetPasswordEmail(user.Email, user.Name, resetLink)
+}
+
+func (s *AuthService) ResetPassword(tokenString, newPassword string) error {
+	// 1. Validar token
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return []byte(os.Getenv("SECRET_KEY")), nil
+	})
+
+	if err != nil || !token.Valid {
+		return errors.New("token inválido o expirado")
+	}
+
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok || claims["action"] != "password_reset" {
+		return errors.New("token inválido")
+	}
+
+	dni := claims["dni"].(string)
+
+	// 2. Buscar usuario
+	user, err := s.repo.FindByDNI(dni)
+	if err != nil {
+		return err
+	}
+
+	// 3. Hashear nueva contraseña
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+
+	// 4. Actualizar usuario
+	user.Password = string(hashedPassword)
+	err = s.repo.Update(user.DNI, user)
+	if err == nil {
+		s.auditService.Log(dni, "PASSWORD_RESET_SELF", "AUTH", "El usuario cambió su propia contraseña vía email", "N/A")
+	}
+	return err
+}
+
+func (s *AuthService) Setup(employee *models.Employee) error {
+	// 1. Validar que la BD esté vacía
+	count, err := s.repo.CountAll()
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.New("el sistema ya ha sido configurado")
+	}
+
+	// 2. Hashear contraseña
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(employee.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	employee.Password = string(hashedPassword)
+	employee.Role = "SUPERADMIN" // Forzar rol superadmin en el primer registro
+
+	// 3. Guardar Superadmin
+	if err := s.repo.Save(employee); err != nil {
+		return err
+	}
+
+	// 4. Seed base data (Consumer Final)
+	repositories.SeedClient(repositories.DB, employee.DNI)
+
 	return nil
+}
+
+func (s *AuthService) CheckSetup() (bool, error) {
+	count, err := s.repo.CountAll()
+	if err != nil {
+		// Si hay un error (ej. DB no lista o error de conexión), 
+		// devolvemos falso para evitar redirecciones erróneas a /setup.
+		// El frontend caerá por defecto en /login.
+		return false, nil 
+	}
+	// Solo necesita setup si confirmamos exitosamente que el conteo es 0
+	return count == 0, nil
 }

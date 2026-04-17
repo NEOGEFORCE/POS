@@ -28,6 +28,8 @@ type Product struct {
 	UpdatedBy        Employee       `gorm:"foreignKey:UpdatedByDNI;references:DNI" json:"updatedByEmployee,omitempty"`
 	ImageUrl         string         `gorm:"type:text;column:imageUrl" json:"imageUrl"`
 	MinStock         float64        `gorm:"type:decimal(10,2);default:0;column:minStock" json:"minStock"`
+	IsActive         bool           `gorm:"default:true;column:isActive" json:"isActive"`
+	NetProfit        float64        `gorm:"-" json:"netProfit"`
 	DeletedAt        gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

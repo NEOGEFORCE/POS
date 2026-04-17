@@ -1,86 +1,82 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useMemo, memo } from 'react';
 import { 
   Card, CardHeader, CardBody, Button, Chip, 
-  Divider, Tab, Tabs, Spinner
+  Divider, Tab, Tabs, Spinner, Table, TableHeader, 
+  TableColumn, TableBody, TableRow, TableCell,
+  Input, Pagination, Tooltip, Avatar, Progress
 } from "@heroui/react";
 import { 
   BarChart3, FileText, Download, Wallet, ShoppingCart, 
   Package, Users, AlertTriangle, TrendingUp, History, 
-  FileSearch, Printer, Calendar, Target, Zap, CreditCard as CreditCardIcon
+  FileSearch, Printer, Calendar, Target, Zap, 
+  CreditCard as CreditCardIcon, PlusCircle, Search,
+  Clock, Mail, ChevronRight, Filter, MoreHorizontal
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import { generatePDFReport } from "@/lib/reportGenerator";
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 import dynamic from "next/dynamic";
+import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
+// Componentes dinámicos
 const DateRangeModal = dynamic(() => import("../dashboard/components/DateRangeModal"));
+// El nuevo Modal avanzado se creará en el siguiente paso
+const GenerateReportModal = dynamic(() => import("./components/GenerateReportModal"));
 
-const PreviewModal = dynamic(() => import("./components/PreviewModal"));
+// ----- DATOS SIMULADOS (MOCK) -----
+const ARCHIVED_REPORTS = [
+    { id: "1", name: "CIERRE_GENERAL_ABRIL", date: "2024-04-15", user: "Admin", format: "PDF", size: "1.2MB" },
+    { id: "2", name: "AUDITORIA_VENTAS_Q1", date: "2024-04-14", user: "Jaider", format: "XLS", size: "3.5MB" },
+    { id: "3", name: "VALORACION_INV_FIX", date: "2024-04-12", user: "SuperAdmin", format: "PDF", size: "850KB" },
+    { id: "4", name: "LOG_ANULACIONES_TURNO_A", date: "2024-04-10", user: "Cajero_2", format: "PDF", size: "420KB" },
+    { id: "5", name: "REPORTE_GASTOS_OPERATIVOS", date: "2024-04-05", user: "Admin", format: "CSV", size: "2.1MB" },
+];
 
-interface ReportCardProps {
-  title: string;
-  description: string;
-  icon: any;
-  color: string;
-  isLoading?: boolean;
-  onDownload: () => void;
-  onPreview?: () => void;
-  isPopular?: boolean;
-}
+const SCHEDULED_REPORTS = [
+    { id: "1", name: "Cierre Diario Automatizado", frequency: "Diary", next: "2024-04-16 23:59", recipient: "gerencia@pos.com" },
+    { id: "2", name: "Alerta Stock Crítico", frequency: "Hourly", next: "Sig. Hora", recipient: "compras@pos.com" },
+    { id: "3", name: "Balance PyG Mensual", frequency: "Monthly", next: "2024-05-01 08:00", recipient: "contabilidad@pos.com" },
+];
 
-function ReportCard({ title, description, icon: Icon, color, onDownload, onPreview, isPopular, isLoading }: ReportCardProps) {
-  return (
-    <Card className="bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-lg hover:shadow-2xl transition-all duration-300 group hover:-translate-y-1 overflow-hidden" radius="lg">
-      <CardBody className="p-0">
-        <div className="p-6">
-          <div className="flex justify-between items-start mb-4">
-            <div className={`p-4 rounded-2xl ${color} bg-opacity-10 shadow-inner group-hover:rotate-6 transition-transform duration-500`}>
-              <Icon size={24} className={color.replace('bg-', 'text-')} />
+const SPARKLINE_DATA = [
+    { val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }
+];
+
+// ----- COMPONENTES AUXILIARES -----
+
+const MetricCard = memo(({ label, value, subValue, trend }: any) => (
+    <div className="bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-5 rounded-[2.5rem] border border-gray-200 dark:border-white/5 shadow-xl relative overflow-hidden group hover:border-emerald-500/30 transition-all">
+        <div className="absolute inset-x-0 bottom-0 h-10 opacity-20 pointer-events-none">
+            <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={SPARKLINE_DATA}>
+                    <Area type="monotone" dataKey="val" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2}/>
+                </AreaChart>
+            </ResponsiveContainer>
+        </div>
+        <div className="relative z-10">
+            <span className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-1 block italic">{label}</span>
+            <div className="flex items-baseline gap-2">
+                <span className="text-3xl font-black text-gray-900 dark:text-white tracking-tighter italic">{value}</span>
+                <span className="text-xs font-black text-emerald-500">{trend}</span>
             </div>
-            {isPopular && (
-              <Chip size="sm" variant="shadow" color="success" className="font-black uppercase text-[8px] tracking-[0.2em] shadow-emerald-500/20">
-                Frecuente
-              </Chip>
-            )}
-          </div>
-          <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tight mb-2 group-hover:text-emerald-500 transition-colors">{title}</h3>
-          <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-relaxed">{description}</p>
+            <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase tracking-widest">{subValue}</p>
         </div>
-        <div className="flex border-t border-gray-100 dark:border-white/5">
-          <button 
-            onClick={onPreview}
-            disabled={isLoading}
-            className="flex-1 py-4 text-[9px] font-black uppercase tracking-[0.2em] text-gray-400 hover:text-emerald-500 hover:bg-emerald-500/5 transition-all flex items-center justify-center gap-2 border-r border-gray-100 dark:border-white/5 italic disabled:opacity-50"
-          >
-            Vista <FileSearch size={14} />
-          </button>
-          <button 
-            onClick={onDownload}
-            disabled={isLoading}
-            className="flex-1 py-4 text-[9px] font-black uppercase tracking-[0.2em] text-gray-900 dark:text-white hover:bg-gray-900 dark:hover:bg-white hover:text-white dark:hover:text-black transition-all flex items-center justify-center gap-2 italic disabled:opacity-50"
-          >
-            {isLoading ? <Spinner size="sm" color="current" /> : <>PDF <Download size={14} /></>}
-          </button>
-        </div>
-      </CardBody>
-    </Card>
-  );
-}
+    </div>
+));
 
 export default function ReportsPage() {
-  const [activeTab, setActiveTab] = useState("operativos");
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
+  const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [dateRangeOpen, setDateRangeOpen] = useState(false);
   const [dateFrom, setDateFrom] = useState(`${new Date().toISOString().split('T')[0]}T00:00`);
   const [dateTo, setDateTo] = useState(`${new Date().toISOString().split('T')[0]}T23:59`);
   
-  // Preview states
-  const [previewOpen, setPreviewOpen] = useState(false);
-  const [previewData, setPreviewData] = useState<any>(null);
-  const [previewTitle, setPreviewTitle] = useState("");
+  // Quick Panel State
+  const [quickCategory, setQuickCategory] = useState("box-closure");
+  const [quickFormat, setQuickFormat] = useState("PDF");
   
   const { toast } = useToast();
 
@@ -89,11 +85,12 @@ export default function ReportsPage() {
     'Content-Type': 'application/json'
   });
 
-  const handleDownload = async (type: string) => {
+  // Lógica de descarga heredada del original
+  const handleDownload = async (type: string, customOptions?: any) => {
     setLoadingReport(type);
     try {
-      const fromD = dateFrom || new Date().toISOString().split('T')[0];
-      const toD = dateTo || new Date().toISOString().split('T')[0];
+      const fromD = customOptions?.dateFrom || dateFrom || new Date().toISOString().split('T')[0];
+      const toD = customOptions?.dateTo || dateTo || new Date().toISOString().split('T')[0];
 
       switch(type) {
         case 'box-closure': {
@@ -119,7 +116,6 @@ export default function ReportsPage() {
           });
           break;
         }
-
         case 'payments': {
           const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/overview`, { headers: getHeaders() });
           const data = await res.json();
@@ -127,7 +123,6 @@ export default function ReportsPage() {
             method,
             amount: `$${formatCurrency(amount as number)}`
           }));
-
           generatePDFReport({
             title: 'Ventas por Medio de Pago',
             subtitle: `Periodo: ${fromD} al ${toD}`,
@@ -141,7 +136,6 @@ export default function ReportsPage() {
           });
           break;
         }
-
         case 'ranking': {
           const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/ranking?from=${fromD}&to=${toD}`, { headers: getHeaders() });
           const data = await res.json();
@@ -159,7 +153,6 @@ export default function ReportsPage() {
           });
           break;
         }
-
         case 'inventory': {
           const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, { headers: getHeaders() });
           const data = await res.json();
@@ -178,7 +171,6 @@ export default function ReportsPage() {
                   total: `$${formatCurrency(subValue)}`
               };
           });
-
           generatePDFReport({
             title: 'Inventario Valorizado',
             subtitle: 'Auditoría de activos en stock',
@@ -198,87 +190,6 @@ export default function ReportsPage() {
           });
           break;
         }
-
-        case 'expenses': {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/expenses/list`, { headers: getHeaders() });
-            const data = await res.json();
-            generatePDFReport({
-              title: 'Libro de Gastos',
-              subtitle: 'Detalle cronológico de egresos',
-              filename: 'Libro_Gastos',
-              columns: [
-                { header: 'Fecha', dataKey: 'date_fmt' },
-                { header: 'Categoría', dataKey: 'category' },
-                { header: 'Descripción', dataKey: 'description' },
-                { header: 'Monto', dataKey: 'amount_fmt' }
-              ],
-              data: data.map((e: any) => ({
-                  ...e,
-                  date_fmt: new Date(e.date).toLocaleDateString(),
-                  amount_fmt: `$${formatCurrency(e.amount)}`
-              })),
-              summary: [{ label: 'Gasto Total', value: data.reduce((acc: number, e: any) => acc + e.amount, 0) }]
-            });
-            break;
-        }
-
-        case 'categories': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/categories?from=${fromD}&to=${toD}`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Ventas por Categoría',
-            subtitle: 'Análisis de rotación por grupos',
-            filename: 'Ventas_Categorias',
-            columns: [
-              { header: 'Categoría', dataKey: 'category' },
-              { header: 'Cant. Items', dataKey: 'quantity' },
-              { header: 'Total Recaudado', dataKey: 'total_fmt' }
-            ],
-            data: data.map((item: any) => ({ ...item, total_fmt: `$${formatCurrency(item.total)}` })),
-          });
-          break;
-        }
-
-        case 'clients': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/clients-vip?from=${fromD}&to=${toD}`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Ranking de Clientes VIP',
-            subtitle: 'Basado en volumen de compra mensual',
-            filename: 'Ranking_Clientes_VIP',
-            columns: [
-              { header: 'DNI/NIT', dataKey: 'dni' },
-              { header: 'Nombre', dataKey: 'name' },
-              { header: 'Ventas', dataKey: 'count' },
-              { header: 'Gasto Total', dataKey: 'total_fmt' }
-            ],
-            data: data.map((item: any) => ({ ...item, total_fmt: `$${formatCurrency(item.total)}` })),
-          });
-          break;
-        }
-
-        case 'voids': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/voids?from=${fromD}&to=${toD}`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Log de Auditoría: Anulaciones',
-            subtitle: 'Control de seguridad operacional',
-            filename: 'Auditoria_Anulaciones',
-            columns: [
-              { header: 'ID Venta', dataKey: 'saleId' },
-              { header: 'Fecha', dataKey: 'date_fmt' },
-              { header: 'Empleado', dataKey: 'employee' },
-              { header: 'Monto Devuelto', dataKey: 'total_fmt' }
-            ],
-            data: data.map((item: any) => ({ 
-                ...item, 
-                date_fmt: new Date(item.date).toLocaleString(),
-                total_fmt: `$${formatCurrency(item.total)}` 
-            })),
-          });
-          break;
-        }
-
         case 'pnl': {
           const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/pnl?from=${fromD}&to=${toD}`, { headers: getHeaders() });
           const data = await res.json();
@@ -301,49 +212,7 @@ export default function ReportsPage() {
           });
           break;
         }
-
-        case 'shardex': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/movements?from=${fromD}&to=${toD}`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Movimientos de Inventario (Kárdex)',
-            subtitle: `Trazabilidad de auditoría: ${fromD} al ${toD}`,
-            filename: 'Reporte_Kardex',
-            columns: [
-              { header: 'Fecha', dataKey: 'date_fmt' },
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Cant.', dataKey: 'quantity' },
-              { header: 'Tipo', dataKey: 'type' },
-              { header: 'Motivo', dataKey: 'reason' },
-              { header: 'Responsable', dataKey: 'employee' }
-            ],
-            data: data.map((item: any) => ({
-              ...item,
-              date_fmt: new Date(item.date).toLocaleString(),
-            }))
-          });
-          break;
-        }
-
-        case 'low-stock': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/overview`, { headers: getHeaders() });
-          const { lowStockProducts } = await res.json();
-          generatePDFReport({
-            title: 'Alerta de Quiebre Stock',
-            subtitle: 'Productos por debajo del nivel de seguridad',
-            filename: 'Alerta_Stock',
-            columns: [
-              { header: 'Barcode', dataKey: 'barcode' },
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Existencias', dataKey: 'stock' },
-              { header: 'Mínimo', dataKey: 'minStock' }
-            ],
-            data: lowStockProducts
-          });
-          break;
-        }
       }
-
       toast({ title: "ÉXITO", description: "REPORTE GENERADO CORRECTAMENTE", variant: "success" });
     } catch (error) {
       console.error(error);
@@ -352,234 +221,241 @@ export default function ReportsPage() {
       setLoadingReport(null);
     }
   };
-  const handlePreview = async (type: string, title: string) => {
-    setLoadingReport(type);
-    try {
-      const fromD = dateFrom || new Date().toISOString().split('T')[0];
-      const toD = dateTo || new Date().toISOString().split('T')[0];
-      let url = "";
-
-      // Mapeo simple de tipo a endpoint para vista previa
-      switch(type) {
-        case 'box-closure': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/cashier-closure`; break;
-        case 'payments': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/overview`; break;
-        case 'ranking': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/ranking?from=${fromD}&to=${toD}`; break;
-        case 'categories': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/categories?from=${fromD}&to=${toD}`; break;
-        case 'clients': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/clients-vip?from=${fromD}&to=${toD}`; break;
-        case 'voids': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/voids?from=${fromD}&to=${toD}`; break;
-        case 'inventory': url = `${process.env.NEXT_PUBLIC_API_URL}/products/all-products`; break;
-        case 'expenses': url = `${process.env.NEXT_PUBLIC_API_URL}/expenses/list`; break;
-        case 'pnl': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/pnl?from=${fromD}&to=${toD}`; break;
-        case 'shardex': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/movements?from=${fromD}&to=${toD}`; break;
-        case 'low-stock': url = `${process.env.NEXT_PUBLIC_API_URL}/dashboard/overview`; break;
-      }
-
-      const res = await fetch(url, { headers: getHeaders() });
-      const data = await res.json();
-
-      setPreviewTitle(title);
-      setPreviewData(data);
-      setPreviewOpen(true);
-    } catch (err) {
-      toast({ title: "Error", description: "No se pudo cargar la vista previa", variant: "destructive" });
-    } finally {
-      setLoadingReport(null);
-    }
-  };
 
   return (
-    <div className="flex flex-col gap-6 md:gap-8 max-w-7xl mx-auto px-4 md:px-6 pb-20">
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pt-4">
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-             <div className="bg-emerald-500 p-2.5 rounded-xl text-white shadow-lg shadow-emerald-500/20"><BarChart3 size={24} /></div>
-             <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
-              Central de <span className="text-emerald-500">Reportes</span>
-             </h1>
+    <div className="flex flex-col gap-6 md:gap-8 max-w-[1600px] mx-auto px-4 md:px-6 pb-20 w-full min-h-[100dvh]">
+      
+      {/* HEADER TACTICO */}
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pt-6">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-4">
+             <div className="bg-emerald-500 w-14 h-14 rounded-[1.5rem] text-white shadow-2xl shadow-emerald-500/20 flex items-center justify-center transform -rotate-6 group hover:rotate-0 transition-all">
+                <BarChart3 size={32} />
+             </div>
+             <div className="flex flex-col">
+                <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
+                  Central de <span className="text-emerald-500">Reportes</span>
+                </h1>
+                <p className="text-[10px] md:text-xs font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic ml-1 mt-2">
+                  Business Intelligence & Audit Ledger V4.0
+                </p>
+             </div>
           </div>
-          <p className="text-[10px] md:text-xs font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic ml-1">
-            Inteligencia de Negocio & Audit Ledger Maestro
-          </p>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md p-1.5 rounded-[1.5rem] border border-gray-200 dark:border-white/5 shadow-inner">
            <Button 
-             variant="flat" 
+             variant="light"
              onPress={() => setDateRangeOpen(true)}
-             className="h-12 rounded-xl text-[10px] font-black uppercase tracking-widest italic bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-sm"
+             className="h-12 rounded-[1rem] text-[10px] font-black uppercase tracking-widest italic text-gray-400 hover:text-emerald-500 transition-all"
            >
-             {dateFrom && dateTo ? `${dateFrom} / ${dateTo}` : "Personalizar Periodo"} <Calendar size={16} className="ml-1" />
+             <Calendar size={16} className="mr-2" /> PERSONALIZAR FECHAS
            </Button>
-           <Button className="h-12 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-black text-[10px] font-black uppercase tracking-widest italic shadow-xl">
-             Consolidado Global <Target size={16} className="ml-1" />
+           <Divider orientation="vertical" className="h-6 mx-1" />
+           <Button 
+            onPress={() => setIsGenerateModalOpen(true)}
+            className="h-12 rounded-[1rem] bg-emerald-500 text-white text-[10px] font-black uppercase tracking-widest italic shadow-xl shadow-emerald-500/20 px-8"
+           >
+             <Zap size={16} className="mr-2" /> GENERADOR MAESTRO
            </Button>
         </div>
       </header>
 
-      <Divider className="opacity-50" />
-
-      <div className="flex flex-col gap-8">
-        <Tabs 
-          aria-label="Report Categories" 
-          variant="underlined"
-          selectedKey={activeTab}
-          onSelectionChange={(key) => setActiveTab(key as string)}
-          classNames={{
-            base: "w-full",
-            tabList: "gap-6 w-full relative rounded-none p-0 border-b border-divider",
-            cursor: "w-full bg-emerald-500",
-            tab: "max-w-fit px-0 h-12",
-            tabContent: "group-data-[selected=true]:text-emerald-500 text-[11px] font-black uppercase tracking-[0.2em] italic transition-colors"
-          }}
-        >
-          <Tab key="operativos" title="Operativos (Caja)" />
-          <Tab key="comerciales" title="Comerciales (Ventas)" />
-          <Tab key="logisticos" title="Logísticos (Stock)" />
-          <Tab key="fiscales" title="Administrativos" />
-        </Tabs>
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-          {activeTab === "operativos" && (
-            <>
-              <ReportCard 
-                title="Cuadre de Caja (X/Z)" 
-                description="Resumen total del turno: Base, ingresos, egresos y ventas netas por cajero."
-                icon={Wallet}
-                color="bg-emerald-500"
-                isLoading={loadingReport === 'box-closure'}
-                onDownload={() => handleDownload('box-closure')}
-                onPreview={() => handlePreview('box-closure', 'Cuadre de Caja')}
-                isPopular
-              />
-              <ReportCard 
-                title="Ventas por Medio de Pago" 
-                description="Desglose detallado de Efectivo, Bancos, Transferencias y Fiados."
-                icon={CreditCardIcon}
-                color="bg-sky-500"
-                isLoading={loadingReport === 'payments'}
-                onDownload={() => handleDownload('payments')}
-                onPreview={() => handlePreview('payments', 'Ventas por Medio de Pago')}
-              />
-              <ReportCard 
-                title="Log de Anulaciones" 
-                description="Auditoría de facturas modificadas o canceladas por seguridad operativa."
-                icon={History}
-                color="bg-rose-500"
-                isLoading={loadingReport === 'voids'}
-                onDownload={() => handleDownload('voids')}
-                onPreview={() => handlePreview('voids', 'Log de Anulaciones')}
-              />
-            </>
-          )}
-
-          {activeTab === "comerciales" && (
-            <>
-              <ReportCard 
-                title="Ranking de Productos" 
-                description="Identifica tus artículos estrella y los de baja rotación en el periodo seleccionado."
-                icon={ShoppingCart}
-                color="bg-violet-500"
-                isLoading={loadingReport === 'ranking'}
-                onDownload={() => handleDownload('ranking')}
-                onPreview={() => handlePreview('ranking', 'Ranking de Productos')}
-                isPopular
-              />
-              <ReportCard 
-                title="Ventas por Categoría" 
-                description="Análisis de rentabilidad por grupos de productos para optimizar pasillos."
-                icon={Package}
-                color="bg-amber-500"
-                isLoading={loadingReport === 'categories'}
-                onDownload={() => handleDownload('categories')}
-                onPreview={() => handlePreview('categories', 'Ventas por Categoría')}
-              />
-              <ReportCard 
-                title="Lista de Clientes VIP" 
-                description="Top de compradores con mayor frecuencia y gasto total acumulado."
-                icon={Users}
-                color="bg-indigo-500"
-                isLoading={loadingReport === 'clients'}
-                onDownload={() => handleDownload('clients')}
-                onPreview={() => handlePreview('clients', 'Ranking de Clientes VIP')}
-              />
-            </>
-          )}
-
-          {activeTab === "logisticos" && (
-            <>
-              <ReportCard 
-                title="Inventario Valorizado" 
-                description="Valor total de tu stock a precio de costo y precio de venta estimado."
-                icon={Package}
-                color="bg-emerald-500"
-                isLoading={loadingReport === 'inventory'}
-                onDownload={() => handleDownload('inventory')}
-                isPopular
-              />
-              <ReportCard 
-                title="Alerta de Quiebre Stock" 
-                description="Informe crítico de productos por debajo del mínimo para reposición inmediata."
-                icon={AlertTriangle}
-                color="bg-rose-500"
-                isLoading={loadingReport === 'low-stock'}
-                onDownload={() => handleDownload('low-stock')}
-                onPreview={() => handlePreview('low-stock', 'Alerta de Quiebre Stock')}
-              />
-              <ReportCard 
-                title="Movimientos Kárdex" 
-                description="Trazabilidad completa de entradas y salidas por cada producto individual."
-                icon={History}
-                color="bg-sky-500"
-                isLoading={loadingReport === 'shardex'}
-                onDownload={() => handleDownload('shardex')}
-                onPreview={() => handlePreview('shardex', 'Movimientos Kárdex')}
-              />
-            </>
-          )}
-
-          {activeTab === "fiscales" && (
-            <>
-              <ReportCard 
-                title="Estado de Resultados" 
-                description="Balance simplificado de Ventas Brutas vs Gastos Operativos totales (PyG)."
-                icon={TrendingUp}
-                color="bg-emerald-500"
-                isLoading={loadingReport === 'pnl'}
-                onDownload={() => handleDownload('pnl')}
-                onPreview={() => handlePreview('pnl', 'Estado de Resultados (PyG)')}
-                isPopular
-              />
-              <ReportCard 
-                title="Libro de Gastos" 
-                description="Listado cronológico de todos los egresos registrados por categoría."
-                icon={FileText}
-                color="bg-gray-500"
-                isLoading={loadingReport === 'expenses'}
-                onDownload={() => handleDownload('expenses')}
-                onPreview={() => handlePreview('expenses', 'Libro de Gastos')}
-              />
-              <ReportCard 
-                title="Facturación Mensual" 
-                description="Listado continuo de folios emitidos para reporte contable externo."
-                icon={Printer}
-                color="bg-amber-500"
-                onDownload={() => handleDownload('fiscal')}
-                onPreview={() => handlePreview('fiscal', 'Facturación Mensual')}
-              />
-            </>
-          )}
-        </div>
+      {/* DASHBOARD ANALITICO SUPERIOR */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <MetricCard label="Reportes Generados" value="1,450" trend="+12.5%" subValue="Últimos 30 días" />
+        <MetricCard label="Exportaciones Exitosas" value="98.2%" subValue="Audit Ledger Health" />
+        <MetricCard label="Programaciones" value="24" trend="Activos" subValue="Next run in 2h" />
+        <MetricCard label="Almacenamiento Cloud" value="2.4 GB" subValue="Uso de repositorio" />
       </div>
 
-      <footer className="mt-auto pt-10 flex flex-col items-center gap-4 opacity-40">
-        <div className="flex items-center gap-2">
-           <Zap size={14} className="text-emerald-500" />
-           <span className="text-[10px] font-black uppercase tracking-[0.2em]">Cifras actualizadas en tiempo real</span>
+      <div className="flex flex-col xl:flex-row gap-8">
+        {/* PANEL PRINCIPAL: TABLAS DE GESTION */}
+        <div className="flex-1 space-y-8 min-w-0">
+            {/* TABLA HISTORIAL */}
+            <Card className="bg-white/70 dark:bg-zinc-900/30 backdrop-blur-2xl border border-gray-200 dark:border-white/5 rounded-[2.5rem] shadow-2xl">
+                <CardHeader className="p-8 pb-0 flex justify-between items-center">
+                    <div className="flex items-center gap-3">
+                        <History size={20} className="text-emerald-500" />
+                        <h2 className="text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter">Historial de <span className="text-emerald-500">Archivos</span></h2>
+                    </div>
+                    <Button isIconOnly variant="flat" size="sm" className="rounded-xl"><Filter size={16} /></Button>
+                </CardHeader>
+                <CardBody className="p-8">
+                    <Table aria-label="Archived Reports" removeWrapper classNames={{
+                        th: "bg-transparent text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest border-b border-gray-100 dark:border-white/5",
+                        td: "py-4 text-sm font-black italic text-gray-900 dark:text-white border-b border-gray-50 dark:border-white/5"
+                    }}>
+                        <TableHeader>
+                            <TableColumn>NOMBRE DEL REPORTE</TableColumn>
+                            <TableColumn>FECHA</TableColumn>
+                            <TableColumn>FORMATO</TableColumn>
+                            <TableColumn>TAMAÑO</TableColumn>
+                            <TableColumn align="end">GESTIÓN</TableColumn>
+                        </TableHeader>
+                        <TableBody>
+                            {ARCHIVED_REPORTS.map((r) => (
+                                <TableRow key={r.id}>
+                                    <TableCell>
+                                        <div className="flex items-center gap-3">
+                                            <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-500"><FileText size={14} /></div>
+                                            {r.name}
+                                        </div>
+                                    </TableCell>
+                                    <TableCell className="text-gray-400 uppercase text-[10px] tabular-nums">{r.date}</TableCell>
+                                    <TableCell>
+                                        <Chip size="sm" variant="flat" className="font-black text-[9px]">{r.format}</Chip>
+                                    </TableCell>
+                                    <TableCell className="text-zinc-500 text-[10px]">{r.size}</TableCell>
+                                    <TableCell>
+                                        <Button isIconOnly variant="light" size="sm" className="text-gray-400"><Download size={16} /></Button>
+                                    </TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </CardBody>
+            </Card>
+
+            {/* TABLA PROGRAMADOS */}
+            <Card className="bg-emerald-500/5 dark:bg-emerald-500/5 backdrop-blur-2xl border border-emerald-500/10 rounded-[2.5rem] shadow-xl">
+                <CardHeader className="p-8 pb-0">
+                    <div className="flex items-center gap-3">
+                        <Clock size={20} className="text-emerald-500" />
+                        <h2 className="text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-emerald-500">Automatizaciones <span className="text-gray-900 dark:text-white">(Scheduled)</span></h2>
+                    </div>
+                </CardHeader>
+                <CardBody className="p-8">
+                    <Table aria-label="Scheduled Reports" removeWrapper classNames={{
+                        th: "bg-transparent text-emerald-500/30 font-black uppercase text-[9px] tracking-widest border-b border-emerald-500/10",
+                        td: "py-4 text-sm font-black italic text-gray-900 dark:text-white border-b border-emerald-500/5"
+                    }}>
+                        <TableHeader>
+                            <TableColumn>REPORTE</TableColumn>
+                            <TableColumn>FRECUENCIA</TableColumn>
+                            <TableColumn>PROX. ENVÍO</TableColumn>
+                            <TableColumn>DESTINATARIO</TableColumn>
+                            <TableColumn align="end">ACCIONES</TableColumn>
+                        </TableHeader>
+                        <TableBody>
+                            {SCHEDULED_REPORTS.map((s) => (
+                                <TableRow key={s.id}>
+                                    <TableCell>{s.name}</TableCell>
+                                    <TableCell><Chip size="sm" variant="dot" color="success" className="font-black text-[9px] uppercase tracking-tighter">{s.frequency}</Chip></TableCell>
+                                    <TableCell className="text-[10px] tabular-nums text-zinc-500 italic">{s.next}</TableCell>
+                                    <TableCell className="text-[10px] text-emerald-500 flex items-center gap-2 underline decoration-emerald-500/20"><Mail size={12} /> {s.recipient}</TableCell>
+                                    <TableCell><Button isIconOnly variant="flat" size="sm" className="rounded-xl"><MoreHorizontal size={16} /></Button></TableCell>
+                                </TableRow>
+                            ))}
+                        </TableBody>
+                    </Table>
+                </CardBody>
+            </Card>
         </div>
-        <p className="text-[8px] font-bold text-center max-w-sm uppercase tracking-widest text-gray-500">
-          Este tablero genera reportes basados en la actividad registrada en el Audit Ledger. Los datos tienen validez operativa y comercial interna.
-        </p>
-      </footer>
+
+        {/* SIDEBAR TACTICA DERECHA */}
+        <aside className="w-full xl:w-96 flex flex-col gap-6 shrink-0">
+            {/* REPORT GENERATION PANEL (Sidebar Derecha) */}
+            <Card className="bg-gray-900 dark:bg-white text-white dark:text-black rounded-[2.5rem] shadow-2xl p-8 border-none transform xl:-rotate-2">
+                <div className="flex flex-col gap-6">
+                    <div className="space-y-1 text-center">
+                        <h3 className="text-2xl font-black italic uppercase tracking-tighter">Acceso <span className="opacity-40">Rápido</span></h3>
+                        <p className="text-[9px] font-bold uppercase tracking-[0.3em] opacity-50">Report Generation Panel</p>
+                    </div>
+                    
+                    <div className="flex flex-col gap-4">
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase tracking-widest opacity-50 ml-1">Report Type</label>
+                            <Tabs 
+                                aria-label="Quick Report Type" 
+                                color="success"
+                                selectedKey={quickCategory}
+                                onSelectionChange={(k) => setQuickCategory(String(k))}
+                                classNames={{
+                                    tabList: "bg-white/10 dark:bg-black/5 p-1 rounded-xl w-full",
+                                    cursor: "bg-emerald-500 rounded-lg",
+                                    tab: "h-10",
+                                    tabContent: "font-black text-[10px] uppercase italic tracking-widest group-data-[selected=true]:text-white"
+                                }}
+                            >
+                                <Tab key="box-closure" title="Caja" />
+                                <Tab key="payments" title="Ventas" />
+                                <Tab key="inventory" title="Stock" />
+                            </Tabs>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase tracking-widest opacity-50 ml-1">Date Range</label>
+                            <Button 
+                                onPress={() => setDateRangeOpen(true)}
+                                className="w-full bg-white/10 dark:bg-black/5 border border-white/5 dark:border-black/5 h-12 rounded-2xl justify-between px-4 hover:border-emerald-500/50 transition-all font-black text-[10px] uppercase tracking-widest"
+                            >
+                                <span>{dateFrom} - {dateTo}</span>
+                                <Calendar size={14} className="text-emerald-500" />
+                            </Button>
+                        </div>
+
+                        <div className="space-y-1">
+                            <label className="text-[9px] font-black uppercase tracking-widest opacity-50 ml-1">Output Format</label>
+                            <Tabs 
+                                aria-label="Quick Output Format" 
+                                selectedKey={quickFormat}
+                                onSelectionChange={(k) => setQuickFormat(String(k))}
+                                classNames={{
+                                    tabList: "bg-white/10 dark:bg-black/5 p-1 rounded-xl w-full",
+                                    cursor: "bg-gray-800 dark:bg-gray-200 rounded-lg",
+                                    tab: "h-10",
+                                    tabContent: "font-black text-[10px] uppercase italic tracking-widest group-data-[selected=true]:text-white dark:group-data-[selected=true]:text-black"
+                                }}
+                            >
+                                <Tab key="PDF" title="PDF" />
+                                <Tab key="CSV" title="CSV" />
+                            </Tabs>
+                        </div>
+
+                        <Button 
+                            className="bg-emerald-500 text-white font-black uppercase tracking-widest italic rounded-2xl h-14 mt-2 shadow-xl shadow-emerald-500/20"
+                            isLoading={!!loadingReport}
+                            onPress={() => {
+                                if (quickFormat !== 'PDF') {
+                                    toast({ title: "EN DESARROLLO", description: "Formato CSV en desarrollo. Usando PDF.", variant: "default" });
+                                }
+                                handleDownload(quickCategory);
+                            }}
+                        >
+                            Generate Report
+                        </Button>
+                    </div>
+
+                    <Divider className="bg-white/10 dark:bg-black/10" />
+
+                    <div className="space-y-4">
+                        <span className="text-[9px] font-black uppercase tracking-widest opacity-50 block text-center">Quick Actions</span>
+                        <div className="flex flex-col gap-2">
+                             <Button variant="flat" className="bg-emerald-500/10 text-emerald-500 font-black uppercase tracking-widest text-[9px] h-10 w-full" onPress={() => setIsGenerateModalOpen(true)}>
+                                Build Custom Template
+                             </Button>
+                             <Button variant="flat" className="bg-white/5 dark:bg-black/5 text-gray-400 font-black uppercase tracking-widest text-[9px] h-10 w-full">
+                                Schedule Report
+                             </Button>
+                        </div>
+                    </div>
+                </div>
+            </Card>
+
+            {/* ADVISOR WIDGET */}
+            <Card className="bg-emerald-500 text-white rounded-[2.5rem] p-8 shadow-xl shadow-emerald-500/20 overflow-hidden relative">
+                <BarChart3 className="absolute -right-10 -bottom-10 w-40 h-40 opacity-20 transform rotate-12" />
+                <div className="relative z-10 space-y-4">
+                    <h4 className="text-xl font-black italic uppercase tracking-tighter leading-none">Smart <br/>Advisor</h4>
+                    <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 leading-relaxed">
+                        Detectamos que el 80% de tus ventas coinciden con los jueves tarde. ¿Cifrar reporte de tendencias?
+                    </p>
+                    <Button fullWidth className="bg-white text-emerald-500 font-black uppercase text-[10px] tracking-widest rounded-xl hover:scale-105 transition-all shadow-xl">Analizar Ahora</Button>
+                </div>
+            </Card>
+        </aside>
+      </div>
 
       {dateRangeOpen && (
         <DateRangeModal 
@@ -593,12 +469,11 @@ export default function ReportsPage() {
         />
       )}
 
-      {previewOpen && (
-        <PreviewModal 
-          isOpen={previewOpen}
-          onOpenChange={() => setPreviewOpen(false)}
-          title={previewTitle}
-          data={previewData}
+      {isGenerateModalOpen && (
+        <GenerateReportModal 
+          isOpen={isGenerateModalOpen}
+          onOpenChange={() => setIsGenerateModalOpen(false)}
+          onGenerate={handleDownload}
         />
       )}
     </div>

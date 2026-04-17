@@ -22,7 +22,7 @@ func NewCategoryHandler(s *services.CategoryService) *CategoryHandler {
 func (h *CategoryHandler) Create(c *gin.Context) {
 	var category models.Category
 	if err := c.ShouldBindJSON(&category); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
@@ -34,7 +34,13 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 	category.UpdatedByDNI = dniStr
 
 	if err := h.service.CreateCategory(&category); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") || 
+		   strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") {
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El nombre de la categoría ya existe", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al crear categoría", err)
 		return
 	}
 	c.JSON(http.StatusCreated, category)
@@ -43,7 +49,7 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 func (h *CategoryHandler) GetAll(c *gin.Context) {
 	categories, err := h.service.GetAllCategories()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener categorías", err)
 		return
 	}
 	c.JSON(http.StatusOK, categories)
@@ -53,12 +59,12 @@ func (h *CategoryHandler) GetByID(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido o mal formado", err)
 		return
 	}
 	category, err := h.service.GetCategory(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Category not found"})
+		SendError(c, http.StatusNotFound, ErrNotFound, "Categoría no encontrada", err)
 		return
 	}
 	c.JSON(http.StatusOK, category)
@@ -68,16 +74,26 @@ func (h *CategoryHandler) Update(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido o mal formado", err)
 		return
 	}
 	var category models.Category
 	if err := c.ShouldBindJSON(&category); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 	if err := h.service.UpdateCategory(uint(id), &category); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Categoría no encontrada", err)
+			return
+		}
+		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") || 
+		   strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") {
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El nuevo nombre ya existe en otra categoría", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar categoría", err)
 		return
 	}
 	c.JSON(http.StatusOK, category)
@@ -87,11 +103,15 @@ func (h *CategoryHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid ID format"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido o mal formado", err)
 		return
 	}
 	if err := h.service.DeleteCategory(uint(id)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Categoría no encontrada", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar categoría", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Category deleted"})

@@ -10,6 +10,7 @@ type Employee struct {
 	Email       string         `gorm:"column:email" json:"email"`
 	Password    string         `gorm:"not null;column:password" json:"-"`
 	Role        string         `gorm:"type:string;default:empleado;not null;column:role" json:"role"`
+	IsActive    bool           `gorm:"type:boolean;default:true;not null;column:is_active" json:"is_active"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

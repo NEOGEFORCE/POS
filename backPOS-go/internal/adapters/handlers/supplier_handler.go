@@ -22,7 +22,7 @@ func NewSupplierHandler(s *services.SupplierService) *SupplierHandler {
 func (h *SupplierHandler) Create(c *gin.Context) {
 	var supplier models.Supplier
 	if err := c.ShouldBindJSON(&supplier); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
@@ -33,7 +33,13 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 	supplier.UpdatedByDNI = dniStr
 
 	if err := h.service.CreateSupplier(&supplier); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") ||
+			strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") {
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El nombre del proveedor ya existe", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar proveedor", err)
 		return
 	}
 	c.JSON(http.StatusCreated, supplier)
@@ -42,7 +48,7 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 func (h *SupplierHandler) GetAll(c *gin.Context) {
 	suppliers, err := h.service.GetAllSuppliers()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener proveedores", err)
 		return
 	}
 	c.JSON(http.StatusOK, suppliers)
@@ -52,13 +58,13 @@ func (h *SupplierHandler) GetByID(c *gin.Context) {
 	idParam := c.Param("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de proveedor inválido", err)
 		return
 	}
 
 	supplier, err := h.service.GetSupplier(uint(id))
 	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Proveedor no encontrado"})
+		SendError(c, http.StatusNotFound, ErrNotFound, "Proveedor no encontrado", err)
 		return
 	}
 	c.JSON(http.StatusOK, supplier)
@@ -68,13 +74,13 @@ func (h *SupplierHandler) Update(c *gin.Context) {
 	idParam := c.Param("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de proveedor inválido", err)
 		return
 	}
 
 	var supplier models.Supplier
 	if err := c.ShouldBindJSON(&supplier); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
@@ -83,7 +89,11 @@ func (h *SupplierHandler) Update(c *gin.Context) {
 	supplier.UpdatedByDNI = fmt.Sprintf("%v", dni)
 
 	if err := h.service.UpdateSupplier(uint(id), &supplier); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Proveedor no encontrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar proveedor", err)
 		return
 	}
 	c.JSON(http.StatusOK, supplier)
@@ -93,12 +103,12 @@ func (h *SupplierHandler) Delete(c *gin.Context) {
 	idParam := c.Param("id")
 	id, err := strconv.Atoi(idParam)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "ID inválido"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de proveedor inválido", err)
 		return
 	}
 
 	if err := h.service.DeleteSupplier(uint(id)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar proveedor", err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Proveedor eliminado"})

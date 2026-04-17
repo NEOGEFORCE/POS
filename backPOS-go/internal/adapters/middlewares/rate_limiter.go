@@ -47,7 +47,7 @@ func RateLimitMiddleware(maxTokens float64, refillRate float64) gin.HandlerFunc 
 
 		if client.tokens < 1 {
 			limiter.mu.Unlock()
-			c.JSON(429, gin.H{"error": "Demasiadas solicitudes. Intenta de nuevo en unos segundos."})
+			sendMiddlewareError(c, 429, "ERR_RATE_LIMIT", "Demasiadas solicitudes. Intenta de nuevo en unos segundos.")
 			c.Abort()
 			return
 		}

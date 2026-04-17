@@ -4,7 +4,7 @@ import {
     Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
     Button, Chip, Divider, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell
 } from "@heroui/react";
-import { FileText, Printer } from 'lucide-react';
+import { FileText, Printer, X } from 'lucide-react';
 import { Sale } from '@/lib/definitions';
 import React from 'react';
 

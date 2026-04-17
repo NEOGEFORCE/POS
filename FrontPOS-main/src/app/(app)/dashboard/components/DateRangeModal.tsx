@@ -6,7 +6,7 @@ import React from 'react';
 
 interface DateRangeModalProps {
     isOpen: boolean;
-    onOpenChange: () => void;
+    onOpenChange: (isOpen: boolean) => void;
     startDate: string;
     endDate: string;
     onSetStartDate: (val: string) => void;

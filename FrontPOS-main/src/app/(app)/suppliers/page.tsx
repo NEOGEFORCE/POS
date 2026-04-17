@@ -9,6 +9,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Supplier } from '@/lib/definitions';
 import Cookies from 'js-cookie';
+import { apiFetch } from '@/lib/api-error';
 
 // Dinámicos para optimización de carga
 const SupplierStats = dynamic(() => import('./components/SupplierStats'), { ssr: false });
@@ -17,11 +18,10 @@ const SupplierFormModal = dynamic(() => import('./components/SupplierFormModal')
 const DeleteSupplierModal = dynamic(() => import('./components/DeleteSupplierModal'), { ssr: false });
 
 async function fetchSuppliers(token: string): Promise<Supplier[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/all-suppliers`, {
-    headers: { 'Authorization': `Bearer ${token}` }
-  });
-  if (!res.ok) throw new Error('Error al cargar proveedores');
-  const data = await res.json();
+  const data = await apiFetch('/suppliers/all-suppliers', {
+    method: 'GET',
+    fallbackError: 'FALLO AL CARGAR PROVEEDORES'
+  }, token);
   return Array.isArray(data) ? data : [];
 }
 
@@ -88,17 +88,18 @@ export default function SuppliersPage() {
     
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/create-suppliers`, {
+      await apiFetch('/suppliers/create-suppliers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...newSupplier, name })
-      });
-      if (!res.ok) throw new Error();
+        body: JSON.stringify({ ...newSupplier, name }),
+        fallbackError: 'FALLO AL CREAR PROVEEDOR'
+      }, token!);
       toast({ variant: 'success', title: 'ÉXITO', description: 'VÍNCULO CREADO CORRECTAMENTE' });
       setAddDialogOpen(false);
       setNewSupplier({ name: '', phone: '', address: '' });
       loadSuppliers();
-    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO EN OPERACIÓN' }); }
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL CREAR PROVEEDOR' });
+    }
   };
 
   const handleEditSupplier = async () => {
@@ -106,81 +107,77 @@ export default function SuppliersPage() {
     const name = editingSupplier.name?.trim().toUpperCase();
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/update-suppliers/${editingSupplier.id}`, {
+      await apiFetch(`/suppliers/update-suppliers/${editingSupplier.id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...editingSupplier, name })
-      });
-      if (!res.ok) throw new Error();
+        body: JSON.stringify({ ...editingSupplier, name }),
+        fallbackError: 'FALLO AL ACTUALIZAR PROVEEDOR'
+      }, token!);
       toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ACTUALIZADO' });
       setEditDialogOpen(false);
       loadSuppliers();
-    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL GUARDAR' }); }
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ACTUALIZAR PROVEEDOR' });
+    }
   };
 
   const handleDeleteSupplier = async () => {
     if (!deletingId) return;
     const token = Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/delete-suppliers/${deletingId}`, {
+      await apiFetch(`/suppliers/delete-suppliers/${deletingId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (!res.ok) throw new Error();
+        fallbackError: 'FALLO AL ELIMINAR PROVEEDOR'
+      }, token!);
       toast({ variant: 'success', title: 'ÉXITO', description: 'VÍNCULO ELIMINADO' });
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadSuppliers();
-    } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL ELIMINAR' }); }
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ELIMINAR PROVEEDOR' });
+    }
   };
 
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col min-h-screen gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20">
+    <div className="flex flex-col gap-6 md:gap-8 max-w-[1600px] mx-auto px-4 md:px-6 pb-20 w-full min-h-[100dvh]">
       
-      {/* Header Premium Zero Friction */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm relative overflow-hidden">
-        <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150"><Truck size={120} /></div>
-        
-        <div className="flex items-center gap-4 relative z-10">
-          <div className="bg-emerald-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-500/20 rotate-3">
-            <Truck size={24} />
-          </div>
-          <div className="flex flex-col">
-            <h1 className="text-xl font-black dark:text-white uppercase leading-none italic tracking-tighter">
-              Directorio de <span className="text-emerald-500">Proveedores</span>
-            </h1>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[9px] font-black text-emerald-500 uppercase tracking-[0.3em]">Red de Abastecimiento</span>
-              <div className="h-1 w-1 bg-gray-300 rounded-full" />
-              <div className="flex items-center gap-1 text-[9px] font-bold text-gray-400 uppercase tracking-widest italic">
-                <Clock size={10} /> {new Date().toLocaleDateString()}
-              </div>
+      {/* HEADER TACTICO */}
+      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pt-6">
+        <div className="flex flex-col gap-4">
+          <div className="flex items-center gap-4">
+            <div className="bg-emerald-500 w-14 h-14 rounded-[1.5rem] text-white shadow-2xl shadow-emerald-500/20 flex items-center justify-center transform -rotate-6 group hover:rotate-0 transition-all">
+              <Truck size={32} />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
+                Directorio <span className="text-emerald-500">Logístico</span>
+              </h1>
+              <p className="text-[10px] md:text-xs font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic ml-1 mt-2 flex items-center gap-2">
+                <Sparkles size={12} className="text-emerald-500" /> Red de Abastecimiento Corporativo
+              </p>
             </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="relative group/search">
+        <div className="flex flex-wrap items-center gap-2 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md p-1.5 rounded-[1.5rem] border border-gray-200 dark:border-white/5 shadow-inner">
+          <div className="relative group/search shrink-0">
             <Input 
-              size="sm" 
-              placeholder="RASTREAR FIRMA O SEDE..." 
+              placeholder="RASTREAR FIRMA..." 
               value={filter} 
               onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
               startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
               classNames={{ 
-                inputWrapper: "h-11 w-full md:w-80 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-focus-within/search:border-emerald-500/50 transition-all", 
-                input: "text-[11px] font-black bg-transparent tracking-widest italic uppercase" 
+                inputWrapper: "h-12 w-full md:w-64 bg-gray-50/80 dark:bg-zinc-950/50 border border-transparent group-focus-within/search:!border-emerald-500/50 transition-all shadow-inner rounded-2xl", 
+                input: "text-[10px] font-black bg-transparent tracking-[0.2em] italic uppercase" 
               }} 
             />
           </div>
           <Button 
-            size="sm" 
             onPress={() => setAddDialogOpen(true)} 
-            className="h-11 px-6 bg-emerald-500 text-white font-black text-[11px] rounded-xl shadow-lg shadow-emerald-500/20 hover:scale-105 active:scale-95 transition-all italic tracking-widest uppercase"
+            className="h-12 px-8 bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest italic rounded-2xl shadow-xl shadow-emerald-500/20 hover:scale-105 transition-transform"
           >
-            <PlusCircle size={16} className="mr-1" /> NUEVA FIRMA
+            <PlusCircle size={16} className="mr-2" /> NUEVA FIRMA
           </Button>
         </div>
       </header>

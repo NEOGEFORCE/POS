@@ -1,71 +1,83 @@
 "use client";
 
-import { 
-    Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, 
-    Button, Input, Select, SelectItem, Checkbox 
+import {
+  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
+  Button, Input, Select, SelectItem, Checkbox
 } from "@heroui/react";
-import { Package, Barcode, Camera, Sparkles } from 'lucide-react';
+import { Package, Barcode, Camera, Sparkles, TrendingUp } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
 import { applyRounding } from '@/lib/utils';
 import { fetchProductFromOpenFoodFacts } from '@/lib/external-apis';
 import { useState } from 'react';
 
+// Formateador de moneda local para evitar errores de importación
+const formatCOP = (value: number) => {
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0
+  }).format(value);
+};
+
 interface ProductFormModalProps {
-    isOpen: boolean;
-    onOpenChange: (open: boolean) => void;
-    addDialogOpen: boolean;
-    newProduct: Omit<Product, 'id'>;
-    setNewProduct: (p: any) => void;
-    editingProduct: Product | null;
-    setEditingProduct: (p: any) => void;
-    newMargin: number;
-    setNewMargin: (m: number) => void;
-    editMargin: number;
-    setEditMargin: (m: number) => void;
-    categories: Category[];
-    onConfirm: () => void;
-    onScan: () => void;
+  isOpen: boolean;
+  onOpenChange: (open: boolean) => void;
+  addDialogOpen: boolean;
+  newProduct: Omit<Product, 'id'>;
+  setNewProduct: (p: any) => void;
+  editingProduct: Product | null;
+  setEditingProduct: (p: any) => void;
+  newMargin: number;
+  setNewMargin: (m: number) => void;
+  editMargin: number;
+  setEditMargin: (m: number) => void;
+  categories: Category[];
+  suppliers: any[];
+  onConfirm: () => void;
+  onScan: () => void;
 }
 
 export default function ProductFormModal({
-    isOpen, onOpenChange, addDialogOpen,
-    newProduct, setNewProduct,
-    editingProduct, setEditingProduct,
-    newMargin, setNewMargin,
-    editMargin, setEditMargin,
-    categories, onConfirm, onScan
+  isOpen, onOpenChange, addDialogOpen,
+  newProduct, setNewProduct,
+  editingProduct, setEditingProduct,
+  newMargin, setNewMargin,
+  editMargin, setEditMargin,
+  categories, suppliers, onConfirm, onScan
 }: ProductFormModalProps) {
-    const [isFetchingInfo, setIsFetchingInfo] = useState(false);
+  const [isFetchingInfo, setIsFetchingInfo] = useState(false);
 
-    const handleAIFill = async () => {
-        const barcode = addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '');
-        if (!barcode) return;
+  const handleAIFill = async () => {
+    const barcode = addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '');
+    if (!barcode) return;
 
-        setIsFetchingInfo(true);
-        try {
-            const data = await fetchProductFromOpenFoodFacts(barcode);
-            if (data?.image_url) {
-                if (addDialogOpen) {
-                    setNewProduct((p: any) => ({ ...p, imageUrl: data.image_url, productName: p.productName || data.product_name?.toUpperCase() }));
-                } else {
-                    setEditingProduct((p: any) => p ? { ...p, imageUrl: data.image_url, productName: p.productName || data.product_name?.toUpperCase() } : null);
-                }
-            }
-        } finally {
-            setIsFetchingInfo(false);
+    setIsFetchingInfo(true);
+    try {
+      const data = await fetchProductFromOpenFoodFacts(barcode);
+      if (data?.image_url) {
+        if (addDialogOpen) {
+          setNewProduct((p: any) => ({ ...p, imageUrl: data.image_url, productName: p.productName || data.product_name?.toUpperCase() }));
+        } else {
+          setEditingProduct((p: any) => p ? { ...p, imageUrl: data.image_url, productName: p.productName || data.product_name?.toUpperCase() } : null);
         }
-    };
-    return (
-    <Modal 
-      isOpen={isOpen} 
-      placement="top-center" 
-      scrollBehavior="inside" 
-      onOpenChange={onOpenChange} 
-      backdrop="blur" 
-      size="xl" 
-      classNames={{ 
-        base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-visible m-4", 
-        closeButton: "text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors" 
+      }
+    } finally {
+      setIsFetchingInfo(false);
+    }
+  };
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      placement="top-center"
+      scrollBehavior="inside"
+      onOpenChange={onOpenChange}
+      backdrop="blur"
+      size="xl"
+      classNames={{
+        base: "bg-white/90 dark:bg-zinc-950/90 backdrop-blur-3xl rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-visible m-4",
+        closeButton: "text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors"
       }}
     >
       <ModalContent>
@@ -87,10 +99,10 @@ export default function ProductFormModal({
                 <div className="relative group/photo cursor-pointer shrink-0">
                   <div className="h-32 w-32 rounded-[2rem] bg-gray-50 dark:bg-zinc-900 border-2 border-dashed border-gray-200 dark:border-white/10 flex items-center justify-center overflow-hidden transition-all group-hover/photo:border-emerald-500/50 shadow-inner">
                     {(addDialogOpen ? newProduct.imageUrl : editingProduct?.imageUrl) ? (
-                      <img 
-                        src={addDialogOpen ? newProduct.imageUrl : editingProduct?.imageUrl} 
-                        className="h-full w-full object-cover" 
-                        alt="Preview" 
+                      <img
+                        src={addDialogOpen ? newProduct.imageUrl : editingProduct?.imageUrl}
+                        className="h-full w-full object-cover"
+                        alt="Preview"
                       />
                     ) : (
                       <Package size={40} className="text-gray-300 dark:text-zinc-700 group-hover/photo:text-emerald-500/50 transition-colors" />
@@ -102,8 +114,8 @@ export default function ProductFormModal({
                   <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-2.5 rounded-xl shadow-lg border-4 border-white dark:border-zinc-950">
                     <Camera size={18} />
                   </div>
-                  <input 
-                    type="file" 
+                  <input
+                    type="file"
                     accept="image/*"
                     className="absolute inset-0 opacity-0 cursor-pointer"
                     onChange={(e) => {
@@ -131,29 +143,30 @@ export default function ProductFormModal({
                   <div className="relative">
                     <Input
                       aria-label="Identificador de barras"
+                      autoFocus
                       value={addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '')}
                       onValueChange={(v) => {
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: v.toUpperCase() }));
                         else setEditingProduct((p: any) => p ? { ...p, barcode: v.toUpperCase() } : null);
                       }}
-                      classNames={{ 
-                        inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 shadow-inner transition-all pr-28", 
-                        input: "font-black text-base uppercase italic text-gray-900 dark:text-white" 
+                      classNames={{
+                        inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 shadow-inner transition-all pr-28",
+                        input: "font-black text-base uppercase italic text-gray-900 dark:text-white"
                       }}
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex gap-1.5 items-center">
-                      <Button 
-                        isIconOnly 
+                      <Button
+                        isIconOnly
                         variant="light"
-                        onPress={handleAIFill} 
+                        onPress={handleAIFill}
                         isLoading={isFetchingInfo}
                         className="h-12 w-12 text-emerald-500 rounded-xl hover:bg-emerald-50 dark:hover:bg-emerald-500/10 transition-all font-black"
                       >
                         <Sparkles size={18} />
                       </Button>
-                      <Button 
-                        isIconOnly 
-                        onPress={onScan} 
+                      <Button
+                        isIconOnly
+                        onPress={onScan}
                         className="h-12 w-12 bg-emerald-500 text-white rounded-xl shadow-lg ring-4 ring-emerald-500/10"
                       >
                         <Camera size={18} />
@@ -170,9 +183,9 @@ export default function ProductFormModal({
                       if (addDialogOpen) setNewProduct((p: any) => ({ ...p, productName: v.toUpperCase() }));
                       else setEditingProduct((p: any) => p ? { ...p, productName: v.toUpperCase() } : null);
                     }}
-                    classNames={{ 
-                      inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 shadow-inner transition-all", 
-                      input: "font-black text-base uppercase italic text-gray-900 dark:text-white" 
+                    classNames={{
+                      inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 shadow-inner transition-all",
+                      input: "font-black text-base uppercase italic text-gray-900 dark:text-white"
                     }}
                   />
                 </div>
@@ -183,7 +196,7 @@ export default function ProductFormModal({
                   <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1">COSTO NETO</label>
                   <Input
                     aria-label="Costo Neto"
-                    type="number" 
+                    type="number"
                     variant="flat"
                     startContent={<span className="text-gray-400 font-black text-sm mr-1">$</span>}
                     value={String(addDialogOpen ? newProduct.purchasePrice : (editingProduct?.purchasePrice || 0))}
@@ -195,9 +208,9 @@ export default function ProductFormModal({
                         setEditingProduct((p: any) => p ? { ...p, purchasePrice: val, salePrice: applyRounding(val * (1 + editMargin / 100)) } : null);
                       }
                     }}
-                    classNames={{ 
-                      inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border-b-2 border-gray-200 dark:border-white/10 rounded-none shadow-none focus-within:border-emerald-500", 
-                      input: "font-black text-xl tabular-nums italic text-gray-900 dark:text-white" 
+                    classNames={{
+                      inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border-b-2 border-gray-200 dark:border-white/10 rounded-none shadow-none focus-within:border-emerald-500",
+                      input: "font-black text-xl tabular-nums italic text-gray-900 dark:text-white"
                     }}
                   />
                 </div>
@@ -206,7 +219,7 @@ export default function ProductFormModal({
                   <label className="text-[10px] font-black text-sky-500 uppercase tracking-widest italic ml-1">MARGEN %</label>
                   <Input
                     aria-label="Margen de ganancia"
-                    type="number" 
+                    type="number"
                     variant="flat"
                     endContent={<span className="text-sky-500 font-black text-sm ml-1">%</span>}
                     value={String(addDialogOpen ? newMargin : editMargin)}
@@ -220,9 +233,9 @@ export default function ProductFormModal({
                         setEditingProduct((p: any) => p ? { ...p, marginPercentage: val, salePrice: applyRounding(p.purchasePrice * (1 + val / 100)) } : null);
                       }
                     }}
-                    classNames={{ 
-                      inputWrapper: "h-16 bg-sky-50 dark:bg-sky-500/5 border-b-2 border-sky-500/50 rounded-none shadow-none", 
-                      input: "font-black text-xl tabular-nums text-sky-600 dark:text-sky-400 italic text-center" 
+                    classNames={{
+                      inputWrapper: "h-16 bg-sky-50 dark:bg-sky-500/5 border-b-2 border-sky-500/50 rounded-none shadow-none",
+                      input: "font-black text-xl tabular-nums text-sky-600 dark:text-sky-400 italic text-center"
                     }}
                   />
                 </div>
@@ -231,20 +244,72 @@ export default function ProductFormModal({
                   <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic ml-1">PVP FINAL</label>
                   <Input
                     aria-label="Precio de Venta al Público"
-                    type="number" 
+                    type="number"
                     variant="flat"
                     startContent={<span className="text-emerald-500 font-black text-base mr-1">$</span>}
                     value={String(addDialogOpen ? newProduct.salePrice : (editingProduct?.salePrice || 0))}
                     onValueChange={(v) => {
                       const val = applyRounding(parseFloat(v) || 0);
-                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, salePrice: val }));
-                      else setEditingProduct((p: any) => p ? { ...p, salePrice: val } : null);
+                      if (addDialogOpen) {
+                        const cost = newProduct.purchasePrice || 0;
+                        const margin = cost > 0 ? ((val - cost) / cost) * 100 : 0;
+                        setNewMargin(parseFloat(margin.toFixed(2)));
+                        setNewProduct((p: any) => ({ ...p, salePrice: val, marginPercentage: margin }));
+                      } else {
+                        const cost = editingProduct?.purchasePrice || 0;
+                        const margin = cost > 0 ? ((val - cost) / cost) * 100 : 0;
+                        setEditMargin(parseFloat(margin.toFixed(2)));
+                        setEditingProduct((p: any) => p ? { ...p, salePrice: val, marginPercentage: margin } : null);
+                      }
                     }}
-                    classNames={{ 
-                      inputWrapper: "h-16 bg-emerald-500/5 border-b-2 border-emerald-500/50 rounded-2xl shadow-none", 
-                      input: "font-black text-3xl tabular-nums text-emerald-600 dark:text-emerald-400 italic" 
+                    classNames={{
+                      inputWrapper: "h-16 bg-emerald-500/5 border-b-2 border-emerald-500/50 rounded-2xl shadow-none",
+                      input: "font-black text-3xl tabular-nums text-emerald-600 dark:text-emerald-400 italic"
                     }}
                   />
+                </div>
+              </div>
+
+              {/* LIVE UTILITY CALCULATOR */}
+              <div className="bg-emerald-500/10 border border-emerald-500/20 p-6 rounded-[2rem] flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic">Ganancia Estimada</span>
+                  <span className="text-2xl font-black text-emerald-600 dark:text-emerald-400 tabular-nums italic leading-none mt-1">
+                    +${formatCOP((addDialogOpen ? newProduct.salePrice - newProduct.purchasePrice : (editingProduct?.salePrice || 0) - (editingProduct?.purchasePrice || 0)))}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest italic">Retorno de Inversión</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <TrendingUp className="text-emerald-500" size={16} />
+                    <span className="text-xl font-black text-gray-900 dark:text-white tabular-nums italic">
+                      {(addDialogOpen ? newMargin : editMargin)}%
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div className="space-y-3">
+                  <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic ml-1">Estructura Logística (Proveedor)</label>
+                  <Select
+                    aria-label="Seleccionar Proveedor"
+                    placeholder="VINCULAR PROVEEDOR..."
+                    selectedKeys={[(addDialogOpen ? String(newProduct.supplierId || '') : String(editingProduct?.supplierId || ''))]}
+                    onSelectionChange={(keys) => {
+                      const val = Array.from(keys)[0] as string;
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, supplierId: val }));
+                      else setEditingProduct((p: any) => p ? { ...p, supplierId: val } : null);
+                    }}
+                    classNames={{
+                      trigger: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl shadow-inner",
+                      value: "font-black text-xs uppercase italic text-gray-900 dark:text-white"
+                    }}
+                  >
+                    {suppliers.map((s) => (
+                      <SelectItem key={s.id} className="text-[10px] font-black uppercase italic">{s.name}</SelectItem>
+                    ))}
+                  </Select>
                 </div>
               </div>
 
@@ -263,9 +328,9 @@ export default function ProductFormModal({
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: val }));
                         else setEditingProduct((p: any) => p ? { ...p, quantity: val } : null);
                       }}
-                      classNames={{ 
-                        inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl shadow-none focus-within:!border-emerald-500 transition-all", 
-                        input: "font-black text-base tabular-nums text-center text-gray-900 dark:text-white" 
+                      classNames={{
+                        inputWrapper: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl shadow-none focus-within:!border-emerald-500 transition-all",
+                        input: "font-black text-base tabular-nums text-center text-gray-900 dark:text-white"
                       }}
                       placeholder="STOCK"
                     />
@@ -279,9 +344,9 @@ export default function ProductFormModal({
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, minStock: val }));
                         else setEditingProduct((p: any) => p ? { ...p, minStock: val } : null);
                       }}
-                      classNames={{ 
-                        inputWrapper: "h-16 bg-rose-50 dark:bg-rose-500/5 border border-rose-500/30 rounded-2xl shadow-none focus-within:!border-rose-500 transition-all", 
-                        input: "font-black text-base tabular-nums text-center text-rose-600 dark:text-rose-400" 
+                      classNames={{
+                        inputWrapper: "h-16 bg-rose-50 dark:bg-rose-500/5 border border-rose-500/30 rounded-2xl shadow-none focus-within:!border-rose-500 transition-all",
+                        input: "font-black text-base tabular-nums text-center text-rose-600 dark:text-rose-400"
                       }}
                       placeholder="ALERTA"
                     />
@@ -299,8 +364,8 @@ export default function ProductFormModal({
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, categoryId: v }));
                         else setEditingProduct((p: any) => p ? { ...p, categoryId: v } : null);
                       }}
-                      classNames={{ 
-                        trigger: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl shadow-none focus-within:!border-emerald-500", 
+                      classNames={{
+                        trigger: "h-16 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl shadow-none focus-within:!border-emerald-500",
                         value: "font-black text-xs uppercase italic text-gray-900 dark:text-white",
                         popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-2xl"
                       }}
@@ -341,5 +406,5 @@ export default function ProductFormModal({
         )}
       </ModalContent>
     </Modal>
-    );
+  );
 }

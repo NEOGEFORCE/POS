@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Integrated Point of Sale (Go + Next.js)",
   "scripts": {
-    "dev": "concurrently \"cd backPOS-go && go build -o server.exe ./cmd/api && .\\server.exe\" \"cd FrontPOS-main && npm run dev:mobile\"",
+    "dev": "concurrently \"cd backPOS-go && go build -o server.exe ./cmd/api && .\\server.exe\" \"cd FrontPOS-main && npm run dev:mobile\" \"powershell -Command Start-Sleep -s 10; start http://localhost:9002\"",
     "tunnel": "npx localtunnel --port 9002 --local-host 127.0.0.1",
     "install:all": "concurrently \"cd backPOS-go && go mod tidy\" \"cd FrontPOS-main && npm install\""
   },

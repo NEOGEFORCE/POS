@@ -4,15 +4,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 
-type User = {
-  dni: string;
-  name: string;
-  email: string;
-  role: 'admin' | 'employee' | 'administrador' | 'empleado';
-  Role?: string; // Compatibilidad con datos antiguos
-  Name?: string;
-  Email?: string;
-};
+import { User } from './definitions';
 
 interface AuthContextType {
   user: User | null;
@@ -56,7 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const token = Cookies.get('org-pos-token');
       
       if (storedUser && token) {
-        setUser(JSON.parse(storedUser));
+        const userData = JSON.parse(storedUser);
+        setUser({ ...userData, token });
       }
     } catch (error) {
       console.error("Failed to recover session from cookies", error);
@@ -91,13 +84,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     if (userData && token) {
       // Guardar en Cookies (Seguro y Volátil) en lugar de localStorage
-      Cookies.set('org-pos-user', JSON.stringify(userData), { expires: 1, secure: true, sameSite: 'strict' });
-      Cookies.set('org-pos-token', token, { expires: 1, secure: true, sameSite: 'strict' });
+      Cookies.set('org-pos-user', JSON.stringify(userData), { expires: 0.5, secure: true, sameSite: 'strict' });
+      Cookies.set('org-pos-token', token, { expires: 0.5, secure: true, sameSite: 'strict' });
       
-      setUser(userData);
+      setUser({ ...userData, token });
       
       const role = userData.role?.toLowerCase() || userData.Role?.toLowerCase() || "";
-      if (role === "admin" || role === "administrador") {
+      if (role === "admin" || role === "administrador" || role === "superadmin") {
         router.push('/dashboard');
       } else {
         router.push('/sales/new');

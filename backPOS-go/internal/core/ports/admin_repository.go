@@ -10,4 +10,10 @@ type AdminRepository interface {
 	Save(employee *models.Employee) error
 	Update(dni string, employee *models.Employee) error
 	Delete(dni string) error
+	CountAll() (int64, error)
+
+	// Faltantes Module
+	SaveMissingItem(item *models.MissingItem) error
+	GetMissingItems() ([]models.MissingItem, error)
+	UpdateMissingItemStatus(id uint, status string) error
 }

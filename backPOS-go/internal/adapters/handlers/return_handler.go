@@ -20,7 +20,7 @@ func NewReturnHandler(s *services.ReturnService) *ReturnHandler {
 func (h *ReturnHandler) Create(c *gin.Context) {
 	var ret models.Return
 	if err := c.ShouldBindJSON(&ret); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
@@ -31,7 +31,7 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 	ret.EmployeeDNI = dni.(string)
 
 	if err := h.service.CreateReturn(&ret); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar devolución", err)
 		return
 	}
 	c.JSON(http.StatusCreated, ret)
@@ -40,7 +40,7 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 func (h *ReturnHandler) GetAll(c *gin.Context) {
 	returns, err := h.service.ListReturns()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener devoluciones", err)
 		return
 	}
 	c.JSON(http.StatusOK, returns)

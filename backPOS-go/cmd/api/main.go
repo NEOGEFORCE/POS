@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"backPOS-go/internal/adapters/handlers"
+	"backPOS-go/internal/adapters/jobs"
 	"backPOS-go/internal/adapters/middlewares"
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/services"
@@ -37,20 +38,26 @@ func main() {
 	shiftRepo := repositories.NewActiveShiftRepository(repositories.DB)
 	creditRepo := repositories.NewPostgresCreditPaymentRepository(repositories.DB)
 	movementRepo := repositories.NewPostgresStockMovementRepository(repositories.DB)
+	auditRepo := repositories.NewAuditRepository(repositories.DB)
+	orderRepo := repositories.NewPostgresPurchaseOrderRepository(repositories.DB)
 
 	// Initialize Services
+	emailService := services.NewEmailService()
 	printService := services.NewPrintService()
+	auditService := services.NewAuditService(auditRepo)
 	productService := services.NewProductService(productRepo, movementRepo)
 	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService)
-	authService := services.NewAuthService(adminRepo)
+	authService := services.NewAuthService(adminRepo, emailService, auditService)
 	categoryService := services.NewCategoryService(categoryRepo)
 	supplierService := services.NewSupplierService(supplierRepo)
-	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo)
-	inventoryService := services.NewInventoryService(productRepo)
+	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo, adminRepo)
+	inventoryService := services.NewInventoryService(productRepo, saleRepo)
 	clientService := services.NewClientService(clientRepo, creditRepo)
 	expenseService := services.NewExpenseService(expenseRepo, supplierRepo)
 	adminService := services.NewAdminService(adminRepo)
 	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo)
+	telegramService := services.NewTelegramService()
+	orderService := services.NewPurchaseOrderService(orderRepo)
 
 	// Initialize Handlers
 	productHandler := handlers.NewProductHandler(productService, inventoryService)
@@ -61,8 +68,14 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService)
 	clientHandler := handlers.NewClientHandler(clientService)
 	expenseHandler := handlers.NewExpenseHandler(expenseService)
-	adminHandler := handlers.NewAdminHandler(adminService)
+	adminHandler := handlers.NewAdminHandler(adminService, auditService)
 	returnHandler := handlers.NewReturnHandler(returnService)
+	orderHandler := handlers.NewOrderHandler(inventoryService, orderService)
+	debtHandler := handlers.NewDebtHandler(clientService, saleService)
+
+	// Initialize and Start Cron Jobs
+	cronManager := jobs.NewCronManager(telegramService, inventoryService, supplierService, orderService)
+	cronManager.Start()
 
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -107,6 +120,9 @@ func main() {
 		// Auth
 		api.POST("/auth/login", authHandler.Login)
 		api.POST("/auth/forgot-password", authHandler.ForgotPassword)
+		api.POST("/auth/reset-password", authHandler.ResetPassword)
+		api.GET("/auth/check-setup", authHandler.CheckSetup)
+		api.POST("/auth/setup", authHandler.Setup)
 
 		// Protected Routes
 		protected := api.Group("/")
@@ -123,6 +139,7 @@ func main() {
 			protected.POST("/products/receive-stock", productHandler.ReceiveStock)
 			protected.POST("/products/bulk-receive", productHandler.BulkReceive)
 			protected.POST("/products/fix-prices", productHandler.FixPrices)
+			protected.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
 			protected.GET("/products/inventory", productHandler.GetInventory)
 
 			// Categories
@@ -187,10 +204,27 @@ func main() {
 			adminGroup.Use(middlewares.RoleMiddleware("admin"))
 			{
 				adminGroup.GET("/users", adminHandler.GetAllEmployees)
+				adminGroup.GET("/user/:dni", adminHandler.GetEmployee)
 				adminGroup.POST("/register-user", adminHandler.CreateEmployee)
 				adminGroup.PUT("/user/:dni", adminHandler.UpdateEmployee)
 				adminGroup.DELETE("/user/:dni", adminHandler.DeleteEmployee)
+				adminGroup.POST("/reset-password/:dni", adminHandler.ResetEmployeePassword)
+				adminGroup.GET("/audit-logs", adminHandler.GetAuditLogs)
+				adminGroup.PUT("/missing-items/status", adminHandler.UpdateMissingItemStatus)
 			}
+
+			// Faltantes (Accessible for all employees to report)
+			protected.POST("/missing-items", adminHandler.CreateMissingItem)
+			protected.GET("/missing-items", adminHandler.GetAllMissingItems)
+
+			// Orders & Smart Restock
+			protected.GET("/inventory/suggested-orders", orderHandler.GetSuggestedOrders)
+			protected.POST("/inventory/orders", orderHandler.CreateOrder)
+			protected.GET("/inventory/orders", orderHandler.GetAllOrders)
+
+			// Debts & Accounts Receivable
+			protected.GET("/sales/debts", debtHandler.GetPendingDebts)
+			protected.PUT("/sales/debts/:id/pay", debtHandler.RegisterPayment)
 		}
 	}
 

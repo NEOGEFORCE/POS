@@ -1,15 +1,20 @@
 
 
 export type User = {
-  id: string;
+  id?: string;
   dni: string;
   name: string;
   email: string;
-  role: 'administrador' | 'empleado' | string;
-  status: 'Activo' | 'Inactivo';
-  lastLogin: string;
+  role: 'superadmin' | 'admin' | 'administrador' | 'empleado' | 'employee' | string;
+  is_active?: boolean;
+  lastLogin?: string;
   avatar?: string;
   password?: string;
+  token?: string;
+  // Compatibilidad con datos antiguos/backend inconsistente
+  Role?: string;
+  Name?: string;
+  Email?: string;
 };
 
 export type Customer = {
@@ -44,6 +49,11 @@ export type Product = {
   supplierId?: number;
   imageUrl?: string;
   minStock?: number;
+  iva?: number;
+  icui?: number;
+  ibua?: number;
+  isActive?: boolean;
+  netProfit?: number;
 };
 
 
@@ -91,6 +101,8 @@ export type Supplier = {
   address?: string;
   status?: 'Activo' | 'Inactivo';
   imageUrl?: string;
+  visitDay?: string;
+  deliveryDay?: string;
 };
 
 export interface CashierClosure {
@@ -119,3 +131,13 @@ export interface CashierClosure {
   closedByDni?: string;
   closedByName?: string;
 }
+
+export type AuditLog = {
+  id: number;
+  employee_dni: string;
+  action: string;
+  module: string;
+  details: string;
+  ip_address: string;
+  created_at: string;
+};

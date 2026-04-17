@@ -190,3 +190,20 @@ func (r *PostgresSaleRepository) GetMonthlyTotals() (map[string]float64, error) 
 	}
 	return results, nil
 }
+
+func (r *PostgresSaleRepository) GetSoldQuantityByProduct(barcode string, from, to string) (float64, error) {
+	var total float64
+	query := r.db.Table("sale_details").
+		Joins("JOIN sales ON sales.\"saleId\" = sale_details.\"saleId\"").
+		Where("sale_details.barcode = ?", barcode)
+	
+	if from != "" {
+		query = query.Where("sales.\"saleDate\" >= ?", from)
+	}
+	if to != "" {
+		query = query.Where("sales.\"saleDate\" <= ?", to)
+	}
+	
+	err := query.Select("COALESCE(SUM(sale_details.quantity), 0)").Scan(&total).Error
+	return total, err
+}

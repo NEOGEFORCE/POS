@@ -26,11 +26,14 @@ import { ScannerOverlay } from '@/components/ScannerOverlay';
 import { useScale } from '@/hooks/useScale';
 import { SplitBillDialog } from '@/components/SplitBillDialog';
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
+import { extractApiError } from '@/lib/api-error';
 
 // CARGA DINÁMICA DE COMPONENTES PESADOS
 const PaymentModal = dynamic(() => import('./components/PaymentModal'), { ssr: false });
 const ClientSelectionModal = dynamic(() => import('./components/ClientSelectionModal'), { ssr: false });
 const ManualWeightModal = dynamic(() => import('./components/ManualWeightModal'), { ssr: false });
+const MissingItemModal = dynamic(() => import('./components/MissingItemModal'), { ssr: false });
+const AlertTriangleIcon = dynamic(() => import('lucide-react').then(m => m.AlertTriangle), { ssr: false });
 
 
 interface CartItem extends Product {
@@ -79,6 +82,7 @@ export default function NewSalePage() {
     const [splitItemsToPay, setSplitItemsToPay] = useState<CartItem[] | null>(null);
     const [remainingItemsAfterSplit, setRemainingItemsAfterSplit] = useState<CartItem[] | null>(null);
     const [showSuccessScreen, setShowSuccessScreen] = useState(false);
+    const [isMissingItemOpen, setIsMissingItemOpen] = useState(false);
 
     const { weight: scaleWeight, isScaleOnline } = useScale();
     const searchRef = useRef<HTMLInputElement>(null);
@@ -106,7 +110,7 @@ export default function NewSalePage() {
             if (typeof window === 'undefined') return;
             const target = document.activeElement as HTMLElement;
             const isRealInput = (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') && !target.classList.contains('scanner-gate');
-            const isModalOpen = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isCartDropdownOpen;
+            const isModalOpen = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isCartDropdownOpen || isMissingItemOpen;
 
             if (!isRealInput && !isModalOpen && hiddenScannerRef.current) {
                 hiddenScannerRef.current.focus();
@@ -422,12 +426,11 @@ export default function NewSalePage() {
                 });
                 setCashPaid(''); setCashTendered(''); setTransferPaid(''); setTransferSource(''); setCreditPaid(''); setDialogAmount(''); setActivePaymentTab('cash');
             } else {
-                const errorBody = await res.json().catch(() => ({}));
-                console.error('DEBUG: ERROR SERVIDOR:', errorBody);
-                throw new Error(errorBody.message || errorBody.error || "Error al registrar venta");
+                const errorMsg = await extractApiError(res, "ERROR AL REGISTRAR VENTA");
+                throw new Error(errorMsg);
             }
-        } catch {
-            toast({ variant: "destructive", title: "FALLO", description: "ERROR DE REGISTRO" });
+        } catch (err: any) {
+            toast({ variant: "destructive", title: "FALLO", description: err.message || "ERROR DE REGISTRO" });
         } finally {
             setSubmitting(false);
         }
@@ -463,7 +466,12 @@ export default function NewSalePage() {
                 if (savedData && Object.keys(savedData.carts).length > 0) {
                     setCarts(savedData.carts); setCartKeys(Object.keys(savedData.carts)); setActiveCartKey(savedData.activeKey || 'Factura 1'); setSelectedCustomerDni(savedData.customerDni || '0');
                 }
-            } catch (err) { console.error(err); } finally { setLoading(false); }
+            } catch (err: any) {
+                console.error(err);
+                toast({ variant: "destructive", title: "ERROR DE CARGA", description: "Verifique su conexión al servidor." });
+            } finally {
+                setLoading(false);
+            }
         };
         loadData();
     }, [router]);
@@ -628,6 +636,15 @@ export default function NewSalePage() {
                                 >
                                     <Camera className="h-3.5 w-3.5" />
                                 </Button>
+                                <Button
+                                    isIconOnly
+                                    size="sm"
+                                    variant="flat"
+                                    className="h-7 w-7 min-w-7 rounded bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-500 hover:bg-rose-500 hover:text-white transition-colors"
+                                    onPress={() => setIsMissingItemOpen(true)}
+                                >
+                                    <AlertTriangleIcon className="h-3.5 w-3.5" />
+                                </Button>
                             </div>
 
                             <div className="grid grid-cols-4 gap-1 flex-1 mt-1">
@@ -730,6 +747,7 @@ export default function NewSalePage() {
 
             <ScannerOverlay isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onResult={(res) => { handleCodeSubmit(res); setIsScannerOpen(false); }} title="Escáner POS" />
             <SplitBillDialog isOpen={isSplitDialogOpen} onClose={() => setIsSplitDialogOpen(false)} originalItems={currentCart} onConfirm={(l, r) => { setRemainingItemsAfterSplit(l); setSplitItemsToPay(r); setIsSplitDialogOpen(false); setIsPaymentDialogOpen(true); }} />
+            <MissingItemModal isOpen={isMissingItemOpen} onOpenChange={setIsMissingItemOpen} />
 
             {/* THERMAL RECEIPT (HIDDEN FROM UI, SHOWN FOR PRINT) */}
             {lastReceipt && (

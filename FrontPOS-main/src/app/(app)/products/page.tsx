@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Product, Category } from '@/lib/definitions';
 import Cookies from 'js-cookie';
+import { apiFetch } from '@/lib/api-error';
 
 // COMPONENTES DINÁMICOS PARA OPTIMIZACIÓN
 const ProductStats = dynamic(() => import('./components/ProductStats'), { ssr: false });
@@ -27,8 +28,16 @@ const formatCOP = (val: number | string): string => {
 
 export default function ProductsPage() {
     const { toast } = useToast();
-    const { data: productsData, isLoading: productsLoading, mutate: mutateProducts } = useApi<any>('/products/paginated?page=1&pageSize=1000');
+    const [pageSize, setPageSize] = useState(25);
+    const [currentPage, setCurrentPage] = useState(1);
+    const [filter, setFilter] = useState('');
+    const [selectedSupplier, setSelectedSupplier] = useState<string>('ALL');
+
+    const { data: productsData, isLoading: productsLoading, mutate: mutateProducts } = useApi<any>(
+        `/products/paginated?page=${currentPage}&pageSize=${pageSize}${filter ? `&q=${filter}` : ''}`
+    );
     const { data: categoriesData } = useApi<Category[]>('/categories/all-categories');
+    const { data: suppliersData } = useApi<any[]>('/api/suppliers/all-suppliers');
 
     // --- ESTADOS ---
     const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -36,10 +45,6 @@ export default function ProductsPage() {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [alertsDialogOpen, setAlertsDialogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
-    const [filter, setFilter] = useState('');
-
-    const [pageSize, setPageSize] = useState(10);
-    const [currentPage, setCurrentPage] = useState(1);
 
     const [newProduct, setNewProduct] = useState<Omit<Product, 'id'>>({
         barcode: '', productName: '', quantity: 0, isWeighted: false,
@@ -50,15 +55,15 @@ export default function ProductsPage() {
     const [editMargin, setEditMargin] = useState(20);
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
 
-    const products: Product[] = useMemo(() => productsData?.items || (Array.isArray(productsData) ? productsData : []), [productsData]);
+    // Paginación y Filtrado Server-side
+    const products: Product[] = useMemo(() => productsData?.items || [], [productsData]);
+    const totalItems = productsData?.total || 0;
+    const totalPages = productsData?.totalPages || Math.ceil(totalItems / pageSize) || 1;
 
     const filteredProducts = useMemo(() => {
-        const query = filter.toLowerCase();
-        return products.filter((p: Product) =>
-            p.productName.toLowerCase().includes(query) ||
-            p.barcode.toLowerCase().includes(query)
-        );
-    }, [products, filter]);
+        if (selectedSupplier === 'ALL') return products;
+        return products.filter(p => p.supplierId?.toString() === selectedSupplier);
+    }, [products, selectedSupplier]);
 
     const stats = useMemo(() => {
         const cost = products.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.purchasePrice)), 0);
@@ -71,101 +76,116 @@ export default function ProductsPage() {
         const token = Cookies.get('org-pos-token');
         try {
             const data = { ...newProduct, productName: newProduct.productName.toUpperCase(), barcode: newProduct.barcode.toUpperCase() };
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/create-products`, {
+            await apiFetch('/products/create-products', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(data)
-            });
-            if (!res.ok) throw new Error();
+                body: JSON.stringify(data),
+                fallbackError: 'FALLO AL CREAR PRODUCTO'
+            }, token!);
             toast({ variant: 'success', title: 'ÉXITO', description: 'REFERENCIA SINCRONIZADA.' });
             setAddDialogOpen(false);
             setNewProduct({ barcode: '', productName: '', quantity: 0, isWeighted: false, purchasePrice: 0, salePrice: 0, categoryId: '', marginPercentage: 20 });
             mutateProducts();
-        } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO EN OPERACIÓN' }); }
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL CREAR PRODUCTO' });
+        }
     };
 
     const handleEditProduct = async () => {
         if (!editingProduct) return;
         const token = Cookies.get('org-pos-token');
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/update-products/${editingProduct.barcode}`, {
+            await apiFetch(`/products/update-products/${editingProduct.barcode}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify(editingProduct)
-            });
-            if (!res.ok) throw new Error();
+                body: JSON.stringify(editingProduct),
+                fallbackError: 'FALLO AL ACTUALIZAR PRODUCTO'
+            }, token!);
             toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ACTUALIZADO' });
             setEditDialogOpen(false);
             mutateProducts();
-        } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO OPERATIVO' }); }
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ACTUALIZAR PRODUCTO' });
+        }
     };
 
     const handleDelete = async () => {
         if (!deletingBarcode) return;
         const token = Cookies.get('org-pos-token');
         try {
-            await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/delete-products/${deletingBarcode}`, {
-                method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
-            });
+            await apiFetch(`/products/delete-products/${deletingBarcode}`, {
+                method: 'DELETE',
+                fallbackError: 'FALLO AL ELIMINAR PRODUCTO'
+            }, token!);
             toast({ variant: 'success', title: 'ÉXITO', description: 'PRODUCTO ELIMINADO' });
             setDeleteDialogOpen(false);
             mutateProducts();
-        } catch { toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL ELIMINAR' }); }
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ELIMINAR PRODUCTO' });
+        }
+    };
+
+    const handleQuickStockUpdate = async (barcode: string, amount: number) => {
+        const token = Cookies.get('org-pos-token');
+        try {
+            await apiFetch(`/products/adjust/${barcode}`, {
+                method: 'PATCH',
+                body: JSON.stringify({ amount }),
+                fallbackError: 'FALLO AL AJUSTAR STOCK'
+            }, token!);
+            mutateProducts();
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL AJUSTAR STOCK' });
+        }
     };
 
     if (productsLoading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
 
     return (
-        <div className="flex flex-col min-h-screen gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20">
-            {/* Header Premium Zero Friction */}
-            <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150 rotate-12"><Package size={120} /></div>
-                
-                <div className="flex items-center gap-4 relative z-10">
-                    <div className="bg-emerald-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-500/20 -rotate-3">
-                        <Package size={24} />
-                    </div>
-                    <div className="flex flex-col">
-                        <h1 className="text-xl font-black dark:text-white uppercase leading-none italic tracking-tighter">
-                            Catálogo <span className="text-emerald-500">Maestro</span>
-                        </h1>
-                        <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[9px] font-black text-emerald-500 uppercase tracking-[0.3em]">Gestión de Almacén</span>
-                            <div className="h-1 w-1 bg-gray-300 rounded-full" />
-                            <div className="flex items-center gap-1 text-[9px] font-bold text-gray-400 uppercase tracking-widest italic">
-                                <Clock size={10} /> {new Date().toLocaleDateString()}
-                            </div>
+        <div className="flex flex-col gap-6 md:gap-8 max-w-[1600px] mx-auto px-4 md:px-6 pb-20 w-full min-h-[100dvh]">
+            
+            {/* HEADER TACTICO */}
+            <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pt-6">
+                <div className="flex flex-col gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="bg-emerald-500 w-14 h-14 rounded-[1.5rem] text-white shadow-2xl shadow-emerald-500/20 flex items-center justify-center transform -rotate-6 group hover:rotate-0 transition-all">
+                            <Package size={32} />
+                        </div>
+                        <div className="flex flex-col">
+                            <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
+                                Catálogo <span className="text-emerald-500">Maestro</span>
+                            </h1>
+                            <p className="text-[10px] md:text-xs font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic ml-1 mt-2 flex items-center gap-2">
+                                <ShieldCheck size={12} className="text-emerald-500" /> Control de Inventario y Assets V4.0
+                            </p>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex items-center gap-3 relative z-10">
-                    <div className="relative group/search">
+                <div className="flex flex-wrap items-center gap-2 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md p-1.5 rounded-[1.5rem] border border-gray-200 dark:border-white/5 shadow-inner">
+                    <div className="relative group/search shrink-0">
                         <Input 
-                            size="sm" 
                             placeholder="BUSCAR REFERENCIA..." 
                             value={filter} 
                             onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
                             startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
                             classNames={{ 
-                                inputWrapper: "h-11 w-full md:w-80 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-focus-within/search:border-emerald-500/50 transition-all", 
-                                input: "text-[11px] font-black bg-transparent tracking-widest italic uppercase" 
+                                inputWrapper: "h-12 w-full md:w-64 bg-gray-50/80 dark:bg-zinc-950/50 border border-transparent group-focus-within/search:!border-emerald-500/50 transition-all shadow-inner rounded-2xl", 
+                                input: "text-[10px] font-black bg-transparent tracking-[0.2em] italic uppercase" 
                             }} 
                         />
                     </div>
+                    
                     <Button 
-                        size="sm" 
                         onPress={() => setAlertsDialogOpen(true)}
-                        className={`h-11 px-4 font-black text-[11px] rounded-xl transition-all italic tracking-widest uppercase border ${stats.lowStock > 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 animate-pulse' : 'bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-white/10 text-gray-400'}`}
+                        className={`h-12 px-6 rounded-2xl font-black text-[10px] uppercase tracking-widest italic transition-all ${stats.lowStock > 0 ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20 animate-pulse' : 'bg-transparent text-gray-400 hover:bg-gray-100 dark:hover:bg-white/5'}`}
                     >
-                        <AlertTriangle size={16} className="mr-1" /> ALERTA ({stats.lowStock})
+                        <AlertTriangle size={16} className="mr-2" /> ALERTA ({stats.lowStock})
                     </Button>
+
                     <Button 
-                        size="sm" 
                         onPress={() => setAddDialogOpen(true)} 
-                        className="h-11 px-6 bg-emerald-500 text-white font-black text-[11px] rounded-xl shadow-lg shadow-emerald-500/20 hover:scale-105 active:scale-95 transition-all italic tracking-widest uppercase"
+                        className="h-12 px-8 bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest italic rounded-2xl shadow-xl shadow-emerald-500/20 hover:scale-105 transition-transform"
                     >
-                        <PlusCircle size={16} className="mr-1" /> NUEVA REF.
+                        <PlusCircle size={16} className="mr-2" /> NUEVA REF.
                     </Button>
                 </div>
             </header>
@@ -175,13 +195,14 @@ export default function ProductsPage() {
 
             {/* Main Content Table */}
             <ProductTable 
-                products={filteredProducts.slice((currentPage - 1) * pageSize, currentPage * pageSize)}
+                products={filteredProducts}
                 currentPage={currentPage}
-                totalPages={Math.ceil(filteredProducts.length / pageSize) || 1}
+                totalPages={totalPages}
                 pageSize={pageSize}
-                totalFiltered={filteredProducts.length}
+                totalFiltered={totalItems}
                 onEdit={(p) => { setEditingProduct({ ...p }); setEditDialogOpen(true); }}
                 onDelete={(b) => { setDeletingBarcode(b); setDeleteDialogOpen(true); }}
+                onQuickUpdate={handleQuickStockUpdate}
                 onPageChange={setCurrentPage}
                 onPageSizeChange={setPageSize}
                 formatCOP={formatCOP}
@@ -201,6 +222,7 @@ export default function ProductsPage() {
                 setEditMargin={setEditMargin}
                 addDialogOpen={addDialogOpen}
                 categories={categoriesData || []}
+                suppliers={suppliersData || []}
                 onConfirm={addDialogOpen ? handleAddProduct : handleEditProduct}
                 onScan={() => setIsScannerOpen(true)}
             />

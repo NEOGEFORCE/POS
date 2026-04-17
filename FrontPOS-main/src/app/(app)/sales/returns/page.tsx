@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import Cookies from 'js-cookie';
 import { Search, RotateCcw, CheckCircle2, AlertCircle, ShoppingCart, Camera, History, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { extractApiError } from '@/lib/api-error';
 import { Sale, Product, SaleDetail } from '@/lib/definitions';
 import { ScannerOverlay } from '@/components/ScannerOverlay';
 
@@ -196,8 +197,8 @@ function ReturnsContent() {
                     throw new Error('No se encontró venta ni producto recientemente vendido');
                 }
             }
-        } catch {
-            toast({ variant: 'destructive', title: 'FALLO', description: 'ERROR DE BÚSQUEDA' });
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'FALLO', description: err.message || 'ERROR DE BÚSQUEDA' });
             setSale(null);
         } finally {
             setLoading(false);
@@ -463,8 +464,8 @@ function ReturnsContent() {
             setExchangeItems([]);
             fetchRecentSales();
             fetchRecentReturns();
-        } catch {
-            toast({ variant: 'destructive', title: 'FALLO', description: 'ERROR AL PROCESAR' });
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'FALLO', description: err.message || 'ERROR AL PROCESAR' });
         }
     };
 

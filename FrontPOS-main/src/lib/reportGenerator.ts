@@ -99,7 +99,7 @@ export const generatePDFReport = ({
     margin: { left: 15, right: 15 },
     didDrawPage: (data: any) => {
         // Footer on each page
-        const str = `Página ${doc.internal.getNumberOfPages()}`;
+        const str = `Página ${doc.getNumberOfPages()}`;
         doc.setFontSize(7);
         doc.setTextColor(156, 163, 175);
         doc.text(str, pageWidth - 15, doc.internal.pageSize.height - 10, { align: 'right' });

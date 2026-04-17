@@ -32,7 +32,7 @@ const SupplierTable = memo(({
   onPageSizeChange
 }: TableProps) => {
   return (
-    <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-all">
+    <div className="flex-1 bg-white/80 dark:bg-zinc-950/60 backdrop-blur-2xl border border-gray-200 dark:border-white/10 rounded-[2.5rem] overflow-hidden flex flex-col min-h-0 shadow-2xl transition-all focus-within:border-emerald-500/30 mb-6">
       {/* VISTA DESKTOP: TABLA */}
       <div className="hidden md:block flex-1 overflow-x-auto custom-scrollbar">
         <Table 
@@ -40,9 +40,9 @@ const SupplierTable = memo(({
           removeWrapper 
           aria-label="Directorio Maestro Proveedores" 
           classNames={{ 
-            th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[10px] tracking-widest h-14 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
-            td: "py-4 font-medium border-b border-gray-100 dark:border-white/5 px-6", 
-            tr: "hover:bg-emerald-500/5 transition-all border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 group" 
+            th: "bg-gray-50/50 dark:bg-black/40 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[10px] tracking-[0.2em] h-14 py-2 border-b border-gray-200 dark:border-white/10 sticky top-0 z-10 px-6", 
+            td: "py-4 font-medium border-b border-gray-100 dark:border-white/5 px-6 group-hover:bg-white dark:group-hover:bg-zinc-900/50 transition-colors", 
+            tr: "transition-all border-l-4 border-transparent hover:border-emerald-500 cursor-pointer group" 
           }}
         >
           <TableHeader>

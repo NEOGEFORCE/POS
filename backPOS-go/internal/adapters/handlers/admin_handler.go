@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -12,27 +13,48 @@ import (
 )
 
 type AdminHandler struct {
-	service *services.AdminService
+	service      *services.AdminService
+	auditService *services.AuditService
 }
 
-func NewAdminHandler(s *services.AdminService) *AdminHandler {
-	return &AdminHandler{service: s}
+func NewAdminHandler(s *services.AdminService, a *services.AuditService) *AdminHandler {
+	return &AdminHandler{
+		service:      s,
+		auditService: a,
+	}
 }
 
 // Estructura para recibir datos del frontend (incluyendo password que el modelo base ignora)
 type RegisterEmployeeRequest struct {
-	DNI      string `json:"dni"`
+	DNI      string `json:"dni" binding:"required"`
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
 	Role     string `json:"role" binding:"required"`
+	IsActive *bool  `json:"is_active"`
 }
 
 func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 	var req RegisterEmployeeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Formato de datos inválido"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
+	}
+
+	roleNormalized := strings.ToLower(req.Role)
+	if roleNormalized == "superadmin" {
+		SendError(c, http.StatusForbidden, ErrForbidden, "No se permite crear más de un Superadmin.", nil)
+		return
+	}
+
+	if (roleNormalized == "admin") && strings.TrimSpace(req.Email) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "El correo electrónico es obligatorio para administradores", nil)
+		return
+	}
+
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
 	}
 
 	emp := models.Employee{
@@ -41,6 +63,7 @@ func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 		Email:    strings.ToUpper(req.Email),
 		Password: req.Password,
 		Role:     strings.ToUpper(req.Role),
+		IsActive: isActive,
 	}
 
 	if emp.DNI == "" {
@@ -50,16 +73,42 @@ func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 	}
 
 	if err := h.service.CreateEmployee(&emp); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		log.Printf("ERROR: Fallo al crear empleado %s: %v", emp.DNI, err)
+		errStr := strings.ToLower(err.Error())
+		// Detección mejorada de duplicados (PostgreSQL / MySQL)
+		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") || 
+		   strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") || 
+		   strings.Contains(errStr, "ya existe") {
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El DNI o el nombre de usuario ya está registrado en el núcleo", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al crear empleado en base de datos", err)
 		return
 	}
+
+	// Recuperación segura del DNI del autor (para auditoría)
+	authorDNI := "SYSTEM"
+	if val, exists := c.Get("dni"); exists {
+		if s, ok := val.(string); ok {
+			authorDNI = s
+		}
+	}
+	
+	h.auditService.Log(authorDNI, "CREATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Creado usuario %s con rol %s", emp.Name, emp.Role), c.ClientIP())
+
 	c.JSON(http.StatusCreated, emp)
 }
 
 func (h *AdminHandler) GetAllEmployees(c *gin.Context) {
-	emps, err := h.service.GetAllEmployees()
+	requesterRole, _ := c.Get("role")
+	roleStr := ""
+	if r, ok := requesterRole.(string); ok {
+		roleStr = r
+	}
+
+	emps, err := h.service.GetAllEmployees(roleStr)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener empleados", err)
 		return
 	}
 	c.JSON(http.StatusOK, emps)
@@ -69,10 +118,47 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 	dni := c.Param("dni")
 	var req RegisterEmployeeRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Formato de datos inválido"})
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 	
+	roleNormalized := strings.ToLower(req.Role)
+	
+	// Verificar el rol actual del empleado antes de actualizar
+	currentEmp, err := h.service.GetEmployee(dni)
+	if err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Empleado no encontrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al verificar empleado actual", err)
+		return
+	}
+
+	isCurrentlySuperAdmin := strings.ToLower(currentEmp.Role) == "superadmin"
+
+	// Bloquear promoción a Superadmin si el usuario no lo es ya
+	if roleNormalized == "superadmin" && !isCurrentlySuperAdmin {
+		SendError(c, http.StatusForbidden, ErrForbidden, "No se permite promover usuarios al nivel de Superadmin.", nil)
+		return
+	}
+
+	// Si es Superadmin, impedir que le cambien el rol a otra cosa (Degradación)
+	if isCurrentlySuperAdmin && roleNormalized != "superadmin" {
+		SendError(c, http.StatusForbidden, ErrForbidden, "No se permite degradar el rango de un Superadmin por seguridad del núcleo.", nil)
+		return
+	}
+
+	if (roleNormalized == "admin") && strings.TrimSpace(req.Email) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "El correo electrónico es obligatorio para administradores", nil)
+		return
+	}
+
+	isActive := true
+	if req.IsActive != nil {
+		isActive = *req.IsActive
+	}
+
 	// Mapeo manual para asegurar normalización
 	emp := models.Employee{
 		DNI:      dni,
@@ -80,20 +166,161 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 		Email:    strings.ToUpper(req.Email),
 		Password: req.Password, // Si viene vacía, el service/repo no la tocará
 		Role:     strings.ToUpper(req.Role),
+		IsActive: isActive,
 	}
 
 	if err := h.service.UpdateEmployee(dni, &emp); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if strings.Contains(err.Error(), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Empleado no encontrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar empleado", err)
 		return
 	}
+
+	requesterDNI, _ := c.Get("dni")
+	h.auditService.Log(requesterDNI.(string), "UPDATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Actualizado usuario DNI: %s", dni), c.ClientIP())
+
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado actualizado correctamente"})
 }
 
 func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
 	dni := c.Param("dni")
-	if err := h.service.DeleteEmployee(dni); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+
+	// Protección: No se puede eliminar a un Superadmin
+	emp, err := h.service.GetEmployee(dni)
+	if err == nil && strings.ToLower(emp.Role) == "superadmin" {
+		SendError(c, http.StatusForbidden, ErrForbidden, "El perfil de Superadmin es inmutable y no puede ser eliminado.", nil)
 		return
 	}
+
+	if err := h.service.DeleteEmployee(dni); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Empleado no encontrado", err)
+			return
+		}
+
+		// Fase 2: Detectar conflictos de integridad relacional (ForeignKey)
+		errStr := strings.ToLower(err.Error())
+		if strings.Contains(errStr, "foreign key") || strings.Contains(errStr, "violat") || strings.Contains(errStr, "relaci") {
+			SendError(c, http.StatusConflict, ErrConflict, "No se puede eliminar: El usuario tiene historial de movimientos (ventas/gastos) vinculado.", err)
+			return
+		}
+
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar empleado", err)
+		return
+	}
+
+	requesterDNI, _ := c.Get("dni")
+	h.auditService.Log(requesterDNI.(string), "DELETE_EMPLOYEE", "ADMIN", fmt.Sprintf("Eliminado usuario DNI: %s", dni), c.ClientIP())
+
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado eliminado correctamente"})
+}
+
+func (h *AdminHandler) ResetEmployeePassword(c *gin.Context) {
+	dni := c.Param("dni")
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "La nueva contraseña es obligatoria", err)
+		return
+	}
+
+
+
+	emp := models.Employee{
+		Password: req.Password,
+	}
+
+	if err := h.service.UpdateEmployee(dni, &emp); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al resetear contraseña", err)
+		return
+	}
+
+	requesterDNI, _ := c.Get("dni")
+	h.auditService.Log(requesterDNI.(string), "RESET_PASSWORD_ADMIN", "ADMIN", fmt.Sprintf("Admin reseteó contraseña para DNI: %s", dni), c.ClientIP())
+
+	c.JSON(http.StatusOK, gin.H{"message": "Contraseña de empleado actualizada correctamente"})
+}
+
+func (h *AdminHandler) GetEmployee(c *gin.Context) {
+	dni := c.Param("dni")
+	emp, err := h.service.GetEmployee(dni)
+	if err != nil {
+		SendError(c, http.StatusNotFound, ErrNotFound, "Empleado no encontrado", err)
+		return
+	}
+	c.JSON(http.StatusOK, emp)
+}
+
+func (h *AdminHandler) GetAuditLogs(c *gin.Context) {
+	logs, err := h.auditService.GetLogs()
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener logs de auditoría", err)
+		return
+	}
+	c.JSON(http.StatusOK, logs)
+}
+
+// --- Faltantes Handlers ---
+
+func (h *AdminHandler) CreateMissingItem(c *gin.Context) {
+	var req struct {
+		ProductName string `json:"product_name" binding:"required"`
+		Note        string `json:"note"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "El nombre del producto es obligatorio", err)
+		return
+	}
+
+	dni, _ := c.Get("dni")
+	authorDNI := ""
+	if s, ok := dni.(string); ok {
+		authorDNI = s
+	}
+
+	item := models.MissingItem{
+		ProductName: req.ProductName,
+		Note:        req.Note,
+		ReportedBy:  authorDNI,
+	}
+
+	if err := h.service.CreateMissingItem(&item); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reportar faltante", err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, item)
+}
+
+func (h *AdminHandler) GetAllMissingItems(c *gin.Context) {
+	items, err := h.service.GetMissingItems()
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener faltantes", err)
+		return
+	}
+	c.JSON(http.StatusOK, items)
+}
+
+func (h *AdminHandler) UpdateMissingItemStatus(c *gin.Context) {
+	var req struct {
+		ID     uint   `json:"id" binding:"required"`
+		Status string `json:"status" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID y Estado son obligatorios", err)
+		return
+	}
+
+	if err := h.service.UpdateMissingItemStatus(req.ID, req.Status); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar estado del faltante", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Estado de faltante actualizado"})
 }

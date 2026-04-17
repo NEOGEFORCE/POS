@@ -22,7 +22,7 @@ type ProductRepository interface {
 	GetByBarcode(barcode string) (*models.Product, error)
 	GetAll() ([]models.Product, error)
 	GetAllWithLimit(limit int) ([]models.Product, error)
-	GetPaginated(page, pageSize int) ([]models.Product, int64, error)
+	GetPaginated(page, pageSize int, search string) ([]models.Product, int64, error)
 	Update(barcode string, product *models.Product) error
 	Delete(barcode string) error
 	UpdateQuantity(barcode string, newQuantity float64) error
@@ -31,4 +31,5 @@ type ProductRepository interface {
 	GetInventoryStats(from, to string) ([]InventoryStat, error)
 	UpdateSupplierPrice(productBarcode string, supplierID uint, price float64) error
 	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
+	GetBySupplier(supplierID uint) ([]models.Product, error)
 }

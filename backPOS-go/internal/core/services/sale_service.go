@@ -55,6 +55,7 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	}
 
 	if sale.CreditAmount > 0 {
+		sale.DebtPending = sale.CreditAmount
 		if sale.ClientDNI == "0" || sale.ClientDNI == "" {
 			return errors.New("debe seleccionar un cliente real para vender a crédito")
 		}
