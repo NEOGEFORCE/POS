@@ -24,6 +24,24 @@ func NewAdminHandler(s *services.AdminService, a *services.AuditService) *AdminH
 	}
 }
 
+func (h *AdminHandler) getAuditInfo(c *gin.Context) (dni string, name string, ip string, device string) {
+	dniVal, _ := c.Get("dni")
+	if s, ok := dniVal.(string); ok {
+		dni = s
+	} else {
+		dni = "SYSTEM"
+	}
+	nameVal, _ := c.Get("userName")
+	if s, ok := nameVal.(string); ok {
+		name = s
+	} else {
+		name = "ADMIN_SYS"
+	}
+	ip = c.ClientIP()
+	device = c.Request.UserAgent()
+	return
+}
+
 // Estructura para recibir datos del frontend (incluyendo password que el modelo base ignora)
 type RegisterEmployeeRequest struct {
 	DNI      string `json:"dni" binding:"required"`
@@ -86,15 +104,8 @@ func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 		return
 	}
 
-	// Recuperación segura del DNI del autor (para auditoría)
-	authorDNI := "SYSTEM"
-	if val, exists := c.Get("dni"); exists {
-		if s, ok := val.(string); ok {
-			authorDNI = s
-		}
-	}
-	
-	h.auditService.Log(authorDNI, "CREATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Creado usuario %s con rol %s", emp.Name, emp.Role), c.ClientIP())
+	authorDNI, authorName, ip, device := h.getAuditInfo(c)
+	h.auditService.Log(authorDNI, authorName, "CREATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Creado usuario %s con rol %s", emp.Name, emp.Role), fmt.Sprintf("Se registró un nuevo usuario: %s (%s) con rol %s", emp.Name, emp.DNI, emp.Role), "{}", ip, device, true)
 
 	c.JSON(http.StatusCreated, emp)
 }
@@ -153,8 +164,7 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "El correo electrónico es obligatorio para administradores", nil)
 		return
 	}
-
-	isActive := true
+	isActive := currentEmp.IsActive
 	if req.IsActive != nil {
 		isActive = *req.IsActive
 	}
@@ -178,8 +188,8 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 		return
 	}
 
-	requesterDNI, _ := c.Get("dni")
-	h.auditService.Log(requesterDNI.(string), "UPDATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Actualizado usuario DNI: %s", dni), c.ClientIP())
+	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
+	h.auditService.Log(requesterDNI, requesterName, "UPDATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Actualizado usuario DNI: %s", dni), fmt.Sprintf("Se modificaron los datos del usuario: %s (%s)", emp.Name, dni), "{}", ip, device, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado actualizado correctamente"})
 }
@@ -193,6 +203,10 @@ func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
 		SendError(c, http.StatusForbidden, ErrForbidden, "El perfil de Superadmin es inmutable y no puede ser eliminado.", nil)
 		return
 	}
+
+	// Al eliminar (borrado lógico), también marcamos IsActive como false
+	emp.IsActive = false
+	h.service.UpdateEmployee(dni, emp)
 
 	if err := h.service.DeleteEmployee(dni); err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -211,14 +225,22 @@ func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
 		return
 	}
 
-	requesterDNI, _ := c.Get("dni")
-	h.auditService.Log(requesterDNI.(string), "DELETE_EMPLOYEE", "ADMIN", fmt.Sprintf("Eliminado usuario DNI: %s", dni), c.ClientIP())
+	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
+	h.auditService.Log(requesterDNI, requesterName, "DELETE_EMPLOYEE", "ADMIN", fmt.Sprintf("Eliminado usuario DNI: %s", dni), fmt.Sprintf("Se eliminó permanentemente al usuario con DNI: %s", dni), "{}", ip, device, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado eliminado correctamente"})
 }
 
 func (h *AdminHandler) ResetEmployeePassword(c *gin.Context) {
 	dni := c.Param("dni")
+
+	// 1. Verificar si el usuario objetivo es Superadmin
+	targetEmp, err := h.service.GetEmployee(dni)
+	if err == nil && strings.ToLower(targetEmp.Role) == "superadmin" {
+		SendError(c, http.StatusForbidden, ErrForbidden, "Operación denegada: El rol superadmin es inmutable", nil)
+		return
+	}
+
 	var req struct {
 		Password string `json:"password" binding:"required"`
 	}
@@ -227,8 +249,6 @@ func (h *AdminHandler) ResetEmployeePassword(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "La nueva contraseña es obligatoria", err)
 		return
 	}
-
-
 
 	emp := models.Employee{
 		Password: req.Password,
@@ -239,8 +259,8 @@ func (h *AdminHandler) ResetEmployeePassword(c *gin.Context) {
 		return
 	}
 
-	requesterDNI, _ := c.Get("dni")
-	h.auditService.Log(requesterDNI.(string), "RESET_PASSWORD_ADMIN", "ADMIN", fmt.Sprintf("Admin reseteó contraseña para DNI: %s", dni), c.ClientIP())
+	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
+	h.auditService.Log(requesterDNI, requesterName, "FORCE_RESET_PASSWORD", "ADMIN", fmt.Sprintf("Admin forzó cambio de contraseña para DNI: %s", dni), fmt.Sprintf("Se forzó el restablecimiento de contraseña para el usuario %s (%s)", targetEmp.Name, dni), "{}", ip, device, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Contraseña de empleado actualizada correctamente"})
 }

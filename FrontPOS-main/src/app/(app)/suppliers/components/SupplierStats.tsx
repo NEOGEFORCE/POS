@@ -51,11 +51,11 @@ const SupplierStats = memo(({ total, withPhone }: StatsProps) => {
   ];
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 xl:gap-6 shrink-0 w-full mb-6">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 lg:gap-6 shrink-0 w-full mb-0">
       {kpis.map((k, i) => (
         <div 
           key={i} 
-          className="relative overflow-hidden group bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-5 md:p-6 border border-gray-200 dark:border-white/5 rounded-[2.5rem] flex items-center justify-between shadow-xl transition-all hover:bg-white dark:hover:bg-zinc-900 hover:border-white/20 active:scale-95 cursor-pointer"
+          className="relative overflow-hidden group bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-2.5 md:p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl flex items-center justify-between shadow-xl transition-all hover:bg-white dark:hover:bg-zinc-900 hover:border-white/20 active:scale-95 cursor-pointer"
         >
           {/* Fondo Sparkline */}
           <div className="absolute inset-x-0 bottom-0 h-16 opacity-10 pointer-events-none transition-all group-hover:opacity-20 group-hover:scale-y-110 origin-bottom">
@@ -67,16 +67,16 @@ const SupplierStats = memo(({ total, withPhone }: StatsProps) => {
           </div>
 
           <div className="relative z-10 flex flex-col min-w-0 pr-1">
-            <span className="text-[9px] md:text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic leading-none mb-2">{k.label}</span>
+            <span className="text-[8px] sm:text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-tight italic leading-none mb-1.5 pr-1">{k.label}</span>
             <div className="flex items-baseline gap-2">
-              <span className="text-2xl md:text-3xl font-black tabular-nums italic leading-none tracking-tighter truncate text-gray-900 dark:text-white" style={{ color: k.color }}>
+              <span className="text-base sm:text-lg font-black tabular-nums italic leading-none text-gray-900 dark:text-white pr-1" style={{ color: k.color }}>
                 {k.val}
               </span>
             </div>
-            <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase tracking-widest">{k.desc}</p>
+            <p className="text-[8px] font-bold text-gray-400 mt-2 uppercase tracking-widest">{k.desc}</p>
           </div>
-          <div className="relative z-10 p-3 rounded-2xl group-hover:scale-110 transition-transform shadow-lg" style={{ backgroundColor: `${k.color}20`, color: k.color }}>
-            <k.icon size={24} />
+          <div className="relative z-10 p-1.5 md:p-2 rounded-xl group-hover:scale-110 transition-transform shadow-lg" style={{ backgroundColor: `${k.color}20`, color: k.color }}>
+            <k.icon size={14} className="md:size-4" />
           </div>
         </div>
       ))}

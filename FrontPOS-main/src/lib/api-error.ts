@@ -1,4 +1,19 @@
 /**
+ * Error personalizado de API que conserva status HTTP y datos del backend
+ */
+export class ApiError extends Error {
+  status: number;
+  data?: any;
+  
+  constructor(message: string, status: number, data?: any) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.data = data;
+  }
+}
+
+/**
  * Utilidad centralizada para parsear errores de la API del backend POS.
  * 
  * El backend puede responder errores en dos formatos:
@@ -28,6 +43,15 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
   'token': 'SESIÓN EXPIRADA: Cierra sesión e ingresa nuevamente',
   'unauthorized': 'ACCESO DENEGADO: No tienes permisos para esta acción',
   'forbidden': 'ACCESO PROHIBIDO: Tu rol no permite esta operación',
+  // Errores de validación de campos (Gin/Gorm)
+  'required': 'CAMPO OBLIGATORIO: Faltan datos necesarios',
+  'is_active': 'ESTADO DE ACCESO',
+  'dni': 'DOCUMENTO DE IDENTIDAD (DNI)',
+  'role': 'NIVEL DE ROL / PERMISOS',
+  'email': 'CORREO ELECTRÓNICO',
+  'unmarshal': 'ERROR DE FORMATO: Los datos enviados no son válidos para el servidor',
+  'unsupported format': 'FORMATO NO SOPORTADO: Verifica que los campos numéricos contengan solo números',
+  'json: cannot unmarshal': 'VALOR INVÁLIDO: Uno de los campos tiene un formato incompatible con el servidor',
 };
 
 /**
@@ -36,6 +60,17 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
  */
 function translateError(rawError: string): string | null {
   const lower = rawError.toLowerCase();
+
+  // Bloqueo de jerga técnica (Go/JSON/GORM/MySQL)
+  const technicalJargon = [
+    'json:', 'unmarshal', 'marshal', 'struct', 'field', 'pointer', 'nil', 
+    'unexpected EOF', 'syntax error', 'mysql', 'sql', 'gorm', 'uint', 'int64'
+  ];
+
+  if (technicalJargon.some(word => lower.includes(word))) {
+    return 'FALLO DE PROCESAMIENTO: Uno de los datos tiene un formato no reconocido por el sistema';
+  }
+
   for (const [key, translation] of Object.entries(ERROR_TRANSLATIONS)) {
     if (lower.includes(key.toLowerCase())) {
       return translation;
@@ -66,10 +101,15 @@ export async function extractApiError(res: Response, fallback: string): Promise<
       }
       
       // Si el message del backend ya es descriptivo, usarlo
-      if (message && message !== fallback) {
+      if (message && message !== fallback && !message.toLowerCase().includes("formato de datos")) {
         // Aún así, intentar enriquecer con traducción
         const translated = translateError(message);
         return translated || message.toUpperCase();
+      }
+
+      // Si llegamos aquí y hay detalles, devolver los detalles (aunque no tengan traducción oficial)
+      if (details) {
+        return details.toUpperCase();
       }
     }
     
@@ -112,11 +152,11 @@ export async function extractApiError(res: Response, fallback: string): Promise<
  * Uso:
  *   const data = await apiFetch('/admin/register-user', { method: 'POST', body: ... }, token);
  */
-export async function apiFetch(
+export async function apiFetch<T = any>(
   path: string, 
   options: RequestInit & { fallbackError?: string } = {},
   token?: string
-): Promise<any> {
+): Promise<T> {
   const { fallbackError = 'OPERACIÓN FALLIDA', ...fetchOptions } = options;
   
   const headers: Record<string, string> = {
@@ -142,14 +182,15 @@ export async function apiFetch(
   }
   
   if (!res.ok) {
+    const errorData = await res.json().catch(() => null);
     const errorMsg = await extractApiError(res, fallbackError);
-    throw new Error(errorMsg);
+    throw new ApiError(errorMsg, res.status, errorData);
   }
   
   // Intentar parsear como JSON, si no se puede, devolver vacío
   try {
     return await res.json();
   } catch {
-    return {};
+    return {} as T;
   }
 }

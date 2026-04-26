@@ -6,6 +6,7 @@ import { Lato, Raleway } from 'next/font/google';
 // IMPORTANTE: Importamos el archivo puente que acabamos de crear
 import { Providers } from './providers';
 import './globals.css';
+import SWRegister from './sw-register';
 
 const lato = Lato({
   subsets: ['latin'],
@@ -22,6 +23,11 @@ const raleway = Raleway({
 export const metadata: Metadata = {
   title: 'POS-PRO',
   description: 'Sistema de Punto de Venta Premium',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'POS-PRO',
+  },
 };
 
 // MEJORA UX: Desactivamos el auto-zoom en móviles al hacer focus en inputs
@@ -30,6 +36,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  themeColor: '#10b981', // Verde Esmeralda POS-PRO
 };
 
 export default function RootLayout({
@@ -39,10 +46,11 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className={`${lato.variable} ${raleway.variable}`} suppressHydrationWarning>
-      <body className="font-body antialiased min-h-screen bg-gray-50 dark:bg-[#09090b] transition-colors duration-300">
+      <body className="font-body antialiased min-h-screen bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white transition-colors duration-300">
 
         {/* Envolvemos toda la app en nuestro Provider de Cliente */}
         <Providers>
+          <SWRegister />
           <AuthProvider>
             {children}
             <Toaster />

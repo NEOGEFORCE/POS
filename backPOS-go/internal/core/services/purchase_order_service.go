@@ -26,10 +26,14 @@ func (s *PurchaseOrderService) GetAllOrders() ([]models.PurchaseOrder, error) {
 	return s.repo.GetAll()
 }
 
-func (s *PurchaseOrderService) GetPendingOrdersByDeliveryDate(date time.Time) ([]models.PurchaseOrder, error) {
-	return s.repo.GetPendingByDeliveryDate(date)
-}
-
 func (s *PurchaseOrderService) UpdateOrderStatus(id uint, status models.PurchaseOrderStatus) error {
 	return s.repo.UpdateStatus(id, status)
+}
+
+func (s *PurchaseOrderService) GetPendingOrdersBySupplier(supplierID uint) ([]models.PurchaseOrder, error) {
+	return s.repo.GetBySupplierAndStatus(supplierID, models.PurchaseOrderPending)
+}
+
+func (s *PurchaseOrderService) GetPendingOrdersByDeliveryDate(date time.Time) ([]models.PurchaseOrder, error) {
+	return s.repo.GetPendingByDeliveryDate(date)
 }

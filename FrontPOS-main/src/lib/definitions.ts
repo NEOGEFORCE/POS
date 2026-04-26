@@ -1,5 +1,4 @@
 
-
 export type User = {
   id?: string;
   dni: string;
@@ -7,6 +6,7 @@ export type User = {
   email: string;
   role: 'superadmin' | 'admin' | 'administrador' | 'empleado' | 'employee' | string;
   is_active?: boolean;
+  last_login?: string;
   lastLogin?: string;
   avatar?: string;
   password?: string;
@@ -45,7 +45,7 @@ export type Product = {
   purchasePrice: number;
   marginPercentage: number;
   salePrice: number;
-  categoryId: string;
+  categoryId: number;
   supplierId?: number;
   imageUrl?: string;
   minStock?: number;
@@ -54,6 +54,15 @@ export type Product = {
   ibua?: number;
   isActive?: boolean;
   netProfit?: number;
+  
+  // Lógica de Empaques
+  isPack?: boolean;
+  baseProductBarcode?: string;
+  packMultiplier?: number;
+  baseProduct?: Product;
+  Category?: Category;
+  category?: Category;
+  suppliers?: Supplier[];
 };
 
 
@@ -67,6 +76,8 @@ export type Expense = {
   date: string;
   paymentSource?: string;
   supplierId?: string | number;
+  lenderName?: string;
+  creator?: User; // El usuario que registró el gasto
 };
 
 export type Sale = {
@@ -94,15 +105,44 @@ export type SaleDetail = {
   product?: Product;
 };
 
+export type OrderMethodType = 'ROUTE' | 'APP';
+
+export interface OrderMethod {
+  id?: number;
+  type: OrderMethodType;
+  platformName: string;
+  visitDays: number[];
+  leadTimeDays: number;
+  isActive: boolean;
+}
+
 export type Supplier = {
   id: string | number;
   name: string;
   phone?: string;
   address?: string;
+  vendorName?: string;
   status?: 'Activo' | 'Inactivo';
   imageUrl?: string;
+  // Campos legacy (compatibilidad)
   visitDay?: string;
   deliveryDay?: string;
+  // Nuevos campos multi-días
+  visitDays?: string[];
+  deliveryDays?: string[];
+  restockMethod?: string;
+  orderMethods?: OrderMethod[];
+};
+
+export type CreditPayment = {
+  id: number;
+  clientDni: string;
+  paymentDate: string;
+  amountCash: number;
+  amountTransfer: number;
+  transferSource: string;
+  totalPaid: number;
+  client?: Customer;
 };
 
 export interface CashierClosure {
@@ -114,11 +154,14 @@ export interface CashierClosure {
   totalSales: number;
   totalCash: number;
   totalTransfer: number;
+  totalCard: number;
   totalNequi: number;
   totalDaviplata: number;
+  totalBancolombia: number;
   totalOtherTransfer: number;
   totalExpenses: number;
   totalReturns: number;
+  returnsCount?: number;
   totalCreditIssued: number;
   totalCreditCollected: number;
   openingCash: number;
@@ -128,6 +171,8 @@ export interface CashierClosure {
   salariesDetail?: string;
   expenses?: Expense[];
   expensesDetail?: string;
+  creditPayments?: CreditPayment[];
+  creditsIssued?: Sale[];
   closedByDni?: string;
   closedByName?: string;
 }
@@ -135,9 +180,32 @@ export interface CashierClosure {
 export type AuditLog = {
   id: number;
   employee_dni: string;
+  employee_name?: string;
   action: string;
   module: string;
   details: string;
+  human_readable?: string;
+  changes?: string; // JSON string
+  is_critical?: boolean;
   ip_address: string;
+  device?: string;
   created_at: string;
+};
+
+export type ProductSupplierPrice = {
+  productBarcode: string;
+  supplierId: number;
+  purchasePrice: number;
+  updatedAt: string;
+  Supplier?: Supplier;
+};
+
+export type SavingsOpportunity = {
+  barcode: string;
+  productName: string;
+  currentPrice: number;
+  bestPrice: number;
+  bestSupplier: string;
+  potentialSave: number;
+  stock: number;
 };

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Button, Input, Spinner } from "@heroui/react";
 import { 
-  Truck, Search, PlusCircle, Clock, Sparkles 
+  Truck, Search, PlusCircle, Clock, Sparkles, RefreshCw 
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Supplier } from '@/lib/definitions';
@@ -24,6 +24,60 @@ async function fetchSuppliers(token: string): Promise<Supplier[]> {
   }, token);
   return Array.isArray(data) ? data : [];
 }
+
+// COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO
+const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: { 
+    filter: string, 
+    onSearch: (v: string) => void, 
+    onAdd: () => void,
+    onReload: () => void,
+    isLoading: boolean
+}) => (
+  <header className="flex flex-col gap-2.5 transition-all">
+    <div className="flex items-center justify-between px-1">
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transition-transform active:scale-95">
+          <Truck size={20} />
+        </div>
+        <div className="flex flex-col">
+          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">DIRECTORIO <span className="text-emerald-500">LOGÍSTICO</span></h1>
+          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Abastecimiento Maestro V4.0</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+            isIconOnly
+            size="sm"
+            onPress={onReload}
+            isLoading={isLoading}
+            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+        >
+            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+        </Button>
+        <Button
+            size="sm"
+            onPress={onAdd}
+            className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+        >
+            <PlusCircle size={16} /> 
+            <span className="ml-2 tracking-widest">NUEVO</span>
+        </Button>
+      </div>
+    </div>
+    <Input
+      size="sm"
+      placeholder="RASTREAR POR NOMBRE / NIT..." 
+      value={filter} 
+      onValueChange={onSearch}
+      classNames={{
+        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+      }}
+      startContent={<Search size={14} className="text-emerald-500 mr-1" />}
+    />
+  </header>
+));
+SupplierHeader.displayName = 'SupplierHeader';
 
 export default function SuppliersPage() {
   const { toast } = useToast();
@@ -82,39 +136,49 @@ export default function SuppliersPage() {
   }), [suppliers]);
 
   // Handlers
-  const handleAddSupplier = async () => {
-    const name = newSupplier.name?.trim().toUpperCase();
+  const handleAddSupplier = async (data: any) => {
+    const name = data.name?.trim().toUpperCase();
     if (!name) return toast({ variant: 'destructive', title: 'ERROR', description: 'NOMBRE REQUERIDO' });
     
     const token = Cookies.get('org-pos-token');
     try {
       await apiFetch('/suppliers/create-suppliers', {
         method: 'POST',
-        body: JSON.stringify({ ...newSupplier, name }),
+        body: JSON.stringify({ ...data, name }),
         fallbackError: 'FALLO AL CREAR PROVEEDOR'
       }, token!);
-      toast({ variant: 'success', title: 'ÉXITO', description: 'VÍNCULO CREADO CORRECTAMENTE' });
+      // Recargar datos ANTES de cerrar modal para mostrar cambios inmediatamente
+      await loadSuppliers();
+      toast({ 
+        variant: "success",
+        title: "ÉXITO", 
+        description: "VÍNCULO CREADO CORRECTAMENTE",
+      });
       setAddDialogOpen(false);
-      setNewSupplier({ name: '', phone: '', address: '' });
-      loadSuppliers();
+      setNewSupplier({ name: '', phone: '', address: '' } as any);
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL CREAR PROVEEDOR' });
     }
   };
 
-  const handleEditSupplier = async () => {
-    if (!editingSupplier) return;
-    const name = editingSupplier.name?.trim().toUpperCase();
+  const handleEditSupplier = async (data: any) => {
+    if (!data) return;
+    const name = data.name?.trim().toUpperCase();
     const token = Cookies.get('org-pos-token');
     try {
-      await apiFetch(`/suppliers/update-suppliers/${editingSupplier.id}`, {
+      await apiFetch(`/suppliers/update-suppliers/${data.id}`, {
         method: 'PUT',
-        body: JSON.stringify({ ...editingSupplier, name }),
+        body: JSON.stringify({ ...data, name }),
         fallbackError: 'FALLO AL ACTUALIZAR PROVEEDOR'
       }, token!);
-      toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ACTUALIZADO' });
+      // Recargar datos ANTES de cerrar modal para mostrar cambios inmediatamente
+      await loadSuppliers();
+      toast({ 
+        title: "ÉXITO", 
+        description: "REGISTRO ACTUALIZADO",
+        className: "bg-emerald-500 text-white border-none"
+      });
       setEditDialogOpen(false);
-      loadSuppliers();
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ACTUALIZAR PROVEEDOR' });
     }
@@ -137,85 +201,57 @@ export default function SuppliersPage() {
     }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+    <Spinner color="success" size="lg" />
+    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Sincronizando Logística...</p>
+  </div>;
 
   return (
-    <div className="flex flex-col gap-6 md:gap-8 max-w-[1600px] mx-auto px-4 md:px-6 pb-20 w-full min-h-[100dvh]">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
       
-      {/* HEADER TACTICO */}
-      <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 pt-6">
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-4">
-            <div className="bg-emerald-500 w-14 h-14 rounded-[1.5rem] text-white shadow-2xl shadow-emerald-500/20 flex items-center justify-center transform -rotate-6 group hover:rotate-0 transition-all">
-              <Truck size={32} />
-            </div>
-            <div className="flex flex-col">
-              <h1 className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
-                Directorio <span className="text-emerald-500">Logístico</span>
-              </h1>
-              <p className="text-[10px] md:text-xs font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic ml-1 mt-2 flex items-center gap-2">
-                <Sparkles size={12} className="text-emerald-500" /> Red de Abastecimiento Corporativo
-              </p>
-            </div>
-          </div>
-        </div>
+      {/* HEADER SECTION: FIXED (TOP) */}
+      <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+        <SupplierHeader 
+            filter={filter} 
+            onSearch={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
+            onAdd={() => setAddDialogOpen(true)} 
+            onReload={loadSuppliers}
+            isLoading={loading}
+        />
+        <SupplierStats total={stats.total} withPhone={stats.withPhone} />
+      </div>
 
-        <div className="flex flex-wrap items-center gap-2 bg-white/50 dark:bg-zinc-900/50 backdrop-blur-md p-1.5 rounded-[1.5rem] border border-gray-200 dark:border-white/5 shadow-inner">
-          <div className="relative group/search shrink-0">
-            <Input 
-              placeholder="RASTREAR FIRMA..." 
-              value={filter} 
-              onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
-              startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
-              classNames={{ 
-                inputWrapper: "h-12 w-full md:w-64 bg-gray-50/80 dark:bg-zinc-950/50 border border-transparent group-focus-within/search:!border-emerald-500/50 transition-all shadow-inner rounded-2xl", 
-                input: "text-[10px] font-black bg-transparent tracking-[0.2em] italic uppercase" 
-              }} 
-            />
-          </div>
-          <Button 
-            onPress={() => setAddDialogOpen(true)} 
-            className="h-12 px-8 bg-emerald-500 text-white font-black text-[10px] uppercase tracking-widest italic rounded-2xl shadow-xl shadow-emerald-500/20 hover:scale-105 transition-transform"
-          >
-            <PlusCircle size={16} className="mr-2" /> NUEVA FIRMA
-          </Button>
-        </div>
-      </header>
+      {/* CONTENT SECTION (SCROLLABLE) */}
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+        <SupplierTable 
+          suppliers={paginatedSuppliers}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalFiltered={filteredSuppliers.length}
+          onEdit={(s) => { setEditingSupplier({...s}); setEditDialogOpen(true); }}
+          onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
+        />
 
-      {/* KPIs */}
-      <SupplierStats total={stats.total} withPhone={stats.withPhone} />
+        <SupplierFormModal 
+          isOpen={addDialogOpen || editDialogOpen}
+          onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); } }}
+          isEdit={editDialogOpen}
+          supplier={addDialogOpen ? null : editingSupplier}
+          onSave={async (data) => {
+            if (addDialogOpen) await handleAddSupplier(data);
+            else await handleEditSupplier(data);
+          }}
+        />
 
-      {/* Main Table Content */}
-      <SupplierTable 
-        suppliers={paginatedSuppliers}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        pageSize={pageSize}
-        totalFiltered={filteredSuppliers.length}
-        onEdit={(s) => { setEditingSupplier({...s}); setEditDialogOpen(true); }}
-        onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
-        onPageChange={setCurrentPage}
-        onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
-      />
-
-      {/* Modals */}
-      <SupplierFormModal 
-        isOpen={addDialogOpen || editDialogOpen}
-        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); setNewSupplier({ name: '', phone: '', address: '' }); } }}
-        isEdit={editDialogOpen}
-        supplier={addDialogOpen ? newSupplier : editingSupplier}
-        setSupplier={addDialogOpen ? setNewSupplier : setEditingSupplier}
-        onSave={async () => {
-          if (addDialogOpen) await handleAddSupplier();
-          else await handleEditSupplier();
-        }}
-      />
-
-      <DeleteSupplierModal 
-        isOpen={deleteDialogOpen}
-        onOpenChange={setDeleteDialogOpen}
-        onConfirm={handleDeleteSupplier}
-      />
+        <DeleteSupplierModal 
+          isOpen={deleteDialogOpen}
+          onOpenChange={setDeleteDialogOpen}
+          onConfirm={handleDeleteSupplier}
+        />
+      </div>
     </div>
   );
 }

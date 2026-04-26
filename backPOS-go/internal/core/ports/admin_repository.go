@@ -16,4 +16,5 @@ type AdminRepository interface {
 	SaveMissingItem(item *models.MissingItem) error
 	GetMissingItems() ([]models.MissingItem, error)
 	UpdateMissingItemStatus(id uint, status string) error
+	GetRecentPendingMissingItems(limit int) ([]models.MissingItem, error)
 }

@@ -31,7 +31,7 @@ func (r *GormReturnRepository) GetAll() ([]models.Return, error) {
 
 func (r *GormReturnRepository) GetByDateRange(from, to string) ([]models.Return, error) {
 	var returns []models.Return
-	query := r.db.Model(&models.Return{})
+	query := r.db.Preload("Details").Model(&models.Return{})
 	if from != "" {
 		query = query.Where("date >= ?", from)
 	}

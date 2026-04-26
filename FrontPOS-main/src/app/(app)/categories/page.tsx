@@ -145,76 +145,90 @@ export default function CategoriesPage() {
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+    <Spinner color="success" size="lg" />
+    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Sincronizando Categorías...</p>
+  </div>;
 
   return (
-    <div className="flex flex-col min-h-screen gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
       
-      {/* Header Premium Zero Friction */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shrink-0 shadow-sm relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150"><LayoutGrid size={120} /></div>
+      {/* HEADER SECTION: FIXED (TOP) - MATCHING SUPPLIERS/USERS 3-PANEL STYLE */}
+      <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
         
-        <div className="flex items-center gap-4 relative z-10">
-          <div className="bg-emerald-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-500/20 rotate-3">
-            <LayoutGrid size={24} />
-          </div>
-          <div className="flex flex-col">
-            <h1 className="text-xl font-black dark:text-white uppercase leading-none italic tracking-tighter">
-              Jerarquía de <span className="text-emerald-500">Categorías</span>
-            </h1>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[9px] font-black text-emerald-500 uppercase tracking-[0.3em]">Taxonomía Maestros</span>
-              <div className="h-1 w-1 bg-gray-300 rounded-full" />
-              <div className="flex items-center gap-1 text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                <Clock size={10} /> {new Date().toLocaleDateString()}
-              </div>
+        {/* PANEL 1: TITULO Y BOTONES ACCIÓN */}
+        <div className="flex items-center justify-between px-1">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transform -rotate-2 hover:rotate-0 transition-all duration-500">
+              <LayoutGrid size={20} className="md:size-5" strokeWidth={2.5} />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-[13px] md:text-[14px] font-black uppercase tracking-tighter leading-none italic text-gray-900 dark:text-white">
+                CATÁLOGO DE <span className="text-emerald-500 text-[14px] md:text-[15px]">CATEGORÍAS</span>
+              </h1>
+              <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1.5 flex items-center gap-1.5 leading-none">
+                <Sparkles size={8} className="text-emerald-500" /> TAXONOMÍA MAESTRA
+              </p>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="relative group/search">
-            <Input 
-              size="sm" 
-              placeholder="RASTREAR DEPARTAMENTO..." 
-              value={filter} 
-              onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
-              startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
-              classNames={{ 
-                inputWrapper: "h-11 w-full md:w-80 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-focus-within/search:border-emerald-500/50 transition-all", 
-                input: "text-[11px] font-black bg-transparent tracking-widest italic" 
-              }} 
-            />
+          <div className="flex items-center gap-2">
+            <Button 
+                isIconOnly
+                size="sm"
+                onPress={() => loadCategories()}
+                className="h-8 w-8 bg-white/80 dark:bg-zinc-900/80 text-gray-400 dark:text-zinc-500 rounded-lg shadow-sm border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
+            >
+                <Clock size={14} />
+            </Button>
+            <Button 
+                onPress={() => setAddDialogOpen(true)} 
+                className="h-8 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-lg shadow-lg shadow-emerald-500/20 active:scale-95 transition-all shrink-0"
+            >
+                <PlusCircle size={14} className="mr-2" /> NUEVO
+            </Button>
           </div>
-          <Button 
-            size="sm" 
-            onPress={() => setAddDialogOpen(true)} 
-            className="h-11 px-6 bg-emerald-500 text-white font-black text-[11px] rounded-xl shadow-lg shadow-emerald-500/20 hover:scale-105 active:scale-95 transition-all italic tracking-widest"
-          >
-            <PlusCircle size={16} className="mr-1" /> NUEVO DEP.
-          </Button>
         </div>
-      </header>
 
-      {/* KPI Section */}
-      <CategoryStats 
-        total={stats.total}
-        topCat={stats.topCat}
-        totalProds={stats.totalProds}
-      />
+        {/* PANEL 2: BARRA DE BÚSQUEDA NIVEL 2 */}
+        <div className="px-1">
+          <Input 
+            size="sm"
+            placeholder="LOCALIZAR DEPARTAMENTO O ID..." 
+            value={filter} 
+            onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
+            startContent={<Search size={14} className="text-emerald-500 mr-2" />} 
+            classNames={{ 
+              inputWrapper: "h-11 px-4 bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-xl", 
+              input: "text-[11px] font-black tracking-widest uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600" 
+            }} 
+          />
+        </div>
 
-      {/* Table Section */}
-      <CategoryTable 
-        categories={paginatedCategories}
-        currentPage={currentPage}
-        totalPages={totalPages}
-        pageSize={pageSize}
-        totalFiltered={filteredCategories.length}
-        onEdit={(cat) => { setEditingCategory({...cat}); setEditDialogOpen(true); }}
-        onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
-        onPageChange={setCurrentPage}
-        onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
-      />
+        {/* PANEL 3: ESTADÍSTICAS INTEGRADAS EN HEADER */}
+        <div className="px-1 pb-1">
+          <CategoryStats 
+            total={stats.total}
+            topCat={stats.topCat}
+            totalProds={stats.totalProds}
+          />
+        </div>
+      </div>
+
+      {/* CONTENT SECTION (SCROLLABLE) */}
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+        <CategoryTable 
+          categories={paginatedCategories}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalFiltered={filteredCategories.length}
+          onEdit={(cat) => { setEditingCategory({...cat}); setEditDialogOpen(true); }}
+          onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
+        />
+      </div>
 
       {/* Modals */}
       <CategoryFormModal 

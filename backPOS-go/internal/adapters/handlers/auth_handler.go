@@ -53,7 +53,8 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	password := req.Password
 
 	log.Printf("INFO: Intentando login para: '%s'", username)
-	token, user, err := h.service.Login(username, password, c.ClientIP())
+	device := c.Request.UserAgent()
+	token, user, err := h.service.Login(username, password, c.ClientIP(), device)
 	if err != nil {
 		log.Printf("Login failed for %s: %v", req.Username, err)
 		SendError(c, http.StatusUnauthorized, ErrUnauthorized, err.Error(), err)
@@ -82,8 +83,8 @@ func (h *AuthHandler) ForgotPassword(c *gin.Context) {
 	err := h.service.ForgotPassword(req.Email)
 	if err != nil {
 		log.Printf("ForgotPassword failed for %s: %v", req.Email, err)
-		// Por seguridad, no revelamos si el correo existe
-		c.JSON(http.StatusOK, gin.H{"message": "Si el correo está registrado, recibirás un enlace de recuperación pronto."})
+		// Por seguridad, mantenemos el mensaje genérico incluso si falla la validación de rol
+		c.JSON(http.StatusOK, gin.H{"message": "Si el correo corresponde a una cuenta administrativa, recibirás instrucciones pronto."})
 		return
 	}
 

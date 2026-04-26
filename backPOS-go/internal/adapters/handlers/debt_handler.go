@@ -21,19 +21,19 @@ func NewDebtHandler(client *services.ClientService, sale *services.SaleService) 
 }
 
 func (h *DebtHandler) GetPendingDebts(c *gin.Context) {
-	// We'll reuse SaleService or move some logic to a new DebtService
-	// For now, let's assume we can get them through the sale repository
-	// Filter: paymentMethod == 'FIADO' and debtPending > 0
-	
-	// This would require a new logic in SaleService
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "Endpoint in development"})
+	debts, err := h.saleService.ListPendingDebts()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al recuperar cartera"})
+		return
+	}
+	c.JSON(http.StatusOK, debts)
 }
 
 func (h *DebtHandler) RegisterPayment(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid debt id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ID de deuda inválido"})
 		return
 	}
 
@@ -43,11 +43,21 @@ func (h *DebtHandler) RegisterPayment(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&paymentData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos de pago inválidos"})
 		return
 	}
 
-	// Update logic would go here
-	_ = id
-	c.JSON(http.StatusNotImplemented, gin.H{"message": "Endpoint in development"})
+	// Recuperar DNI del empleado del contexto (inyectado por AuthMiddleware)
+	employeeDNI, _ := c.Get("dni")
+	empDNIStr, ok := employeeDNI.(string)
+	if !ok {
+		empDNIStr = "SISTEMA"
+	}
+
+	if err := h.saleService.RegisterDebtPayment(uint(id), paymentData.Amount, paymentData.Method, empDNIStr); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "¡Abono registrado con éxito!"})
 }

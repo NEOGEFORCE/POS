@@ -219,7 +219,7 @@ export default function PaymentModal({
                             <div className="bg-gray-50 dark:bg-zinc-950 p-6 rounded-[2rem] border border-gray-200 dark:border-white/5 text-right shadow-inner flex flex-col justify-center h-32">
                                 <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-2 font-black">ENTRADA MANUAL</p>
                                 <p className="text-4xl font-black text-gray-900 dark:text-white tabular-nums h-12 italic tracking-tighter">
-                                    {dialogAmount ? `$${Number(dialogAmount).toLocaleString()}` : ''}
+                                    {dialogAmount ? `$${formatCurrency(dialogAmount)}` : ''}
                                 </p>
                             </div>
                             
@@ -241,7 +241,7 @@ export default function PaymentModal({
                             </div>
 
                             <Button 
-                                className={`h-24 font-black text-lg uppercase rounded-[2rem] shadow-2xl transition-all tracking-[0.2em] italic ${
+                                className={`h-24 font-black text-lg uppercase rounded-[2rem] shadow-2xl transition-all tracking-[0.1em] italic ${
                                     isReadyToFinalize 
                                     ? 'bg-emerald-600 text-white shadow-emerald-500/20' 
                                     : 'bg-sky-600 text-white shadow-sky-500/20'

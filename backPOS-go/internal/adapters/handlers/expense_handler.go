@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -25,9 +27,20 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 		return
 	}
 	// Mayúsculas y Metadatos
-	expense.Description = strings.ToUpper(expense.Description)
-	dni, _ := c.Get("dni")
-	expense.CreatedByDNI = dni.(string)
+	expense.Description = strings.ToUpper(strings.TrimSpace(expense.Description))
+
+	val, exists := c.Get("dni")
+	if exists {
+		// Convertimos a string de forma segura según el tipo de dato en el JWT
+		switch v := val.(type) {
+		case string:
+			expense.CreatedByDNI = strings.ToUpper(strings.TrimSpace(v))
+		case float64:
+			expense.CreatedByDNI = fmt.Sprintf("%.0f", v)
+		default:
+			expense.CreatedByDNI = strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", v)))
+		}
+	}
 
 	if err := h.service.CreateExpense(&expense); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar gasto", err)
@@ -68,4 +81,49 @@ func (h *ExpenseHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, expense)
+}
+
+// CreateLinked crea un egreso vinculado a una orden de compra pendiente
+// Request body debe incluir: linkedOrderId (ID de la orden a vincular)
+// Este endpoint:
+// 1. Crea el egreso
+// 2. Marca la orden como RECIBIDA
+// 3. Actualiza el stock automáticamente según los items de la orden
+func (h *ExpenseHandler) CreateLinked(c *gin.Context) {
+	var req struct {
+		models.Expense
+		LinkedOrderID uint `json:"linkedOrderId" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido - linkedOrderId es requerido", err)
+		return
+	}
+
+	// Mayúsculas y Metadatos
+	req.Expense.Description = strings.ToUpper(strings.TrimSpace(req.Expense.Description))
+
+	val, exists := c.Get("dni")
+	if exists {
+		switch v := val.(type) {
+		case string:
+			req.Expense.CreatedByDNI = strings.ToUpper(strings.TrimSpace(v))
+		case float64:
+			req.Expense.CreatedByDNI = fmt.Sprintf("%.0f", v)
+		default:
+			req.Expense.CreatedByDNI = strings.ToUpper(strings.TrimSpace(fmt.Sprintf("%v", v)))
+		}
+	}
+
+	expense, err := h.service.CreateLinkedExpense(&req.Expense, req.LinkedOrderID)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, err.Error(), err)
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{
+		"message":       "Egreso registrado y stock actualizado correctamente",
+		"expense":       expense,
+		"linkedOrderId": req.LinkedOrderID,
+	})
 }

@@ -1,5 +1,5 @@
 const WS_URL = process.env.NEXT_PUBLIC_SCALE_WS_URL || 'ws://localhost:9876';
-const RECONNECT_DELAY = 10000;
+const RECONNECT_DELAY = 60000; // Intentar reconectar cada minuto para no saturar la consola
 
 interface ScaleState {
     weight: number;

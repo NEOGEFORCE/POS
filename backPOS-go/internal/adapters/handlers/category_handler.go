@@ -52,6 +52,10 @@ func (h *CategoryHandler) GetAll(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener categorías", err)
 		return
 	}
+	// Log de depuración para verificar en la terminal si los conteos son > 0
+	if len(categories) > 0 {
+		fmt.Printf("API DEBUG: Primera categoría %s tiene ProductCount: %d\n", categories[0].Name, categories[0].ProductCount)
+	}
 	c.JSON(http.StatusOK, categories)
 }
 

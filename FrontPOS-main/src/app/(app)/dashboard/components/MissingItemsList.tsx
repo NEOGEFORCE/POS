@@ -107,7 +107,11 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                                         </p>
                                     )}
                                 </div>
-                                <Tooltip content="Marcar como ADQUIRIDO" placement="left" color="success">
+                                <Tooltip 
+                                    content="Marcar como ADQUIRIDO" 
+                                    placement="left" 
+                                    classNames={{ content: "font-bold text-[8px] uppercase tracking-wider bg-emerald-500 text-white py-0.5 px-2 shadow-xl" }}
+                                >
                                     <Button
                                         isIconOnly
                                         size="sm"

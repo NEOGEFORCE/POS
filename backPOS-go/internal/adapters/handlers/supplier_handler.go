@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -46,11 +48,16 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 }
 
 func (h *SupplierHandler) GetAll(c *gin.Context) {
+	log.Printf("[Suppliers] Iniciando GetAll...")
+
 	suppliers, err := h.service.GetAllSuppliers()
 	if err != nil {
+		log.Printf("[Suppliers] ERROR al obtener proveedores: %v", err)
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener proveedores", err)
 		return
 	}
+
+	log.Printf("[Suppliers] Éxito: %d proveedores obtenidos", len(suppliers))
 	c.JSON(http.StatusOK, suppliers)
 }
 

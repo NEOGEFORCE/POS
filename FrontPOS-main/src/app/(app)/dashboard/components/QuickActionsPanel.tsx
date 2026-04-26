@@ -19,7 +19,7 @@ export default function QuickActionsPanel() {
         {
             label: "Añadir Producto",
             icon: PlusCircle,
-            href: "/inventory",
+            href: "/products",
             color: "amber",
             shadow: "shadow-amber-500/20"
         },
@@ -29,13 +29,6 @@ export default function QuickActionsPanel() {
             href: "/dashboard/closure",
             color: "sky",
             shadow: "shadow-sky-500/20"
-        },
-        {
-            label: "Registrar Gasto",
-            icon: ReceiptText,
-            href: "/dashboard/closure", // Placeholder o redirección a caja
-            color: "rose",
-            shadow: "shadow-rose-500/20"
         }
     ];
 
@@ -44,7 +37,7 @@ export default function QuickActionsPanel() {
             <CardBody className="p-4 md:p-6">
                 <div className="flex items-center gap-2 mb-6">
                     <div className="p-2 bg-emerald-500/10 rounded-xl">
-                        <Landmark className="h-5 w-5 text-emerald-500" />
+                        <Landmark size={20} strokeWidth={2.5} className="text-emerald-500" />
                     </div>
                     <div>
                         <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tighter">Acciones Rápidas</h3>
@@ -63,13 +56,13 @@ export default function QuickActionsPanel() {
                             `}>
                                 <div className="flex items-center gap-3">
                                     <div className={`p-2.5 rounded-xl bg-${action.color}-500/10 text-${action.color}-500 group-hover:scale-110 transition-transform`}>
-                                        <action.icon size={20} />
+                                        <action.icon size={20} strokeWidth={2.5} />
                                     </div>
                                     <span className="text-xs font-bold text-gray-700 dark:text-zinc-300 uppercase tracking-wide">
                                         {action.label}
                                     </span>
                                 </div>
-                                <ArrowUpRight size={16} className="text-gray-400 dark:text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                <ArrowUpRight size={20} strokeWidth={2.5} className="text-gray-400 dark:text-zinc-600 opacity-0 group-hover:opacity-100 transition-opacity" />
                             </div>
                         </Link>
                     ))}

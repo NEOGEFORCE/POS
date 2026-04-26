@@ -5,6 +5,7 @@ import { useEffect } from "react"
 import {
   Sidebar,
   SidebarHeader,
+  SidebarContent,
   SidebarMenu,
   SidebarMenuItem,
   SidebarMenuButton,
@@ -27,7 +28,8 @@ import {
   Truck,
   Tag,
   BarChart3,
-  ShieldCheck
+  ShieldCheck,
+  Box
 } from "lucide-react"
 import { useAuth } from "@/lib/auth"
 import Link from "next/link"
@@ -39,14 +41,14 @@ const menuItems = [
   { href: "/sales/new", label: "Venta", icon: ShoppingCart },
   { href: "/sales", label: "Historial", icon: History },
   { href: "/sales/returns", label: "Devoluciones", icon: CreditCard },
-  { href: "/dashboard/closure", label: "Cierre", icon: FileText, adminOnly: true },
-  { href: "/products", label: "Productos", icon: Package },
+  { href: "/dashboard/closure", label: "Cierre", icon: FileText, adminOnly: false },
+  { href: "/inventory", label: "Inventario", icon: Package },
+  { href: "/products", label: "Productos", icon: Box },
   { href: "/suppliers", label: "Proveedores", icon: Truck },
-  { href: "/inventory/receive", label: "Recepción", icon: ArrowUpCircle },
   { href: "/categories", label: "Categorías", icon: Shapes },
   { href: "/customers", label: "Clientes", icon: UserCircle },
   { href: "/expenses", label: "Gastos", icon: FileText },
-  { href: "/labels", label: "Etiquetas", icon: Tag }, // <-- NUEVA LÍNEA AGREGADA
+  { href: "/labels", label: "Etiquetas", icon: Tag },
   { href: "/users", label: "Personal", icon: Users, adminOnly: true },
   { href: "/audit", label: "Auditoría", icon: ShieldCheck, adminOnly: true },
 ]
@@ -60,20 +62,20 @@ export function AppSidebar() {
   const isAdmin = role === "admin" || role === "administrador" || role === "superadmin" || role === "auditor";
 
   return (
-    <Sidebar className="border-r border-gray-200 dark:border-white/5 bg-white dark:bg-zinc-950 backdrop-blur-3xl shadow-2xl overflow-hidden transition-colors duration-500">
-      <SidebarHeader className="py-4 px-6 border-b border-gray-100 dark:border-white/5">
+    <Sidebar className="border-r border-gray-200 dark:border-white/5 bg-white dark:bg-zinc-950 backdrop-blur-3xl shadow-2xl transition-colors duration-500">
+      <SidebarHeader className="py-4 px-6 border-b border-gray-100 dark:border-white/5 shrink-0">
         <div className="flex items-center gap-3 group">
-          <div className="bg-emerald-500 h-10 w-10 rounded-2xl flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all duration-700 group-hover:rotate-[180deg] group-hover:scale-105">
+          <div className="bg-emerald-500 h-10 w-10 rounded-2xl flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all duration-700 group-hover:rotate-[180deg] group-hover:scale-105 shrink-0">
             <Zap className="h-5 w-5 text-white dark:text-black" />
           </div>
-          <div className="flex flex-col">
-            <h1 className="text-lg font-black text-gray-900 dark:text-white tracking-tighter leading-none italic uppercase">SISTEMA POS</h1>
+          <div className="flex flex-col min-w-0">
+            <h1 className="text-lg font-black text-gray-900 dark:text-white tracking-tighter leading-none italic uppercase truncate">SISTEMA POS</h1>
             <span className="text-[7px] font-black text-emerald-600 dark:text-emerald-500 tracking-[0.4em] mt-1 uppercase opacity-80">v1.0.0</span>
           </div>
         </div>
       </SidebarHeader>
 
-      <div className="flex-1 px-3 py-4 overflow-y-auto custom-scrollbar">
+      <SidebarContent className="px-3 py-4 flex-1 overflow-y-auto custom-scrollbar">
         <div className="px-1">
           <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.3em] mb-3 px-2">Menú Principal</p>
           <SidebarMenu className="space-y-0.5">
@@ -94,7 +96,7 @@ export function AppSidebar() {
                         setOpen(false);
                       }}
                       className={`h-10 rounded-xl px-4 transition-all duration-300 relative group/btn ${isActive
-                          ? 'bg-emerald-500 text-white dark:bg-emerald-500/10 dark:text-emerald-500 dark:border-l-4 dark:border-emerald-500 shadow-lg scale-[1.01]'
+                          ? 'bg-emerald-500 text-white dark:bg-emerald-500/10 dark:text-emerald-500 dark:border-l-4 dark:border-emerald-500 shadow-md'
                           : 'text-gray-500 dark:text-zinc-500 hover:bg-gray-100 dark:hover:bg-white/5 hover:text-gray-900 dark:hover:text-white'
                         }`}
                     >
@@ -112,9 +114,9 @@ export function AppSidebar() {
             )}
           </SidebarMenu>
         </div>
-      </div>
+      </SidebarContent>
 
-      <SidebarFooter className="p-3 border-t border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-black/40">
+      <SidebarFooter className="p-3 pb-6 md:pb-3 border-t border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-black/40 mb-safe">
         <div className="flex flex-col gap-2">
           <SidebarMenuItem className="list-none">
             <SidebarMenuButton

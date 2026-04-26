@@ -72,14 +72,9 @@ export default function Home() {
 
         {/* INDICADOR DE CARGA */}
         <div className="flex flex-col items-center gap-5">
-          <Spinner color="success" size="lg" />
-
-          <div className="flex flex-col items-center gap-1">
-            <p className="text-gray-500 dark:text-zinc-500 text-[10px] font-black uppercase tracking-[0.2em] animate-pulse">
-              Verificando entorno...
-            </p>
-            {/* Pequeña barra de progreso visual (estética) */}
-            <div className="w-32 h-1 bg-gray-200 dark:bg-white/10 rounded-full mt-2 overflow-hidden">
+          <div className="flex flex-col items-center gap-3">
+            <Spinner color="success" size="lg" label="Verificando entorno" />
+            <div className="w-32 h-1 bg-gray-200 dark:bg-white/10 rounded-full overflow-hidden">
               <div className="h-full bg-emerald-500 w-1/2 animate-[pulse_1s_ease-in-out_infinite_alternate]" />
             </div>
           </div>

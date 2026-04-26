@@ -2,8 +2,6 @@
 import React, { memo, useMemo } from 'react';
 import { ShieldCheck, ShieldAlert, UserCircle, Users, Activity } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { Progress } from "@heroui/react";
-
 interface StatsProps {
     total: number;
     admins: number;
@@ -27,14 +25,14 @@ const AnalyticalUserCard = ({
     chartData?: any[],
     progress?: number
 }) => (
-    <div className="relative group min-w-[200px] md:min-w-0 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-5 border border-gray-200 dark:border-white/5 rounded-[2rem] shadow-xl overflow-hidden shadow-emerald-500/5 transition-all hover:scale-[1.02] hover:border-emerald-500/20">
+    <div className="relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5 transition-all hover:scale-[1.02] hover:border-emerald-500/20">
         {/* Background Sparkline */}
         {chartData && (
-            <div className="absolute inset-x-0 bottom-0 h-16 opacity-30 dark:opacity-20 pointer-events-none">
+            <div className="absolute inset-x-0 bottom-0 h-6 sm:h-10 opacity-30 dark:opacity-20 pointer-events-none">
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData}>
                         <defs>
-                            <linearGradient id={`color-${color}`} x1="0" y1="0" x2="0" y2="1">
+                            <linearGradient id={`color-${color.replace('#', '')}`} x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor={color} stopOpacity={0.8}/>
                                 <stop offset="95%" stopColor={color} stopOpacity={0}/>
                             </linearGradient>
@@ -44,7 +42,7 @@ const AnalyticalUserCard = ({
                             dataKey="val" 
                             stroke={color} 
                             fillOpacity={1} 
-                            fill={`url(#color-${color})`} 
+                            fill={`url(#color-${color.replace('#', '')})`} 
                             strokeWidth={2}
                         />
                     </AreaChart>
@@ -53,27 +51,27 @@ const AnalyticalUserCard = ({
         )}
 
         <div className="relative z-10">
-            <div className="flex justify-between items-start mb-4">
-                <div className={`p-3 rounded-2xl bg-${color}-500/10 text-${color}-500 shadow-inner`}>
-                    <Icon size={20} />
+            <div className="flex justify-between items-start mb-2 sm:mb-3">
+                <div className={`p-1.5 sm:p-2 rounded-xl bg-opacity-10 text-white shadow-inner`} style={{ backgroundColor: `${color}20`, color: color }}>
+                    <Icon size={16} className="sm:size-4" />
                 </div>
                 <div className="text-right">
-                    <span className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none italic block mb-1">
+                    <span className="text-[8px] sm:text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none italic block mb-0.5">
                         {label}
                     </span>
-                    <span className="text-2xl font-black text-gray-900 dark:text-white italic leading-none tracking-tighter tabular-nums">
+                    <span className="text-lg sm:text-xl font-black text-gray-900 dark:text-white italic leading-none tracking-tighter tabular-nums">
                         {value}
                     </span>
                 </div>
             </div>
 
-            <div className="flex flex-col gap-2">
-                <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-wider">
-                    <span className="text-gray-400 dark:text-zinc-500">{subValue}</span>
+            <div className="flex flex-col gap-1 sm:gap-2">
+                <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-black uppercase tracking-wider">
+                    <span className="text-gray-400 dark:text-zinc-500 truncate max-w-[60px] sm:max-w-none">{subValue}</span>
                     {progress !== undefined && <span style={{ color: color }}>{progress}%</span>}
                 </div>
                 {progress !== undefined && (
-                    <div className="h-1 w-full bg-gray-100 dark:bg-white/5 rounded-full overflow-hidden shadow-inner">
+                    <div className="h-0.5 sm:h-1 w-full bg-gray-100 dark:bg-white/5 rounded-full overflow-hidden shadow-inner">
                         <div 
                             className="h-full rounded-full transition-all duration-1000 ease-out"
                             style={{ width: `${progress}%`, backgroundColor: color }}
@@ -99,32 +97,38 @@ const UserStats = memo(({ total, admins, employees }: StatsProps) => {
     const employeePercent = total > 0 ? Math.round((employees / total) * 100) : 0;
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 shrink-0 mb-4 px-1">
-            <AnalyticalUserCard 
-                label="Personal Total"
-                value={total}
-                subValue="Crecimiento Mensual"
-                icon={Users}
-                color="#10b981" // Emerald
-                chartData={trends}
-            />
-            <AnalyticalUserCard 
-                label="Administradores"
-                value={admins}
-                subValue="Proporción de Control"
-                icon={ShieldAlert}
-                progress={adminPercent}
-                color="#f59e0b" // Amber
-            />
-            <AnalyticalUserCard 
-                label="Operativos de Turno"
-                value={employees}
-                subValue="Actividad en Tiempo Real"
-                icon={Activity}
-                progress={employeePercent}
-                color="#3b82f6" // Blue
-                chartData={activityTrends}
-            />
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 shrink-0 mb-1 md:mb-2 px-1">
+            <div className="col-span-1">
+                <AnalyticalUserCard 
+                    label="Personal Total"
+                    value={total}
+                    subValue="Crecimiento"
+                    icon={Users}
+                    color="#10b981"
+                    chartData={trends}
+                />
+            </div>
+            <div className="col-span-1">
+                <AnalyticalUserCard 
+                    label="Admins"
+                    value={admins}
+                    subValue="Control"
+                    icon={ShieldAlert}
+                    progress={adminPercent}
+                    color="#f59e0b"
+                />
+            </div>
+            <div className="col-span-2 md:col-span-1">
+                <AnalyticalUserCard 
+                    label="Operativos de Turno"
+                    value={employees}
+                    subValue="Actividad"
+                    icon={Activity}
+                    progress={employeePercent}
+                    color="#3b82f6"
+                    chartData={activityTrends}
+                />
+            </div>
         </div>
     );
 });

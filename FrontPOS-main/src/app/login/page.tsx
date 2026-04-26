@@ -95,7 +95,7 @@ export default function LoginPage() {
       const data = await response.json();
       toast({
         title: "Petición enviada",
-        description: data.message || "Si el correo existe, recibirás instrucciones.",
+        description: data.message || "Si el correo corresponde a una cuenta administrativa, recibirás instrucciones.",
       });
       setIsForgotOpen(false);
       setForgotEmail('');
@@ -143,7 +143,11 @@ export default function LoginPage() {
           <CardBody className="space-y-5 px-4 sm:px-6 py-6 sm:py-8 overflow-hidden">
             <div className="space-y-1">
               <div className="px-1 mb-2">
-                <label className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider">
+                <label
+                  id="login-username-label"
+                  htmlFor="username"
+                  className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider"
+                >
                   Usuario
                 </label>
               </div>
@@ -158,8 +162,9 @@ export default function LoginPage() {
                 isDisabled={isLoading}
                 variant="flat"
                 radius="lg"
+                aria-labelledby="login-username-label"
                 classNames={{
-                  input: "font-bold text-gray-900 dark:text-white bg-transparent",
+                  input: "font-bold text-gray-900 dark:text-white bg-transparent uppercase",
                   inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
                 }}
               />
@@ -167,7 +172,11 @@ export default function LoginPage() {
 
             <div className="space-y-1">
               <div className="flex items-center justify-between px-1 mb-2">
-                <label className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider">
+                <label
+                  id="login-password-label"
+                  htmlFor="password"
+                  className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider"
+                >
                   Contraseña
                 </label>
                 <button
@@ -191,6 +200,7 @@ export default function LoginPage() {
                 isDisabled={isLoading}
                 variant="flat"
                 radius="lg"
+                aria-labelledby="login-password-label"
                 endContent={
                   <button className="focus:outline-none" type="button" onClick={toggleVisibility}>
                     {isVisible ? (
@@ -224,7 +234,6 @@ export default function LoginPage() {
           </CardFooter>
         </form>
       </Card>
-
       {/* Modal de Recuperación de HeroUI */}
       <Modal
         isOpen={isForgotOpen}
@@ -242,29 +251,39 @@ export default function LoginPage() {
             <form onSubmit={handleForgotPassword}>
               <ModalHeader className="flex flex-col gap-1 pt-6 px-6">
                 <h2 className="font-black text-xl sm:text-2xl uppercase text-gray-900 dark:text-white">Recuperar Acceso</h2>
-                <p className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase normal-case">
-                  Ingresa tu correo para recibir instrucciones.
+                <p className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase">
+                  Solo para cuentas Administrativas.
                 </p>
               </ModalHeader>
               <ModalBody className="py-6 px-6">
-                <Input
-                  autoFocus
-                  id="forgot-email"
-                  type="email"
-                  label="Correo Electrónico"
-                  labelPlacement="outside"
-                  isRequired
-                  value={forgotEmail}
-                  onValueChange={setForgotEmail}
-                  isDisabled={isForgotLoading}
-                  variant="flat"
-                  startContent={<Mail className="text-gray-400 dark:text-zinc-500 w-4 h-4 mr-2" />}
-                  classNames={{
-                    label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
-                    input: "font-bold text-gray-900 dark:text-white bg-transparent",
-                    inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-colors shadow-none",
-                  }}
-                />
+                <div className="space-y-1">
+                  <div className="px-1 mb-2">
+                    <label
+                      id="login-forgot-email-label"
+                      htmlFor="forgot-email"
+                      className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider"
+                    >
+                      Correo Electrónico
+                    </label>
+                  </div>
+                  <Input
+                    autoFocus
+                    id="forgot-email"
+                    type="email"
+                    isRequired
+                    value={forgotEmail}
+                    onValueChange={setForgotEmail}
+                    isDisabled={isForgotLoading}
+                    variant="flat"
+                    radius="lg"
+                    aria-labelledby="login-forgot-email-label"
+                    startContent={<Mail className="text-gray-400 dark:text-zinc-500 w-4 h-4 mr-2" />}
+                    classNames={{
+                      input: "font-bold text-gray-900 dark:text-white bg-transparent uppercase",
+                      inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
+                    }}
+                  />
+                </div>
               </ModalBody>
               <ModalFooter className="px-6 pb-6">
                 <Button color="danger" variant="light" onPress={onClose} className="font-bold uppercase tracking-wider text-xs">
@@ -278,6 +297,7 @@ export default function LoginPage() {
           )}
         </ModalContent>
       </Modal>
+
 
       <div className="fixed bottom-4 sm:bottom-8 text-[8px] sm:text-[9px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.3em] sm:tracking-[0.4em] z-20 text-center w-full px-4 transition-colors">
         SISTEMA POS — v1.0.0

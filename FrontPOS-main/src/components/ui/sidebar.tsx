@@ -198,7 +198,7 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[--sidebar-width] bg-white dark:bg-zinc-950 p-0 text-sidebar-foreground [&>button]:hidden shadow-2xl"
+            className="w-[--sidebar-width] bg-white dark:bg-zinc-950 p-0 text-sidebar-foreground [&>button]:hidden shadow-2xl h-[calc(100svh-48px)] flex flex-col mt-12"
             style={
               {
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -212,7 +212,7 @@ const Sidebar = React.forwardRef<
                 Accede a las diferentes secciones del sistema POS
               </SheetDescription>
             </SheetHeader>
-            <div className="flex h-full w-full flex-col">{children}</div>
+            <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">{children}</div>
           </SheetContent>
         </Sheet>
       )
@@ -364,7 +364,7 @@ const SidebarHeader = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="header"
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn("flex flex-col gap-2 p-2 shrink-0", className)}
       {...props}
     />
   )
@@ -379,7 +379,7 @@ const SidebarFooter = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="footer"
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn("flex flex-col gap-2 p-2 shrink-0", className)}
       {...props}
     />
   )
@@ -410,7 +410,7 @@ const SidebarContent = React.forwardRef<
       ref={ref}
       data-sidebar="content"
       className={cn(
-        "flex min-h-0 flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
+        "flex flex-1 flex-col gap-2 overflow-auto group-data-[collapsible=icon]:overflow-hidden",
         className
       )}
       {...props}

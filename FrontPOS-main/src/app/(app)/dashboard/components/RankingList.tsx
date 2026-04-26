@@ -2,7 +2,7 @@
 
 import { memo } from "react";
 import { TrendingUp, Award, Box } from "lucide-react";
-import { Progress, Tooltip } from "@heroui/react";
+import { Tooltip } from "@heroui/react";
 
 interface ProductRankingItem {
     barcode: string;
@@ -77,7 +77,11 @@ const RankingList = memo(({ products }: RankingListProps) => {
                                         </span>
                                     </div>
                                 </div>
-                                <Tooltip content={`Total: ${p.total.toLocaleString()} COP`} placement="top" color="success">
+                                <Tooltip 
+                                    content={`Total: ${p.total.toLocaleString()} COP`} 
+                                    placement="top"
+                                    classNames={{ content: "font-bold text-[8px] uppercase tracking-wider bg-emerald-500 text-white py-0.5 px-2 shadow-xl" }}
+                                >
                                     <div className="relative w-full h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner">
                                         <div 
                                             className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${rankColors[index] || "from-gray-500 to-gray-700"} transition-all duration-1000 ease-out shadow-lg`}

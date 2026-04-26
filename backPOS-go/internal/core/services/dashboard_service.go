@@ -1,14 +1,32 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
+	"log"
 	"sort"
 	"strings"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/cache"
+
+	"golang.org/x/sync/errgroup"
 )
+
+// GetCriticalThreshold calcula el umbral crítico basado en minStock
+// minStock >= 12 -> 3, minStock >= 4 -> 2, minStock <= 3 -> 1
+// Esta es la ÚNICA fuente de verdad para el semáforo de stock en todo el sistema
+func GetCriticalThreshold(minStock int) int {
+	if minStock >= 12 {
+		return 3
+	}
+	if minStock >= 4 {
+		return 2
+	}
+	return 1
+}
 
 type DashboardService struct {
 	saleRepo     ports.SaleRepository
@@ -54,11 +72,21 @@ func NewDashboardService(
 
 // --- New structs for Dashboard V5 widgets ---
 
+type StockStatus string
+
+const (
+	StockCritical StockStatus = "CRITICAL" // Rojo: quantity <= criticalThreshold
+	StockWarning  StockStatus = "WARNING"  // Ámbar: quantity <= minStock && quantity > criticalThreshold
+	StockOptimal  StockStatus = "OPTIMAL"  // Verde: quantity > minStock
+)
+
 type LowStockItem struct {
-	Barcode  string  `json:"barcode"`
-	Name     string  `json:"name"`
-	Stock    float64 `json:"stock"`
-	MinStock float64 `json:"minStock"`
+	Barcode   string      `json:"barcode"`
+	Name      string      `json:"name"`
+	Stock     float64     `json:"stock"`
+	MinStock  float64     `json:"minStock"`
+	Threshold int         `json:"threshold"` // Umbral crítico calculado dinámicamente
+	Status    StockStatus `json:"status"`    // CRITICAL, WARNING, OPTIMAL
 }
 
 type DailyPoint struct {
@@ -76,25 +104,24 @@ type DashboardOverview struct {
 	RecentSales         []map[string]interface{} `json:"recentSales"`
 	Monthly             map[string]interface{}   `json:"monthly"`
 	// V5 fields
-	TodaySalesAmount float64            `json:"todaySalesAmount"`
-	TodaySalesCount  int64              `json:"todaySalesCount"`
-	TodayExpenses    float64            `json:"todayExpenses"`
-	ActiveProducts   int64              `json:"activeProducts"`
-	TotalProducts    int64              `json:"totalProducts"`
-	CategoriesCount  int64              `json:"categoriesCount"`
-	LowStockProducts []LowStockItem     `json:"lowStockProducts"`
-	SalesByPayment   map[string]float64 `json:"salesByPayment"`
-	DailySalesLast7  []DailyPoint       `json:"dailySalesLast7"`
-	TopProducts      []ProductRankingItem `json:"topProducts"`
-	MissingItems     []models.MissingItem `json:"missingItems"`
+	TodaySalesAmount      float64                    `json:"todaySalesAmount"`
+	TodaySalesCount       int64                      `json:"todaySalesCount"`
+	TodayExpenses         float64                    `json:"todayExpenses"`
+	TodayCollectedDebts   float64                    `json:"todayCollectedDebts"`
+	MonthlyCollectedDebts float64                    `json:"monthlyCollectedDebts"`
+	ActiveProducts        int64                      `json:"activeProducts"`
+	TotalProducts         int64                      `json:"totalProducts"`
+	CategoriesCount       int64                      `json:"categoriesCount"`
+	CriticalStockCount    int64                      `json:"criticalStockCount"` // Rojo
+	WarningStockCount     int64                      `json:"warningStockCount"`  // Ámbar
+	LowStockProducts      []LowStockItem             `json:"lowStockProducts"`
+	SalesByPayment        map[string]float64         `json:"salesByPayment"`
+	DailySalesLast7       []DailyPoint               `json:"dailySalesLast7"`
+	TopProducts           []ports.ProductRankingItem `json:"topProducts"`
+	MissingItems          []models.MissingItem       `json:"missingItems"`
+	SavingsOpportunities  []ports.SavingsOpportunity `json:"savingsOpportunities"`
 }
 
-type ProductRankingItem struct {
-	Barcode  string  `json:"barcode"`
-	Name     string  `json:"name"`
-	Quantity float64 `json:"quantity"`
-	Total    float64 `json:"total"`
-}
 
 type CategoryReportItem struct {
 	Category string  `json:"category"`
@@ -103,18 +130,18 @@ type CategoryReportItem struct {
 }
 
 type VIPClientItem struct {
-	DNI      string  `json:"dni"`
-	Name     string  `json:"name"`
-	Total    float64 `json:"total"`
-	Count    int     `json:"count"`
+	DNI   string  `json:"dni"`
+	Name  string  `json:"name"`
+	Total float64 `json:"total"`
+	Count int     `json:"count"`
 }
 
 type VoidReportItem struct {
-	SaleID    uint      `json:"saleId"`
-	Date      time.Time `json:"date"`
-	Total     float64   `json:"total"`
-	Employee  string    `json:"employee"`
-	VoidedAt  time.Time `json:"voidedAt"`
+	SaleID   uint      `json:"saleId"`
+	Date     time.Time `json:"date"`
+	Total    float64   `json:"total"`
+	Employee string    `json:"employee"`
+	VoidedAt time.Time `json:"voidedAt"`
 }
 
 type PnLReport struct {
@@ -140,178 +167,262 @@ type StockMovementReportItem struct {
 }
 
 func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
+	// CACHÉ L1: Retorno instantáneo si existe en RAM (Barrera HFT)
+	if cached, found := cache.CacheManager.Get(cache.CacheKeyDashboardOverview); found {
+		if overview, ok := cached.(*DashboardOverview); ok {
+			log.Println("🚀 HFT: Dashboard HIT (L1 Cache Intercepted)")
+			return overview, nil
+		}
+	}
+
+	log.Println("⚡ HFT: Dashboard MISS (Ejecutando Goroutines de Alta Intensidad...)")
 	now := time.Now()
-	currentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
-	nextMonth := currentMonth.AddDate(0, 1, 0)
 	todayStr := now.Format("2006-01-02")
+	tomorrowStr := now.AddDate(0, 0, 1).Format("2006-01-02")
+	sevenDaysAgoStr := now.AddDate(0, 0, -7).Format("2006-01-02")
+	currentMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	nextMonthStart := currentMonthStart.AddDate(0, 1, 0)
+	currentMonthStr := currentMonthStart.Format("2006-01-02")
+	nextMonthStr := nextMonthStart.Format("2006-01-02")
 
-	sales, _ := s.saleRepo.GetByDateRange(currentMonth.Format("2006-01-02"), nextMonth.Format("2006-01-02"))
-	expenses, _ := s.expenseRepo.GetByDateRange(currentMonth.Format("2006-01-02"), nextMonth.Format("2006-01-02"))
-	clientCount, _ := s.clientRepo.Count()
+	g, _ := errgroup.WithContext(context.Background())
 
-	var totalSalesAmount float64
-	var totalProductsSold float64
+	var totalSalesAmount, totalProductsSold, totalExpensesAmount, monthlyCollectedDebts float64
+	var mvStats *ports.MVMonthlyStats
+	var mvTrend []ports.MVMonthlyStats
+	currentMonthKey := now.Format("2006-01")
+
+	var todayExpensesRaw []models.Expense
+	var todayPaymentsRaw []models.CreditPayment
 	var todaySalesAmount float64
 	var todaySalesCount int64
-	var todayExpenses float64
-	salesByDay := make(map[string]float64)
-	salesByMonth := make(map[string]float64)
-	expensesByMonth := make(map[string]float64)
-	profitByMonth := make(map[string]float64)
-	salesByPayment := make(map[string]float64)
+	var clientCount int64
+	var categories []models.Category
+	var totalProducts, activeProducts int64
+	var lowStockRaw []models.Product
+	var recentSalesRaw []models.Sale
+	var salesByMonth, expensesByMonth, profitByMonth map[string]float64
+	var dailySalesMap map[string]float64
+	var dailyCollectedMap map[string]float64
+	var salesByPayment map[string]float64
+	var topProducts []ports.ProductRankingItem
+	var missingItems []models.MissingItem
+	var savingsOpportunities []ports.SavingsOpportunity
 
-	for _, sale := range sales {
-		totalSalesAmount += sale.TotalAmount
+	// 1. Get Materialized View Stats (Instant)
+	g.Go(func() error {
+		var err error
+		mvStats, err = s.saleRepo.GetMonthlyStatsFromMV(currentMonthKey)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		mvTrend, err = s.saleRepo.GetMonthlyStatsTrendFromMV()
+		return err
+	})
 
-		dayKey := sale.SaleDate.Format("2006-01-02")
-		monthKey := sale.SaleDate.Format("2006-01")
+	// 2. Optimized Real-time Queries (Only Today or small sets)
+	g.Go(func() error {
+		var err error
+		// Only get expenses for TODAY to keep it fast
+		todayExpensesRaw, err = s.expenseRepo.GetByDateRange(todayStr, tomorrowStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		// Only get payments for TODAY
+		todayPaymentsRaw, err = s.creditRepo.GetByDateRange(now, now) // Note: might need adjustment for full day
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		todaySalesAmount, todaySalesCount, _, err = s.saleRepo.GetDashboardStats(todayStr, tomorrowStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		clientCount, err = s.clientRepo.Count()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		categories, err = s.categoryRepo.GetAll()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		totalProducts, err = s.productRepo.Count()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		activeProducts, err = s.productRepo.GetActiveCount()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		lowStockRaw, err = s.productRepo.GetAllWithLowStock()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		// Recent sales is already small (limit 5)
+		salesFilter := ports.SaleFilter{Page: 1, PageSize: 5, From: currentMonthStr, To: nextMonthStr}
+		recentSalesRaw, _, err = s.saleRepo.FindAll(salesFilter)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		dailySalesMap, err = s.saleRepo.GetDailySalesByRange(sevenDaysAgoStr, tomorrowStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		dailyCollectedMap, err = s.creditRepo.GetDailyCollectedByRange(sevenDaysAgoStr, tomorrowStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		topProducts, err = s.saleRepo.GetTopSellingProducts(currentMonthStr, nextMonthStr, 5)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		missingItems, err = s.adminRepo.GetRecentPendingMissingItems(5)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		savingsOpportunities, err = s.getSavingsOpportunitiesCached()
+		return err
+	})
 
-		salesByDay[dayKey] += sale.TotalAmount
-		salesByMonth[monthKey] += sale.TotalAmount
-
-		// Today's sales
-		if dayKey == todayStr {
-			todaySalesAmount += sale.TotalAmount
-			todaySalesCount++
-		}
-
-		// Payment method breakdown (month)
-		if sale.CashAmount > 0 {
-			salesByPayment["EFECTIVO"] += sale.CashAmount
-		}
-		if sale.TransferAmount > 0 {
-			source := sale.TransferSource
-			if source == "" {
-				source = "TRANSFERENCIA"
-			}
-			salesByPayment[source] += sale.TransferAmount
-		}
-		if sale.CreditAmount > 0 {
-			salesByPayment["FIADO"] += sale.CreditAmount
-		}
-
-		for _, detail := range sale.SaleDetails {
-			totalProductsSold += detail.Quantity
-		}
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
-	var totalExpensesAmount float64
-	for _, expense := range expenses {
-		totalExpensesAmount += expense.Amount
-		monthKey := expense.Date.Format("2006-01")
-		expensesByMonth[monthKey] += expense.Amount
-		// Today's expenses
-		if expense.Date.Format("2006-01-02") == todayStr {
-			todayExpenses += expense.Amount
-		}
+	// Consolidación de Datos usando MVStats
+	totalSalesAmount = mvStats.TotalSales
+	totalProductsSold = mvStats.ProductsSold
+	totalExpensesAmount = mvStats.TotalExpenses
+	monthlyCollectedDebts = mvStats.TotalAbonos
+
+	todayCollectedDebts := 0.0
+	for _, p := range todayPaymentsRaw {
+		todayCollectedDebts += p.TotalPaid
 	}
 
-	for month, sAmount := range salesByMonth {
-		profitByMonth[month] = sAmount - expensesByMonth[month]
+	todayExpenses := 0.0
+	for _, e := range todayExpensesRaw {
+		todayExpenses += e.Amount
 	}
 
-	recentSales := []map[string]interface{}{}
-	count := len(sales)
-	if count > 5 {
-		count = 5
-	}
-	for i := 0; i < count; i++ {
-		sale := sales[len(sales)-1-i]
-		clientName := "Consumidor Final"
-		if sale.Client.Name != "" {
-			clientName = sale.Client.Name
-		}
-		recentSales = append(recentSales, map[string]interface{}{
-			"id":              sale.SaleID,
-			"total":           sale.TotalAmount,
-			"date":            sale.SaleDate.Format(time.RFC3339),
-			"client":          clientName,
-			"payment_method":  sale.PaymentMethod,
-			"transfer_source": sale.TransferSource,
-		})
+	// Reconstruir mapas históricos desde MV Trend
+	salesByMonth = make(map[string]float64)
+	expensesByMonth = make(map[string]float64)
+	profitByMonth = make(map[string]float64)
+
+	for _, trend := range mvTrend {
+		salesByMonth[trend.MonthYear] = trend.TotalSales
+		expensesByMonth[trend.MonthYear] = trend.TotalExpenses
+		profitByMonth[trend.MonthYear] = trend.TotalSales - trend.TotalExpenses
 	}
 
-	salesByMonth, _ = s.saleRepo.GetMonthlyTotals()
-	expensesByMonth, _ = s.expenseRepo.GetMonthlyTotals()
-	
-	for month, sAmount := range salesByMonth {
-		profitByMonth[month] = sAmount - expensesByMonth[month]
+	// Reconstruir salesByPayment desde MVStats (Mes Actual)
+	salesByPayment = map[string]float64{
+		"EFECTIVO":      mvStats.SalesCash,
+		"TRANSFERENCIA": mvStats.SalesTransfer,
+		"FIADO":         mvStats.SalesCredit,
 	}
 
-	// --- V5: Products, Categories, Low Stock ---
-	allProducts, _ := s.productRepo.GetAll()
-	totalProducts := int64(len(allProducts))
-	var activeProducts int64
+	criticalCount := 0
+	warningCount := 0
 	lowStockProducts := []LowStockItem{}
-	for _, p := range allProducts {
-		if p.Quantity > 0 {
-			activeProducts++
-		}
-		
-		threshold := p.MinStock
-		if threshold <= 0 {
-			threshold = 5 // Default heuristic if not set
-		}
-
-		if p.Quantity <= threshold {
+	for _, p := range lowStockRaw {
+		if p.IsWeighted { continue }
+		minStock := int(p.MinStock)
+		if minStock <= 0 { minStock = 5 }
+		threshold := GetCriticalThreshold(minStock)
+		if int(p.Quantity) <= threshold {
+			criticalCount++
 			lowStockProducts = append(lowStockProducts, LowStockItem{
-				Barcode:  p.Barcode,
-				Name:     p.ProductName,
-				Stock:    p.Quantity,
-				MinStock: threshold,
+				Barcode: p.Barcode, Name: p.ProductName, Stock: p.Quantity, MinStock: float64(minStock), Threshold: threshold, Status: StockCritical,
+			})
+		} else if int(p.Quantity) <= minStock {
+			warningCount++
+			lowStockProducts = append(lowStockProducts, LowStockItem{
+				Barcode: p.Barcode, Name: p.ProductName, Stock: p.Quantity, MinStock: float64(minStock), Threshold: threshold, Status: StockWarning,
 			})
 		}
 	}
-	// Limit low stock to 10 items
-	if len(lowStockProducts) > 10 {
-		lowStockProducts = lowStockProducts[:10]
+
+	recentSales := []map[string]interface{}{}
+	for _, sale := range recentSalesRaw {
+		clientName := "Consumidor Final"
+		if sale.Client.Name != "" { clientName = sale.Client.Name }
+		recentSales = append(recentSales, map[string]interface{}{
+			"id": sale.SaleID, "total": sale.TotalAmount, "date": sale.SaleDate.Format(time.RFC3339), "client": clientName, "payment_method": sale.PaymentMethod,
+		})
 	}
 
-	// Categories count
-	categories, _ := s.categoryRepo.GetAll()
-	categoriesCount := int64(len(categories))
-
-	// --- V5: Daily Sales Last 7 Days ---
 	dailySalesLast7 := []DailyPoint{}
 	for i := 6; i >= 0; i-- {
 		d := now.AddDate(0, 0, -i)
-		key := d.Format("2006-01-02")
-		dailySalesLast7 = append(dailySalesLast7, DailyPoint{
-			Date:   key,
-			Amount: salesByDay[key],
-		})
+		dStr := d.Format("2006-01-02")
+		dailySalesLast7 = append(dailySalesLast7, DailyPoint{Date: dStr, Amount: dailySalesMap[dStr] + dailyCollectedMap[dStr]})
 	}
-	// Sort by date ascending
-	sort.Slice(dailySalesLast7, func(i, j int) bool {
-		return dailySalesLast7[i].Date < dailySalesLast7[j].Date
-	})
 
-	return &DashboardOverview{
+	result := &DashboardOverview{
 		TotalSalesAmount:    totalSalesAmount,
 		TotalExpensesAmount: totalExpensesAmount,
 		Profit:              totalSalesAmount - totalExpensesAmount,
 		TotalProductsSold:   totalProductsSold,
 		TotalClients:        clientCount,
-		SalesByDay:          salesByDay,
 		RecentSales:         recentSales,
 		Monthly: map[string]interface{}{
-			"salesByMonth":    salesByMonth,
-			"expensesByMonth": expensesByMonth,
-			"profitByMonth":   profitByMonth,
+			"salesByMonth": salesByMonth, "expensesByMonth": expensesByMonth, "profitByMonth": profitByMonth,
 		},
-		// V5 fields
-		TodaySalesAmount: todaySalesAmount,
-		TodaySalesCount:  todaySalesCount,
-		TodayExpenses:    todayExpenses,
-		ActiveProducts:   activeProducts,
-		TotalProducts:    totalProducts,
-		CategoriesCount:  categoriesCount,
-		LowStockProducts: lowStockProducts,
-		SalesByPayment:   salesByPayment,
-		DailySalesLast7:  dailySalesLast7,
-		TopProducts:      s.calculateTopProductsFromSales(sales),
-		MissingItems:     s.fetchRecentMissingItems(),
-	}, nil
+		TodaySalesAmount:      todaySalesAmount,
+		TodaySalesCount:       todaySalesCount,
+		TodayExpenses:         todayExpenses,
+		TodayCollectedDebts:   todayCollectedDebts,
+		MonthlyCollectedDebts: monthlyCollectedDebts,
+		ActiveProducts:        activeProducts,
+		TotalProducts:         totalProducts,
+		CategoriesCount:       int64(len(categories)),
+		CriticalStockCount:    int64(criticalCount),
+		WarningStockCount:     int64(warningCount),
+		LowStockProducts:      lowStockProducts,
+		SalesByPayment:        salesByPayment,
+		DailySalesLast7:       dailySalesLast7,
+		TopProducts:           topProducts,
+		MissingItems:          missingItems,
+		SavingsOpportunities:  savingsOpportunities,
+	}
+
+	// PERSISTENCIA EN RAM: TTL de 60s para datos frescos pero sin I/O repetitivo
+	cache.CacheManager.Set(cache.CacheKeyDashboardOverview, result, 60*time.Second)
+
+	return result, nil
+}
+
+func (s *DashboardService) getSavingsOpportunitiesCached() ([]ports.SavingsOpportunity, error) {
+	if cached, found := cache.CacheManager.Get(cache.CacheKeySavingsOpportunities); found {
+		return cached.([]ports.SavingsOpportunity), nil
+	}
+	savings, err := s.productRepo.GetSavingsOpportunities()
+	if err == nil {
+		cache.CacheManager.Set(cache.CacheKeySavingsOpportunities, savings, 1*time.Hour)
+	}
+	return savings, err
+}
+
+func (s *DashboardService) getSavingsOpportunities() []ports.SavingsOpportunity {
+	savings, err := s.productRepo.GetSavingsOpportunities()
+	if err != nil {
+		return []ports.SavingsOpportunity{}
+	}
+	return savings
 }
 
 func (s *DashboardService) fetchRecentMissingItems() []models.MissingItem {
@@ -332,8 +443,8 @@ func (s *DashboardService) fetchRecentMissingItems() []models.MissingItem {
 	return filtered
 }
 
-func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []ProductRankingItem {
-	rankingMap := make(map[string]*ProductRankingItem)
+func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []ports.ProductRankingItem {
+	rankingMap := make(map[string]*ports.ProductRankingItem)
 	for _, sale := range sales {
 		for _, detail := range sale.SaleDetails {
 			if _, ok := rankingMap[detail.Barcode]; !ok {
@@ -341,7 +452,7 @@ func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []
 				if detail.Product.ProductName != "" {
 					name = detail.Product.ProductName
 				}
-				rankingMap[detail.Barcode] = &ProductRankingItem{
+				rankingMap[detail.Barcode] = &ports.ProductRankingItem{
 					Barcode: detail.Barcode,
 					Name:    name,
 				}
@@ -351,7 +462,7 @@ func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []
 		}
 	}
 
-	ranking := []ProductRankingItem{}
+	ranking := []ports.ProductRankingItem{}
 	for _, item := range rankingMap {
 		ranking = append(ranking, *item)
 	}
@@ -367,35 +478,46 @@ func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []
 }
 
 type CashierClosure struct {
-	Date                 time.Time `json:"date"`
-	StartDate            time.Time `json:"startDate"`
-	EndDate              time.Time `json:"endDate"`
-	SalesCount           int       `json:"salesCount"`
-	TotalSales           float64   `json:"totalSales"`
-	TotalCash            float64   `json:"totalCash"`
-	TotalTransfer        float64   `json:"totalTransfer"`
-	TotalNequi           float64   `json:"totalNequi"`
-	TotalDaviplata       float64   `json:"totalDaviplata"`
-	TotalBancolombia     float64   `json:"totalBancolombia"`
-	TotalOtherTransfer   float64   `json:"totalOtherTransfer"`
-	TotalExpenses        float64   `json:"totalExpenses"`
-	TotalReturns         float64   `json:"totalReturns"`
-	TotalCreditIssued    float64   `json:"totalCreditIssued"`
-	TotalCreditCollected float64   `json:"totalCreditCollected"`
-	OpeningCash          float64          `json:"openingCash"`
-	NetBalance           float64          `json:"netBalance"`
-	Expenses             []models.Expense `json:"expenses"`
-	ExpensesDetail       string           `json:"expensesDetail"`
+	Date                 time.Time              `json:"date"`
+	StartDate            time.Time              `json:"startDate"`
+	EndDate              time.Time              `json:"endDate"`
+	SalesCount           int                    `json:"salesCount"`
+	TotalSales           float64                `json:"totalSales"`
+	TotalCash            float64                `json:"totalCash"`
+	TotalTransfer        float64                `json:"totalTransfer"`
+	TotalCard            float64                `json:"totalCard"` // NUEVO: Pagos con tarjeta
+	TotalNequi           float64                `json:"totalNequi"`
+	TotalDaviplata       float64                `json:"totalDaviplata"`
+	TotalBancolombia     float64                `json:"totalBancolombia"`
+	TotalOtherTransfer   float64                `json:"totalOtherTransfer"`
+	TotalExpenses        float64                `json:"totalExpenses"`
+	TotalReturns         float64                `json:"totalReturns"`
+	ReturnsCount         float64                `json:"returnsCount"`
+	TotalCreditIssued    float64                `json:"totalCreditIssued"`
+	TotalCreditCollected float64                `json:"totalCreditCollected"`
+	OpeningCash          float64                `json:"openingCash"`
+	NetBalance           float64                `json:"netBalance"`
+	CashBills            float64                `json:"cashBills"`
+	Coins200             float64                `json:"coins200"`
+	Coins100             float64                `json:"coins100"`
+	Coins500_1000        float64                `json:"coins500_1000"`
+	ClosedByDNI          string                 `json:"closedByDni"`
+	ClosedByName         string                 `json:"closedByName"`
+	PhysicalCash         float64                `json:"physicalCash"`
+	Difference           float64                `json:"difference"`
+	AuthorizedBy         string                 `json:"authorizedBy"`
+	Expenses             []models.Expense       `json:"expenses"`
+	CreditPayments       []models.CreditPayment `json:"creditPayments"`
+	CreditsIssued        []models.Sale          `json:"creditsIssued"` // NUEVO: Listado de fiados
+	ExpensesDetail       string                 `json:"expensesDetail"`
 }
 
 func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
-	activeShift, err := s.shiftRepo.GetActive()
+	activeShift, _ := s.shiftRepo.GetActive()
 	var startDate time.Time
-	var openingCash float64
 
-	if err == nil && activeShift != nil {
+	if activeShift != nil {
 		startDate = activeShift.StartTime
-		openingCash = activeShift.OpeningCash
 	} else {
 		lastClosure, _ := s.closureRepo.GetLast()
 		startDate = time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.UTC)
@@ -404,66 +526,127 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 		}
 	}
 
-	startStr := startDate.Format("2006-01-02")
-	endStr := time.Now().AddDate(0, 0, 1).Format("2006-01-02")
+	startStr := startDate.Format("2006-01-02 15:04:05")
+	endStr := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
 
-	sales, _ := s.saleRepo.GetByDateRange(startStr, endStr)
-	expenses, _ := s.expenseRepo.GetByDateRange(startStr, endStr)
-	returns, _ := s.returnRepo.GetByDateRange(startStr, endStr)
+	g, _ := errgroup.WithContext(context.Background())
+
+	var sales []models.Sale
+	var expenses []models.Expense
+	var returns []models.Return
+	var payments []models.CreditPayment
+
+	g.Go(func() error {
+		var err error
+		sales, err = s.saleRepo.GetByDateRange(startStr, endStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		expenses, err = s.expenseRepo.GetByDateRange(startStr, endStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		returns, err = s.returnRepo.GetByDateRange(startStr, endStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		payments, err = s.creditRepo.GetByDateRange(startDate, time.Now())
+		return err
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
 
 	var closure CashierClosure
 	closure.Date = time.Now()
 	closure.StartDate = startDate
 	closure.EndDate = time.Now()
+	closure.CreditsIssued = []models.Sale{}
 
+	// Agrupar fiados por cliente para el resumen
+	creditsIssuedMap := make(map[string]models.Sale)
 	for _, sale := range sales {
 		if !sale.SaleDate.Before(startDate) {
 			closure.SalesCount++
-			closure.TotalSales += sale.TotalAmount
-			closure.TotalCash += sale.CashAmount
-			closure.TotalTransfer += sale.TransferAmount
-			closure.TotalCreditIssued += sale.CreditAmount
+			netCashInSale := sale.CashAmount - sale.Change
+			if netCashInSale < 0 { netCashInSale = 0 }
+			cleanTransfer := sale.TransferAmount
+			if cleanTransfer < 0 { cleanTransfer = 0 }
+			cleanCredit := sale.CreditAmount
+			if cleanCredit < 0 { cleanCredit = 0 }
 
-			// Desglose por origen
+			closure.TotalSales += (netCashInSale + cleanTransfer + cleanCredit)
+			closure.TotalCash += netCashInSale
+			closure.TotalTransfer += cleanTransfer
+			closure.TotalCreditIssued += cleanCredit
+
+			if sale.CreditAmount > 0 {
+				if existing, ok := creditsIssuedMap[sale.ClientDNI]; ok {
+					existing.CreditAmount += sale.CreditAmount
+					existing.TotalAmount += sale.TotalAmount
+					creditsIssuedMap[sale.ClientDNI] = existing
+				} else {
+					creditsIssuedMap[sale.ClientDNI] = sale
+				}
+			}
+
 			if sale.TransferAmount > 0 {
-				switch sale.TransferSource {
-				case "NEQUI":
-					closure.TotalNequi += sale.TransferAmount
-				case "DAVIPLATA":
-					closure.TotalDaviplata += sale.TransferAmount
-				case "BANCOLOMBIA":
-					closure.TotalBancolombia += sale.TransferAmount
-				default:
-					closure.TotalOtherTransfer += sale.TransferAmount
+				switch strings.ToUpper(sale.TransferSource) {
+				case "NEQUI": closure.TotalNequi += sale.TransferAmount
+				case "DAVIPLATA": closure.TotalDaviplata += sale.TransferAmount
+				case "BANCOLOMBIA": closure.TotalBancolombia += sale.TransferAmount
+				case "TARJETA": closure.TotalCard += sale.TransferAmount
+				default: closure.TotalOtherTransfer += sale.TransferAmount
 				}
 			}
 		}
 	}
 
-	// Obtener y sumar abonos (pagos de deudas)
-	payments, _ := s.creditRepo.GetByDateRange(startDate, time.Now())
+	for _, s := range creditsIssuedMap {
+		closure.CreditsIssued = append(closure.CreditsIssued, s)
+	}
+
+	clientPaymentsMap := make(map[string]models.CreditPayment)
 	for _, p := range payments {
 		closure.TotalCash += p.AmountCash
 		closure.TotalTransfer += p.AmountTransfer
 		closure.TotalCreditCollected += p.TotalPaid
 
+		if existing, ok := clientPaymentsMap[p.ClientDNI]; ok {
+			existing.TotalPaid += p.TotalPaid
+			existing.AmountCash += p.AmountCash
+			existing.AmountTransfer += p.AmountTransfer
+			clientPaymentsMap[p.ClientDNI] = existing
+		} else {
+			clientPaymentsMap[p.ClientDNI] = p
+		}
+
 		if p.AmountTransfer > 0 {
-			switch p.TransferSource {
-			case "NEQUI":
-				closure.TotalNequi += p.AmountTransfer
-			case "DAVIPLATA":
-				closure.TotalDaviplata += p.AmountTransfer
-			case "BANCOLOMBIA":
-				closure.TotalBancolombia += p.AmountTransfer
-			default:
-				closure.TotalOtherTransfer += p.AmountTransfer
+			switch strings.ToUpper(p.TransferSource) {
+			case "NEQUI": closure.TotalNequi += p.AmountTransfer
+			case "DAVIPLATA": closure.TotalDaviplata += p.AmountTransfer
+			case "BANCOLOMBIA": closure.TotalBancolombia += p.AmountTransfer
+			case "TARJETA": closure.TotalCard += p.AmountTransfer
+			default: closure.TotalOtherTransfer += p.AmountTransfer
 			}
 		}
+	}
+
+	closure.CreditPayments = []models.CreditPayment{}
+	for _, cp := range clientPaymentsMap {
+		closure.CreditPayments = append(closure.CreditPayments, cp)
 	}
 
 	for _, ret := range returns {
 		if !ret.Date.Before(startDate) {
 			closure.TotalReturns += ret.TotalReturned
+			for _, detail := range ret.Details {
+				closure.ReturnsCount += detail.Quantity
+			}
 		}
 	}
 
@@ -474,11 +657,7 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 		}
 	}
 
-	// El NetBalance ahora NO incluye el OpeningCash (petición del usuario: "no debería sumarse")
-	// Es puramente operativo del turno
 	closure.NetBalance = (closure.TotalSales - closure.TotalCreditIssued) + closure.TotalCreditCollected - closure.TotalReturns - closure.TotalExpenses
-	closure.OpeningCash = openingCash
-
 	return &closure, nil
 }
 
@@ -498,10 +677,10 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 	// 2. Close the active shift
 	_ = s.shiftRepo.CloseActive()
 
-	// 3. Automatically open a new shift with the default base ($120,000)
+	// 3. Automatically open a new shift
 	newShift := &models.ActiveShift{
 		StartTime:   time.Now(),
-		OpeningCash: 120000,
+		OpeningCash: 0,
 		CashierDNI:  closureDTO.ClosedByDNI,
 		CashierName: closureDTO.ClosedByName,
 		Status:      "OPEN",
@@ -513,13 +692,13 @@ func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error)
 	return s.closureRepo.GetAll()
 }
 
-func (s *DashboardService) GetRankingReport(from, to string) ([]ProductRankingItem, error) {
+func (s *DashboardService) GetRankingReport(from, to string) ([]ports.ProductRankingItem, error) {
 	sales, err := s.saleRepo.GetByDateRange(from, to)
 	if err != nil {
 		return nil, err
 	}
 
-	rankingMap := make(map[string]*ProductRankingItem)
+	rankingMap := make(map[string]*ports.ProductRankingItem)
 	for _, sale := range sales {
 		for _, detail := range sale.SaleDetails {
 			if _, ok := rankingMap[detail.Barcode]; !ok {
@@ -527,7 +706,7 @@ func (s *DashboardService) GetRankingReport(from, to string) ([]ProductRankingIt
 				if detail.Product.ProductName != "" {
 					name = detail.Product.ProductName
 				}
-				rankingMap[detail.Barcode] = &ProductRankingItem{
+				rankingMap[detail.Barcode] = &ports.ProductRankingItem{
 					Barcode: detail.Barcode,
 					Name:    name,
 				}
@@ -537,7 +716,7 @@ func (s *DashboardService) GetRankingReport(from, to string) ([]ProductRankingIt
 		}
 	}
 
-	ranking := []ProductRankingItem{}
+	ranking := []ports.ProductRankingItem{}
 	for _, item := range rankingMap {
 		ranking = append(ranking, *item)
 	}
@@ -629,26 +808,26 @@ func (s *DashboardService) GetVoidsReport(from, to string) ([]VoidReportItem, er
 	}
 
 	report := []VoidReportItem{}
-	
+
 	// Add returns
 	for _, r := range returns {
 		report = append(report, VoidReportItem{
-			SaleID:    r.SaleID,
-			Date:      r.Date, // Effective return date
-			Total:     r.TotalReturned,
-			Employee:  r.EmployeeDNI,
-			VoidedAt:  r.Date,
+			SaleID:   r.SaleID,
+			Date:     r.Date, // Effective return date
+			Total:    r.TotalReturned,
+			Employee: r.EmployeeDNI,
+			VoidedAt: r.Date,
 		})
 	}
 
 	// Add deleted sales
 	for _, ds := range deletedSales {
 		report = append(report, VoidReportItem{
-			SaleID:    ds.SaleID,
-			Date:      ds.SaleDate,
-			Total:     ds.TotalAmount,
-			Employee:  ds.EmployeeDNI,
-			VoidedAt:  ds.DeletedAt.Time,
+			SaleID:   ds.SaleID,
+			Date:     ds.SaleDate,
+			Total:    ds.TotalAmount,
+			Employee: ds.EmployeeDNI,
+			VoidedAt: ds.DeletedAt.Time,
 		})
 	}
 
@@ -661,14 +840,34 @@ func (s *DashboardService) GetVoidsReport(from, to string) ([]VoidReportItem, er
 }
 
 func (s *DashboardService) GetPnLReport(from, to string) (*PnLReport, error) {
-	sales, err := s.saleRepo.GetByDateRange(from, to)
-	if err != nil {
-		return nil, err
-	}
+	start, _ := time.Parse("2006-01-02", from)
+	end, _ := time.Parse("2006-01-02", to)
+	endQuery := end.AddDate(0, 0, 1)
 
-	expenses, err := s.expenseRepo.GetByDateRange(from, to)
-	if err != nil {
-		expenses = []models.Expense{}
+	g, _ := errgroup.WithContext(context.Background())
+
+	var sales []models.Sale
+	var expenses []models.Expense
+	var payments []models.CreditPayment
+
+	g.Go(func() error {
+		var err error
+		sales, err = s.saleRepo.GetByDateRange(from, to)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		expenses, err = s.expenseRepo.GetByDateRange(from, to)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		payments, err = s.creditRepo.GetByDateRange(start, endQuery)
+		return err
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
 	}
 
 	var revenue float64
@@ -676,12 +875,8 @@ func (s *DashboardService) GetPnLReport(from, to string) (*PnLReport, error) {
 	for _, sale := range sales {
 		revenue += sale.TotalAmount
 		for _, detail := range sale.SaleDetails {
-			// Usar el CostPrice guardado en la venta para integridad histórica
-			// Si no existe (ventas antiguas), usar el PurchasePrice actual del producto
 			cost := detail.CostPrice
-			if cost == 0 {
-				cost = detail.Product.PurchasePrice
-			}
+			if cost == 0 { cost = detail.Product.PurchasePrice }
 			cogs += detail.Quantity * cost
 		}
 	}
@@ -691,23 +886,74 @@ func (s *DashboardService) GetPnLReport(from, to string) (*PnLReport, error) {
 		totalExpenses += e.Amount
 	}
 
+	for _, p := range payments {
+		revenue += p.TotalPaid
+	}
+
 	grossProfit := revenue - cogs
 	netProfit := grossProfit - totalExpenses
 	margin := 0.0
-	if revenue > 0 {
-		margin = (netProfit / revenue) * 100
-	}
+	if revenue > 0 { margin = (netProfit / revenue) * 100 }
 
 	return &PnLReport{
-		From:             from,
-		To:               to,
-		TotalRevenue:     revenue,
-		TotalCOGS:        cogs,
-		GrossProfit:      grossProfit,
-		TotalExpenses:    totalExpenses,
-		NetProfit:        netProfit,
-		MarginPercentage: margin,
+		From: from, To: to, TotalRevenue: revenue, TotalCOGS: cogs,
+		GrossProfit: grossProfit, TotalExpenses: totalExpenses,
+		NetProfit: netProfit, MarginPercentage: margin,
 	}, nil
+}
+
+type VaultAuditReport struct {
+	Date          time.Time `json:"date"`
+	SystemCash    float64   `json:"systemCash"`
+	ReportedCash  float64   `json:"reportedCash"`
+	Difference    float64   `json:"difference"`
+	VaultFund     float64   `json:"vaultFund"`
+	TotalPhysical float64   `json:"totalPhysical"`
+}
+
+func (s *DashboardService) GetVaultAudit() (*VaultAuditReport, error) {
+	// 1. Obtener datos de cajas en piso
+	// Priorizamos el turno activo para auditoría en tiempo real
+	activeShift, _ := s.shiftRepo.GetActive()
+	var systemCash, reportedCash float64
+
+	if activeShift != nil {
+		closure, _ := s.GetCashierClosure()
+		systemCash = closure.TotalCash - closure.TotalExpenses
+		reportedCash = 0 // Aún no reportado físicamente
+	} else {
+		// Si no hay turno, usamos el último cierre histórico
+		lastClosure, _ := s.closureRepo.GetLast()
+		if lastClosure != nil {
+			systemCash = lastClosure.TotalCash - lastClosure.TotalExpenses
+			reportedCash = lastClosure.PhysicalCash
+		}
+	}
+
+	// 2. Fondo de Bóveda (Fijo por ahora, o configurable en el futuro)
+	// Valor base de la caja fuerte según requerimiento
+	vaultFund := 2500000.0
+
+	return &VaultAuditReport{
+		Date:          time.Now(),
+		SystemCash:    systemCash,
+		ReportedCash:  reportedCash,
+		Difference:    reportedCash - systemCash,
+		VaultFund:     vaultFund,
+		TotalPhysical: reportedCash + vaultFund,
+	}, nil
+}
+
+func (s *DashboardService) GetGlobalDebt() (float64, error) {
+	clients, err := s.clientRepo.GetAll()
+	if err != nil {
+		return 0, err
+	}
+	totalDebt := 0.0
+	for _, c := range clients {
+		totalDebt += c.CurrentCredit
+	}
+	return totalDebt, nil
 }
 
 func (s *DashboardService) GetInventoryMovementsReport(from, to string) ([]StockMovementReportItem, error) {

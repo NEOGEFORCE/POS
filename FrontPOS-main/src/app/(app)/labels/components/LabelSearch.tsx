@@ -1,8 +1,8 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Input, Button } from "@heroui/react";
-import { Search, PlusCircle } from 'lucide-react';
+import { Input, Button, Card, CardBody } from "@heroui/react";
+import { Search, PlusCircle, ShoppingBag } from 'lucide-react';
 import { Product } from '@/lib/definitions';
 import { formatCurrency } from '@/lib/utils';
 
@@ -15,50 +15,63 @@ interface SearchProps {
 
 const LabelSearch = memo(({ filter, onFilterChange, filteredProducts, onAddToQueue }: SearchProps) => {
     return (
-        <div className="w-full md:w-1/3 flex flex-col gap-2">
-            <div className="bg-white dark:bg-zinc-900 p-4 border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col transition-colors">
-                <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-                    <Search size={12} /> Buscar Producto
-                </label>
-                <Input
-                    placeholder="NOMBRE O CÓDIGO..."
-                    value={filter} 
-                    onValueChange={onFilterChange}
-                    classNames={{ 
-                        inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10 rounded-xl shadow-none focus-within:border-emerald-500/50", 
-                        input: "font-black text-xs uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600" 
-                    }}
-                />
-            </div>
+        <div className="flex flex-col gap-1 w-full">
+            <Card className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-sm rounded-lg" radius="sm">
+                <CardBody className="p-3">
+                    <div className="flex items-center justify-between mb-2">
+                         <label className="text-[9px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-2 italic">
+                            <Search size={14} className="text-emerald-500" />
+                            Buscar Producto
+                        </label>
+                    </div>
+                    <Input
+                        placeholder="NOMBRE O CÓDIGO..."
+                        value={filter} 
+                        onValueChange={onFilterChange}
+                        variant="faded"
+                        classNames={{ 
+                            inputWrapper: "h-12 bg-gray-50 dark:bg-black/40 border-gray-200 dark:border-white/10 rounded-xl shadow-inner group-data-[focus=true]:border-emerald-500/50", 
+                            input: "font-black text-sm uppercase italic text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-tighter" 
+                        }}
+                    />
+                </CardBody>
+            </Card>
 
             {filter && (
-                <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm overflow-hidden flex flex-col transition-colors max-h-[400px] overflow-auto custom-scrollbar">
-                    {filteredProducts.map(p => (
-                        <div key={p.barcode} className="p-3 border-b border-gray-100 dark:border-white/5 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-white/5 transition-colors">
-                            <div className="flex flex-col min-w-0">
-                                <span className="text-xs font-black text-gray-900 dark:text-white uppercase italic truncate">
-                                    {p.productName}
-                                </span>
-                                <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest mt-0.5">
-                                    ${formatCurrency(p.salePrice)}
-                                </span>
-                            </div>
-                            <Button 
-                                isIconOnly 
-                                size="sm" 
-                                className="bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 min-w-8 rounded-lg" 
-                                onPress={() => onAddToQueue(p)}
+                <Card className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-xl rounded-lg overflow-hidden" radius="sm">
+                    <CardBody className="p-2 flex flex-col gap-1 max-h-[500px] overflow-auto custom-scrollbar">
+                        {filteredProducts.map(p => (
+                            <div 
+                                key={p.barcode} 
+                                onClick={() => onAddToQueue(p)}
+                                className="group p-3 rounded-xl border border-transparent hover:border-emerald-500/30 bg-gray-50/50 dark:bg-white/5 hover:bg-white dark:hover:bg-emerald-500/5 flex justify-between items-center transition-all cursor-pointer"
                             >
-                                <PlusCircle size={16} />
-                            </Button>
-                        </div>
-                    ))}
-                    {filteredProducts.length === 0 && (
-                        <div className="p-6 text-center text-[10px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-widest">
-                            No hay resultados
-                        </div>
-                    )}
-                </div>
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className="h-10 w-10 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 group-hover:scale-110 transition-transform">
+                                        <ShoppingBag size={18} />
+                                    </div>
+                                    <div className="flex flex-col min-w-0">
+                                        <span className="text-xs font-black text-gray-900 dark:text-white uppercase italic truncate tracking-tight">
+                                            {p.productName}
+                                        </span>
+                                        <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-black tracking-[0.2em] mt-0.5 uppercase">
+                                            ${formatCurrency(p.salePrice)} <span className="text-emerald-500/50 ml-1">#{p.barcode}</span>
+                                        </span>
+                                    </div>
+                                </div>
+                                <div className="bg-emerald-500 text-white h-8 w-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-lg shadow-emerald-500/40">
+                                    <PlusCircle size={18} />
+                                </div>
+                            </div>
+                        ))}
+                        {filteredProducts.length === 0 && (
+                            <div className="p-10 text-center flex flex-col items-center gap-2">
+                                <Search size={32} className="text-gray-200 dark:text-white/5" />
+                                <span className="text-[10px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest italic">No se encontraron productos</span>
+                            </div>
+                        )}
+                    </CardBody>
+                </Card>
             )}
         </div>
     );

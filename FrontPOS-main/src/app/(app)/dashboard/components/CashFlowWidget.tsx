@@ -13,7 +13,7 @@ export default function CashFlowWidget() {
   const progressRatio = (accountsPayable / accountsReceivable) * 100;
 
   return (
-    <Card className="bg-white/80 dark:bg-zinc-950/60 backdrop-blur-3xl rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-xl overflow-hidden group">
+    <Card className="bg-white/80 dark:bg-zinc-950/60 backdrop-blur-3xl rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-xl group h-fit">
       <CardBody className="p-8">
         <div className="flex items-center justify-between mb-8">
           <div className="flex items-center gap-4">
@@ -48,13 +48,14 @@ export default function CashFlowWidget() {
 
         <div className="space-y-4 mb-8">
           <div className="flex items-center justify-between">
-             <span className="text-[10px] font-black uppercase text-gray-400 dark:text-zinc-500 tracking-widest italic">Compromiso de Capital</span>
+             <span id="cashflow-capital-commitment-label" className="text-[10px] font-black uppercase text-gray-400 dark:text-zinc-500 tracking-widest italic">Compromiso de Capital</span>
              <span className="text-[10px] font-black text-emerald-500 italic">{progressRatio.toFixed(1)}%</span>
           </div>
           <Progress 
             value={progressRatio} 
             color="success" 
             className="h-2"
+            aria-labelledby="cashflow-capital-commitment-label"
             classNames={{
               indicator: "bg-gradient-to-r from-emerald-500 to-teal-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
             }}

@@ -46,3 +46,11 @@ func (r *PostgresPurchaseOrderRepository) GetPendingByDeliveryDate(date time.Tim
 func (r *PostgresPurchaseOrderRepository) UpdateStatus(id uint, status models.PurchaseOrderStatus) error {
 	return r.db.Model(&models.PurchaseOrder{}).Where("id = ?", id).Update("status", status).Error
 }
+
+func (r *PostgresPurchaseOrderRepository) GetBySupplierAndStatus(supplierID uint, status models.PurchaseOrderStatus) ([]models.PurchaseOrder, error) {
+	var orders []models.PurchaseOrder
+	err := r.db.Preload("Supplier").Preload("OrderItems.Product").
+		Where("\"supplierId\" = ? AND status = ?", supplierID, status).
+		Find(&orders).Error
+	return orders, err
+}

@@ -6,6 +6,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -28,9 +29,15 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 	ret.Reason = strings.ToUpper(ret.Reason)
 	ret.ReturnType = strings.ToUpper(ret.ReturnType)
 	dni, _ := c.Get("dni")
-	ret.EmployeeDNI = dni.(string)
+	name, _ := c.Get("name")
+	dniStr := dni.(string)
+	nameStr := ""
+	if name != nil {
+		nameStr = name.(string)
+	}
+	ret.EmployeeDNI = dniStr
 
-	if err := h.service.CreateReturn(&ret); err != nil {
+	if err := h.service.CreateReturn(&ret, dniStr, nameStr); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar devolución", err)
 		return
 	}

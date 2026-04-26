@@ -71,10 +71,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!response.ok) {
         const text = await response.text();
-        let errorMsg = 'Login failed';
+        let errorMsg = 'Error de inicio de sesión';
         try {
             const errorData = JSON.parse(text);
-            errorMsg = errorData.error || errorMsg;
+            if (errorData.error && typeof errorData.error === 'object') {
+              errorMsg = errorData.error.message || errorMsg;
+            } else {
+              errorMsg = errorData.error || errorMsg;
+            }
         } catch (e) {}
         throw new Error(errorMsg);
     }

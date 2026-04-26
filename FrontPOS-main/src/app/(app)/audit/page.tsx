@@ -57,51 +57,56 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="p-4 sm:p-6 max-w-[1600px] mx-auto space-y-6">
-      {/* HEADER */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold flex items-center gap-3 tracking-tight">
-            <ShieldCheck size={32} className="text-primary" />
-            Auditoría del Sistema
-          </h1>
-          <p className="text-default-500 text-sm mt-1">
-            Monitoreo en tiempo real de acciones administrativas y eventos de seguridad.
-          </p>
-        </div>
-        <div className="flex gap-2 w-full sm:w-auto">
-          <Button 
-            variant="flat" 
-            onPress={loadData}
-            isLoading={loading}
-            startContent={!loading && <RefreshCw size={18} />}
-          >
-            Refrescar
-          </Button>
-          <Button 
-            color="primary"
-            variant="shadow"
-            startContent={<Download size={18} />}
-            onPress={() => {
-              toast({
-                title: "Reporte de Auditoría",
-                description: "Exportación a PDF en desarrollo...",
-                variant: "default"
-              });
-            }}
-          >
-            Exportar Logs
-          </Button>
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+      
+      {/* HEADER SECTION: FIXED (TOP) */}
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="bg-emerald-500 h-10 w-10 rounded-xl text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3">
+              <ShieldCheck size={20} />
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-[13px] font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
+                Seguridad & <span className="text-emerald-500">Auditoría</span>
+              </h1>
+              <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic mt-1 flex items-center gap-1">
+                <RefreshCw size={10} className="text-emerald-500" /> Monitoreo V5.0
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button 
+                isIconOnly
+                onPress={loadData}
+                isLoading={loading}
+                className="h-10 w-10 min-w-0 bg-white/80 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm active:scale-90"
+            >
+                {!loading && <RefreshCw size={16} />}
+            </Button>
+            <Button 
+                onPress={() => {
+                    toast({
+                      title: "Reporte de Auditoría",
+                      description: "Exportación a PDF en desarrollo...",
+                      variant: "default"
+                    });
+                }} 
+                className="h-10 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+            >
+                <Download size={14} className="mr-1.5" /> EXPORTAR
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-        {/* STATS */}
+      {/* CONTENT SECTION (SCROLLABLE) */}
+      <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-gray-100/50 dark:bg-zinc-950/20 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <AuditStats logs={logs} />
-
-        {/* TABLE */}
         <AuditTable logs={logs} />
       </div>
     </div>
+
   );
 }

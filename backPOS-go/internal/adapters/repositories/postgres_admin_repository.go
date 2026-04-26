@@ -50,6 +50,7 @@ func (r *PostgresAdminRepository) Update(dni string, employee *models.Employee) 
 		"email":      employee.Email,
 		"role":       employee.Role,
 		"is_active":  employee.IsActive,
+		"last_login": employee.LastLogin,
 		"deleted_at": nil,
 	}
 	if employee.Password != "" {
@@ -85,4 +86,14 @@ func (r *PostgresAdminRepository) GetMissingItems() ([]models.MissingItem, error
 
 func (r *PostgresAdminRepository) UpdateMissingItemStatus(id uint, status string) error {
 	return r.db.Model(&models.MissingItem{}).Where("id = ?", id).Update("status", status).Error
+}
+
+func (r *PostgresAdminRepository) GetRecentPendingMissingItems(limit int) ([]models.MissingItem, error) {
+	var items []models.MissingItem
+	err := r.db.Preload("Reporter").
+		Where("UPPER(status) = ?", "PENDIENTE").
+		Order("created_at desc").
+		Limit(limit).
+		Find(&items).Error
+	return items, err
 }

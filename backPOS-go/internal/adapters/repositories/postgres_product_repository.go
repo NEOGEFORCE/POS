@@ -1,8 +1,12 @@
 package repositories
 
 import (
+	"fmt"
+	"time"
+
 	"backPOS-go/internal/core/domain/models"
-	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/cache"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -15,19 +19,59 @@ func NewPostgresProductRepository(db *gorm.DB) *PostgresProductRepository {
 	return &PostgresProductRepository{db: db}
 }
 
+// Save persiste un producto y sus asociaciones de forma separada
 func (r *PostgresProductRepository) Save(product *models.Product) error {
-	return r.db.Create(product).Error
+	suppliers := product.Suppliers
+	product.Suppliers = nil
+
+	if err := r.db.Omit("Suppliers").Save(product).Error; err != nil {
+		return fmt.Errorf("error guardando producto: %w", err)
+	}
+
+	// INVALIDACIÓN L1: El catálogo maestro ha cambiado
+	cache.InvalidateCache(cache.CacheKeyProducts)
+	cache.InvalidateCache(cache.CacheKeyProductCount)
+
+	if len(suppliers) > 0 {
+		if err := r.db.Model(product).Association("Suppliers").Replace(suppliers); err != nil {
+			return fmt.Errorf("error asociando proveedores: %w", err)
+		}
+		product.Suppliers = suppliers
+	}
+
+	return nil
 }
 
 func (r *PostgresProductRepository) GetByBarcode(barcode string) (*models.Product, error) {
 	var product models.Product
-	err := r.db.Preload("Category").Where("barcode = ?", barcode).First(&product).Error
+	err := r.db.Preload("Category").Preload("Suppliers").Where("barcode = ?", barcode).First(&product).Error
+	return &product, err
+}
+
+func (r *PostgresProductRepository) GetByBarcodeWithPreloads(barcode string, preloads ...string) (*models.Product, error) {
+	var product models.Product
+	query := r.db.Model(&models.Product{})
+	for _, p := range preloads {
+		query = query.Preload(p)
+	}
+	err := query.Where("barcode = ?", barcode).First(&product).Error
 	return &product, err
 }
 
 func (r *PostgresProductRepository) GetAll() ([]models.Product, error) {
+	// CACHÉ L1: Intentar recuperar de RAM primero
+	if cached, found := cache.CacheManager.Get(cache.CacheKeyProducts); found {
+		return cached.([]models.Product), nil
+	}
+
 	var products []models.Product
-	err := r.db.Preload("Category").Find(&products).Error
+	err := r.db.Preload("Category").Order("\"productName\" ASC").Find(&products).Error
+
+	// PERSISTENCIA EN RAM: Guardar si la consulta fue exitosa
+	if err == nil {
+		cache.CacheManager.Set(cache.CacheKeyProducts, products, 24*time.Hour)
+	}
+
 	return products, err
 }
 
@@ -41,10 +85,11 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	var products []models.Product
 	var total int64
 
-	query := r.db.Model(&models.Product{})
+	query := r.db.Model(&models.Product{}).Preload("Category")
 	if search != "" {
 		searchTerm := "%" + search + "%"
-		query = query.Where("barcode ILIKE ? OR \"productName\" ILIKE ?", searchTerm, searchTerm)
+		query = query.Joins("LEFT JOIN categories ON categories.id = products.\"categoryId\"").
+			Where("products.barcode ILIKE ? OR products.\"productName\" ILIKE ? OR categories.name ILIKE ?", searchTerm, searchTerm, searchTerm)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -53,6 +98,8 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 
 	offset := (page - 1) * pageSize
 	err := query.Preload("Category").
+		Preload("BaseProduct").
+		Preload("Suppliers").
 		Order("\"productName\" ASC").
 		Limit(pageSize).
 		Offset(offset).
@@ -62,80 +109,71 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 }
 
 func (r *PostgresProductRepository) Update(barcode string, product *models.Product) error {
-	return r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Updates(product).Error
+	suppliers := product.Suppliers
+	product.Suppliers = nil
+
+	if err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).
+		Omit("Suppliers").Updates(product).Error; err != nil {
+		return fmt.Errorf("error actualizando producto: %w", err)
+	}
+
+	if len(suppliers) > 0 {
+		var existing models.Product
+		if err := r.db.Where("barcode = ?", barcode).First(&existing).Error; err != nil {
+			return fmt.Errorf("error obteniendo producto para asociar: %w", err)
+		}
+		if err := r.db.Model(&existing).Association("Suppliers").Replace(suppliers); err != nil {
+			return fmt.Errorf("error actualizando proveedores: %w", err)
+		}
+		product.Suppliers = suppliers
+	}
+
+	// INVALIDACIÓN L1: Reflejar cambios en el catálogo maestro
+	cache.InvalidateCache(cache.CacheKeyProducts)
+	cache.InvalidateCache(cache.CacheKeyProductCount)
+
+	return nil
 }
 
 func (r *PostgresProductRepository) Delete(barcode string) error {
-	return r.db.Where("barcode = ?", barcode).Delete(&models.Product{}).Error
-}
-
-func (r *PostgresProductRepository) UpdateQuantity(barcode string, newQuantity float64) error {
-	return r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQuantity).Error
-}
-
-func (r *PostgresProductRepository) BatchUpdateQuantities(updates map[string]float64) error {
-	if len(updates) == 0 {
-		return nil
+	err := r.db.Where("barcode = ?", barcode).Delete(&models.Product{}).Error
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyProducts)
+		cache.InvalidateCache(cache.CacheKeyProductCount)
 	}
-
-	tx := r.db.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-
-	for barcode, newQty := range updates {
-		if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQty).Error; err != nil {
-			tx.Rollback()
-			return err
-		}
-	}
-
-	return tx.Commit().Error
+	return err
 }
 
 func (r *PostgresProductRepository) Count() (int64, error) {
+	if cached, found := cache.CacheManager.Get(cache.CacheKeyProductCount); found {
+		return cached.(int64), nil
+	}
 	var count int64
 	err := r.db.Model(&models.Product{}).Count(&count).Error
+	if err == nil {
+		cache.CacheManager.Set(cache.CacheKeyProductCount, count, 1*time.Hour)
+	}
 	return count, err
 }
 
-func (r *PostgresProductRepository) GetInventoryStats(from, to string) ([]ports.InventoryStat, error) {
-	var stats []ports.InventoryStat
-
-	query := r.db.Table("products").
-		Select("products.barcode, products.\"productName\", products.\"categoryId\", categories.name as category_name, products.\"salePrice\", products.\"purchasePrice\", products.quantity as stock, COALESCE(SUM(sale_details.quantity), 0) as units_sold, COALESCE(SUM(sale_details.subtotal), 0) as total_revenue").
-		Joins("left join categories on categories.id = products.\"categoryId\"").
-		Joins("left join sale_details on sale_details.barcode = products.barcode").
-		Joins("left join sales on sales.\"saleId\" = sale_details.\"saleId\"")
-
-	if from != "" {
-		query = query.Where("sales.\"saleDate\" >= ?", from)
+func (r *PostgresProductRepository) GetActiveCount() (int64, error) {
+	// Reusamos la lógica de caché para conteos activos
+	cacheKey := cache.CacheKeyProductCount + "_active"
+	if cached, found := cache.CacheManager.Get(cacheKey); found {
+		return cached.(int64), nil
 	}
-	if to != "" {
-		query = query.Where("sales.\"saleDate\" <= ?", to)
+	var count int64
+	err := r.db.Model(&models.Product{}).Where("quantity > 0").Count(&count).Error
+	if err == nil {
+		cache.CacheManager.Set(cacheKey, count, 1*time.Hour)
 	}
-
-	err := query.Group("products.barcode, products.\"productName\", products.\"categoryId\", categories.name, products.\"salePrice\", products.\"purchasePrice\", products.quantity").
-		Scan(&stats).Error
-
-	if err != nil {
-		return nil, err
-	}
-
-	// Post-procesamiento para margen y promedio (igual que en JS)
-	for i, s := range stats {
-		stats[i].TotalCost = float64(s.UnitsSold) * s.PurchasePrice
-		stats[i].GrossMargin = s.TotalRevenue - stats[i].TotalCost
-		// El cálculo de avgSoldPerDay se hará en el servicio (necesita lógica de días)
-	}
-
-	return stats, nil
+	return count, err
 }
 
 func (r *PostgresProductRepository) UpdateSupplierPrice(barcode string, supplierID uint, price float64) error {
 	return r.db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "productBarcode"}, {Name: "supplierId"}},
-		DoUpdates: clause.AssignmentColumns([]string{"purchasePrice", "updatedAt"}),
+		Columns:   []clause.Column{{Name: "product_barcode"}, {Name: "supplier_id"}},
+		DoUpdates: clause.AssignmentColumns([]string{"purchasePrice"}),
 	}).Create(&models.ProductSupplier{
 		ProductID:     barcode,
 		SupplierID:    supplierID,
@@ -151,8 +189,13 @@ func (r *PostgresProductRepository) GetSupplierPrices(barcode string) ([]models.
 
 func (r *PostgresProductRepository) GetBySupplier(supplierID uint) ([]models.Product, error) {
 	var products []models.Product
-	err := r.db.Preload("Category").
-		Where("\"supplierId\" = ?", supplierID).
-		Find(&products).Error
+	err := r.db.Where(
+		`products.barcode IN (
+			SELECT "productBarcode" FROM product_suppliers WHERE "supplierId" = ?
+			UNION
+			SELECT barcode FROM products WHERE "supplierId" = ?
+		)`,
+		supplierID, supplierID,
+	).Find(&products).Error
 	return products, err
 }

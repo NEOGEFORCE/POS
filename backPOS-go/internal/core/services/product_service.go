@@ -1,10 +1,11 @@
 package services
 
 import (
-	"fmt"
-	"time"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"fmt"
+	"math"
+	"time"
 )
 
 type ProductService struct {
@@ -36,6 +37,10 @@ func (s *ProductService) CreateProduct(product *models.Product) error {
 
 func (s *ProductService) GetProduct(barcode string) (*models.Product, error) {
 	return s.repo.GetByBarcode(barcode)
+}
+
+func (s *ProductService) GetProductWithPreloads(barcode string, preloads ...string) (*models.Product, error) {
+	return s.repo.GetByBarcodeWithPreloads(barcode, preloads...)
 }
 
 func (s *ProductService) GetAllProducts() ([]models.Product, error) {
@@ -70,19 +75,67 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 
 	// 2. Actualizar campos básicos
 	existing.ProductName = updatedProduct.ProductName
-	existing.Quantity = updatedProduct.Quantity
 	existing.IsWeighted = updatedProduct.IsWeighted
 	existing.CategoryID = updatedProduct.CategoryID
+	// Limpiar asociaciones para que GORM no sobreescriba foreign keys con objetos preloaded
+	existing.Category = models.Category{}
+	existing.Supplier = models.Supplier{}
+	existing.UpdatedBy = models.Employee{}
+	existing.CreatedBy = models.Employee{}
 	existing.Iva = updatedProduct.Iva
 	existing.Icui = updatedProduct.Icui
 	existing.Ibua = updatedProduct.Ibua
 	existing.MarginPercentage = updatedProduct.MarginPercentage
 	existing.ImageUrl = updatedProduct.ImageUrl
-	if updatedProduct.SupplierID != nil {
+	existing.MinStock = updatedProduct.MinStock
+	existing.IsActive = updatedProduct.IsActive
+	if updatedProduct.UpdatedByDNI != "" {
+		existing.UpdatedByDNI = updatedProduct.UpdatedByDNI
+		existing.UpdatedByName = updatedProduct.UpdatedByName
+	}
+	if updatedProduct.SupplierID != nil && *updatedProduct.SupplierID > 0 {
 		existing.SupplierID = updatedProduct.SupplierID
+	} else if updatedProduct.SupplierID != nil && *updatedProduct.SupplierID == 0 {
+		existing.SupplierID = nil
 	}
 
-	// 3. Lógica de Precios: PVP se calcula siempre sobre el PurchasePrice (maxCost) + Margen
+	if updatedProduct.CategoryID == 0 {
+		existing.CategoryID = 0 // Wait, CategoryID is uint, not pointer?
+	}
+
+	// Lógica de Empaques (Sincronización con Producto Base)
+	existing.IsPack = updatedProduct.IsPack
+	existing.PackMultiplier = updatedProduct.PackMultiplier
+	if updatedProduct.BaseProductBarcode != nil && *updatedProduct.BaseProductBarcode != "" {
+		existing.BaseProductBarcode = updatedProduct.BaseProductBarcode
+
+		// Si el stock ha cambiado en esta edición, debemos impactar al producto base
+		if updatedProduct.Quantity != existing.Quantity && existing.PackMultiplier > 0 {
+			baseProduct, err := s.repo.GetByBarcode(*existing.BaseProductBarcode)
+			if err == nil {
+				// Calcular nueva cantidad base: cantidad_pack * multiplicador
+				baseProduct.Quantity = updatedProduct.Quantity * float64(existing.PackMultiplier)
+				_ = s.repo.Update(baseProduct.Barcode, baseProduct)
+
+				// Log del ajuste en el base
+				baseMovement := &models.StockMovement{
+					Date:         time.Now(),
+					Barcode:      baseProduct.Barcode,
+					Quantity:     0, // Es un ajuste absoluto en este caso
+					Type:         "ADJUSTMENT_PACK",
+					Reason:       "PACK_UPDATE_SYNC",
+					ReferenceID:  fmt.Sprintf("SYNC-%d", time.Now().Unix()),
+					EmployeeDNI:  existing.UpdatedByDNI,
+					EmployeeName: existing.UpdatedByName,
+				}
+				_ = s.movementRepo.Save(baseMovement)
+			}
+		}
+	} else {
+		existing.BaseProductBarcode = nil // Aseguramos NULL en la DB
+	}
+	existing.Quantity = updatedProduct.Quantity
+	// 3. Lógica de Precios:
 	if existing.MarginPercentage > 0 && existing.PurchasePrice > 0 {
 		suggested := existing.PurchasePrice * (1 + existing.MarginPercentage/100)
 		existing.SalePrice = applyRounding(suggested)
@@ -93,8 +146,31 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		}
 	}
 
+	// 4. Sincronizar Proveedores (Many-to-Many)
+	if len(updatedProduct.Suppliers) > 0 {
+		var ids []uint
+		for _, s := range updatedProduct.Suppliers {
+			if s.ID > 0 {
+				ids = append(ids, s.ID)
+			}
+		}
+		if len(ids) > 0 {
+			_ = s.repo.SyncSuppliers(barcode, ids)
+		}
+	}
+
 	// Usamos Save en lugar de Update para asegurar que GORM maneje correctamente el objeto completo
 	return s.repo.Save(existing)
+}
+
+func (s *ProductService) UpdateProductSuppliers(barcode string, suppliers []models.Supplier) error {
+	var ids []uint
+	for _, sup := range suppliers {
+		if sup.ID > 0 {
+			ids = append(ids, sup.ID)
+		}
+	}
+	return s.repo.SyncSuppliers(barcode, ids)
 }
 
 func (s *ProductService) DeleteProduct(barcode string) error {
@@ -107,7 +183,42 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		return err
 	}
 
-	product.Quantity += addedQuantity
+	// === LÓGICA DE SINCRONIZACIÓN DE PACKS ===
+	// Si es un pack con producto base válido, el inventario real vive en el base
+	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
+		baseProduct, err := s.repo.GetByBarcode(*product.BaseProductBarcode)
+		if err != nil {
+			return fmt.Errorf("error obteniendo producto base (barcode=%s): %w", *product.BaseProductBarcode, err)
+		}
+
+		// 1. Calcular cantidad expandida y sumar al base
+		expandedQuantity := addedQuantity * float64(product.PackMultiplier)
+		baseProduct.Quantity += expandedQuantity
+
+		// 2. Guardar base product
+		if err := s.repo.Update(baseProduct.Barcode, baseProduct); err != nil {
+			return fmt.Errorf("error actualizando producto base: %w", err)
+		}
+
+		// 3. Sincronizar el stock del pack actual
+		product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
+
+		// Log en el Kárdex del Base
+		baseMovement := &models.StockMovement{
+			Date:         time.Now(),
+			Barcode:      baseProduct.Barcode,
+			Quantity:     expandedQuantity,
+			Type:         "IN",
+			Reason:       "PACK_RECEPTION",
+			ReferenceID:  fmt.Sprintf("PACK-%d", time.Now().Unix()),
+			EmployeeDNI:  product.UpdatedByDNI,
+			EmployeeName: product.UpdatedByName,
+		}
+		_ = s.movementRepo.Save(baseMovement)
+	} else {
+		// Comportamiento normal
+		product.Quantity += addedQuantity
+	}
 
 	// El costo real de esta entrada es base + impuestos
 	entryTotalCost := newPurchasePrice + iva + icui + ibua
@@ -132,7 +243,7 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		} else {
 			product.PurchasePrice = entryTotalCost
 		}
-		
+
 		// Guardar los últimos impuestos aplicados como referencia
 		product.Iva = iva
 		product.Icui = icui
@@ -176,16 +287,70 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 	return nil
 }
 
-func (s *ProductService) AdjustStock(barcode string, amount float64) error {
+func (s *ProductService) AdjustStock(barcode string, amount float64, employeeDNI string, employeeName string) error {
 	product, err := s.repo.GetByBarcode(barcode)
 	if err != nil {
 		return err
 	}
-	newQuantity := product.Quantity + amount
-	if newQuantity < 0 {
-		newQuantity = 0
+	movementType := "ADJUSTMENT_UP"
+	if amount < 0 {
+		movementType = "ADJUSTMENT_DOWN"
 	}
-	return s.repo.UpdateQuantity(barcode, newQuantity)
+
+	// Lógica de Packs (Ajuste Manual)
+	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
+		baseProduct, err := s.repo.GetByBarcode(*product.BaseProductBarcode)
+		if err == nil {
+			// 1. Ajustar el producto base (multiplicando el ajuste)
+			baseAdjustment := amount * float64(product.PackMultiplier)
+			baseProduct.Quantity += baseAdjustment
+			if baseProduct.Quantity < 0 {
+				baseProduct.Quantity = 0
+			}
+			_ = s.repo.Update(baseProduct.Barcode, baseProduct)
+
+			// 2. Recalcular el stock del pack
+			product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
+			_ = s.repo.UpdateQuantity(barcode, product.Quantity)
+
+			// Log en el base
+			baseMovement := &models.StockMovement{
+				Date:         time.Now(),
+				Barcode:      baseProduct.Barcode,
+				Quantity:     baseAdjustment,
+				Type:         movementType,
+				Reason:       "PACK_ADJUSTMENT_SYNC",
+				ReferenceID:  fmt.Sprintf("PADJ-%d", time.Now().Unix()),
+				EmployeeDNI:  employeeDNI,
+				EmployeeName: employeeName,
+			}
+			_ = s.movementRepo.Save(baseMovement)
+		}
+	} else {
+		// Comportamiento normal
+		product.Quantity += amount
+		if product.Quantity < 0 {
+			product.Quantity = 0
+		}
+		if err := s.repo.UpdateQuantity(barcode, product.Quantity); err != nil {
+			return err
+		}
+	}
+
+
+	movement := &models.StockMovement{
+		Date:         time.Now(),
+		Barcode:      barcode,
+		Quantity:     amount,
+		Type:         movementType,
+		Reason:       "MANUAL_ADJUSTMENT",
+		ReferenceID:  fmt.Sprintf("ADJ-%d", time.Now().Unix()),
+		EmployeeDNI:  employeeDNI,
+		EmployeeName: employeeName,
+	}
+	_ = s.movementRepo.Save(movement)
+
+	return nil
 }
 
 func (s *ProductService) FixAllProductPrices() error {
@@ -210,22 +375,14 @@ func (s *ProductService) FixAllProductPrices() error {
 	return nil
 }
 
-type ReceiveEntry struct {
-	Barcode          string  `json:"barcode"`
-	AddedQuantity    float64 `json:"addedQuantity"`
-	NewPurchasePrice float64 `json:"newPurchasePrice"`
-	NewSalePrice     float64 `json:"newSalePrice"`
-	SupplierID       *uint   `json:"supplierId"`
-	Iva              float64 `json:"iva"`
-	Icui             float64 `json:"icui"`
-	Ibua             float64 `json:"ibua"`
+func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint) error {
+	return s.repo.BulkReceive(entries, orderID)
 }
 
-func (s *ProductService) BulkReceiveStock(entries []ReceiveEntry) error {
-	for _, entry := range entries {
-		if err := s.ReceiveStock(entry.Barcode, entry.AddedQuantity, entry.NewPurchasePrice, entry.NewSalePrice, entry.SupplierID, entry.Iva, entry.Icui, entry.Ibua); err != nil {
-			return err
-		}
-	}
-	return nil
+func (s *ProductService) GetSavingsOpportunities() ([]ports.SavingsOpportunity, error) {
+	return s.repo.GetSavingsOpportunities()
+}
+
+func (s *ProductService) GetProductPriceComparison(barcode string) ([]models.ProductSupplier, error) {
+	return s.repo.GetSupplierPrices(barcode)
 }

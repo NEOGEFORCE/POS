@@ -115,10 +115,14 @@ func (h *ClientHandler) PayCredit(c *gin.Context) {
 	}
 	payment.EmployeeDNI = dniStr
 
-	if err := h.service.PayCredit(&payment); err != nil {
+	updatedClient, err := h.service.PayCredit(&payment)
+	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar pago de crédito", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Abono registrado correctamente", "clientDni": payment.ClientDNI})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Abono registrado correctamente",
+		"client":  updatedClient,
+	})
 }

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -11,11 +12,13 @@ import (
 )
 
 type SaleHandler struct {
-	service *services.SaleService
+	service      *services.SaleService
+	auditService *services.AuditService
+	sseService   *services.SSEService
 }
 
-func NewSaleHandler(s *services.SaleService) *SaleHandler {
-	return &SaleHandler{service: s}
+func NewSaleHandler(s *services.SaleService, a *services.AuditService, sse *services.SSEService) *SaleHandler {
+	return &SaleHandler{service: s, auditService: a, sseService: sse}
 }
 
 func (h *SaleHandler) Create(c *gin.Context) {
@@ -43,6 +46,10 @@ func (h *SaleHandler) Create(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar venta", err)
 		return
 	}
+
+	// ULTRA-INSTINTO: Broadcast SSE para actualización en tiempo real del Dashboard
+	go h.sseService.BroadcastNewSale(sale)
+
 	c.JSON(http.StatusCreated, sale)
 }
 
@@ -95,10 +102,26 @@ func (h *SaleHandler) GetByID(c *gin.Context) {
 func (h *SaleHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.ParseUint(idStr, 10, 32)
+	
+	// Obtener datos de la venta antes de borrar
+	sale, _ := h.service.GetSale(uint(id))
+
 	if err := h.service.DeleteSale(uint(id)); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar venta", err)
 		return
 	}
+
+	// Auditoría de Anulación de Venta (MUY CRÍTICO)
+	dni, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	details := fmt.Sprintf("Venta #%d eliminada/anulada", id)
+	human := fmt.Sprintf("Se eliminó/anuló permanentemente la venta #%d", id)
+	if sale != nil {
+		human = fmt.Sprintf("Se eliminó/anuló la venta #%d por valor de $%s (Cliente: %s)", id, fmt.Sprintf("%.2f", sale.TotalAmount), sale.ClientDNI)
+	}
+
+	h.auditService.Log(dni.(string), name.(string), "VOID_SALE", "SALES", details, human, "{}", c.ClientIP(), c.Request.UserAgent(), true)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Venta eliminada correctamente"})
 }
 
@@ -114,5 +137,14 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar pago", err)
 		return
 	}
+
+	// Auditoría de Cambio de Pago
+	dni, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(dni.(string), name.(string), "UPDATE_PAYMENT", "SALES", 
+		fmt.Sprintf("Actualizado pago venta #%d", id),
+		fmt.Sprintf("Se modificó la información de pago para la venta #%d", id),
+		"{}", c.ClientIP(), c.Request.UserAgent(), true)
+
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})
 }

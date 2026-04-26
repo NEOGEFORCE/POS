@@ -19,7 +19,7 @@ func (r *PostgresExpenseRepository) Save(expense *models.Expense) error {
 
 func (r *PostgresExpenseRepository) GetAll() ([]models.Expense, error) {
 	expenses := []models.Expense{}
-	err := r.db.Find(&expenses).Error
+	err := r.db.Preload("Creator").Order("date DESC").Limit(100).Find(&expenses).Error
 	return expenses, err
 }
 
@@ -32,7 +32,7 @@ func (r *PostgresExpenseRepository) GetByDateRange(from, to string) ([]models.Ex
 	if to != "" {
 		query = query.Where("date <= ?", to)
 	}
-	err := query.Find(&expenses).Error
+	err := query.Order("date DESC").Limit(100).Find(&expenses).Error
 	return expenses, err
 }
 

@@ -7,14 +7,14 @@ import dynamic from 'next/dynamic';
 import Cookies from 'js-cookie';
 import { extractApiError, apiFetch } from '@/lib/api-error';
 import { 
-  Users, Search, PlusCircle 
+  Users, Search, PlusCircle, RefreshCw
 } from 'lucide-react';
 import { Input, Button, Spinner } from "@heroui/react";
 import { User } from '@/lib/definitions';
 
 const UserStats = dynamic(() => import('./components/UserStats'), { ssr: false });
 const UserTable = dynamic(() => import('./components/UserTable'), { ssr: false });
-import { UserFormModal, DeleteUserModal, ResetPasswordModal } from './components/UserModals';
+import { UserModals, DeleteUserModal, ResetPasswordModal } from './components/UserModals';
 
 async function fetchUsers(token: string): Promise<User[]> {
   return await apiFetch('/admin/users', {
@@ -47,47 +47,75 @@ async function deleteUser(dni: string, token: string) {
 }
 
 async function resetPassword(dni: string, userData: { password?: string }, token: string) {
-  return await apiFetch(`/admin/reset-password/${dni}`, {
-    method: 'POST',
+  return await apiFetch(`/admin/force-reset-password/${dni}`, {
+    method: 'PATCH',
     body: JSON.stringify(userData),
     fallbackError: 'FALLO AL RESETEAR CONTRASEÑA'
   }, token);
 }
 
-// COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO
-const UserHeader = memo(({ searchInput, onSearch, onAdd }: { searchInput: string, onSearch: (v: string) => void, onAdd: () => void }) => (
-  <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/70 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 rounded-[2.5rem] shrink-0 shadow-2xl shadow-emerald-500/5 transition-all mb-4">
-    <div className="flex items-center gap-4">
-      <div className="h-12 w-12 rounded-2xl bg-emerald-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 shrink-0 transform -rotate-3 transition-transform hover:rotate-0">
-        <Users size={24} />
-      </div>
-      <div className="flex flex-col">
-        <h1 className="text-lg font-black uppercase tracking-tighter leading-none italic">GESTIÓN DE <span className="text-emerald-500">PERSONAL</span></h1>
-        <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.3em] mt-2 not-italic opacity-80">Arquitectura de Accesos POS V4.0</p>
-      </div>
-    </div>
+async function lookupUser(dni: string, token: string): Promise<User | null> {
+  try {
+    return await apiFetch(`/admin/user/${dni}`, {
+      method: 'GET',
+      fallbackError: 'USUARIO NO ENCONTRADO'
+    }, token);
+  } catch (err) {
+    return null;
+  }
+}
 
-    <div className="flex items-center justify-between md:justify-end gap-4 w-full md:w-auto mt-3 md:mt-0">
-      <Input
-        size="sm"
-        placeholder="FILTRAR POR NOMBRE O DNI..."
-        value={searchInput} 
-        onValueChange={onSearch}
-        classNames={{
-          inputWrapper: "h-14 px-8 rounded-2xl bg-white/50 dark:bg-black/20 border-2 border-transparent focus-within:!border-emerald-500/30 transition-all flex-1 md:w-96 shadow-inner",
-          input: "font-black text-sm uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-[0.05em]"
-        }}
-        startContent={<Search size={20} className="text-emerald-500 mr-2" />}
-      />
-      <Button
-        size="sm"
-        onPress={onAdd}
-        className="h-14 bg-emerald-500 text-white font-black uppercase text-[10px] px-8 rounded-2xl shadow-xl shadow-emerald-500/20 italic transition-all hover:scale-[1.05] active:scale-95 shrink-0"
-      >
-        <PlusCircle size={18} /> 
-        <span className="ml-1 tracking-widest">NUEVO ACCESO</span>
-      </Button>
+// COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO
+const UserHeader = memo(({ searchInput, onSearch, onAdd, onReload, isLoading }: { 
+    searchInput: string, 
+    onSearch: (v: string) => void, 
+    onAdd: () => void,
+    onReload: () => void,
+    isLoading: boolean
+}) => (
+
+  <header className="flex flex-col gap-2.5 transition-all">
+    <div className="flex items-center justify-between px-1">
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transition-transform active:scale-95">
+          <Users size={20} />
+        </div>
+        <div className="flex flex-col">
+          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">GESTIÓN DE <span className="text-emerald-500">PERSONAL</span></h1>
+          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Directorio POS V4.0</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+            isIconOnly
+            size="sm"
+            onPress={onReload}
+            isLoading={isLoading}
+            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+        >
+            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+        </Button>
+        <Button
+            size="sm"
+            onPress={onAdd}
+            className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+        >
+            <PlusCircle size={16} /> 
+            <span className="ml-2 tracking-widest">NUEVO</span>
+        </Button>
+      </div>
     </div>
+    <Input
+      size="sm"
+      placeholder="FILTRAR POR NOMBRE O DNI..."
+      value={searchInput} 
+      onValueChange={onSearch}
+      classNames={{
+        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+      }}
+      startContent={<Search size={14} className="text-emerald-500 mr-1" />}
+    />
   </header>
 ));
 UserHeader.displayName = 'UserHeader';
@@ -111,6 +139,7 @@ export default function UsersPage() {
   const [editingUser, setEditingUser] = useState<Partial<User> | null>(null);
   const [resetUser, setResetUser] = useState<Partial<User> | null>(null);
   const [deletingDni, setDeletingDni] = useState<string | null>(null);
+  const targetDeleteUser = useMemo(() => users.find(u => u.dni === deletingDni), [users, deletingDni]);
 
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -122,7 +151,7 @@ export default function UsersPage() {
     fetchUsers(token)
       .then(data => {
         const userList = Array.isArray(data) ? data : [];
-        setUsers(userList.map(u => ({ ...u, id: u.dni, status: 'Activo', lastLogin: new Date().toISOString() })));
+        setUsers(userList.map(u => ({ ...u, id: u.dni, status: 'Activo' })));
       })
       .catch(() => toast({ variant: "destructive", title: "ERROR", description: "SÍNCRONIZACIÓN DE PERSONAL FALLIDA" }))
       .finally(() => setLoading(false));
@@ -153,10 +182,10 @@ export default function UsersPage() {
     const query = filter.toLowerCase();
     return users.filter(u =>
       u.name.toLowerCase().includes(query) ||
-      (u.email && u.email.toLowerCase().includes(query)) ||
-      (u.dni && u.dni.includes(query))
+             (u.email && u.email.toLowerCase().includes(query)) ||
+             (u.dni && u.dni.includes(query))
     );
-  }, [users, filter]);
+  }, [users, filter, user]);
 
   const paginatedUsers = useMemo(() => filteredUsers.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filteredUsers, currentPage, pageSize]);
   const totalPages = Math.ceil(filteredUsers.length / pageSize || 1);
@@ -210,7 +239,7 @@ export default function UsersPage() {
     }
     try {
       const { dni, name, email, role, is_active, password } = data;
-      await updateUser(dni!, { name: name!.toUpperCase(), email, role, is_active, password }, token!);
+      await updateUser(dni!, { dni, name: name!.toUpperCase(), email, role, is_active, password }, token!);
       toast({ variant: 'success', title: 'ÉXITO', description: 'PERMISOS ACTUALIZADOS' });
       setEditDialogOpen(false);
       setEditingUser(null);
@@ -260,24 +289,62 @@ export default function UsersPage() {
   const handlePageSizeChange = useCallback((size: number) => { setPageSize(size); setCurrentPage(1); }, []);
   const handleAddOpen = useCallback(() => setAddDialogOpen(true), []);
   const handleModalClose = useCallback((o: boolean) => {
-      if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingUser(null); }
+      if (!o) { 
+        setAddDialogOpen(false); 
+        setEditDialogOpen(false); 
+        setEditingUser(null); 
+      }
   }, []);
+
+  const handleLookupUser = useCallback(async (dni: string) => {
+    const token = Cookies.get('org-pos-token');
+    if (!token) return;
+
+    const existingUser = await lookupUser(dni, token);
+    if (existingUser) {
+        toast({ 
+            variant: 'success',
+            title: 'USUARIO IDENTIFICADO', 
+            description: `EL DNI ${dni} YA EXISTE. ABRIENDO MODO EDICIÓN PARA ${existingUser.name}.` 
+        });
+        
+        // Cambiar de modo Agregar a modo Editar
+        setAddDialogOpen(false);
+        setEditingUser({ ...existingUser, is_active: existingUser.is_active ?? true });
+        setEditDialogOpen(true);
+    }
+  }, [toast]);
 
   const modalInitialUser = useMemo(() => (editDialogOpen ? editingUser : { role: 'empleado', is_active: true }) || {}, [editDialogOpen, editingUser]);
   const modalOnSave = useMemo(() => editDialogOpen ? handleEditUser : handleAddUser, [editDialogOpen, handleEditUser, handleAddUser]);
 
-  if (authLoading || loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
+  if (authLoading || (loading && users.length === 0)) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+    <Spinner color="success" size="lg" />
+    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Iniciando POS-PRO...</p>
+  </div>;
   const role = user?.role?.toLowerCase();
   if (role !== 'admin' && role !== 'administrador' && role !== 'superadmin') return null;
 
   return (
-    <div className="flex flex-col gap-4 p-4 md:p-6 w-full max-w-[1600px] mx-auto min-h-[100dvh] bg-gray-50/50 dark:bg-zinc-950 text-gray-900 dark:text-white transition-all duration-500">
-      <UserHeader searchInput={searchInput} onSearch={setSearchInput} onAdd={handleAddOpen} />
-      <UserStats total={stats.total} admins={stats.admins} employees={stats.employees} />
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+      
+      {/* HEADER SECTION: FIXED (TOP) */}
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+        <UserHeader 
+            searchInput={searchInput} 
+            onSearch={setSearchInput} 
+            onAdd={handleAddOpen} 
+            onReload={loadUsers}
+            isLoading={loading}
+        />
+        <UserStats total={stats.total} admins={stats.admins} employees={stats.employees} />
+      </div>
 
-      <div className="flex-1 pb-10">
-        <UserTable 
-            users={paginatedUsers}
+      {/* LIST SECTION - STRICT INTERNAL SCROLL */}
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+          <UserTable 
+              users={paginatedUsers}
+              currentDni={user?.dni}
             onEdit={handleEditOpen}
             onDelete={handleDeleteOpen}
             onResetPassword={handleResetOpen}
@@ -287,19 +354,21 @@ export default function UsersPage() {
             totalRecords={filteredUsers.length}
             onPageChange={handlePageChange}
             onPageSizeChange={handlePageSizeChange}
-        />
+            onReload={loadUsers}
+            isLoading={loading}
+          />
       </div>
 
-      {(addDialogOpen || editDialogOpen) && (
-        <UserFormModal 
-          isOpen={addDialogOpen || editDialogOpen}
-          onOpenChange={handleModalClose}
-          isEdit={editDialogOpen}
-          initialUser={modalInitialUser}
-          onSave={modalOnSave}
-        />
-      )}
-
+      {/* MODALS SECTION */}
+      <UserModals 
+        isOpen={addDialogOpen || editDialogOpen} 
+        onOpenChange={handleModalClose}
+        editMode={editDialogOpen}
+        user={editingUser}
+        onSave={modalOnSave}
+        onLookupDni={handleLookupUser}
+      />
+      
       {deleteDialogOpen && (
         <DeleteUserModal 
           isOpen={deleteDialogOpen}

@@ -3,7 +3,7 @@
 import { 
   Modal, ModalContent, ModalHeader, ModalBody, 
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Card, CardBody
+  Card, CardBody, Chip
 } from "@heroui/react";
 import React from 'react';
 import { FileSearch, TrendingUp, PieChart, Wallet, ShoppingBag, ArrowUpRight, ArrowDownRight, Tag } from "lucide-react";
@@ -25,22 +25,41 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
 
   // Normalizar datos para la tabla basado en el tipo de reporte
   const getTableContent = () => {
-    // Caso para Alerta de Stock (Bajo del mínimo)
+    // Caso para Alerta de Stock (Bajo del mínimo) con semáforo dinámico
     if (isLowStock) {
         return {
             columns: [
                 { key: 'barcode', label: 'BARCODE' },
                 { key: 'name', label: 'PRODUCTO' },
                 { key: 'stock', label: 'EXISTENCIAS' },
-                { key: 'minStock', label: 'MÍNIMO ALERTA' },
+                { key: 'threshold', label: 'UMBRAL CRÍTICO' },
+                { key: 'status', label: 'ESTADO' },
             ],
-            rows: data.lowStockProducts.map((item: any, i: number) => ({
-                id: i,
-                ...item,
-                stock: (
-                    <span className="text-rose-500 font-black">{item.stock}</span>
-                )
-            }))
+            rows: data.lowStockProducts.map((item: any, i: number) => {
+                const isCritical = item.status === 'CRITICAL' || item.status === 'CRÍTICO';
+                const isWarning = item.status === 'WARNING' || item.status === 'ADVERTENCIA';
+                return {
+                    id: i,
+                    barcode: item.barcode,
+                    name: item.name,
+                    stock: (
+                        <span className={`font-black ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>
+                            {item.stock}
+                        </span>
+                    ),
+                    threshold: item.threshold || '-',
+                    status: (
+                        <Chip size="sm" variant="flat"
+                            className={isCritical
+                                ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400'
+                                : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'}
+                            classNames={{ content: "text-[9px] font-black uppercase tracking-widest" }}
+                        >
+                            {isCritical ? 'CRÍTICO' : 'BAJO'}
+                        </Chip>
+                    )
+                };
+            })
         };
     }
 
@@ -241,14 +260,3 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
   );
 }
 
-const Chip = ({ children, color, className }: any) => {
-    const colors: any = {
-        success: "bg-emerald-500/10 text-emerald-500",
-        danger: "bg-rose-500/10 text-rose-500",
-    };
-    return (
-        <span className={`px-2 py-1 rounded-full ${colors[color]} ${className}`}>
-            {children}
-        </span>
-    );
-};

@@ -13,6 +13,7 @@ type Category struct {
 	UpdatedByName string         `gorm:"column:updatedByName" json:"updatedByName"`
 	Creator       Employee       `gorm:"foreignKey:CreatedByDNI;references:DNI" json:"creator,omitempty"`
 	Updater       Employee       `gorm:"foreignKey:UpdatedByDNI;references:DNI" json:"updater,omitempty"`
+	ProductCount  int64          `gorm:"->;column:product_count" json:"productCount"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

@@ -1,6 +1,9 @@
 package services
 
 import (
+	"fmt"
+	"log"
+
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
 )
@@ -22,7 +25,16 @@ func (s *SupplierService) GetSupplier(id uint) (*models.Supplier, error) {
 }
 
 func (s *SupplierService) GetAllSuppliers() ([]models.Supplier, error) {
-	return s.repo.GetAll()
+	log.Printf("[SupplierService] Iniciando GetAllSuppliers...")
+
+	suppliers, err := s.repo.GetAll()
+	if err != nil {
+		log.Printf("[SupplierService] ERROR en repositorio: %v", err)
+		return nil, fmt.Errorf("error en repositorio: %w", err)
+	}
+
+	log.Printf("[SupplierService] Éxito: %d proveedores obtenidos", len(suppliers))
+	return suppliers, nil
 }
 
 func (s *SupplierService) UpdateSupplier(id uint, supplier *models.Supplier) error {

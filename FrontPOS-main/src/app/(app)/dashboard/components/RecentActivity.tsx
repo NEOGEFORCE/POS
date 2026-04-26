@@ -20,7 +20,7 @@ interface RecentActivityProps {
 
 export default function RecentActivity({ sales }: RecentActivityProps) {
     return (
-        <Card className="bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-lg dark:shadow-2xl transition-colors shrink-0 h-full flex flex-col" radius="lg">
+        <Card className="bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-lg dark:shadow-2xl transition-colors shrink-0 flex flex-col h-fit" radius="lg">
             <CardHeader className="px-6 py-5 border-b border-gray-100 dark:border-white/5 flex justify-between items-center bg-gray-50/50 dark:bg-transparent shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="bg-sky-100 dark:bg-sky-500/10 p-2.5 rounded-xl text-sky-600 dark:text-sky-500 border border-sky-200 dark:border-sky-500/20 shadow-sm"><Clock size={18} /></div>
@@ -30,7 +30,7 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                     </div>
                 </div>
             </CardHeader>
-            <CardBody className="p-0 flex-1 overflow-y-auto custom-scrollbar">
+            <CardBody className="p-0 flex-1">
                 <div className="hidden md:block">
                     <table className="w-full text-left text-sm">
                         <thead className="bg-gray-50 dark:bg-zinc-900/80 text-[10px] font-black uppercase tracking-widest text-gray-500 dark:text-zinc-400 sticky top-0 z-10 backdrop-blur-md">
@@ -41,14 +41,14 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                            {(sales || []).slice(0, 8).map((sale) => {
+                            {(sales || []).slice(0, 10).map((sale) => {
                                 const method = sale.transfer_source || sale.payment_method || 'EFECTIVO';
                                 const chipColor = method === 'EFECTIVO' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                                     : method === 'NEQUI' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400'
                                     : method === 'DAVIPLATA' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400'
                                     : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-zinc-300';
                                 return (
-                                    <tr key={sale.id} className="hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors group">
+                                    <tr key={sale.id} className="hover:bg-emerald-500/5 border-l-4 border-transparent hover:border-emerald-500 transition-colors group">
                                         <td className="px-6 py-3">
                                             <p className="font-bold text-gray-900 dark:text-white uppercase tracking-tight truncate max-w-[140px] group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors text-xs">{sale.client}</p>
                                             <span className="text-[9px] font-bold text-gray-400 dark:text-zinc-500 tracking-widest">{new Date(sale.date).toLocaleDateString()}</span>
@@ -70,7 +70,7 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
 
                 {/* Mobile View: Vertical Feed */}
                 <div className="md:hidden divide-y divide-gray-100 dark:divide-white/5">
-                    {(sales || []).map((sale) => {
+                    {(sales || []).slice(0, 10).map((sale) => {
                          const method = sale.transfer_source || sale.payment_method || 'EFECTIVO';
                          const chipColor = method === 'EFECTIVO' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
                              : method === 'NEQUI' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400'

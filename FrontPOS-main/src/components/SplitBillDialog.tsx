@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import {
     Dialog,
     DialogContent,
@@ -8,6 +8,7 @@ import {
     DialogTitle,
     DialogDescription,
 } from "@/components/ui/dialog"
+import ClientSelectorModal from '@/app/(app)/sales/components/ClientSelectorModal'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
@@ -40,23 +41,32 @@ interface SplitBillDialogProps {
     isOpen: boolean;
     onClose: () => void;
     originalItems: CartItem[];
-    onConfirm: (leftItems: CartItem[], rightItems: CartItem[]) => void;
+    customers: any[];
+    currentCustomerDni: string;
+    onConfirm: (leftItems: CartItem[], rightItems: CartItem[], targetCustomerDni: string) => void;
 }
 
-export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: SplitBillDialogProps) {
+export function SplitBillDialog({ isOpen, onClose, originalItems, customers, currentCustomerDni, onConfirm }: SplitBillDialogProps) {
     const [leftItems, setLeftItems] = useState<CartItem[]>([])
     const [rightItems, setRightItems] = useState<CartItem[]>([])
     const [selectedLeft, setSelectedLeft] = useState<string | null>(null)
     const [selectedRight, setSelectedRight] = useState<string | null>(null)
+    const [targetCustomer, setTargetCustomer] = useState<{dni: string, name: string} | null>(null)
+    const [isClientModalOpen, setIsClientModalOpen] = useState(false)
+
+    const prevIsOpen = useRef(isOpen)
 
     useEffect(() => {
-        if (isOpen) {
+        if (isOpen && !prevIsOpen.current) {
             setLeftItems([...originalItems])
             setRightItems([])
             setSelectedLeft(originalItems.length > 0 ? originalItems[0].barcode : null)
             setSelectedRight(null)
+            const initialCustomer = customers.find(c => String(c.dni) === String(currentCustomerDni)) || { dni: String(currentCustomerDni), name: 'Consumidor Final' };
+            setTargetCustomer(initialCustomer);
         }
-    }, [isOpen, originalItems])
+        prevIsOpen.current = isOpen
+    }, [isOpen, currentCustomerDni, customers])
 
     // Auto-select first item when list changes
     useEffect(() => {
@@ -168,11 +178,15 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
     const rightTotal = calculateTotal(rightItems)
 
     return (
-        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+        <>
+            <Dialog open={isOpen} onOpenChange={(open) => {
+            if (!open && isClientModalOpen) return;
+            if (!open) onClose();
+        }}>
              <DialogContent 
-                aria-labelledby="split-bill-title"
-                aria-describedby="split-bill-description"
                 className="max-w-[95vw] lg:max-w-[90vw] w-full lg:w-[900px] p-0 overflow-hidden bg-white dark:bg-zinc-950 border-gray-200 dark:border-white/5 rounded-3xl shadow-2xl h-[90vh] lg:h-[420px] flex flex-col"
+                onPointerDownOutside={(e) => e.preventDefault()}
+                onEscapeKeyDown={(e) => e.preventDefault()}
             >
                 <DialogHeader className="p-3 bg-gray-50 dark:bg-black border-b border-gray-200 dark:border-white/5 shrink-0">
                     <div className="flex items-center justify-between">
@@ -181,8 +195,8 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
                                 <Zap className="h-4 w-4 text-black" />
                             </div>
                             <div>
-                                <DialogTitle id="split-bill-title" className="text-sm font-black text-gray-900 dark:text-white italic uppercase tracking-tighter leading-none">Dividir Cuenta</DialogTitle>
-                                <DialogDescription id="split-bill-description" className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">V4.0 DENSITY</DialogDescription>
+                                <DialogTitle className="text-sm font-black text-gray-900 dark:text-white italic uppercase tracking-tighter leading-none">Dividir Cuenta</DialogTitle>
+                                <DialogDescription className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">V4.0 DENSITY</DialogDescription>
                             </div>
                         </div>
                     </div>
@@ -245,6 +259,27 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
                     <div className="flex-1 flex flex-col bg-gray-50 dark:bg-black rounded-2xl border border-gray-200 dark:border-white/5 overflow-hidden shadow-inner">
                         <div className="p-2 bg-emerald-50 dark:bg-emerald-500/10 border-b border-emerald-100 dark:border-emerald-500/20 flex items-center justify-between shrink-0">
                             <span className="text-[8px] font-black text-emerald-700 dark:text-emerald-500 uppercase tracking-widest">Cobrar Ahora</span>
+                            
+                            <Button 
+                                size="sm" 
+                                variant="outline" 
+                                className={`h-9 px-3 min-w-0 rounded-xl font-black transition-all duration-300 border shadow-sm ${
+                                    targetCustomer?.dni !== currentCustomerDni 
+                                        ? 'bg-emerald-500 text-white border-emerald-400 animate-in zoom-in-95 shadow-emerald-500/20' 
+                                        : 'bg-white dark:bg-zinc-900 text-emerald-700 dark:text-emerald-400 border-emerald-100 dark:border-emerald-500/10'
+                                }`}
+                                onClick={() => setIsClientModalOpen(true)}
+                            >
+                                <User size={14} className="mr-2 shrink-0" />
+                                <div className="flex flex-col items-start leading-none gap-1 py-1">
+                                    <span className="text-[9px] uppercase tracking-wider truncate max-w-[110px]">
+                                        {targetCustomer?.name || 'Consumidor Final'}
+                                    </span>
+                                    <span className={`text-[7px] font-bold uppercase tracking-widest ${targetCustomer?.dni !== currentCustomerDni ? 'text-emerald-100' : 'text-emerald-600 dark:text-emerald-500'}`}>
+                                        DNI: {targetCustomer?.dni || '0'}
+                                    </span>
+                                </div>
+                            </Button>
                         </div>
                         <ScrollArea className="flex-1">
                         <Table>
@@ -281,11 +316,27 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, onConfirm }: S
                     <Button variant="outline" className="flex-1 h-10 rounded-xl border-gray-200 dark:border-white/5 bg-white dark:bg-zinc-900 text-gray-500 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest hover:bg-rose-50 dark:hover:bg-rose-500/10 hover:border-rose-200 hover:text-rose-600 dark:hover:text-rose-500 shadow-sm transition-all" onClick={onClose}>
                         <ChevronLeft className="h-3 w-3 mr-1" /> VOLVER / CANCELAR
                     </Button>
-                    <Button className="flex-[2] h-10 rounded-xl bg-emerald-500 text-white dark:text-black font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 dark:hover:bg-emerald-400 active:scale-95 disabled:opacity-50 shadow-md transition-all" disabled={rightItems.length === 0} onClick={() => onConfirm(leftItems, rightItems)}>
+                    <Button className="flex-[2] h-10 rounded-xl bg-emerald-500 text-white dark:text-black font-black uppercase text-[10px] tracking-widest hover:bg-emerald-600 dark:hover:bg-emerald-400 active:scale-95 disabled:opacity-50 shadow-md transition-all" disabled={rightItems.length === 0} onClick={() => {
+                        const customerDni = targetCustomer?.dni || '0';
+                        onConfirm(leftItems, rightItems, customerDni);
+                    }}>
                         <Check className="h-4 w-4 mr-1 stroke-[3]" /> CONFIRMAR
                     </Button>
                 </div>
             </DialogContent>
-        </Dialog>
+
+            </Dialog>
+
+            <ClientSelectorModal 
+                isOpen={isClientModalOpen}
+                onOpenChange={setIsClientModalOpen}
+                customers={customers}
+                onSelect={(c) => {
+                    console.log('DEBUG: Cliente seleccionado en Split:', c);
+                    setTargetCustomer({ dni: String(c.dni), name: c.name });
+                }}
+                selectedClientDni={targetCustomer?.dni}
+            />
+        </>
     )
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import React, { memo } from 'react';
-import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Button } from "@heroui/react";
-import { Layers, Tag, Minus, Plus, Trash2 } from 'lucide-react';
+import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Button, Card, CardBody, Chip } from "@heroui/react";
+import { Layers, Tag, Minus, Plus, Trash2, Printer } from 'lucide-react';
 import { Product } from '@/lib/definitions';
 import { formatCurrency } from '@/lib/utils';
 
@@ -21,107 +21,113 @@ interface QueueProps {
 
 const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, onRemove }: QueueProps) => {
     return (
-        <div className="w-full md:w-2/3 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col min-h-0 transition-colors">
-            <div className="p-4 border-b border-gray-100 dark:border-white/5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-gray-50/50 dark:bg-zinc-950/50 rounded-t-2xl">
-                <span className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Lista de Impresión</span>
-                <div className="flex items-center gap-2">
-                    <Button 
-                        size="sm" 
-                        className="bg-emerald-500 text-white text-[9px] font-black uppercase tracking-widest rounded-lg shadow-lg shadow-emerald-500/20" 
-                        onPress={onAddAll}
-                    >
-                        <Layers size={14} className="mr-1" /> Añadir Todos
-                    </Button>
-                    <Button 
-                        size="sm" 
-                        variant="flat" 
-                        color="danger" 
-                        className="text-[9px] font-black uppercase tracking-widest rounded-lg bg-rose-50 dark:bg-rose-500/10 text-rose-500" 
-                        onPress={onClearAll}
-                    >
-                        Limpiar Todo
-                    </Button>
-                </div>
-            </div>
-
-            <div className="flex-1 overflow-auto custom-scrollbar p-2">
-                {printQueue.length === 0 ? (
-                    <div className="h-full flex flex-col items-center justify-center opacity-30 text-gray-500 dark:text-zinc-500">
-                        <Tag size={60} strokeWidth={1} className="mb-4" />
-                        <span className="text-[11px] font-black uppercase tracking-widest">Añade productos para imprimir</span>
+        <Card className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-sm flex flex-col h-full rounded-lg" radius="sm">
+            <CardBody className="p-0 flex flex-col h-full">
+                {/* Header de la Cola */}
+                <div className="p-4 border-b border-gray-100 dark:border-white/5 flex items-center justify-between bg-gray-50/50 dark:bg-zinc-950/20">
+                    <div className="flex flex-col">
+                        <span className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest italic flex items-center gap-2">
+                             LISTA DE IMPRESIÓN
+                        </span>
+                        <div className="flex items-center gap-2 mt-1">
+                            <Chip size="sm" color="success" variant="flat" className="h-4 font-black text-[8px] uppercase tracking-[0.2em] italic">
+                                {printQueue.length} PRODUCTOS
+                            </Chip>
+                        </div>
                     </div>
-                ) : (
-                    <Table 
-                        isCompact
-                        removeWrapper 
-                        aria-label="Cola" 
-                        classNames={{ 
-                            th: "bg-transparent text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest", 
-                            td: "py-3 border-b border-gray-100 dark:border-white/5", 
-                            tr: "hover:bg-gray-50 dark:hover:bg-white/5 transition-colors" 
-                        }}
-                    >
-                        <TableHeader>
-                            <TableColumn>PRODUCTO</TableColumn>
-                            <TableColumn align="center">ETIQUETAS</TableColumn>
-                            <TableColumn align="end">ACCIONES</TableColumn>
-                        </TableHeader>
-                        <TableBody>
+                    <div className="flex items-center gap-2">
+                        <Button 
+                            size="sm" 
+                            variant="flat"
+                            className="bg-emerald-500/10 text-emerald-500 text-[9px] font-black uppercase tracking-widest rounded-lg h-8 px-4 border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all italic" 
+                            onPress={onAddAll}
+                        >
+                            <Layers size={14} className="mr-2" /> añadir todos
+                        </Button>
+                        <Button 
+                            size="sm" 
+                            variant="flat"
+                            color="danger" 
+                            className="text-[9px] font-black uppercase tracking-widest rounded-lg h-8 px-4 bg-rose-500/10 text-rose-500 border border-rose-500/10 italic" 
+                            onPress={onClearAll}
+                        >
+                           limpiar
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Lista de Productos */}
+                <div className="flex-1 overflow-auto custom-scrollbar p-3">
+                    {printQueue.length === 0 ? (
+                        <div className="h-full flex flex-col items-center justify-center gap-4 py-20 grayscale opacity-20">
+                            <Printer size={80} strokeWidth={1} />
+                            <div className="flex flex-col items-center">
+                                <span className="text-xl font-black uppercase tracking-tighter italic">Cola Vacía</span>
+                                <span className="text-[10px] font-bold uppercase tracking-widest">Busca productos para empezar</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
                             {printQueue.map((item) => (
-                                <TableRow key={item.product.barcode}>
-                                    <TableCell>
-                                        <div className="flex flex-col">
-                                            <span className="text-xs font-black text-gray-900 dark:text-white uppercase italic truncate max-w-[200px] md:max-w-[300px]">
+                                <div key={item.product.barcode} className="group p-2.5 rounded-xl border border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-black/30 flex items-center justify-between gap-3 hover:border-emerald-500/30 transition-all">
+                                    <div className="flex items-center gap-4 min-w-0">
+                                        <div className="h-10 w-10 rounded-lg bg-white dark:bg-zinc-800 border border-gray-200 dark:border-white/10 flex items-center justify-center text-gray-400 font-black text-[8px] shadow-sm">
+                                            #{item.product.barcode.slice(-4)}
+                                        </div>
+                                        <div className="flex flex-col min-w-0">
+                                            <span className="text-xs font-black text-gray-900 dark:text-white uppercase italic truncate tracking-tight">
                                                 {item.product.productName}
                                             </span>
-                                            <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest mt-0.5">
-                                                #{item.product.barcode} - ${formatCurrency(item.product.salePrice)}
-                                            </span>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                                <span className="text-[10px] font-black text-emerald-500 tabular-nums tracking-tighter italic">${formatCurrency(item.product.salePrice)}</span>
+                                                <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-zinc-700" />
+                                                <span className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest">PVP</span>
+                                            </div>
                                         </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <div className="flex items-center justify-center gap-3">
+                                    </div>
+
+                                    <div className="flex items-center gap-4 shrink-0">
+                                        <div className="flex items-center bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5 p-1 shadow-sm">
                                             <Button 
                                                 isIconOnly 
                                                 size="sm" 
-                                                variant="flat" 
-                                                className="h-8 w-8 rounded-lg bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 border border-gray-200 dark:border-white/5" 
+                                                variant="light" 
+                                                className="h-7 w-7 min-w-0 rounded-lg text-gray-500 hover:bg-rose-500/10 hover:text-rose-500" 
                                                 onPress={() => onUpdateQuantity(item.product.barcode, -1)}
                                             >
-                                                <Minus size={12} />
+                                                <Minus size={14} />
                                             </Button>
-                                            <span className="font-black text-sm tabular-nums w-4 text-center text-gray-900 dark:text-white">{item.quantity}</span>
+                                            <div className="w-10 flex flex-col items-center">
+                                                <span className="text-xs font-black tabular-nums text-gray-900 dark:text-white">{item.quantity}</span>
+                                                <span className="text-[6px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-tighter mt-[-2px]">CANT</span>
+                                            </div>
                                             <Button 
                                                 isIconOnly 
                                                 size="sm" 
-                                                variant="flat" 
-                                                className="h-8 w-8 rounded-lg bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 border border-emerald-200 dark:border-emerald-500/20" 
+                                                variant="light" 
+                                                className="h-7 w-7 min-w-0 rounded-lg text-emerald-500 hover:bg-emerald-500/10" 
                                                 onPress={() => onUpdateQuantity(item.product.barcode, 1)}
                                             >
-                                                <Plus size={12} />
+                                                <Plus size={14} />
                                             </Button>
                                         </div>
-                                    </TableCell>
-                                    <TableCell>
-                                        <div className="flex justify-end">
-                                            <Button 
-                                                isIconOnly 
-                                                size="sm" 
-                                                variant="flat" 
-                                                className="h-9 w-9 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-xl hover:bg-rose-500 hover:text-white transition-all shadow-sm" 
-                                                onPress={() => onRemove(item.product.barcode)}
-                                            >
-                                                <Trash2 size={14} />
-                                            </Button>
-                                        </div>
-                                    </TableCell>
-                                </TableRow>
+                                        <Button 
+                                            isIconOnly 
+                                            size="sm" 
+                                            variant="flat" 
+                                            className="h-9 w-9 bg-rose-500/10 text-rose-500 border border-rose-500/10 rounded-xl hover:bg-rose-500 hover:text-white transition-all shadow-sm" 
+                                            onPress={() => onRemove(item.product.barcode)}
+                                        >
+                                            <Trash2 size={16} />
+                                        </Button>
+                                    </div>
+                                </div>
                             ))}
-                        </TableBody>
-                    </Table>
-                )}
-            </div>
-        </div>
+                        </div>
+                    )}
+                </div>
+            </CardBody>
+        </Card>
     );
 });
 

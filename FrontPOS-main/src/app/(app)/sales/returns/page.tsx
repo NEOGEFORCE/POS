@@ -15,7 +15,9 @@ import {
     Select, SelectItem, Pagination, Chip, Card, CardHeader, CardBody, CardFooter, Spinner, Avatar
 } from "@heroui/react";
 
-import { Banknote, RefreshCw, Truck } from 'lucide-react';
+import { Banknote, RefreshCw, Truck, Check, ChevronDown, ChevronRight } from 'lucide-react';
+import UniversalPaymentModal from '@/components/shared/UniversalPaymentModal';
+import ReturnsKPIs from './components/ReturnsKPIs';
 
 import { Suspense } from 'react';
 
@@ -43,6 +45,11 @@ function ReturnsContent() {
     const [returnDialogOpen, setReturnDialogOpen] = useState(false);
     const [exchangeSearch, setExchangeSearch] = useState('');
     const [exchangeProducts, setExchangeProducts] = useState<Product[]>([]);
+    
+    // Estados para el Motor Universal de Pagos
+    const [submittingPayment, setSubmittingPayment] = useState(false);
+    const [showSuccessScreen, setShowSuccessScreen] = useState(false);
+    const [lastChange, setLastChange] = useState(0);
 
     const searchRef = useRef<HTMLInputElement>(null);
     const directSearchRef = useRef<HTMLInputElement>(null);
@@ -76,7 +83,7 @@ function ReturnsContent() {
     const fetchRecentSales = async () => {
         const token = Cookies.get('org-pos-token');
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=10`, {
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=20`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -393,54 +400,69 @@ function ReturnsContent() {
         }
     }, [returnDialogOpen, isTransfer, balance, cashRefundablePool]);
 
-    const processReturn = async () => {
+    const handleFinalPayment = async (paymentData: {
+        cash: number;
+        transfer: number;
+        transferSource: string;
+        credit: number;
+        totalPaid: number;
+        change: number;
+    }) => {
         if (returningItems.every(i => i.returnQty === 0)) {
             toast({ variant: 'destructive', title: 'SISTEMA', description: 'SELECCIONA ARTÍCULOS' });
             return;
         }
 
+        setSubmittingPayment(true);
         const token = Cookies.get('org-pos-token');
-        const allDetails = [
-            ...returningItems.filter(i => i.returnQty > 0).map(i => {
-                let max = 999999;
-                if (sale) {
-                    max = (i.quantity || 0) - (i.returnedQty || 0);
-                } else {
-                    const prod = allProducts.find(p => p.barcode === i.barcode);
-                    max = prod ? prod.quantity : 999999;
-                }
-
-                if (i.returnQty > max) {
-                    throw new Error(`La cantidad de ${i.productName} excede el límite permitido (${max}).`);
-                }
-
-                return {
-                    barcode: i.barcode,
-                    quantity: i.returnQty,
-                    price: i.unitPrice,
-                    subtotal: i.unitPrice * i.returnQty,
-                    isExchange: false
-                };
-            }),
-            ...exchangeItems.map(i => ({
-                barcode: i.barcode,
-                quantity: i.cartQuantity,
-                price: i.unitPrice,
-                subtotal: i.unitPrice * i.cartQuantity,
-                isExchange: true
-            }))
-        ];
-
-        const effectiveSaleId = Number(sale?.id) || returningItems.find(i => (i.lastSaleId || 0) > 0)?.lastSaleId || 0;
-        const returnData = {
-            saleId: effectiveSaleId,
-            totalReturned: totalReturned,
-            reason: returnReason,
-            returnType: returnType,
-            details: allDetails
-        };
-
+        
         try {
+            const allDetails = [
+                ...returningItems.filter(i => i.returnQty > 0).map(i => {
+                    let max = 999999;
+                    if (sale) {
+                        max = (i.quantity || 0) - (i.returnedQty || 0);
+                    } else {
+                        const prod = allProducts.find(p => p.barcode === i.barcode);
+                        max = prod ? prod.quantity : 999999;
+                    }
+
+                    if (i.returnQty > max) {
+                        throw new Error(`La cantidad de ${i.productName} excede el límite permitido (${max}).`);
+                    }
+
+                    return {
+                        barcode: i.barcode,
+                        quantity: i.returnQty,
+                        price: i.unitPrice,
+                        subtotal: i.unitPrice * i.returnQty,
+                        isExchange: false
+                    };
+                }),
+                ...exchangeItems.map(i => ({
+                    barcode: i.barcode,
+                    quantity: i.cartQuantity,
+                    price: i.unitPrice,
+                    subtotal: i.unitPrice * i.cartQuantity,
+                    isExchange: true
+                }))
+            ];
+
+            const effectiveSaleId = Number(sale?.id) || returningItems.find(i => (i.lastSaleId || 0) > 0)?.lastSaleId || 0;
+            const returnData = {
+                saleId: effectiveSaleId,
+                totalReturned: totalReturned,
+                reason: returnReason,
+                returnType: returnType,
+                details: allDetails,
+                // Inyectamos la información del motor de pagos
+                cashAmount: paymentData.cash,
+                transferAmount: paymentData.transfer,
+                transferSource: paymentData.transferSource,
+                creditAmount: paymentData.credit,
+                change: paymentData.change
+            };
+
             const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/returns/create`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -452,20 +474,27 @@ function ReturnsContent() {
                 throw new Error(errorData.error || 'Error al procesar la devolución');
             }
 
-            toast({ 
-                variant: 'success',
-                title: 'ÉXITO', 
-                description: 'RETORNO PROCESADO' 
-            });
+            setLastChange(paymentData.change);
+            setShowSuccessScreen(true);
+            toast({ variant: 'success', title: 'ÉXITO', description: 'RETORNO PROCESADO' });
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'FALLO', description: err.message || 'ERROR AL PROCESAR' });
+        } finally {
+            setSubmittingPayment(false);
+        }
+    };
+
+    const handleClosePaymentModal = () => {
+        if (showSuccessScreen) {
             setReturnDialogOpen(false);
             setSale(null);
             setSearchId('');
             setReturningItems([]);
             setExchangeItems([]);
+            setReturnReason('');
+            setShowSuccessScreen(false);
             fetchRecentSales();
             fetchRecentReturns();
-        } catch (err: any) {
-            toast({ variant: 'destructive', title: 'FALLO', description: err.message || 'ERROR AL PROCESAR' });
         }
     };
 
@@ -544,51 +573,52 @@ function ReturnsContent() {
 
     return (
         <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-all duration-500">
-            {/* Dashboard Header & Search Toolbox */}
-            <header className="flex flex-col gap-1 p-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-all">
-                <div className="flex items-center justify-between px-2 py-1">
-                    <div className="flex items-center gap-2">
-                        <div className="h-8 w-8 rounded bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-500">
-                            <RotateCcw size={16} />
+            {/* HEADER SECTION: FIXED (TOP) */}
+            <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200 dark:border-white/5 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md relative z-[150]">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="bg-rose-600 h-10 w-10 rounded-xl text-white shadow-lg shadow-rose-500/20 flex items-center justify-center transform -rotate-3">
+                            <RotateCcw size={20} />
                         </div>
                         <div className="flex flex-col">
-                            <h1 className="text-sm font-black uppercase tracking-tight leading-tight text-gray-900 dark:text-white italic">DEVOLUCIONES</h1>
-                            <p className="text-[9px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest opacity-60">AUDIT LEDGER V5.1</p>
+                            <h1 className="text-[13px] font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic leading-none">
+                                Gestión de <span className="text-rose-500">Devoluciones</span>
+                            </h1>
+                            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.4em] italic mt-1 flex items-center gap-1">
+                                <History size={10} className="text-rose-500" /> Auditoría de Reintegros
+                            </p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-2">
                         <Button
-                            size="sm"
+                            isIconOnly
                             variant="flat"
-                            className={`font-black uppercase tracking-widest text-[9px] h-9 px-4 rounded-xl transition-all ${isScannerOpen ? "bg-emerald-500 text-white" : "bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400"}`}
+                            className={`h-10 w-10 min-w-0 rounded-xl border transition-all ${isScannerOpen ? "bg-rose-500/20 text-rose-500 border-rose-500/50" : "bg-gray-100 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 border-gray-200 dark:border-white/5"}`}
                             onPress={() => setIsScannerOpen(!isScannerOpen)}
                         >
-                            <Camera size={14} className="mr-2" /> SCANNER
+                            <Camera size={16} />
                         </Button>
                     </div>
                 </div>
 
-                {/* Toolbar Unificada */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 px-1 pb-1">
-                    <div className="relative">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div className="relative group/search">
                         <Input
-                            size="sm"
                             placeholder="ESCRIBIR ID DE FACTURA..."
                             aria-label="Buscar factura por ID"
                             value={searchId}
                             onValueChange={setSearchId}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             classNames={{ 
-                                inputWrapper: "h-8 bg-gray-50/50 dark:bg-zinc-800/50 border border-gray-200 dark:border-white/5 rounded-lg text-xs font-bold uppercase transition-all shadow-none",
-                                input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/search:border-rose-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-rose-500/20 transition-all",
+                                input: "font-black text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest italic"
                             }}
-                            startContent={<FileText size={14} className="text-gray-300 dark:text-zinc-600" />}
+                            startContent={<FileText size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/search:text-rose-500" />}
                         />
                     </div>
-                    <div className="relative">
+                    <div className="relative group/date">
                         <Input
-                            size="sm"
                             type="date"
                             placeholder="FECHA..."
                             aria-label="Filtrar por fecha"
@@ -598,55 +628,63 @@ function ReturnsContent() {
                                 if (val) handleSearch(true);
                             }}
                             classNames={{ 
-                                inputWrapper: "h-8 bg-gray-50/50 dark:bg-zinc-800/50 border border-gray-200 dark:border-white/5 rounded-lg text-xs font-bold uppercase transition-all shadow-none",
-                                input: "font-black text-[10px] uppercase text-gray-900 dark:text-white"
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/date:border-rose-500/50 group-focus-within/date:ring-2 group-focus-within/date:ring-rose-500/20 transition-all",
+                                input: "font-black text-xs uppercase text-zinc-900 dark:text-white tracking-widest italic"
                             }}
                         />
                     </div>
-                    <div className="relative">
+                    <div className="relative group/prod z-[200]">
                         <Input
-                            size="sm"
                             placeholder="PRODUCTO O BARCODE..."
                             aria-label="Buscar producto o código de barras"
                             value={productSearch}
                             onValueChange={setProductSearch}
                             classNames={{ 
-                                inputWrapper: "h-8 bg-gray-50/50 dark:bg-zinc-800/50 border border-gray-200 dark:border-white/5 rounded-lg text-xs font-bold uppercase transition-all shadow-none",
-                                input: "font-black text-[10px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/prod:border-rose-500/50 group-focus-within/prod:ring-2 group-focus-within/prod:ring-rose-500/20 transition-all",
+                                input: "font-black text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest italic"
                             }}
-                            startContent={<Search size={14} className="text-gray-300 dark:text-zinc-600" />}
+                            startContent={<Search size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/prod:text-rose-500" />}
                         />
                          {productSearch.length > 0 && products.length > 0 && (
-                            <div className="absolute z-[100] left-0 right-0 top-10 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-lg shadow-2xl overflow-hidden backdrop-blur-3xl">
+                            <div className="absolute z-[300] left-0 right-0 top-14 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl overflow-hidden backdrop-blur-3xl">
                                 {products.slice(0, 5).map(p => (
                                     <button
                                         key={p.barcode}
-                                        className="w-full p-3 flex justify-between hover:bg-emerald-500/10 transition-colors text-left border-b border-gray-100 dark:border-white/5 last:border-0"
+                                        className="w-full p-3 flex justify-between hover:bg-rose-500/10 transition-colors text-left border-b border-gray-100 dark:border-white/5 last:border-0 group"
                                         onClick={() => addProductToReturn(p)}
                                     >
                                         <div className="flex flex-col">
-                                            <span className="font-bold text-xs text-gray-900 dark:text-white uppercase">{p.productName}</span>
+                                            <span className="font-bold text-xs text-gray-900 dark:text-white uppercase group-hover:text-rose-500 transition-colors">{p.productName}</span>
                                             <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-mono">{p.barcode}</span>
                                         </div>
-                                        <span className="font-black text-emerald-500 text-xs tabular-nums">${p.salePrice.toLocaleString()}</span>
+                                        <span className="font-black text-rose-500 text-xs tabular-nums">${p.salePrice.toLocaleString()}</span>
                                     </button>
                                 ))}
                             </div>
                         )}
                     </div>
                 </div>
-            </header>
+            </div>
 
+            {/* CONTENT SECTION (SCROLLABLE) */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar pb-4 px-1">
+                <div className="px-2 pt-3 pb-3 shrink-0">
+                <ReturnsKPIs 
+                    totalReturns={recentReturns.length} 
+                    totalRefunded={`$${recentReturns.reduce((acc, curr) => acc + (curr.totalReturned || 0), 0).toLocaleString()}`} 
+                    itemsReturned={recentReturns.reduce((acc, curr) => acc + (curr.details || []).reduce((sum: number, d: any) => sum + (d.quantity || 0), 0), 0)}
+                />
+            </div>
             {/* Banner de Contexto de Venta Activa */}
             {sale && (
-                <div className="flex items-center gap-4 p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl animate-in fade-in zoom-in-95 duration-300">
-                    <div className="h-12 w-12 rounded-xl bg-emerald-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-emerald-500/20">
+                <div className="flex items-center gap-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl animate-in fade-in zoom-in-95 duration-300">
+                    <div className="h-12 w-12 rounded-xl bg-rose-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-rose-500/20">
                         <CheckCircle2 size={24} />
                     </div>
                     <div className="flex-1 flex flex-col md:flex-row md:items-center justify-between gap-4">
                         <div>
                             <div className="flex items-center gap-3 mb-2">
-                                <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
+                                <span className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
                                 <Chip size="sm" variant="shadow" color={paymentInfo?.color as any || 'default'} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
                                     PAGADO EN: {paymentInfo?.label}
                                 </Chip>
@@ -666,9 +704,8 @@ function ReturnsContent() {
                 </div>
             )}
 
-            <div className="flex-1 overflow-y-auto custom-scrollbar pb-24 pr-1">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-1">
-                    {/* COLUMNA IZQUIERDA: LO QUE EL CLIENTE TRAE */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-1">
+                {/* COLUMNA IZQUIERDA: LO QUE EL CLIENTE TRAE */}
                     <div className="space-y-2">
                         <Card className="rounded-xl bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden min-h-[450px]">
                             <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
@@ -680,9 +717,9 @@ function ReturnsContent() {
                             <CardBody className="p-0">
                                 {returningItems.length > 0 ? (
                                     <Table aria-label="Devoluciones" isHeaderSticky isCompact removeWrapper classNames={{ 
-                                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest h-8 py-0.5 px-3 border-b border-gray-200 dark:border-white/5", 
-                                        td: "px-3 py-0.5 border-b border-gray-100 dark:border-white/5", 
-                                        tr: "hover:bg-emerald-500/5 transition-colors" 
+                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-xs h-10 py-0.5 px-3 border-b border-white/5", 
+                                        td: "px-3 py-0.5", 
+                                        tr: "border-b border-white/5 hover:bg-rose-500/5 border-l-4 border-transparent hover:border-rose-500 transition-colors h-12" 
                                     }}>
                                         <TableHeader>
                                             <TableColumn>PRODUCTO</TableColumn>
@@ -742,7 +779,7 @@ function ReturnsContent() {
                                     <div className="flex justify-between items-end">
                                         <div>
                                             <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL REINGRESO</p>
-                                            <p className="text-xl font-black text-emerald-500 tracking-tighter italic leading-none tabular-nums">${totalReturned.toLocaleString()}</p>
+                                            <p className="text-xl font-black text-rose-500 tracking-tighter italic leading-none tabular-nums">${totalReturned.toLocaleString()}</p>
                                         </div>
                                     </div>
                                 </div>
@@ -752,9 +789,9 @@ function ReturnsContent() {
 
                     {/* COLUMNA DERECHA: LO QUE EL CLIENTE SE LLEVA / REEMBOLSO */}
                     <div className="space-y-2">
-                        <Card className={`rounded-xl bg-white dark:bg-zinc-900 border transition-all shadow-xl shadow-black/5 overflow-hidden min-h-[450px] ${returnType === 'EXCHANGE' ? 'border-blue-500/10' : 'border-emerald-500/10'}`}>
+                        <Card className={`rounded-xl bg-white dark:bg-zinc-900 border transition-all shadow-xl shadow-black/5 overflow-hidden min-h-[450px] ${returnType === 'EXCHANGE' ? 'border-blue-500/10' : 'border-rose-500/10'}`}>
                             <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
-                                <h3 className={`text-[12px] font-black uppercase tracking-[0.2em] flex items-center gap-2 ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-emerald-500'}`}>
+                                <h3 className={`text-[12px] font-black uppercase tracking-[0.2em] flex items-center gap-2 ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-rose-500'}`}>
                                     {returnType === 'EXCHANGE' ? <ShoppingCart size={16} /> : <RotateCcw size={16} className="rotate-180" />}
                                     {returnType === 'EXCHANGE' ? "PRODUCTOS QUE SE LLEVA" : "REEMBOLSO DINERO / SALDO"}
                                 </h3>
@@ -772,14 +809,22 @@ function ReturnsContent() {
                                         onSelectionChange={(keys) => setReturnType(Array.from(keys)[0] as string)}
                                         variant="flat"
                                         labelPlacement="outside"
+                                        selectorIcon={<ChevronDown size={14} />}
+                                        popoverProps={{
+                                            classNames: {
+                                                content: "bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-2xl rounded-2xl p-2",
+                                            }
+                                        }}
                                         classNames={{ 
-                                            trigger: "h-9 bg-gray-100/50 dark:bg-zinc-800/80 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm px-3 min-h-unit-8",
-                                            value: "text-[10px] font-black uppercase italic"
+                                            trigger: "h-9 bg-gray-100 dark:bg-zinc-800 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm px-3 min-h-unit-8 pr-10",
+                                            value: "text-[10px] font-black uppercase italic",
+                                            selectorIcon: "absolute right-3 text-gray-500",
+                                            popoverContent: "bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 shadow-2xl rounded-xl"
                                         }}
                                         renderValue={(items) => {
                                             return items.map((item) => (
                                                 <div key={item.key} className="flex items-center gap-2">
-                                                    {item.key === 'REFUND' ? <Banknote size={14} className="text-emerald-500" /> : <RefreshCw size={14} className="text-blue-500" />}
+                                                    {item.key === 'REFUND' ? <Banknote size={14} className="text-rose-500" /> : <RefreshCw size={14} className="text-blue-500" />}
                                                     <span className="text-[10px] font-black italic">{item.textValue}</span>
                                                 </div>
                                             ));
@@ -788,10 +833,10 @@ function ReturnsContent() {
                                         <SelectItem 
                                             key="REFUND" 
                                             textValue="Reembolso de Dinero" 
-                                            className="group p-2 rounded-xl hover:bg-emerald-500/10 transition-colors"
+                                            className="group p-2 rounded-xl hover:bg-rose-500/10 transition-colors"
                                         >
                                             <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-lg bg-emerald-100 dark:bg-emerald-500/10 flex items-center justify-center text-emerald-600 dark:text-emerald-500">
+                                                <div className="h-8 w-8 rounded-lg bg-rose-100 dark:bg-rose-500/10 flex items-center justify-center text-rose-600 dark:text-rose-500">
                                                     <Banknote size={16} />
                                                 </div>
                                                 <div className="flex flex-col">
@@ -819,7 +864,7 @@ function ReturnsContent() {
                                 </div>
                                   {returnType === 'EXCHANGE' && (
                                     <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
-                                        <div className="relative">
+                                        <div className="relative z-[200]">
                                             <Input
                                                 size="sm"
                                                 placeholder="BUSCAR ARTÍCULO..."
@@ -835,7 +880,7 @@ function ReturnsContent() {
                                                 startContent={<Search size={14} className="text-blue-500/50" />}
                                             />
                                             {exchangeSearch.length > 2 && exchangeProducts.length > 0 && (
-                                                <div className="absolute z-[100] left-0 right-0 top-8 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl p-1 max-h-48 overflow-y-auto custom-scrollbar">
+                                                <div className="absolute z-[300] left-0 right-0 top-8 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl p-1 max-h-48 overflow-y-auto custom-scrollbar">
                                                     {exchangeProducts.map(p => (
                                                         <button key={p.barcode} className="w-full p-2 text-left hover:bg-blue-500/10 rounded-lg flex justify-between items-center group transition-colors border-b border-gray-100 dark:border-white/5 last:border-none" onClick={() => { addProductToReturn(p, true); setExchangeSearch(''); }}>
                                                             <div className="flex flex-col">
@@ -853,7 +898,7 @@ function ReturnsContent() {
                                         </div>
 
                                         <div className="rounded-2xl border border-gray-100 dark:border-white/5 overflow-hidden">
-                                            <Table isCompact removeWrapper aria-label="Items Cambio" classNames={{ th: "bg-gray-50 dark:bg-zinc-950 text-[8px] font-black uppercase tracking-widest h-8 px-4", td: "px-4 py-1 border-b border-gray-50 dark:border-white/5" }}>
+                                            <Table isCompact removeWrapper aria-label="Items Cambio" classNames={{ th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-8 px-4 border-b border-white/5", td: "px-4 py-1", tr: "border-b border-white/5 hover:bg-blue-500/5 transition-colors" }}>
                                                 <TableHeader>
                                                     <TableColumn>PRODUCTO</TableColumn>
                                                     <TableColumn align="center">CANT</TableColumn>
@@ -898,8 +943,8 @@ function ReturnsContent() {
                                 )}
 
                                 {returnType === 'REFUND' && (
-                                     <div className="h-full flex flex-col items-center justify-center space-y-4 py-10 bg-emerald-500/5 rounded-[2.5rem] border border-dashed border-emerald-500/20 animate-in fade-in duration-500">
-                                        <div className="h-16 w-16 rounded-3xl bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                     <div className="h-full flex flex-col items-center justify-center space-y-4 py-10 bg-rose-500/5 rounded-[2.5rem] border border-dashed border-rose-500/20 animate-in fade-in duration-500">
+                                        <div className="h-16 w-16 rounded-3xl bg-rose-500/10 flex items-center justify-center text-rose-500">
                                             <RotateCcw size={32} />
                                         </div>
                                         <div className="text-center">
@@ -925,7 +970,7 @@ function ReturnsContent() {
 
                                {/* HISTORIAL RECIENTE DOBLE COLUMNA: VENTAS VS DEVOLUCIONES */}
                 {!sale && (recentSales.length > 0 || recentReturns.length > 0) && (
-                    <div className="mt-4 px-1 pb-24 animate-in fade-in slide-in-from-bottom-5 duration-700">
+                    <div className="mt-4 px-1 pb-4 animate-in fade-in slide-in-from-bottom-5 duration-700">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             
                             {/* COLUMNA IZQUIERDA: VENTAS PARA GESTIÓN */}
@@ -940,18 +985,18 @@ function ReturnsContent() {
                                 
                                 <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
                                     <Table isCompact removeWrapper aria-label="Ventas Recientes" classNames={{ 
-                                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest h-10 py-1 px-4 border-b border-gray-100 dark:border-white/5", 
-                                        td: "py-2 px-4 border-b border-gray-50 dark:border-white/5 whitespace-nowrap",
-                                        tr: "hover:bg-emerald-500/5 transition-colors cursor-pointer group"
+                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5", 
+                                        td: "py-2 px-4 whitespace-nowrap",
+                                        tr: "border-b border-white/5 hover:bg-emerald-500/5 transition-colors cursor-pointer group border-l-4 border-transparent hover:border-emerald-500"
                                     }}>
                                         <TableHeader>
                                             <TableColumn>FACTURA</TableColumn>
                                             <TableColumn>CLIENTE</TableColumn>
                                             <TableColumn align="end">TOTAL</TableColumn>
-                                            <TableColumn align="center" width={40}>EXT</TableColumn>
+                                            <TableColumn align="center" width={60}>ACCIÓN</TableColumn>
                                         </TableHeader>
                                         <TableBody emptyContent="SIN VENTAS">
-                                            {recentSales.map((s) => (
+                                            {recentSales.slice(0, 10).map((s) => (
                                                 <TableRow key={s.id} onClick={() => loadSale(s)}>
                                                     <TableCell>
                                                         <div className="flex flex-col">
@@ -970,7 +1015,11 @@ function ReturnsContent() {
                                                         </span>
                                                     </TableCell>
                                                     <TableCell>
-                                                        <RotateCcw size={12} className="text-emerald-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                                        <div className="flex justify-center">
+                                                            <Button size="sm" variant="flat" className="h-6 px-3 rounded-md font-black text-[9px] uppercase tracking-widest bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1.5 shrink-0">
+                                                                GESTIONAR <ChevronRight size={12} className="shrink-0" />
+                                                            </Button>
+                                                        </div>
                                                     </TableCell>
                                                 </TableRow>
                                             ))}
@@ -991,9 +1040,9 @@ function ReturnsContent() {
                                 
                                 <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
                                     <Table isCompact removeWrapper aria-label="Devoluciones Recientes" classNames={{ 
-                                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-400 dark:text-zinc-500 font-black uppercase text-[8px] tracking-widest h-10 py-1 px-4 border-b border-gray-100 dark:border-white/5", 
-                                        td: "py-2 px-4 border-b border-gray-50 dark:border-white/5 whitespace-nowrap",
-                                        tr: "hover:bg-rose-500/5 transition-colors cursor-default group"
+                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5", 
+                                        td: "py-2 px-4 whitespace-nowrap",
+                                        tr: "border-b border-white/5 hover:bg-rose-500/5 transition-colors cursor-default group border-l-4 border-transparent hover:border-rose-500"
                                     }}>
                                         <TableHeader>
                                             <TableColumn>TICKET</TableColumn>
@@ -1002,7 +1051,7 @@ function ReturnsContent() {
                                             <TableColumn align="end">VALOR</TableColumn>
                                         </TableHeader>
                                         <TableBody emptyContent={isHistoryLoading ? <Spinner size="sm" color="danger" /> : "SIN DEVOLUCIONES"}>
-                                            {recentReturns.map((r: any) => (
+                                            {recentReturns.slice(0, 10).map((r: any) => (
                                                 <TableRow key={r.id}>
                                                     <TableCell>
                                                         <div className="flex flex-col">
@@ -1086,83 +1135,22 @@ function ReturnsContent() {
             )}
 
             {/* MODAL: CONFIRMAR DEVOLUCIÓN (Optimizado Mobile) */}
-            <Modal isOpen={returnDialogOpen} onOpenChange={setReturnDialogOpen} backdrop="blur" size="2xl" classNames={{ 
-                base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2rem] md:rounded-[3rem] shadow-2xl mx-4", 
-                header: "p-6 md:p-10 pb-2 md:pb-4 border-none", 
-                body: "p-6 md:p-10 py-4 md:py-6", 
-                footer: "p-6 md:p-10 pt-2 md:pt-4 border-none" 
-            }}>
-                <ModalContent>
-                    {(onClose) => (
-                        <>
-                            <ModalHeader className="flex flex-col gap-3">
-                                <div className="h-10 w-10 md:h-14 md:w-14 rounded-xl md:rounded-[1.5rem] bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20">
-                                    <RotateCcw className="h-5 w-5 md:h-7 md:w-7" />
-                                </div>
-                                <h2 className="text-xl md:text-3xl font-black text-gray-900 dark:text-white uppercase tracking-tighter leading-none italic">VALORACIÓN CONTABLE</h2>
-                                <p className="text-[9px] md:text-[11px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest opacity-80 leading-none mt-1 md:mt-2">Finalización de Auditoría de Retorno</p>
-                            </ModalHeader>
-                            <ModalBody className="flex flex-col gap-8">
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-emerald-500 uppercase tracking-widest pl-1 italic">Modalidad de Reintegro Sugerida</label>
-                                    <Select
-                                        selectedKeys={new Set([returnType])}
-                                        onSelectionChange={(keys) => setReturnType(Array.from(keys)[0] as string)}
-                                        isDisabled={balance > 0 && isTransfer}
-                                        aria-label="Modalidad de reintegro"
-                                        variant="flat"
-                                        labelPlacement="outside"
-                                        classNames={{ 
-                                            trigger: "h-12 md:h-16 bg-gray-50 dark:bg-zinc-900 rounded-xl md:rounded-2xl border-2 border-emerald-500/10 px-4 md:px-6",
-                                            value: "text-xs md:text-base font-black uppercase italic"
-                                        }}
-                                    >
-                                        <SelectItem key="REFUND" textValue="Reembolso Efectivo" className="font-black uppercase text-xs">💸 REEMBOLSO EN EFECTIVO</SelectItem>
-                                        <SelectItem key="EXCHANGE" textValue="Cambio de Artículo" className="font-black uppercase text-xs">🔄 CAMBIO POR OTROS PRODUCTOS</SelectItem>
-                                    </Select>
-                                </div>
-                                <div className="space-y-4">
-                                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest pl-1">Justificación del Retorno</label>
-                                    <Input
-                                        value={returnReason}
-                                        onValueChange={setReturnReason}
-                                        placeholder="Ej. DEFECTO DE FÁBRICA / CAMBIO POR TALLA..."
-                                        aria-label="Justificación del retorno"
-                                        variant="flat"
-                                        classNames={{ inputWrapper: "h-12 md:h-16 bg-gray-50 dark:bg-zinc-900 rounded-xl md:rounded-2xl border-none font-bold text-xs md:text-sm uppercase px-4 md:px-6" }}
-                                    />
-                                </div>
-
-                                {balance !== 0 && (
-                                    <div className={`p-4 md:p-8 rounded-2xl md:rounded-[2rem] text-center border-2 ${balance > 0 ? 'bg-emerald-50 dark:bg-emerald-500/5 border-emerald-500/20' : 'bg-rose-50 dark:bg-rose-500/5 border-rose-500/20'} animate-in zoom-in-95 duration-300`}>
-                                        <div className={`text-[9px] md:text-[11px] font-black uppercase tracking-widest mb-1 md:mb-2 ${balance > 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                            Neto de la Operación
-                                        </div>
-                                        <div className="text-3xl md:text-5xl font-black text-gray-900 dark:text-white tracking-tighter tabular-nums italic">
-                                            ${Math.abs(balance).toLocaleString()}
-                                        </div>
-                                    </div>
-                                )}
-                            </ModalBody>
-                            <ModalFooter className="flex justify-between items-center bg-gray-50/50 dark:bg-zinc-900/50 p-6 md:p-10 rounded-b-[2rem] md:rounded-b-[3rem]">
-                                <Button variant="light" color="danger" onPress={onClose} className="font-black uppercase text-[9px] md:text-[11px] tracking-[0.2em] h-12 md:h-14 px-6 md:px-10 rounded-xl md:rounded-2xl">
-                                    CANCELAR
-                                </Button>
-                                <Button
-                                    onPress={processReturn}
-                                    isDisabled={balance > 0 && isTransfer}
-                                    className={`h-12 md:h-16 px-6 md:px-16 font-black uppercase text-[9px] md:text-[11px] tracking-[0.2em] md:tracking-[0.3em] rounded-xl md:rounded-2xl shadow-2xl transition-all ${balance > 0 && isTransfer
-                                            ? "bg-gray-100 text-gray-400 dark:bg-zinc-800 dark:text-zinc-500"
-                                            : "bg-emerald-500 text-white hover:scale-105 active:scale-95"
-                                        }`}
-                                >
-                                    {balance > 0 && isTransfer ? 'PENDIENTE POR CAMBIO' : 'CONFIRMAR Y FINALIZAR'}
-                                </Button>
-                            </ModalFooter>
-                        </>
-                    )}
-                </ModalContent>
-            </Modal>
+            <UniversalPaymentModal
+                isOpen={returnDialogOpen}
+                onOpenChange={setReturnDialogOpen}
+                title="DINERO A DEVOLVER AL CLIENTE"
+                client={sale?.client || null}
+                totalToPay={Math.abs(balance)}
+                showSuccessScreen={showSuccessScreen}
+                submittingPayment={submittingPayment}
+                lastChange={lastChange}
+                onPay={handleFinalPayment}
+                onCloseComplete={handleClosePaymentModal}
+                reason={returnReason}
+                onReasonChange={setReturnReason}
+                showCreditTab={false}
+                flowType="out"
+            />
 
             {/* MODAL: RESULTADOS BÚSQUEDA */}
             <Modal isOpen={isResultsDialogOpen} onOpenChange={setIsResultsDialogOpen} backdrop="blur" size="4xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-2xl", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
@@ -1171,7 +1159,7 @@ function ReturnsContent() {
                         <>
                             <ModalHeader className="flex flex-col gap-1">
                                 <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight flex items-center gap-3">
-                                    <History className="h-6 w-6 text-emerald-600 dark:text-emerald-500" /> Resultados
+                                    <History className="h-6 w-6 text-rose-600 dark:text-rose-500" /> Resultados
                                 </h2>
                                 <p className="text-gray-500 dark:text-zinc-500 font-bold uppercase tracking-widest text-[10px] mt-1">
                                     Selecciona la venta para iniciar el proceso
@@ -1179,7 +1167,7 @@ function ReturnsContent() {
                             </ModalHeader>
                             <ModalBody>
                                 <div className="rounded-[2rem] border border-gray-200 dark:border-white/5 overflow-hidden shadow-sm">
-                                    <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 font-black uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-gray-50 dark:hover:bg-white/[0.02] cursor-pointer transition-colors group" }}>
+                                    <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 font-black uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-emerald-500/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
                                         <TableHeader>
                                             <TableColumn>ID</TableColumn>
                                             <TableColumn>CLIENTE</TableColumn>
@@ -1216,14 +1204,14 @@ function ReturnsContent() {
                                         <Pagination
                                             isCompact
                                             showControls
-                                            color="success"
+                                            color="danger"
                                             page={searchResultsPage}
                                             total={Math.max(1, Math.ceil(searchResultsTotal / 10))}
                                             onChange={(page) => handleSearch(true, page)}
                                             classNames={{
                                                 wrapper: "gap-2",
                                                 item: "w-10 h-10 min-w-10 rounded-xl font-black text-xs bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5",
-                                                cursor: "bg-emerald-600 dark:bg-emerald-500 text-white shadow-lg shadow-emerald-500/30",
+                                                cursor: "bg-rose-600 dark:bg-rose-500 text-white shadow-lg shadow-rose-500/30",
                                                 next: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5",
                                                 prev: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5"
                                             }}
@@ -1247,7 +1235,7 @@ function ReturnsContent() {
                     <div className="relative w-full max-w-2xl aspect-video bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
                         <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 pointer-events-none">
                             <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2">
-                                <Camera className="h-5 w-5 text-emerald-500" /> Escáner Activo
+                                <Camera className="h-5 w-5 text-rose-500" /> Escáner Activo
                             </h2>
                         </div>
                         <ScannerOverlay

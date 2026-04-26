@@ -3,6 +3,7 @@ package services
 import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"time"
 )
 
 type ClientService struct {
@@ -14,23 +15,34 @@ func NewClientService(repo ports.ClientRepository, cr ports.CreditPaymentReposit
 	return &ClientService{repo: repo, creditRepo: cr}
 }
 
-func (s *ClientService) PayCredit(payment *models.CreditPayment) error {
+func (s *ClientService) PayCredit(payment *models.CreditPayment) (*models.Client, error) {
 	client, err := s.repo.GetByDNI(payment.ClientDNI)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	client.CurrentCredit -= payment.TotalPaid
 	if client.CurrentCredit < 0 {
-		// Opcional: Permitir saldo a favor o truncar a 0
 		client.CurrentCredit = 0
 	}
 
+	// Actualizar quién hizo el movimiento para evitar errores de FK
+	client.UpdatedByDNI = payment.EmployeeDNI
+
 	if err := s.repo.Update(client.DNI, client); err != nil {
-		return err
+		return nil, err
 	}
 
-	return s.creditRepo.Save(payment)
+	// Asegurar fecha de pago si no viene definida
+	if payment.PaymentDate.IsZero() {
+		payment.PaymentDate = time.Now()
+	}
+
+	if err := s.creditRepo.Save(payment); err != nil {
+		return nil, err
+	}
+
+	return client, nil
 }
 
 func (s *ClientService) CreateClient(client *models.Client) error {

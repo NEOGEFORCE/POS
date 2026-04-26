@@ -27,7 +27,7 @@ func NewAuthService(repo ports.AdminRepository, emailService *EmailService, audi
 	}
 }
 
-func (s *AuthService) Login(identifier string, password string, ip string) (string, interface{}, error) {
+func (s *AuthService) Login(identifier string, password string, ip string, device string) (string, interface{}, error) {
 	// Normalizar identificador para búsqueda (El sistema guarda nombres y DNI en mayúsculas)
 	identifier = strings.ToUpper(strings.TrimSpace(identifier))
 
@@ -48,20 +48,26 @@ func (s *AuthService) Login(identifier string, password string, ip string) (stri
 
 	// 3. Verificar si el usuario ha sido borrado (Soft Delete)
 	if user.DeletedAt.Valid {
-		s.auditService.Log(user.DNI, "LOGIN_BLOCKED", "AUTH", "Intento de acceso en cuenta eliminada", ip)
+		s.auditService.Log(user.DNI, user.Name, "LOGIN_BLOCKED", "AUTH", "Intento de acceso en cuenta eliminada", "Intento de inicio de sesión en una cuenta que ha sido eliminada del sistema.", "{}", ip, device, true)
 		return "", nil, errors.New("tu cuenta ha sido removida del sistema. contacta al administrador")
 	}
 
 	// 4. Verificar si el usuario está activo
 	if !user.IsActive {
-		s.auditService.Log(user.DNI, "LOGIN_BLOCKED", "AUTH", "Intento de acceso en cuenta inactiva", ip)
+		s.auditService.Log(user.DNI, user.Name, "LOGIN_BLOCKED", "AUTH", "Intento de acceso en cuenta inactiva", "Intento de inicio de sesión en una cuenta desactivada.", "{}", ip, device, true)
 		return "", nil, errors.New("tu cuenta ha sido desactivada. contacta al administrador")
 	}
 
-	s.auditService.Log(user.DNI, "LOGIN_SUCCESS", "AUTH", fmt.Sprintf("Acceso exitoso como %s", user.Role), ip)
+	s.auditService.Log(user.DNI, user.Name, "LOGIN_SUCCESS", "AUTH", fmt.Sprintf("Acceso exitoso como %s", user.Role), fmt.Sprintf("Inicio de sesión exitoso desde %s", device), "{}", ip, device, false)
+
+	// Actualizar fecha de última conexión
+	now := time.Now()
+	user.LastLogin = &now
+	s.repo.Update(user.DNI, user)
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"dni":  user.DNI,
+		"name": user.Name,
 		"role": user.Role,
 		"exp":  time.Now().Add(time.Hour * 12).Unix(),
 	})
@@ -77,9 +83,14 @@ func (s *AuthService) Login(identifier string, password string, ip string) (stri
 func (s *AuthService) ForgotPassword(email string) error {
 	user, err := s.repo.FindByEmail(email)
 	if err != nil {
-		// Por seguridad, no revelamos si el correo no existe en el handler, 
-		// pero aquí retornamos el error para que el handler decida.
 		return err
+	}
+
+	// VALIDACIÓN DE SEGURIDAD: Solo Administradores pueden recuperar por correo.
+	// Superadmins y Empleados están bloqueados.
+	role := strings.ToUpper(user.Role)
+	if role != "ADMINISTRADOR" && role != "ADMIN" {
+		return fmt.Errorf("recuperación no permitida para el rol: %s", role)
 	}
 
 	// 1. Generar token de recuperación (JWT de corta duración)
@@ -135,7 +146,7 @@ func (s *AuthService) ResetPassword(tokenString, newPassword string) error {
 	user.Password = string(hashedPassword)
 	err = s.repo.Update(user.DNI, user)
 	if err == nil {
-		s.auditService.Log(dni, "PASSWORD_RESET_SELF", "AUTH", "El usuario cambió su propia contraseña vía email", "N/A")
+		s.auditService.Log(dni, user.Name, "PASSWORD_RESET_SELF", "AUTH", "El usuario cambió su propia contraseña vía email", "Cambio de contraseña exitoso mediante enlace de recuperación.", "{}", "N/A", "N/A", true)
 	}
 	return err
 }

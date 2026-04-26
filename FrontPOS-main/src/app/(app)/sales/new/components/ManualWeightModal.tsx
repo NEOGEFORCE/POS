@@ -3,8 +3,11 @@
 import {
     Modal, ModalContent, ModalHeader, ModalBody, Button, Input
 } from "@heroui/react";
-import { X, ChevronsUpDown } from "lucide-react";
+import { Weight, Check } from 'lucide-react';
+import { validateManualWeight, FieldError } from '@/lib/formValidation';
+import ValidationErrors from '@/components/ValidationErrors';
 import { Product } from "@/lib/definitions";
+import React from 'react';
 
 interface ManualWeightModalProps {
     isOpen: boolean;
@@ -23,6 +26,7 @@ export default function ManualWeightModal({
     setManualWeightValue,
     confirmManualWeight
 }: ManualWeightModalProps) {
+    const [validationErrors, setValidationErrors] = React.useState<FieldError[]>([]);
     return (
         <Modal 
             isOpen={isOpen} 
@@ -39,7 +43,7 @@ export default function ManualWeightModal({
                     <>
                         <ModalHeader className="p-8 border-b border-gray-100 dark:border-white/5 rounded-t-[2rem] flex items-center gap-4">
                             <div className="bg-sky-500/10 p-3 rounded-2xl text-sky-500 shadow-inner -rotate-3">
-                                <ChevronsUpDown size={24} />
+                                <Weight size={24} />
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <span className="text-xl font-black text-gray-900 dark:text-white uppercase italic tracking-tighter leading-none">{manualWeightProduct?.productName || 'PRODUCTO'}</span>
@@ -52,7 +56,7 @@ export default function ManualWeightModal({
                                 onPress={onClose} 
                                 className="ml-auto text-gray-400 hover:text-rose-500 bg-gray-50 dark:bg-zinc-900 rounded-xl h-10 w-10 transition-colors"
                             >
-                                <X size={18} />
+                                <Check size={18} />
                             </Button>
                         </ModalHeader>
                         <ModalBody className="p-8 gap-8">
@@ -89,9 +93,22 @@ export default function ManualWeightModal({
                                 ))}
                             </div>
 
+                            {validationErrors.length > 0 && (
+                                <div className="col-span-2 mb-2">
+                                    <ValidationErrors errors={validationErrors} />
+                                </div>
+                            )}
                             <Button
                                 className="w-full h-16 rounded-[2rem] font-black uppercase tracking-widest text-base bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-500/20 transition-all active:scale-95 italic"
-                                onPress={confirmManualWeight}
+                                onPress={() => {
+                                    const result = validateManualWeight(manualWeightValue);
+                                    if (!result.isValid) {
+                                        setValidationErrors(result.errors);
+                                        return;
+                                    }
+                                    setValidationErrors([]);
+                                    confirmManualWeight();
+                                }}
                             >
                                 AÑADIR AL COMPROBANTE
                             </Button>

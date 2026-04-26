@@ -13,15 +13,24 @@ interface KPIProps {
 }
 
 const KPICard = React.memo(({ label, val, icon: Icon, color, desc }: KPIProps) => (
-    <Card className="rounded-lg bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-sm hover:shadow-md transition-all duration-500 group overflow-hidden">
-        <CardBody className="p-2">
-            <h3 className="text-[7px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest">{label}</h3>
-            <div className="flex items-center justify-between">
-                <div className="text-sm font-black text-gray-900 dark:text-white mt-0.5 tabular-nums leading-none">{val}</div>
-                <Icon className={`h-3 w-3 text-${color}-600 dark:text-${color}-500 opacity-20 group-hover:opacity-100 transition-opacity`} />
+    <div className="bg-white dark:bg-zinc-900/40 dark:backdrop-blur-md border border-gray-200 dark:border-white/10 rounded-2xl p-4 flex items-center gap-4 relative overflow-hidden group hover:shadow-md transition-all duration-500">
+        {/* Contenedor del Icono con Glow */}
+        <div className="relative flex-shrink-0 flex items-center justify-center w-12 h-12">
+            <div className={`absolute inset-0 bg-${color}-500/20 blur-xl rounded-full dark:block hidden group-hover:bg-${color}-500/30 transition-colors`}></div>
+            <div className={`relative bg-${color}-50 text-${color}-600 dark:bg-${color}-500/20 dark:text-${color}-400 p-2.5 rounded-xl shadow-sm transition-colors`}>
+                <Icon className="w-6 h-6" />
             </div>
-        </CardBody>
-    </Card>
+        </div>
+        {/* Textos */}
+        <div className="flex flex-col">
+            <span className="text-gray-500 dark:text-zinc-400 text-[10px] font-bold tracking-wider uppercase mb-0.5 leading-none">
+                {label}
+            </span>
+            <span className="text-gray-900 dark:text-white font-bold italic text-2xl tracking-tighter tabular-nums leading-none mt-1">
+                {val}
+            </span>
+        </div>
+    </div>
 ));
 
 KPICard.displayName = 'KPICard';

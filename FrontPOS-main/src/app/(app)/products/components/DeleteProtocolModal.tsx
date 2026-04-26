@@ -15,9 +15,11 @@ export default function DeleteProtocolModal({ isOpen, onOpenChange, deletingBarc
         <Modal 
             isOpen={isOpen} 
             onOpenChange={onOpenChange} 
+            placement="top"
             backdrop="blur" 
             classNames={{ 
-                base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-2xl", 
+                base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-2xl mx-2 md:mx-0", 
+                wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
                 closeButton: "text-gray-400 hover:text-rose-500 transition-colors" 
             }}
         >

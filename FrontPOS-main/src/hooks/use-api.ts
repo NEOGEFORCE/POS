@@ -12,6 +12,14 @@ const fetcher = async (url: string) => {
     },
   });
 
+  if (res.status === 401) {
+    // Limpieza global de sesión por expiración o token inválido
+    Cookies.remove('org-pos-token');
+    Cookies.remove('org-pos-user');
+    window.location.href = '/login?expired=true';
+    return;
+  }
+
   if (!res.ok) {
     const error = new Error('Error al cargar datos');
     (error as any).status = res.status;

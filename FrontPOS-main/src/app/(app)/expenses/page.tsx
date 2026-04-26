@@ -1,21 +1,78 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Button, Input, Spinner } from "@heroui/react";
 import { 
-  TrendingDown, Search, PlusCircle, Clock, Sparkles 
+  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles 
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Expense } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
+import { useAuth } from '@/lib/auth';
 
 // Dinámicos para optimización de carga y HMR
 const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: false });
 const ExpenseTable = dynamic(() => import('./components/ExpenseTable'), { ssr: false });
 const ExpenseFormModal = dynamic(() => import('./components/ExpenseFormModal'), { ssr: false });
 const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal'), { ssr: false });
+
+// COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (ESTILO USUARIOS)
+const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: { 
+    filter: string, 
+    onSearch: (v: string) => void, 
+    onAdd: () => void,
+    onReload: () => void,
+    isLoading: boolean
+}) => (
+  <header className="flex flex-col gap-2.5 transition-all">
+    <div className="flex items-center justify-between px-1">
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-rose-500 flex items-center justify-center text-white shadow-xl shadow-rose-500/20 shrink-0 transition-transform active:scale-95 transform -rotate-3">
+          <TrendingDown size={20} />
+        </div>
+        <div className="flex flex-col">
+          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">
+            CONTROL DE <span className="text-rose-500">EGRESOS</span>
+          </h1>
+          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Audit Ledger V4.5</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+            isIconOnly
+            size="sm"
+            onPress={onReload}
+            isLoading={isLoading}
+            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-rose-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+        >
+            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+        </Button>
+        <Button
+            size="sm"
+            onPress={onAdd}
+            className="h-10 bg-rose-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-rose-500/20 italic transition-all active:scale-95 shrink-0"
+        >
+            <PlusCircle size={16} /> 
+            <span className="ml-2 tracking-widest">NUEVA SALIDA</span>
+        </Button>
+      </div>
+    </div>
+    <Input
+      size="sm"
+      placeholder="FILTRAR POR CONCEPTO O CATEGORÍA..."
+      value={filter} 
+      onValueChange={onSearch}
+      classNames={{
+        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+      }}
+      startContent={<Search size={14} className="text-rose-500 mr-1" />}
+    />
+  </header>
+));
+ExpenseHeader.displayName = 'ExpenseHeader';
 
 async function fetchExpenses(token: string): Promise<Expense[]> {
   const data = await apiFetch('/expenses/list', {
@@ -26,7 +83,14 @@ async function fetchExpenses(token: string): Promise<Expense[]> {
 }
 
 export default function ExpensesPage() {
+  const { user } = useAuth();
   const { toast } = useToast();
+  
+  const isAdmin = useMemo(() => {
+    const role = user?.role?.toLowerCase() || user?.Role?.toLowerCase() || '';
+    return role === 'admin' || role === 'administrador' || role === 'superadmin';
+  }, [user]);
+
   const [loading, setLoading] = useState(true);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [filter, setFilter] = useState('');
@@ -38,7 +102,6 @@ export default function ExpensesPage() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   // Estados de Datos
-  const [newExpense, setNewExpense] = useState<Partial<Expense>>({ description: '', amount: 0, paymentSource: 'EFECTIVO' });
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const loadExpenses = useCallback(async () => {
@@ -58,7 +121,10 @@ export default function ExpensesPage() {
 
   const stats = useMemo(() => {
     const now = new Date();
-    const currentMonth = expenses.filter(e => new Date(e.date).getMonth() === now.getMonth());
+    const currentMonth = expenses.filter(e => {
+      const d = new Date(e.date);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    });
     const totalMonth = currentMonth.reduce((acc, e) => acc + Number(e.amount), 0);
     const bySource = expenses.reduce((acc: any, e) => {
       const source = e.paymentSource || 'EFECTIVO';
@@ -74,10 +140,23 @@ export default function ExpensesPage() {
     return expenses.filter(e => e.description.toLowerCase().includes(query));
   }, [expenses, filter]);
 
+  const [pageSize, setPageSize] = useState(10);
+  const [currentPage, setCurrentPage] = useState(1);
+
+  const paginatedExpenses = useMemo(() => {
+    return filteredExpenses.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  }, [filteredExpenses, currentPage, pageSize]);
+
+  const totalPages = Math.ceil(filteredExpenses.length / pageSize || 1);
+
+  // Reset pagination when filter changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter]);
+
   // Handlers
-  const handleSaveExpense = async () => {
+  const handleSaveExpense = async (data: any) => {
     const token = Cookies.get('org-pos-token');
-    const data = addDialogOpen ? newExpense : editingExpense;
     if (!token || !data?.description || !data?.amount || !data?.category) {
       toast({ variant: "destructive", title: "CAMPOS INCOMPLETOS", description: "La categoría, concepto y monto son obligatorios." });
       return;
@@ -85,33 +164,57 @@ export default function ExpensesPage() {
 
     try {
       const currentDate = new Date().toISOString();
+      
+      // Si hay linkedOrderId y es creación, usar endpoint especial vinculado
+      const isLinkedOrder = addDialogOpen && data.linkedOrderId;
+      
       const path = addDialogOpen
-        ? '/expenses/create'
+        ? (isLinkedOrder ? '/expenses/create-linked' : '/expenses/create')
         : `/expenses/update/${editingExpense?.id}`;
 
       const method = addDialogOpen ? 'POST' : 'PUT';
 
-      await apiFetch(path, {
+      // Preparar payload base
+      const payload: any = {
+        description: data.description.toUpperCase(),
+        amount: Math.abs(parseFloat(String(data.amount)) || 0),
+        date: currentDate,
+        paymentSource: data.paymentSource || 'EFECTIVO',
+        category: data.category,
+        lenderName: data.paymentSource === 'PRESTADO' ? data.lenderName : null,
+        supplierId: data.category === 'Proveedores' && data.supplierId ? Number(data.supplierId) : null,
+        newSupplierName: data.category === 'Proveedores' && !data.supplierId ? data.newSupplierName : null
+      };
+
+      // Si es orden vinculada, incluir el ID
+      if (isLinkedOrder) {
+        payload.linkedOrderId = Number(data.linkedOrderId);
+      }
+
+      const result = await apiFetch(path, {
         method,
-        body: JSON.stringify({
-          description: data.description.toUpperCase(),
-          amount: parseFloat(String(data.amount)),
-          date: currentDate,
-          paymentSource: data.paymentSource,
-          category: data.category,
-          supplierId: data.category === 'Proveedores' ? data.supplierId : null
-        }),
+        body: JSON.stringify(payload),
         fallbackError: 'FALLO AL REGISTRAR MOVIMIENTO'
       }, token!);
 
-      toast({ 
-        title: "ÉXITO", 
-        description: "MOVIMIENTO REGISTRADO CORRECTAMENTE",
-        className: "bg-emerald-500 text-white border-none" 
-      });
+      // Mensaje de éxito específico para orden vinculada
+      if (isLinkedOrder && result?.message) {
+        toast({ 
+          variant: "success",
+          title: "ÉXITO", 
+          description: `${result.message}. Stock actualizado automáticamente.`,
+        });
+      } else {
+        toast({ 
+          variant: "success",
+          title: "ÉXITO", 
+          description: "MOVIMIENTO REGISTRADO CORRECTAMENTE",
+        });
+      }
+      
       setAddDialogOpen(false);
       setEditDialogOpen(false);
-      setNewExpense({ description: '', amount: 0, paymentSource: 'EFECTIVO' });
+      setEditingExpense(null);
       loadExpenses();
     } catch (err: any) { 
       toast({ 
@@ -132,9 +235,9 @@ export default function ExpensesPage() {
         fallbackError: 'FALLO AL ELIMINAR EGRESO'
       }, token!);
       toast({ 
+        variant: "success",
         title: "ÉXITO", 
         description: "REGISTRO ELIMINADO", 
-        className: "bg-emerald-500 text-white border-none"
       });
       setDeleteDialogOpen(false);
       loadExpenses();
@@ -151,78 +254,47 @@ export default function ExpensesPage() {
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="danger" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col min-h-[100dvh] gap-2 p-2 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20 items-center">
-      <div className="w-full max-w-[1600px] flex flex-col gap-3">
-      {/* Header Premium Zero Friction */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-4 bg-white/90 dark:bg-zinc-900/50 backdrop-blur-2xl border-b border-gray-200 dark:border-white/5 rounded-[2rem] shrink-0 shadow-xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-4 opacity-5 text-rose-500 scale-150 rotate-12 transition-transform duration-1000 group-hover:rotate-[24deg]"><TrendingDown size={120} /></div>
-        
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="bg-rose-500 p-2.5 rounded-xl text-white shadow-lg shadow-rose-500/20 -rotate-3">
-            <TrendingDown size={20} />
-          </div>
-          <div className="flex flex-col">
-            <h1 className="text-lg font-black dark:text-white uppercase leading-none italic tracking-tighter">
-              Control de <span className="text-rose-500">Egresos</span>
-            </h1>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[8px] font-black text-rose-500 uppercase tracking-[0.3em]">Caja & Auditoría</span>
-              <div className="h-1 w-1 bg-gray-300 rounded-full" />
-              <div className="flex items-center gap-1 text-[8px] font-bold text-gray-400 uppercase tracking-widest italic">
-                <Clock size={9} /> {new Date().toLocaleDateString()}
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+      
+      {/* HEADER SECTION: FIXED (TOP) */}
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+        <ExpenseHeader 
+            filter={filter} 
+            onSearch={(v) => setFilter(v.toUpperCase())} 
+            onAdd={() => setAddDialogOpen(true)} 
+            onReload={loadExpenses}
+            isLoading={loading}
+        />
+        <ExpenseStats 
+          totalMonth={stats.totalMonth}
+          topSource={stats.topSource}
+          count={stats.count}
+        />
+      </div>
 
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="relative group/search">
-            <Input 
-              size="sm" 
-              placeholder="RASTREAR MOVIMIENTO..." 
-              value={filter} 
-              onValueChange={(v) => setFilter(v.toUpperCase())} 
-              startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-rose-500 transition-colors" />} 
-              classNames={{ 
-                inputWrapper: "h-11 w-full md:w-80 bg-gray-50/50 dark:bg-black/20 backdrop-blur-md border border-gray-200 dark:border-white/10 shadow-inner rounded-2xl group-focus-within/search:border-rose-500/50 transition-all", 
-                input: "text-[11px] font-black bg-transparent tracking-widest italic uppercase" 
-              }} 
-            />
-          </div>
-          <Button 
-            size="sm" 
-            onPress={() => setAddDialogOpen(true)} 
-            className="h-11 px-6 bg-rose-500 text-white font-black text-[11px] rounded-xl shadow-lg shadow-rose-500/20 hover:scale-105 active:scale-95 transition-all italic tracking-widest uppercase"
-          >
-            <PlusCircle size={16} className="mr-1" /> NUEVA SALIDA
-          </Button>
-        </div>
-      </header>
+      {/* CONTENT SECTION (INTERNAL SCROLLABLE) */}
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+        <ExpenseTable 
+          expenses={paginatedExpenses}
+          isAdmin={isAdmin}
+          onEdit={(e) => { setEditingExpense({ ...e }); setEditDialogOpen(true); }}
+          onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalRecords={filteredExpenses.length}
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+        />
+      </div>
 
-      {/* KPI Section */}
-      <ExpenseStats 
-        totalMonth={stats.totalMonth}
-        topSource={stats.topSource}
-        count={stats.count}
-      />
-
-      {/* Main Content Table */}
-      <ExpenseTable 
-        expenses={filteredExpenses}
-        onEdit={(e) => { setEditingExpense({ ...e }); setEditDialogOpen(true); }}
-        onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
-      />
 
       {/* Modals Orchestration */}
       <ExpenseFormModal 
         isOpen={addDialogOpen || editDialogOpen}
-        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingExpense(null); setNewExpense({ description: '', amount: 0, paymentSource: 'EFECTIVO' }); } }}
+        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingExpense(null); } }}
         isEdit={editDialogOpen}
-        expense={(addDialogOpen ? newExpense : editingExpense) || {}}
-        setExpense={(e) => {
-          if (addDialogOpen) setNewExpense(e as any);
-          else setEditingExpense(e as any);
-        }}
+        initialExpense={addDialogOpen ? null : editingExpense}
         onSave={handleSaveExpense}
       />
 
@@ -231,7 +303,7 @@ export default function ExpensesPage() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteExpense}
       />
-      </div>
+
     </div>
   );
 }

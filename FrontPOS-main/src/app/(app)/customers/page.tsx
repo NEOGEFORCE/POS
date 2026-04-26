@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
 import {
   Button, Input, Spinner
 } from "@heroui/react";
 
 import {
-  Users, Search, PlusCircle, LayoutGrid, Clock
+  Users, Search, PlusCircle, Clock, RefreshCw, LayoutGrid
 } from 'lucide-react';
 
 import { useToast } from '@/hooks/use-toast';
@@ -16,7 +16,7 @@ import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
 
 // Dinámicos para aligerar HMR y carga inicial
-const PayCreditModal = dynamic(() => import('./components/PayCreditModal'), { ssr: false });
+const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
 const CustomerFormModal = dynamic(() => import('./components/CustomerFormModal'), { ssr: false });
 const DeleteCustomerModal = dynamic(() => import('./components/DeleteCustomerModal'), { ssr: false });
 const CustomerStats = dynamic(() => import('./components/CustomerStats'), { ssr: false });
@@ -38,11 +38,69 @@ async function fetchCustomers(token: string): Promise<Customer[]> {
   }));
 }
 
+// COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (PARIDAD CON USERS/SUPPLIERS)
+const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: { 
+    filter: string, 
+    onSearch: (v: string) => void, 
+    onAdd: () => void,
+    onReload: () => void,
+    isLoading: boolean
+}) => (
+  <header className="flex flex-col gap-2.5 transition-all">
+    <div className="flex items-center justify-between px-1">
+      <div className="flex items-center gap-3">
+        <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transition-transform active:scale-95">
+          <Users size={20} />
+        </div>
+        <div className="flex flex-col">
+          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">GESTIÓN DE <span className="text-emerald-500">CLIENTES</span></h1>
+          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1 italic leading-none">Directorio Maestro V4.2</p>
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+            isIconOnly
+            size="sm"
+            onPress={onReload}
+            isLoading={isLoading}
+            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+        >
+            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+        </Button>
+        <Button
+            size="sm"
+            onPress={onAdd}
+            className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+        >
+            <PlusCircle size={16} /> 
+            <span className="ml-2 tracking-widest">NUEVO</span>
+        </Button>
+      </div>
+    </div>
+    <Input
+      size="sm"
+      placeholder="RASTREAR POR NOMBRE / IDENTIFICACIÓN..." 
+      value={filter} 
+      onValueChange={onSearch}
+      classNames={{
+        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest italic"
+      }}
+      startContent={<Search size={14} className="text-emerald-500 mr-1" />}
+    />
+  </header>
+));
+CustomerHeader.displayName = 'CustomerHeader';
+
 export default function CustomersPage() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filter, setFilter] = useState('');
+
+  // Paginación (Sincronizada con Users/Suppliers)
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   // Estados de Modales
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -56,10 +114,6 @@ export default function CustomersPage() {
   const [payingClient, setPayingClient] = useState<Customer | null>(null);
   const [deletingDni, setDeletingDni] = useState<string | null>(null);
 
-  // Estados de Pago
-  const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA'>('cash');
-  const [dialogAmount, setDialogAmount] = useState('');
-  const [cashTendered, setCashTendered] = useState<string>('');
   const [lastChange, setLastChange] = useState(0);
   const [showSuccessScreen, setShowSuccessScreen] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
@@ -79,6 +133,7 @@ export default function CustomersPage() {
 
   useEffect(() => { loadCustomers(); }, [loadCustomers]);
 
+  // Lógica de Filtrado y Paginación
   const filteredCustomers = useMemo(() => {
     return customers.filter(c =>
       c.name.toLowerCase().includes(filter.toLowerCase()) ||
@@ -86,36 +141,43 @@ export default function CustomersPage() {
     );
   }, [customers, filter]);
 
+  const totalPages = Math.ceil(filteredCustomers.length / pageSize) || 1;
+  
+  const currentCustomers = useMemo(() => {
+    const start = (page - 1) * pageSize;
+    return filteredCustomers.slice(start, start + pageSize);
+  }, [filteredCustomers, page, pageSize]);
+
   const statsValues = useMemo(() => {
     const totalDebt = customers.reduce((acc, c) => acc + (Number(c.currentCredit) || 0), 0);
     const withDebt = customers.filter(c => (Number(c.currentCredit) || 0) > 0).length;
     return { totalDebt, withDebt, totalClients: customers.length };
   }, [customers]);
 
-  const handlePayCredit = async () => {
+  // La lógica de suma ahora la maneja el UniversalPaymentModal
+
+  const handlePayCredit = async (paymentData: {
+    cash: number;
+    transfer: number;
+    transferSource: string;
+    totalPaid: number;
+    change: number;
+  }) => {
     if (!payingClient) return;
     setSubmittingPayment(true);
     const token = Cookies.get('org-pos-token');
     try {
-      const totalDebtVal = Number(payingClient.currentCredit || 0);
-      const currentDialogVal = Number(dialogAmount) || 0;
-      const amountToPayRaw = currentDialogVal > 0 ? currentDialogVal : (Number(cashTendered) > 0 ? Number(cashTendered) : totalDebtVal);
-      const actualPaymentValue = Math.min(amountToPayRaw, totalDebtVal);
-      const displayChange = activePaymentTab === 'cash' ? Math.max(0, amountToPayRaw - totalDebtVal) : 0;
-
-      const numCash = activePaymentTab === 'cash' ? actualPaymentValue : 0;
-      const numTransfer = activePaymentTab !== 'cash' ? actualPaymentValue : 0;
-      const tSource = activePaymentTab !== 'cash' ? activePaymentTab : '';
+      const { cash, transfer, transferSource, totalPaid, change } = paymentData;
 
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/pay-credit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
           clientDni: payingClient.dni,
-          amountCash: numCash,
-          amountTransfer: numTransfer,
-          transferSource: tSource,
-          totalPaid: actualPaymentValue
+          amountCash: cash,
+          amountTransfer: transfer,
+          transferSource: transferSource,
+          totalPaid: totalPaid // actualPaymentValue
         })
       });
       if (!res.ok) {
@@ -123,7 +185,7 @@ export default function CustomersPage() {
         throw new Error(errorMsg);
       }
 
-      setLastChange(displayChange);
+      setLastChange(change);
       setShowSuccessScreen(true);
       loadCustomers();
     } catch (err: any) { 
@@ -132,19 +194,35 @@ export default function CustomersPage() {
     finally { setSubmittingPayment(false); }
   };
 
-  // Acciones CRUD (memoizadas)
+  // Lógica de búsqueda rápida (Lookup) por DNI para evitar duplicados y facilitar edición
+  const handleLookupCustomer = useCallback(async (dni: string) => {
+    const token = Cookies.get('org-pos-token');
+    const existing = customers.find(c => c.dni === dni);
+    if (existing) {
+        toast({ variant: "success", title: "CLIENTE IDENTIFICADO", description: "ACCEDIENDO A FICHA EXISTENTE..." });
+        setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 });
+        setAddDialogOpen(false);
+        setEditingClient({ ...existing });
+        setEditDialogOpen(true);
+        return;
+    }
+    // Si no está local, podríamos buscar en API, pero por ahora local es suficiente
+    toast({ variant: "success", title: "DNI DISPONIBLE", description: "PUEDE PROCEDER CON EL REGISTRO" });
+  }, [customers, toast]);
+
+  // Acciones CRUD
   const handleAddCustomer = async () => {
     const token = Cookies.get('org-pos-token');
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/create-client`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...newClient, creditLimit: Number(newClient.creditLimit) })
+        body: JSON.stringify({ ...newClient, name: newClient.name?.toUpperCase(), creditLimit: Number(newClient.creditLimit) })
       });
       if (!res.ok) {
         const errorMsg = await extractApiError(res, "FALLO AL CREAR CLIENTE");
         throw new Error(errorMsg);
       }
-      toast({ title: "Cliente Creado" }); setAddDialogOpen(false);
+      toast({ variant: "success", title: "ÉXITO", description: "CLIENTE REGISTRADO EN MAESTRO" }); setAddDialogOpen(false);
       setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 }); loadCustomers();
     } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL CREAR" }); }
   };
@@ -155,13 +233,13 @@ export default function CustomersPage() {
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/update-client/${editingClient.dni}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...editingClient, creditLimit: Number(editingClient.creditLimit) })
+        body: JSON.stringify({ ...editingClient, name: editingClient.name.toUpperCase(), creditLimit: Number(editingClient.creditLimit) })
       });
       if (!res.ok) {
         const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CLIENTE");
         throw new Error(errorMsg);
       }
-      toast({ title: "Actualizado" }); setEditDialogOpen(false); loadCustomers();
+      toast({ variant: "success", title: "SINCRONIZADO", description: "PERFIL ACTUALIZADO CORRECTAMENTE" }); setEditDialogOpen(false); loadCustomers();
     } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL ACTUALIZAR" }); }
   };
 
@@ -176,118 +254,80 @@ export default function CustomersPage() {
         const errorMsg = await extractApiError(res, "FALLO AL ELIMINAR CLIENTE");
         throw new Error(errorMsg);
       }
-      toast({ title: "Eliminado" }); setDeleteDialogOpen(false); setDeletingDni(null); loadCustomers();
+      toast({ variant: "success", title: "ELIMINADO", description: "REGISTRO RETIRADO DEL MAESTRO" }); setDeleteDialogOpen(false); setDeletingDni(null); loadCustomers();
     } catch (err: any) { toast({ variant: "destructive", title: "Error al borrar", description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
-  // Teclado (mejorado)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (!payCreditDialogOpen) return;
-      const target = e.target as HTMLElement;
-      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
-      if (e.key === 'Enter' && showSuccessScreen) { e.preventDefault(); setShowSuccessScreen(false); setPayCreditDialogOpen(false); return; }
-      if (!showSuccessScreen && !isInput) {
-        if (/^[0-9]$/.test(e.key)) { e.preventDefault(); setDialogAmount(p => p + e.key); }
-        if (e.key === 'Backspace') { e.preventDefault(); setDialogAmount(p => p.slice(0, -1)); }
-        if (e.key === 'Enter') { e.preventDefault(); handlePayCredit(); }
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [payCreditDialogOpen, showSuccessScreen, dialogAmount, activePaymentTab, payingClient]);
+  // Teclado ahora se maneja en el UniversalPaymentModal
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="success" size="lg" /></div>;
+  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+    <Spinner color="success" size="lg" />
+    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse italic">Sincronizando Directorio...</p>
+  </div>;
 
   return (
-    <div className="flex flex-col min-h-[100dvh] gap-3 p-3 bg-gray-100 dark:bg-zinc-950 transition-all duration-700 pb-20 items-center">
-      <div className="w-full max-w-[1600px] flex flex-col gap-3">
-      {/* Header Premium Zero Friction */}
-      <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-5 bg-white/90 dark:bg-zinc-900/50 backdrop-blur-2xl border-b border-gray-200 dark:border-white/5 rounded-[2rem] shrink-0 shadow-xl relative overflow-hidden group">
-        <div className="absolute top-0 right-0 p-4 opacity-5 text-emerald-500 scale-150 rotate-3 transition-transform duration-1000 group-hover:rotate-12"><Users size={120} /></div>
-        
-        <div className="flex items-center gap-4 relative z-10">
-          <div className="bg-emerald-500 p-3 rounded-2xl text-white shadow-lg shadow-emerald-500/20 rotate-3">
-            <Users size={24} />
-          </div>
-          <div className="flex flex-col">
-            <h1 className="text-xl font-black dark:text-white uppercase leading-none italic tracking-tighter">
-              Gestión de <span className="text-emerald-500">Clientes</span>
-            </h1>
-            <div className="flex items-center gap-2 mt-1">
-              <span className="text-[9px] font-black text-emerald-500 uppercase tracking-[0.3em]">Directorio Maestro</span>
-              <div className="h-1 w-1 bg-gray-300 rounded-full" />
-              <div className="flex items-center gap-1 text-[9px] font-bold text-gray-400 uppercase tracking-widest">
-                <Clock size={10} /> {new Date().toLocaleDateString()}
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+      
+      {/* HEADER SECTION: FIXED (TOP) - PARIDAD TOTAL CON USERS/SUPPLIERS */}
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+        <CustomerHeader 
+            filter={filter} 
+            onSearch={(v) => { setFilter(v.toUpperCase()); setPage(1); }} 
+            onAdd={() => setAddDialogOpen(true)} 
+            onReload={loadCustomers}
+            isLoading={loading}
+        />
+        <CustomerStats 
+          totalDebt={statsValues.totalDebt}
+          totalClients={statsValues.totalClients}
+          withDebt={statsValues.withDebt}
+        />
+      </div>
 
-        <div className="flex items-center gap-3 relative z-10">
-          <div className="relative group/search">
-            <Input 
-              size="sm" 
-              placeholder="RASTREAR POR NOMBRE / NIT..." 
-              value={filter} 
-              onValueChange={(v) => setFilter(v.toUpperCase())} 
-              startContent={<Search size={16} className="text-gray-400 group-focus-within/search:text-emerald-500 transition-colors" />} 
-              classNames={{ 
-                inputWrapper: "h-11 w-full md:w-80 bg-gray-50/50 dark:bg-black/20 backdrop-blur-md border border-gray-200 dark:border-white/10 shadow-inner rounded-2xl group-focus-within/search:border-emerald-500/50 transition-all", 
-                input: "text-[11px] font-black bg-transparent tracking-widest italic" 
-              }} 
-            />
-          </div>
-          <Button 
-            size="sm" 
-            onPress={() => setAddDialogOpen(true)} 
-            className="h-11 px-6 bg-emerald-500 text-white font-black text-[11px] rounded-xl shadow-lg shadow-emerald-500/20 hover:scale-105 active:scale-95 transition-all italic tracking-widest"
-          >
-            <PlusCircle size={16} className="mr-1" /> NUEVO
-          </Button>
-        </div>
-      </header>
+      {/* CONTENT SECTION (SCROLLABLE) */}
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+        <CustomerTable 
+          customers={currentCustomers}
+          onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setDialogAmount(''); setPayCreditDialogOpen(true); }}
+          onEdit={(c) => { setEditingClient({ ...c }); setEditDialogOpen(true); }}
+          onDelete={(dni) => { setDeletingDni(dni); setDeleteDialogOpen(true); }}
+          currentPage={page}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalRecords={filteredCustomers.length}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+          onAdd={() => setAddDialogOpen(true)}
+        />
+      </div>
 
-      {/* Stats Section */}
-      <CustomerStats 
-        totalDebt={statsValues.totalDebt}
-        totalClients={statsValues.totalClients}
-        withDebt={statsValues.withDebt}
-      />
 
-      {/* Main Table Section */}
-      <CustomerTable 
-        customers={filteredCustomers}
-        onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setDialogAmount(''); setPayCreditDialogOpen(true); }}
-        onEdit={(c) => { setEditingClient({ ...c }); setEditDialogOpen(true); }}
-        onDelete={(dni) => { setDeletingDni(dni); setDeleteDialogOpen(true); }}
-      />
 
       {/* Modals con carga dinámica */}
-      <PayCreditModal 
+      <UniversalPaymentModal 
         isOpen={payCreditDialogOpen}
-        onOpenChange={setPayCreditDialogOpen}
+        onOpenChange={(open) => {
+          setPayCreditDialogOpen(open);
+          if(!open) setShowSuccessScreen(false);
+        }}
+        title="Gestión de Abonos"
         client={payingClient}
-        activePaymentTab={activePaymentTab}
-        setActivePaymentTab={setActivePaymentTab}
-        dialogAmount={dialogAmount}
-        setDialogAmount={setDialogAmount}
-        cashTendered={cashTendered}
-        setCashTendered={setCashTendered}
+        totalToPay={Number(payingClient?.currentCredit || 0)}
         showSuccessScreen={showSuccessScreen}
-        setShowSuccessScreen={setShowSuccessScreen}
         submittingPayment={submittingPayment}
         lastChange={lastChange}
         onPay={handlePayCredit}
+        showCreditTab={false}
       />
 
       <CustomerFormModal 
         isOpen={addDialogOpen || editDialogOpen}
-        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); } }}
+        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingClient(null); } }}
         isEdit={editDialogOpen}
         customer={addDialogOpen ? newClient : editingClient}
         setCustomer={addDialogOpen ? setNewClient : setEditingClient}
         onSave={addDialogOpen ? handleAddCustomer : handleEditCustomer}
+        onLookupDni={handleLookupCustomer}
       />
 
       <DeleteCustomerModal 
@@ -295,7 +335,7 @@ export default function CustomersPage() {
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteCustomer}
       />
-      </div>
+
     </div>
   );
 }

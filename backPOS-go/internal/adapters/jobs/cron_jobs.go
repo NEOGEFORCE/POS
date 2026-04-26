@@ -7,10 +7,12 @@ import (
 
 	"backPOS-go/internal/core/services"
 	"github.com/robfig/cron/v3"
+	"gorm.io/gorm"
 )
 
 type CronManager struct {
 	scheduler *cron.Cron
+	db        *gorm.DB
 	telegram  *services.TelegramService
 	inventory *services.InventoryService
 	supplier  *services.SupplierService
@@ -18,6 +20,7 @@ type CronManager struct {
 }
 
 func NewCronManager(
+	db *gorm.DB,
 	tg *services.TelegramService,
 	inv *services.InventoryService,
 	sup *services.SupplierService,
@@ -34,6 +37,7 @@ func NewCronManager(
 
 	return &CronManager{
 		scheduler: scheduler,
+		db:        db,
 		telegram:  tg,
 		inventory: inv,
 		supplier:  sup,
@@ -42,8 +46,19 @@ func NewCronManager(
 }
 
 func (m *CronManager) Start() {
+	// Job 0: High-Performance Dashboard Refresher (Every 5 minutes)
+	_, err := m.scheduler.AddFunc("@every 5m", func() {
+		log.Println("📊 Refrescando Vista Materializada del Dashboard...")
+		if err := m.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats_monthly").Error; err != nil {
+			log.Printf("⚠️ Error refrescando vista materializada: %v", err)
+		}
+	})
+	if err != nil {
+		log.Printf("❌ Failed to schedule Dashboard Refresher: %v", err)
+	}
+
 	// Job 1: Suggested Orders (Daily at 07:00 AM)
-	_, err := m.scheduler.AddFunc("0 7 * * *", m.handleSuggestedOrdersAlert)
+	_, err = m.scheduler.AddFunc("0 7 * * *", m.handleSuggestedOrdersAlert)
 	if err != nil {
 		log.Printf("❌ Failed to schedule Job 1: %v", err)
 	}
