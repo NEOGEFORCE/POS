@@ -47,24 +47,9 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
+  output: 'export',
   images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'placehold.co',
-        port: '',
-        pathname: '/**',
-      },
-    ],
-  },
-  async rewrites() {
-    const backendUrl = process.env.BACKEND_URL || 'http://127.0.0.1:3000';
-    return [
-      {
-        source: '/api/:path*',
-        destination: `${backendUrl}/api/:path*`,
-      },
-    ]
+    unoptimized: true,
   },
   experimental: {
     optimizePackageImports: [
@@ -80,6 +65,14 @@ const nextConfig: NextConfig = {
     pagesBufferLength: 20,
   },
   transpilePackages: ['@ericblade/quagga2'],
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: 'http://localhost:3000/api/:path*',
+      },
+    ];
+  },
 };
 
 export default nextConfig;

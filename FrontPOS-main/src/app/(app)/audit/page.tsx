@@ -9,6 +9,7 @@ import { Button, Spinner } from "@heroui/react";
 import { AuditLog } from '@/lib/definitions';
 import AuditTable from './components/AuditTable';
 import AuditStats from './components/AuditStats';
+import MaintenancePanel from './components/MaintenancePanel';
 
 async function fetchAuditLogs(token: string): Promise<AuditLog[]> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/audit-logs`, {
@@ -103,6 +104,7 @@ export default function AuditPage() {
 
       {/* CONTENT SECTION (SCROLLABLE) */}
       <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-gray-100/50 dark:bg-zinc-950/20 animate-in fade-in slide-in-from-bottom-4 duration-700">
+        <MaintenancePanel />
         <AuditStats logs={logs} />
         <AuditTable logs={logs} />
       </div>

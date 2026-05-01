@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -343,4 +345,78 @@ func (h *AdminHandler) UpdateMissingItemStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Estado de faltante actualizado"})
+}
+
+// --- Mantenimiento BD (V7.0) ---
+
+func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
+	// 1. Validar que tengamos los binarios de pg_dump
+	// En Windows esto asume que pg_dump está en el PATH, o usará variables de entorno
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USER")
+	dbname := os.Getenv("DB_NAME")
+	pass := os.Getenv("DB_PASSWORD")
+
+	if host == "" { host = "localhost" }
+	if port == "" { port = "5432" }
+	if user == "" { user = "postgres" }
+	if dbname == "" { dbname = "pos_db" }
+
+	fileName := fmt.Sprintf("pos_backup_%s.sql", time.Now().Format("20060102_150405"))
+	filePath := "./" + fileName
+
+	// Comando pg_dump
+	cmd := exec.Command("pg_dump", "-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath)
+	// Setear la contraseña temporalmente en el entorno
+	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
+
+	if err := cmd.Run(); err != nil {
+		log.Printf("Error ejecutando pg_dump: %v", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo generar el respaldo. Verifique que pg_dump esté instalado.", err)
+		return
+	}
+
+	// 2. Registrar auditoría
+	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
+	h.auditService.Log(requesterDNI, requesterName, "DB_BACKUP", "ADMIN", "Generación de Respaldo SQL", "El administrador descargó un respaldo completo de la base de datos.", "{}", ip, device, true)
+
+	// 3. Enviar archivo y limpiarlo
+	c.Header("Content-Disposition", "attachment; filename="+fileName)
+	c.Header("Content-Type", "application/octet-stream")
+	c.File(filePath)
+	
+	// Eliminar el archivo después de enviarlo (usando un goroutine corto)
+	go func() {
+		time.Sleep(5 * time.Second)
+		os.Remove(filePath)
+	}()
+}
+
+func (h *AdminHandler) PurgeOldData(c *gin.Context) {
+	var req struct {
+		Date string `json:"date" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "La fecha de corte es obligatoria (YYYY-MM-DD)", err)
+		return
+	}
+
+	// Ejecutar purga en el servicio
+	rowsAffected, err := h.service.PurgeDataBefore(req.Date)
+	if err != nil {
+		log.Printf("Error purgando base de datos: %v", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo realizar la purga.", err)
+		return
+	}
+
+	// Auditoría
+	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
+	h.auditService.Log(requesterDNI, requesterName, "DB_PURGE", "ADMIN", fmt.Sprintf("Purga de historial anterior a %s", req.Date), fmt.Sprintf("Se eliminaron %d registros transaccionales obsoletos.", rowsAffected), "{}", ip, device, true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Purga completada exitosamente",
+		"records_deleted": rowsAffected,
+	})
 }

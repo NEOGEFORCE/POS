@@ -195,8 +195,37 @@ func main() {
 	})
 
 	// Servir archivos estáticos (Logos para el Dashboard y Pagos)
-	// Se asume que el servidor corre desde la raíz de backPOS-go
-	r.Static("/logos", "../FrontPOS-main/public/logos")
+	// Se asume que el servidor corre desde la raíz (ej: backPOS-go o desde donde se ejecute NSSM)
+	r.Static("/logos", "./out/logos")
+
+	// Middleware de SPA Fallback
+	r.Use(func(c *gin.Context) {
+		// Ignorar rutas de API
+		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.Next()
+			return
+		}
+
+		path := "./out" + c.Request.URL.Path
+		
+		// Si es la ruta raíz o el archivo no existe, sirve index.html
+		if c.Request.URL.Path == "/" {
+			c.File("./out/index.html")
+			c.Abort()
+			return
+		}
+
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			// SPA Fallback a index.html
+			c.File("./out/index.html")
+			c.Abort()
+			return
+		}
+
+		// Si el archivo existe (ej. /_next/static/...), lo sirve
+		c.File(path)
+		c.Abort()
+	})
 
 	// Add a simple request logger for visibility in a professional way
 	r.Use(func(c *gin.Context) {
@@ -354,6 +383,10 @@ func main() {
 				adminGroup.PATCH("/force-reset-password/:dni", adminHandler.ResetEmployeePassword)
 				adminGroup.GET("/audit-logs", adminHandler.GetAuditLogs)
 				adminGroup.PUT("/missing-items/status", adminHandler.UpdateMissingItemStatus)
+				
+				// Mantenimiento de BD (V7.0)
+				adminGroup.GET("/backup", adminHandler.GenerateDatabaseBackup)
+				adminGroup.POST("/purge", adminHandler.PurgeOldData)
 			}
 
 			// Faltantes (Accessible for all employees to report)

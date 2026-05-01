@@ -232,9 +232,10 @@ func ConnectDB() {
 		log.Printf("⚠️ Warning: Materialized views encountered issues: %v", err)
 	}
 
-	// 7. Seed Admin, Client and Products
+	// 7. Seed Admin, Client, Categories and Products
 	SeedAdmin(db)
-	SeedClient(db, "1000128428")
+	SeedClient(db, "admin")
+	SeedCategory(db, "admin")
 	SeedProducts(db)
 }
 
@@ -612,10 +613,10 @@ func SeedAdmin(db *gorm.DB) {
 	var count int64
 	db.Model(&models.Employee{}).Count(&count)
 	if count == 0 {
-		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("1024"), bcrypt.DefaultCost)
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
 		admin := models.Employee{
-			DNI:      "1000128428",
-			Name:     "SEBASTIAN",
+			DNI:      "admin",
+			Name:     "ADMINISTRADOR",
 			Email:    "admin@pos.com",
 			Password: string(hashedPassword),
 			Role:     "SUPERADMIN",
@@ -625,8 +626,27 @@ func SeedAdmin(db *gorm.DB) {
 		} else {
 			// ANSI Color Codes for Green Text in Terminal
 			fmt.Print("\033[32m")
-			log.Println("[PRODUCCIÓN] Base de datos limpia. Superadmin SEBASTIAN creado con éxito.")
+			log.Println("[PRODUCCIÓN] Base de datos limpia. Superadmin ADMINISTRADOR creado con éxito (Usuario: admin / Clave: 123456).")
 			fmt.Print("\033[0m")
+		}
+	}
+}
+
+func SeedCategory(db *gorm.DB, adminDNI string) {
+	var count int64
+	db.Model(&models.Category{}).Where("id = ?", 1).Count(&count)
+	if count == 0 {
+		category := models.Category{
+			ID:            1,
+			Name:          "GENERAL",
+			CreatedByDNI:  adminDNI,
+			UpdatedByDNI:  adminDNI,
+			IsActive:      true,
+		}
+		if err := db.Create(&category).Error; err != nil {
+			log.Printf("⚠️ Warning: Failed to seed default category: %v", err)
+		} else {
+			log.Println("📁 Default Category (GENERAL) initialized.")
 		}
 	}
 }
@@ -643,7 +663,7 @@ func SeedProducts(db *gorm.DB) {
 			SalePrice:        0,
 			MarginPercentage: 20,
 			IsActive:         true,
-			CategoryID:       0,
+			CategoryID:       1,
 		}
 		if err := db.Create(&product).Error; err != nil {
 			log.Printf("⚠️ Warning: Failed to seed 'Varios' product: %v", err)

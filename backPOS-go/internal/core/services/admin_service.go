@@ -111,3 +111,8 @@ func (s *AdminService) GetMissingItems() ([]models.MissingItem, error) {
 func (s *AdminService) UpdateMissingItemStatus(id uint, status string) error {
 	return s.repo.UpdateMissingItemStatus(id, strings.ToUpper(status))
 }
+
+// Maintenance (V7.0)
+func (s *AdminService) PurgeDataBefore(date string) (int64, error) {
+	return s.repo.PurgeDataBefore(date)
+}

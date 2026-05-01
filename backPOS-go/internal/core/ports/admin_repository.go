@@ -17,4 +17,7 @@ type AdminRepository interface {
 	GetMissingItems() ([]models.MissingItem, error)
 	UpdateMissingItemStatus(id uint, status string) error
 	GetRecentPendingMissingItems(limit int) ([]models.MissingItem, error)
+	
+	// Database Maintenance (V7.0)
+	PurgeDataBefore(date string) (int64, error)
 }
