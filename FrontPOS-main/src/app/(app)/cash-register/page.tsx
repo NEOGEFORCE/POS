@@ -1,9 +1,9 @@
 "use client";
 
 import { Card, Button, Input, Textarea, Skeleton } from "@heroui/react";
-import { 
-  TrendingUp, TrendingDown, 
-  Lock, ArrowRight, Banknote, 
+import {
+  TrendingUp, TrendingDown,
+  Lock, ArrowRight, Banknote,
   XCircle, CheckCircle2, AlertTriangle, ArrowRightCircle, Receipt, Calculator
 } from 'lucide-react';
 import { useApi } from "@/hooks/use-api";
@@ -34,6 +34,8 @@ export default function CashRegisterPage() {
   const { toast } = useToast();
 
   const [actualCashInput, setActualCashInput] = useState('');
+  const [actualNequiInput, setActualNequiInput] = useState('');
+  const [actualDaviplataInput, setActualDaviplataInput] = useState('');
   const [closingNote, setClosingNote] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -91,11 +93,14 @@ export default function CashRegisterPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          actualCash: actualCash,
+          totalCashReal: actualCash,
+          totalNequiReal: parseFloat(actualNequiInput) || 0,
+          totalDaviplataReal: parseFloat(actualDaviplataInput) || 0,
+          physicalCash: actualCash, // Mantenemos por compatibilidad con auditoría actual
           note: closingNote
         })
       });
-      
+
       if (!res.ok) throw new Error("Error al cerrar caja");
 
       toast({
@@ -103,7 +108,7 @@ export default function CashRegisterPage() {
         title: 'CAJA CERRADA EXITOSAMENTE',
         description: 'El turno ha finalizado.',
       });
-      
+
       window.location.reload();
     } catch (err: any) {
       toast({
@@ -119,8 +124,8 @@ export default function CashRegisterPage() {
   const salidasTotales = (closure?.totalExpenses || 0) + (closure?.totalReturns || 0);
 
   return (
-    <div className="flex flex-col w-full min-h-screen bg-zinc-950 text-white p-3 md:p-6 gap-6 overflow-y-auto custom-scrollbar pb-24">
-      
+    <div className="flex flex-col w-full bg-zinc-950 text-white p-3 md:p-6 gap-6">
+
       {/* HEADER */}
       <div className="flex items-center gap-3 shrink-0">
         <div className="h-10 w-10 bg-emerald-500 text-white rounded-xl flex items-center justify-center shadow-lg shadow-emerald-500/20 transform -rotate-3">
@@ -178,11 +183,11 @@ export default function CashRegisterPage() {
 
       {/* BLOQUE PRINCIPAL DIVIDIDO */}
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-4 md:gap-6 flex-1">
-        
+
         {/* BLOQUE IZQUIERDO: RESUMEN INTOCABLE */}
         <div className="bg-zinc-900/60 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col relative overflow-hidden shadow-2xl">
           <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-zinc-800 via-zinc-700 to-zinc-800 opacity-50" />
-          
+
           <div className="flex items-center gap-3 mb-8">
             <div className="h-8 w-8 rounded-full bg-zinc-800 flex items-center justify-center">
               <Receipt size={14} className="text-zinc-400" />
@@ -212,7 +217,7 @@ export default function CashRegisterPage() {
 
         {/* BLOQUE DERECHO: INTERACCIÓN CAJERO */}
         <div className="bg-zinc-900/60 backdrop-blur-xl border border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col gap-6 md:gap-8 shadow-2xl relative">
-          
+
           {/* Input Gigante */}
           <div className="flex flex-col gap-2 relative z-10">
             <label className="text-[12px] md:text-sm font-black uppercase tracking-[0.3em] text-zinc-400 flex items-center gap-2">
@@ -231,6 +236,31 @@ export default function CashRegisterPage() {
               }}
               startContent={<span className="text-3xl font-black text-zinc-600">$</span>}
             />
+            
+            <div className="grid grid-cols-2 gap-3 mt-2">
+              <div className="flex flex-col gap-1">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Nequi Real</label>
+                 <Input 
+                   type="number"
+                   placeholder="0"
+                   value={actualNequiInput}
+                   onChange={(e) => setActualNequiInput(e.target.value)}
+                   classNames={{ inputWrapper: "bg-zinc-950 border-white/5", input: "font-black text-purple-400" }}
+                   startContent={<span className="text-xs font-bold">$</span>}
+                 />
+              </div>
+              <div className="flex flex-col gap-1">
+                 <label className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Daviplata Real</label>
+                 <Input 
+                   type="number"
+                   placeholder="0"
+                   value={actualDaviplataInput}
+                   onChange={(e) => setActualDaviplataInput(e.target.value)}
+                   classNames={{ inputWrapper: "bg-zinc-950 border-white/5", input: "font-black text-rose-400" }}
+                   startContent={<span className="text-xs font-bold">$</span>}
+                 />
+              </div>
+            </div>
           </div>
 
           {/* Calculadora Rápida */}
@@ -243,12 +273,12 @@ export default function CashRegisterPage() {
                   type="number"
                   placeholder="0"
                   value={bills[bill as keyof typeof bills]}
-                  onChange={(e) => setBills(prev => ({...prev, [bill]: e.target.value}))}
+                  onChange={(e) => setBills(prev => ({ ...prev, [bill]: e.target.value }))}
                   classNames={{
                     inputWrapper: "h-10 bg-zinc-950/50 border border-white/5 rounded-xl",
                     input: "font-black text-right text-sm text-emerald-400"
                   }}
-                  startContent={<span className="text-[10px] font-bold text-zinc-500 uppercase">${bill.replace('000','K')}</span>}
+                  startContent={<span className="text-[10px] font-bold text-zinc-500 uppercase">${bill.replace('000', 'K')}</span>}
                 />
               ))}
               <Input
@@ -303,7 +333,7 @@ export default function CashRegisterPage() {
                     <span className="text-3xl md:text-4xl font-black text-rose-500 tabular-nums italic">-${Math.abs(difference).toLocaleString()}</span>
                   </div>
                 </div>
-                <Textarea 
+                <Textarea
                   placeholder="Justificación del faltante (Obligatorio)..."
                   value={closingNote}
                   onValueChange={setClosingNote}
@@ -331,7 +361,7 @@ export default function CashRegisterPage() {
                     <span className="text-3xl md:text-4xl font-black text-amber-500 tabular-nums italic">+${Math.abs(difference).toLocaleString()}</span>
                   </div>
                 </div>
-                <Textarea 
+                <Textarea
                   placeholder="Nota (Opcional)..."
                   value={closingNote}
                   onValueChange={setClosingNote}
@@ -347,13 +377,12 @@ export default function CashRegisterPage() {
             <Button
               onPress={handleCloseRegister}
               isDisabled={status === 'PENDING' || (status === 'SHORTAGE' && !closingNote.trim()) || isSubmitting}
-              className={`w-full h-20 rounded-2xl font-black text-xl md:text-2xl uppercase tracking-[0.2em] italic shadow-2xl transition-all duration-300 mt-2 ${
-                status === 'PENDING' 
-                  ? 'bg-zinc-800 text-zinc-500 opacity-50' 
+              className={`w-full h-20 rounded-2xl font-black text-xl md:text-2xl uppercase tracking-[0.2em] italic shadow-2xl transition-all duration-300 mt-2 ${status === 'PENDING'
+                  ? 'bg-zinc-800 text-zinc-500 opacity-50'
                   : status === 'SHORTAGE' && !closingNote.trim()
                     ? 'bg-zinc-800 text-zinc-500 opacity-50'
                     : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_40px_rgba(37,99,235,0.4)] hover:scale-[1.02]'
-              }`}
+                }`}
               endContent={status !== 'PENDING' && !(status === 'SHORTAGE' && !closingNote.trim()) ? <ArrowRightCircle size={28} /> : null}
             >
               {isSubmitting ? 'PROCESANDO...' : 'CERRAR CAJA'}

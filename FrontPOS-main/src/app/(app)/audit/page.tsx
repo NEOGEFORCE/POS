@@ -2,7 +2,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
-import { 
+import {
   ShieldCheck, RefreshCw, Download
 } from 'lucide-react';
 import { Button, Spinner } from "@heroui/react";
@@ -57,8 +57,8 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-      
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto bg-transparent text-gray-900 dark:text-white transition-all duration-500 relative">
+
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
         <div className="flex items-center justify-between">
@@ -77,25 +77,25 @@ export default function AuditPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button 
-                isIconOnly
-                onPress={loadData}
-                isLoading={loading}
-                className="h-10 w-10 min-w-0 bg-white/80 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm active:scale-90"
+            <Button
+              isIconOnly
+              onPress={loadData}
+              isLoading={loading}
+              className="h-10 w-10 min-w-0 bg-white/80 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm active:scale-90"
             >
-                {!loading && <RefreshCw size={16} />}
+              {!loading && <RefreshCw size={16} />}
             </Button>
-            <Button 
-                onPress={() => {
-                    toast({
-                      title: "Reporte de Auditoría",
-                      description: "Exportación a PDF en desarrollo...",
-                      variant: "default"
-                    });
-                }} 
-                className="h-10 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+            <Button
+              onPress={() => {
+                toast({
+                  title: "Reporte de Auditoría",
+                  description: "Exportación a PDF en desarrollo...",
+                  variant: "default"
+                });
+              }}
+              className="h-10 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
             >
-                <Download size={14} className="mr-1.5" /> EXPORTAR
+              <Download size={14} className="mr-1.5" /> EXPORTAR
             </Button>
           </div>
         </div>

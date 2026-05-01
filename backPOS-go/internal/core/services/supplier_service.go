@@ -20,6 +20,10 @@ func (s *SupplierService) CreateSupplier(supplier *models.Supplier) error {
 	return s.repo.Save(supplier)
 }
 
+func (s *SupplierService) GetSupplierByName(name string) (*models.Supplier, error) {
+	return s.repo.GetByName(name)
+}
+
 func (s *SupplierService) GetSupplier(id uint) (*models.Supplier, error) {
 	return s.repo.GetByID(id)
 }

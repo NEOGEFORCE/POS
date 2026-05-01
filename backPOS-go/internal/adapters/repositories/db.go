@@ -232,9 +232,10 @@ func ConnectDB() {
 		log.Printf("⚠️ Warning: Materialized views encountered issues: %v", err)
 	}
 
-	// 7. Seed Admin y Client
+	// 7. Seed Admin, Client and Products
 	SeedAdmin(db)
 	SeedClient(db, "1000128428")
+	SeedProducts(db)
 }
 
 // runDatabaseSetup ejecuta configuraciones avanzadas de BD (idempotente)
@@ -611,15 +612,43 @@ func SeedAdmin(db *gorm.DB) {
 	var count int64
 	db.Model(&models.Employee{}).Count(&count)
 	if count == 0 {
-		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("1024"), bcrypt.DefaultCost)
 		admin := models.Employee{
 			DNI:      "1000128428",
-			Name:     "Admin Maestro",
+			Name:     "SEBASTIAN",
 			Email:    "admin@pos.com",
 			Password: string(hashedPassword),
-			Role:     "admin",
+			Role:     "SUPERADMIN",
 		}
-		db.Create(&admin)
-		log.Println("👤 Default Admin Seeded")
+		if err := db.Create(&admin).Error; err != nil {
+			log.Printf("❌ Failed to seed Superadmin: %v", err)
+		} else {
+			// ANSI Color Codes for Green Text in Terminal
+			fmt.Print("\033[32m")
+			log.Println("[PRODUCCIÓN] Base de datos limpia. Superadmin SEBASTIAN creado con éxito.")
+			fmt.Print("\033[0m")
+		}
+	}
+}
+
+func SeedProducts(db *gorm.DB) {
+	var count int64
+	db.Model(&models.Product{}).Where("barcode = ?", "0000").Count(&count)
+	if count == 0 {
+		product := models.Product{
+			Barcode:          "0000",
+			ProductName:      "VARIOS / VENTA RÁPIDA",
+			Quantity:         999999,
+			PurchasePrice:    0,
+			SalePrice:        0,
+			MarginPercentage: 20,
+			IsActive:         true,
+			CategoryID:       0,
+		}
+		if err := db.Create(&product).Error; err != nil {
+			log.Printf("⚠️ Warning: Failed to seed 'Varios' product: %v", err)
+		} else {
+			log.Println("📦 Global product 'VARIOS' (0000) initialized.")
+		}
 	}
 }

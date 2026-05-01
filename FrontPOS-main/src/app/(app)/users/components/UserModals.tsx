@@ -99,6 +99,10 @@ export const UserFormModal = memo(({ isOpen, onOpenChange, isEdit, initialUser, 
                                         value={localUser?.dni || ''}
                                         onValueChange={(v) => {
                                             setLocalUser(p => ({ ...p, dni: v }));
+                                            // Auto-lookup para evitar duplicados y facilitar edición
+                                            if (!isEdit && v.length >= 5 && onLookupDni) {
+                                                onLookupDni(v);
+                                            }
                                         }}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter' && !isEdit && localUser.dni && localUser.dni.length >= 5 && onLookupDni) {

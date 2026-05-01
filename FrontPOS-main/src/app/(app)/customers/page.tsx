@@ -39,12 +39,12 @@ async function fetchCustomers(token: string): Promise<Customer[]> {
 }
 
 // COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (PARIDAD CON USERS/SUPPLIERS)
-const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: { 
-    filter: string, 
-    onSearch: (v: string) => void, 
-    onAdd: () => void,
-    onReload: () => void,
-    isLoading: boolean
+const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
+  filter: string,
+  onSearch: (v: string) => void,
+  onAdd: () => void,
+  onReload: () => void,
+  isLoading: boolean
 }) => (
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
@@ -59,28 +59,28 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       </div>
       <div className="flex items-center gap-2">
         <Button
-            isIconOnly
-            size="sm"
-            onPress={onReload}
-            isLoading={isLoading}
-            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          isIconOnly
+          size="sm"
+          onPress={onReload}
+          isLoading={isLoading}
+          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
-            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+          <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
-            size="sm"
-            onPress={onAdd}
-            className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+          size="sm"
+          onPress={onAdd}
+          className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
         >
-            <PlusCircle size={16} /> 
-            <span className="ml-2 tracking-widest">NUEVO</span>
+          <PlusCircle size={16} />
+          <span className="ml-2 tracking-widest">NUEVO</span>
         </Button>
       </div>
     </div>
     <Input
       size="sm"
-      placeholder="RASTREAR POR NOMBRE / IDENTIFICACIÓN..." 
-      value={filter} 
+      placeholder="RASTREAR POR NOMBRE / IDENTIFICACIÓN..."
+      value={filter}
       onValueChange={onSearch}
       classNames={{
         inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
@@ -142,7 +142,7 @@ export default function CustomersPage() {
   }, [customers, filter]);
 
   const totalPages = Math.ceil(filteredCustomers.length / pageSize) || 1;
-  
+
   const currentCustomers = useMemo(() => {
     const start = (page - 1) * pageSize;
     return filteredCustomers.slice(start, start + pageSize);
@@ -188,8 +188,8 @@ export default function CustomersPage() {
       setLastChange(change);
       setShowSuccessScreen(true);
       loadCustomers();
-    } catch (err: any) { 
-        toast({ variant: "destructive", title: "Error al procesar", description: err.message || "ERROR INESPERADO" }); 
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error al procesar", description: err.message || "ERROR INESPERADO" });
     }
     finally { setSubmittingPayment(false); }
   };
@@ -199,12 +199,12 @@ export default function CustomersPage() {
     const token = Cookies.get('org-pos-token');
     const existing = customers.find(c => c.dni === dni);
     if (existing) {
-        toast({ variant: "success", title: "CLIENTE IDENTIFICADO", description: "ACCEDIENDO A FICHA EXISTENTE..." });
-        setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 });
-        setAddDialogOpen(false);
-        setEditingClient({ ...existing });
-        setEditDialogOpen(true);
-        return;
+      toast({ variant: "success", title: "CLIENTE IDENTIFICADO", description: "ACCEDIENDO A FICHA EXISTENTE..." });
+      setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 });
+      setAddDialogOpen(false);
+      setEditingClient({ ...existing });
+      setEditDialogOpen(true);
+      return;
     }
     // Si no está local, podríamos buscar en API, pero por ahora local es suficiente
     toast({ variant: "success", title: "DNI DISPONIBLE", description: "PUEDE PROCEDER CON EL REGISTRO" });
@@ -267,17 +267,17 @@ export default function CustomersPage() {
 
   return (
     <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-      
+
       {/* HEADER SECTION: FIXED (TOP) - PARIDAD TOTAL CON USERS/SUPPLIERS */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
-        <CustomerHeader 
-            filter={filter} 
-            onSearch={(v) => { setFilter(v.toUpperCase()); setPage(1); }} 
-            onAdd={() => setAddDialogOpen(true)} 
-            onReload={loadCustomers}
-            isLoading={loading}
+        <CustomerHeader
+          filter={filter}
+          onSearch={(v) => { setFilter(v.toUpperCase()); setPage(1); }}
+          onAdd={() => setAddDialogOpen(true)}
+          onReload={loadCustomers}
+          isLoading={loading}
         />
-        <CustomerStats 
+        <CustomerStats
           totalDebt={statsValues.totalDebt}
           totalClients={statsValues.totalClients}
           withDebt={statsValues.withDebt}
@@ -286,7 +286,7 @@ export default function CustomersPage() {
 
       {/* CONTENT SECTION (SCROLLABLE) */}
       <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
-        <CustomerTable 
+        <CustomerTable
           customers={currentCustomers}
           onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setDialogAmount(''); setPayCreditDialogOpen(true); }}
           onEdit={(c) => { setEditingClient({ ...c }); setEditDialogOpen(true); }}
@@ -304,11 +304,11 @@ export default function CustomersPage() {
 
 
       {/* Modals con carga dinámica */}
-      <UniversalPaymentModal 
+      <UniversalPaymentModal
         isOpen={payCreditDialogOpen}
         onOpenChange={(open) => {
           setPayCreditDialogOpen(open);
-          if(!open) setShowSuccessScreen(false);
+          if (!open) setShowSuccessScreen(false);
         }}
         title="Gestión de Abonos"
         client={payingClient}
@@ -320,7 +320,7 @@ export default function CustomersPage() {
         showCreditTab={false}
       />
 
-      <CustomerFormModal 
+      <CustomerFormModal
         isOpen={addDialogOpen || editDialogOpen}
         onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingClient(null); } }}
         isEdit={editDialogOpen}
@@ -330,7 +330,7 @@ export default function CustomersPage() {
         onLookupDni={handleLookupCustomer}
       />
 
-      <DeleteCustomerModal 
+      <DeleteCustomerModal
         isOpen={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteCustomer}

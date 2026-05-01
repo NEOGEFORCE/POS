@@ -88,9 +88,29 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Mayúsculas y Metadatos
-	product.Barcode = strings.ToUpper(product.Barcode)
-	product.ProductName = strings.ToUpper(product.ProductName)
+	// Mayúsculas, Sanitización y Metadatos
+	product.Barcode = strings.ToUpper(strings.TrimSpace(product.Barcode))
+	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
+
+	// 1. Verificar Duplicados (Barcode)
+	if existing, err := h.service.GetProduct(product.Barcode); err == nil && existing != nil {
+		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El código de barras ya existe en el sistema", gin.H{
+			"barcode": existing.Barcode,
+			"name":    existing.ProductName,
+			"active":  existing.IsActive,
+		})
+		return
+	}
+
+	// 2. Verificar Duplicados (Nombre)
+	if existing, err := h.service.GetProductByName(product.ProductName); err == nil && existing != nil {
+		SendError(c, http.StatusConflict, ErrDuplicateEntry, "Ya existe un producto con este nombre", gin.H{
+			"barcode": existing.Barcode,
+			"name":    existing.ProductName,
+			"active":  existing.IsActive,
+		})
+		return
+	}
 	dni, _ := c.Get("dni")
 	dniStr := fmt.Sprintf("%v", dni)
 	product.CreatedByDNI = dniStr
@@ -107,6 +127,13 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, product)
+	
+	// Auditoría de Creación
+	name, _ := c.Get("userName")
+	h.auditService.Log(dniStr, fmt.Sprintf("%v", name), "CREATE_PRODUCT", "INVENTORY", 
+		fmt.Sprintf("Creado producto: %s (%s)", product.ProductName, product.Barcode),
+		fmt.Sprintf("Se registró un nuevo producto: %s con código %s", product.ProductName, product.Barcode),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *ProductHandler) GetAll(c *gin.Context) {
@@ -126,7 +153,7 @@ func (h *ProductHandler) GetAllPaginated(c *gin.Context) {
 	if page <= 0 {
 		page = 1
 	}
-	if pageSize <= 0 || pageSize > 1000 {
+	if pageSize <= 0 || pageSize > 10000 {
 		pageSize = 100
 	}
 
@@ -145,10 +172,11 @@ func (h *ProductHandler) GetAllPaginated(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"items":    products,
-		"total":    total,
-		"page":     page,
-		"pageSize": pageSize,
+		"items":      products,
+		"total":      total,
+		"page":       page,
+		"pageSize":   pageSize,
+		"totalPages": int(math.Ceil(float64(total) / float64(pageSize))),
 	})
 }
 
@@ -191,6 +219,8 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
+	// Sanitización
+	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
 	// Capturar estado anterior para auditoría forense
 	existing, _ := h.service.GetProduct(barcode)
 
@@ -239,8 +269,8 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 	if existing != nil { productName = existing.ProductName }
 	
 	h.auditService.Log(dni.(string), name.(string), "DELETE_PRODUCT", "INVENTORY", 
-		fmt.Sprintf("Eliminado producto: %s", barcode),
-		fmt.Sprintf("Se eliminó permanentemente el producto: %s (%s)", productName, barcode),
+		fmt.Sprintf("Desactivado producto: %s", barcode),
+		fmt.Sprintf("Se desactivó el producto: %s (%s)", productName, barcode),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Product deleted"})
@@ -270,6 +300,14 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 
 	product, _ := h.service.GetProduct(body.Barcode)
 	c.JSON(http.StatusOK, product)
+
+	// Auditoría de Recepción Individual
+	dni, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(dni.(string), name.(string), "RECEIVE_STOCK", "INVENTORY", 
+		fmt.Sprintf("Entrada stock: %s (+%.2f)", body.Barcode, body.AddedQuantity),
+		fmt.Sprintf("Se registró entrada de %.2f unidades para el producto %s", body.AddedQuantity, product.ProductName),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *ProductHandler) AdjustStock(c *gin.Context) {
@@ -296,12 +334,20 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 
 	product, _ := h.service.GetProduct(barcode)
 	c.JSON(http.StatusOK, product)
+
+	// Auditoría de Ajuste Manual
+	h.auditService.Log(dniStr, nameStr, "ADJUST_STOCK", "INVENTORY", 
+		fmt.Sprintf("Ajuste stock: %s (Nueva cant: %.2f)", barcode, body.Amount),
+		fmt.Sprintf("Se ajustó manualmente el stock de %s a %.2f unidades", product.ProductName, body.Amount),
+		"", c.ClientIP(), c.Request.UserAgent(), true)
 }
 
 func (h *ProductHandler) BulkReceive(c *gin.Context) {
 	var body struct {
-		OrderID *uint                `json:"orderId"`
-		Entries []ports.ReceiveEntry `json:"entries" binding:"required"`
+		OrderID       *uint                `json:"orderId"`
+		Entries       []ports.ReceiveEntry `json:"entries" binding:"required"`
+		BypassExpense bool                 `json:"bypassExpense"`
+		PaymentSource string               `json:"paymentSource"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -309,12 +355,36 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 		return
 	}
 
-	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID); err != nil {
+	// Doble Validación de Seguridad: Solo ADMIN/SUPERADMIN pueden omitir egresos
+	if body.BypassExpense {
+		userRole, _ := c.Get("role")
+		roleStr := fmt.Sprintf("%v", userRole)
+		if roleStr != "ADMIN" && roleStr != "SUPERADMIN" {
+			SendError(c, http.StatusForbidden, ErrForbidden, "No tienes permisos para omitir el registro de egresos", nil)
+			return
+		}
+	}
+
+	employeeDNI, _ := c.Get("dni")
+	dniStr := fmt.Sprintf("%v", employeeDNI)
+
+	if body.PaymentSource == "" {
+		body.PaymentSource = "EFECTIVO"
+	}
+
+	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepción masiva", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Bulk receive processed successfully"})
+
+	// Auditoría de Recepción Masiva
+	name, _ := c.Get("userName")
+	h.auditService.Log(dniStr, name.(string), "BULK_RECEIVE", "INVENTORY", 
+		fmt.Sprintf("Recepción masiva: %d ítems (Egreso: %v)", len(body.Entries), !body.BypassExpense),
+		fmt.Sprintf("Se procesó una recepción masiva de %d productos. Origen pago: %s", len(body.Entries), body.PaymentSource),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 func (h *ProductHandler) FixPrices(c *gin.Context) {
 	if err := h.service.FixAllProductPrices(); err != nil {

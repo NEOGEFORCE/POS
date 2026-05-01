@@ -142,6 +142,32 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	})
 }
 
+func (h *DashboardHandler) AdjustInitialBalance(c *gin.Context) {
+	var body struct {
+		RealBalance float64 `json:"realBalance"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato inválido", err)
+		return
+	}
+
+	dniVal, _ := c.Get("dni")
+	nameVal, _ := c.Get("userName")
+	
+	dni := "ADMIN"
+	if dniVal != nil { dni = dniVal.(string) }
+	name := "ADMINISTRADOR"
+	if nameVal != nil { name = nameVal.(string) }
+
+	err := h.service.AdjustInitialBalance(body.RealBalance, name, dni)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al ajustar saldo inicial", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Saldo inicial ajustado correctamente"})
+}
+
 func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
 	var closure models.CashierClosure
 	if err := c.ShouldBindJSON(&closure); err != nil {

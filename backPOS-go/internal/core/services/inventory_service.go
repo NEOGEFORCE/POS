@@ -1,7 +1,6 @@
 package services
 
 import (
-	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -38,6 +37,10 @@ type SuggestedOrder struct {
 	SupplierID     uint        `json:"supplierId"` // 0 = sin proveedor asignado
 	Threshold      int         `json:"threshold"`  // Umbral crítico calculado dinámicamente
 	Status         StockStatus `json:"status"`     // CRITICAL, WARNING, OPTIMAL
+	BestSupplierID   uint    `json:"bestSupplierId"`
+	BestSupplierName string      `json:"bestSupplierName"`
+	LowestPrice      float64     `json:"lowestPrice"`
+	IsHighRotation   bool        `json:"isHighRotation"`
 }
 
 // CalculateSalesVelocity calcula el promedio de venta diaria para un producto
@@ -63,165 +66,146 @@ func (s *InventoryService) CalculateSalesVelocity(barcode string, days int) (flo
 
 // GetGlobalRestockSuggestions devuelve todos los productos con bajo stock, incluyendo los sin proveedor asignado
 func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, error) {
-	log.Printf("[InventoryService] Iniciando GetGlobalRestockSuggestions...")
+	log.Printf("[InventoryService] Iniciando GetGlobalRestockSuggestions (Smart Sourcing)...")
 
-	// Obtener todos los productos con bajo stock o sin proveedor
-	log.Printf("[InventoryService] Ejecutando GetAllWithLowStock()...")
-	products, err := s.repo.GetAllWithLowStock()
+	// Obtener todos los productos con info de mejor proveedor
+	products, err := s.repo.GetProductsWithBestSupplier(nil)
 	if err != nil {
-		log.Printf("[InventoryService] SQL Error en GetAllWithLowStock: %v", err)
-		return nil, fmt.Errorf("error en consulta SQL GetAllWithLowStock: %w", err)
+		log.Printf("[InventoryService] Error en GetProductsWithBestSupplier: %v", err)
+		return nil, err
 	}
-	log.Printf("[InventoryService] GetAllWithLowStock exitoso: %d productos encontrados", len(products))
 
 	if len(products) == 0 {
-		log.Printf("[InventoryService] No hay productos con bajo stock, retornando lista vacía")
 		return []SuggestedOrder{}, nil
 	}
 
 	barcodes := make([]string, len(products))
 	for i, p := range products {
 		barcodes[i] = p.Barcode
-		log.Printf("[InventoryService] Producto %d: barcode=%s, quantity=%.2f, minStock=%.2f, supplierId=%v",
-			i, p.Barcode, p.Quantity, p.MinStock, p.SupplierID)
 	}
 
 	now := time.Now()
 	fourteenDaysAgo := now.AddDate(0, 0, -14).Format("2006-01-02")
 	todayStr := now.Format("2006-01-02")
-	log.Printf("[InventoryService] Consultando ventas desde %s hasta %s", fourteenDaysAgo, todayStr)
 
 	salesMap, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, fourteenDaysAgo, todayStr)
 	if err != nil {
-		log.Printf("[InventoryService] Error en GetSoldQuantitiesByBarcodes: %v", err)
-		return nil, fmt.Errorf("error consultando ventas: %w", err)
+		return nil, err
 	}
-	log.Printf("[InventoryService] Ventas consultadas: %d registros", len(salesMap))
 
 	suggested := []SuggestedOrder{}
-	erroredProducts := 0
+	for _, p := range products {
+		sold := salesMap[p.Barcode]
+		avgDaily := float64(sold) / 14.0
+		avgDaily = math.Round(avgDaily*100) / 100
 
-	for i, p := range products {
-		// Manejo de panic para productos individuales - no dejar que uno malo arruine todo
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("[InventoryService] PANIC al procesar producto %s: %v", p.Barcode, r)
-					erroredProducts++
-				}
-			}()
+		const DIAS_COBERTURA = 15.0
+		
+		sugeridoBase := p.MinStock - p.Quantity
+		stockProyectado := avgDaily * DIAS_COBERTURA
+		sugeridoPorVentas := stockProyectado - p.Quantity
 
-			sold := salesMap[p.Barcode]
+		// La Regla de Decisión: El pedido final es el MAYOR entre el sugerido por ventas y el sugerido base
+		totalIdeal := math.Max(sugeridoBase, sugeridoPorVentas)
+		isHighRotation := sugeridoPorVentas > sugeridoBase && totalIdeal > 0
 
-			log.Printf("[InventoryService] Procesando producto %d/%d: %s (stock=%.2f, minStock=%.2f)",
-				i+1, len(products), p.Barcode, p.Quantity, p.MinStock)
-
-			// Calcular promedio de venta diaria (últimos 14 días)
-			avgDaily := float64(sold) / 14.0
-			avgDaily = math.Round(avgDaily*100) / 100
-
-			// === ALGORITMO LIMPIO DE 5 PASOS (sin SafetyStock, usando Modo Pack existente) ===
-			daysCoverage := 7.0
-			leadTime := 0.0 // Simplificado para Radar Global
-
-			// PASO 1: Mínimo Obligado (garantía de stock mínimo)
-			requiredMin := math.Max(0, p.MinStock-p.Quantity)
-
-			// PASO 2: Total Crudo (fórmula maestra sin safety stock)
-			rawTotal := (avgDaily * (daysCoverage + leadTime)) - p.Quantity
-
-			// PASO 3: Freno/Garantía (el mayor entre mínimo y proyección)
-			baseTotal := math.Max(requiredMin, rawTotal)
-
-			// PASO 4: Redondeo por Modo Pack (usando campos preexistentes)
-			totalIdeal := baseTotal
-			if p.IsPack && p.PackMultiplier > 1 && baseTotal > 0 {
-				// Redondear hacia arriba al múltiplo del PackMultiplier
-				totalIdeal = math.Ceil(baseTotal/float64(p.PackMultiplier)) * float64(p.PackMultiplier)
+		if totalIdeal <= 0 {
+			totalIdeal = 0
+		} else {
+			// Redondeo hacia arriba para evitar fracciones en pedidos de logística
+			totalIdeal = math.Ceil(totalIdeal)
+			
+			// Si es un pack, ajustar al multiplicador
+			if p.IsPack && p.PackMultiplier > 1 {
+				totalIdeal = math.Ceil(totalIdeal/float64(p.PackMultiplier)) * float64(p.PackMultiplier)
 			}
+		}
 
-			// PASO 5: Asignación de valores de transparencia
-			projectedSales := totalIdeal - requiredMin
+		requiredMin := math.Max(0, sugeridoBase)
+		projectedSales := math.Max(0, sugeridoPorVentas)
 
-			// Asegurar que no sugiera cantidades negativas
-			if totalIdeal < 0 {
-				totalIdeal = 0
-				projectedSales = 0
-			}
+		// REMOVED FILTER: Traer todo el catálogo activo
 
-			// Marcar productos sin proveedor
-			supplierID := uint(0)
-			if p.SupplierID != nil {
-				supplierID = *p.SupplierID
-			}
+		supplierID := uint(0)
+		if p.SupplierID != nil {
+			supplierID = *p.SupplierID
+		}
 
-			// Calcular umbral crítico dinámicamente (FUENTE DE VERDAD)
-			minStock := int(p.MinStock)
-			if minStock <= 0 {
-				minStock = 5
-			}
-			criticalThreshold := GetCriticalThreshold(minStock)
+		minStock := int(p.MinStock)
+		if minStock <= 0 {
+			minStock = 5
+		}
+		criticalThreshold := GetCriticalThreshold(minStock)
 
-			// Determinar estado del producto
-			var status StockStatus
-			if int(p.Quantity) <= criticalThreshold {
+		// SPRINT HOTFIX: Lógica de Estado mejorada (CRÍTICO: stock <= minStock/2, BAJO: stock <= minStock)
+		var status StockStatus
+		if p.MinStock <= 0 {
+			if p.Quantity <= 0 {
 				status = StockCritical
-			} else if int(p.Quantity) <= minStock {
+			} else if p.Quantity <= 2 { // Margen mínimo de seguridad si no hay minStock definido
 				status = StockWarning
 			} else {
 				status = StockOptimal
 			}
+		} else {
+			if p.Quantity <= (p.MinStock / 2) {
+				status = StockCritical
+			} else if p.Quantity <= p.MinStock {
+				status = StockWarning
+			} else {
+				status = StockOptimal
+			}
+		}
 
-			suggested = append(suggested, SuggestedOrder{
-				Barcode:        p.Barcode,
-				ProductName:    p.ProductName,
-				Stock:          p.Quantity,
-				MinStock:       p.MinStock,
-				IsPack:         p.IsPack,
-				PackMultiplier: p.PackMultiplier,
-				RequiredMin:    requiredMin,
-				ProjectedSales: projectedSales,
-				TotalIdeal:     totalIdeal,
-				RecentSales:    sold,
-				AvgDailySales:  avgDaily,
-				Suggested:      totalIdeal,
-				PurchasePrice:  p.PurchasePrice,
-				SupplierID:     supplierID,
-				Threshold:      criticalThreshold,
-				Status:         status,
-			})
-		}()
+		suggested = append(suggested, SuggestedOrder{
+			Barcode:        p.Barcode,
+			ProductName:    p.ProductName,
+			Stock:          p.Quantity,
+			MinStock:       p.MinStock,
+			IsPack:         p.IsPack,
+			PackMultiplier: p.PackMultiplier,
+			RequiredMin:    requiredMin,
+			ProjectedSales: projectedSales,
+			TotalIdeal:     totalIdeal,
+			RecentSales:    sold,
+			AvgDailySales:  avgDaily,
+			Suggested:      totalIdeal,
+			PurchasePrice:  p.PurchasePrice,
+			SupplierID:     supplierID,
+			Threshold:      criticalThreshold,
+			Status:         status,
+			BestSupplierID:   p.BestSupplierID,
+			BestSupplierName: p.BestSupplierName,
+			LowestPrice:      p.LowestPrice,
+			IsHighRotation:   isHighRotation,
+		})
 	}
 
-	if erroredProducts > 0 {
-		log.Printf("[InventoryService] %d productos tuvieron errores y fueron omitidos", erroredProducts)
-	}
-
-	// Ordenar por urgencia: CRÍTICO > WARNING > OPTIMAL, luego por stock menor
 	sort.Slice(suggested, func(i, j int) bool {
-		// Prioridad 1: Estado de urgencia (CRITICAL primero, luego WARNING, luego OPTIMAL)
+		// Prioridad 1: Gravedad del Stock (Urgencia)
 		statusPriority := map[StockStatus]int{StockCritical: 0, StockWarning: 1, StockOptimal: 2}
 		if statusPriority[suggested[i].Status] != statusPriority[suggested[j].Status] {
 			return statusPriority[suggested[i].Status] < statusPriority[suggested[j].Status]
 		}
-
-		// Prioridad 2: Sin proveedor va antes que con proveedor
+		
+		// Prioridad 2: Productos sin proveedor (para Radar Global)
 		if suggested[i].SupplierID == 0 && suggested[j].SupplierID != 0 {
 			return true
 		}
 		if suggested[i].SupplierID != 0 && suggested[j].SupplierID == 0 {
 			return false
 		}
-
-		// Prioridad 3: Stock de menor a mayor
-		return suggested[i].Stock < suggested[j].Stock
+		
+		// Prioridad 3: Orden Alfabético
+		return suggested[i].ProductName < suggested[j].ProductName
 	})
 
 	return suggested, nil
 }
 
 func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder, error) {
-	products, err := s.repo.GetBySupplier(supplierID)
+	// Obtener productos filtrados por proveedor con info de mejor proveedor
+	products, err := s.repo.GetProductsWithBestSupplier(&supplierID)
 	if err != nil {
 		return nil, err
 	}
@@ -247,38 +231,54 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 	suggested := []SuggestedOrder{}
 	for _, p := range products {
 		sold := salesMap[p.Barcode]
-
-		// Calcular promedio de venta diaria (últimos 14 días)
 		avgDaily := float64(sold) / 14.0
 		avgDaily = math.Round(avgDaily*100) / 100
 
-		// === ALGORITMO LIMPIO DE 5 PASOS (sin SafetyStock, usando Modo Pack existente) ===
-		daysCoverage := 7.0
-		leadTime := 0.0 // Simplificado, se puede extender con lógica de método de abastecimiento
+		const DIAS_COBERTURA = 15.0
+		
+		sugeridoBase := p.MinStock - p.Quantity
+		stockProyectado := avgDaily * DIAS_COBERTURA
+		sugeridoPorVentas := stockProyectado - p.Quantity
 
-		// PASO 1: Mínimo Obligado (garantía de stock mínimo)
-		requiredMin := math.Max(0, p.MinStock-p.Quantity)
+		// La Regla de Decisión: El pedido final es el MAYOR entre el sugerido por ventas y el sugerido base
+		totalIdeal := math.Max(sugeridoBase, sugeridoPorVentas)
+		isHighRotation := sugeridoPorVentas > sugeridoBase && totalIdeal > 0
 
-		// PASO 2: Total Crudo (fórmula maestra sin safety stock)
-		rawTotal := (avgDaily * (daysCoverage + leadTime)) - p.Quantity
-
-		// PASO 3: Freno/Garantía (el mayor entre mínimo y proyección)
-		baseTotal := math.Max(requiredMin, rawTotal)
-
-		// PASO 4: Redondeo por Modo Pack (usando campos preexistentes)
-		totalIdeal := baseTotal
-		if p.IsPack && p.PackMultiplier > 1 && baseTotal > 0 {
-			// Redondear hacia arriba al múltiplo del PackMultiplier
-			totalIdeal = math.Ceil(baseTotal/float64(p.PackMultiplier)) * float64(p.PackMultiplier)
+		if totalIdeal <= 0 {
+			totalIdeal = 0
+		} else {
+			// Redondeo hacia arriba
+			totalIdeal = math.Ceil(totalIdeal)
+			
+			// Si es un pack, ajustar al multiplicador
+			if p.IsPack && p.PackMultiplier > 1 {
+				totalIdeal = math.Ceil(totalIdeal/float64(p.PackMultiplier)) * float64(p.PackMultiplier)
+			}
 		}
 
-		// PASO 5: Asignación de valores de transparencia
-		projectedSales := totalIdeal - requiredMin
+		requiredMin := math.Max(0, sugeridoBase)
+		projectedSales := math.Max(0, sugeridoPorVentas)
 
-		// Asegurar que no sugiera cantidades negativas
-		if totalIdeal < 0 {
-			totalIdeal = 0
-			projectedSales = 0
+		// REMOVED FILTER: Traer todo el catálogo activo
+
+		// SPRINT HOTFIX: Lógica de Estado consistente
+		var status StockStatus
+		if p.MinStock <= 0 {
+			if p.Quantity <= 0 {
+				status = StockCritical
+			} else if p.Quantity <= 2 {
+				status = StockWarning
+			} else {
+				status = StockOptimal
+			}
+		} else {
+			if p.Quantity <= (p.MinStock / 2) {
+				status = StockCritical
+			} else if p.Quantity <= p.MinStock {
+				status = StockWarning
+			} else {
+				status = StockOptimal
+			}
 		}
 
 		suggested = append(suggested, SuggestedOrder{
@@ -296,12 +296,31 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 			Suggested:      totalIdeal,
 			PurchasePrice:  p.PurchasePrice,
 			SupplierID:     supplierID,
+			Threshold:      int(p.MinStock / 2),
+			Status:         status,
+			BestSupplierID:   p.BestSupplierID,
+			BestSupplierName: p.BestSupplierName,
+			LowestPrice:      p.LowestPrice,
+			IsHighRotation:   isHighRotation,
 		})
 	}
 
-	// Ordenar por stock de menor a mayor (para priorizar productos más críticos)
 	sort.Slice(suggested, func(i, j int) bool {
-		return suggested[i].Stock < suggested[j].Stock
+		// Prioridad 1: Estado de Stock (Urgencia)
+		isLowI := suggested[i].Stock <= suggested[i].MinStock
+		isLowJ := suggested[j].Stock <= suggested[j].MinStock
+		
+		if isLowI != isLowJ {
+			return isLowI // Los que tienen bajo stock van primero (true < false en sort invertido)
+		}
+
+		// Prioridad 2: Sugerencia de la IA
+		if suggested[i].Suggested != suggested[j].Suggested {
+			return suggested[i].Suggested > suggested[j].Suggested
+		}
+		
+		// Prioridad 3: Orden Alfabético
+		return suggested[i].ProductName < suggested[j].ProductName
 	})
 
 	return suggested, nil

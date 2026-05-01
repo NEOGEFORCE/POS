@@ -135,13 +135,13 @@ export default function LabelsPage() {
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-1 flex-1 min-h-0 print:hidden">
                 {/* IZQUIERDA: Buscador y Filtros (35%) */}
                 <div className="lg:col-span-4 flex flex-col gap-1 overflow-hidden">
-                    <LabelSearch 
+                    <LabelSearch
                         filter={filter}
                         onFilterChange={setFilter}
                         filteredProducts={filteredProducts}
                         onAddToQueue={addToQueue}
                     />
-                    
+
                     <div className="mt-auto p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 hidden lg:block">
                         <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-[0.2em] mb-1 italic">Tip Pro</p>
                         <p className="text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed italic">
@@ -152,7 +152,7 @@ export default function LabelsPage() {
 
                 {/* DERECHA: Cola de Impresión (65%) */}
                 <div className="lg:col-span-8 flex flex-col gap-1 overflow-hidden h-[calc(100vh-140px)]">
-                    <LabelQueue 
+                    <LabelQueue
                         printQueue={printQueue}
                         onAddAll={addAllToQueue}
                         onClearAll={() => setPrintQueue([])}

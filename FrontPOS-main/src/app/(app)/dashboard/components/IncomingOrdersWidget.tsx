@@ -74,7 +74,7 @@ export default function IncomingOrdersWidget() {
                     <Plus size={16} className="mr-2" /> RECIBIR MERCANCÍA
                 </Button>
             </CardHeader>
-            <CardBody className="p-4 md:p-8 flex flex-col gap-4">
+            <CardBody className="p-4 md:p-8 flex flex-col gap-4 overflow-x-hidden">
                 {todayOrders.length === 0 ? (
                     <div className="py-12 flex flex-col items-center justify-center opacity-30 grayscale hover:grayscale-0 transition-all">
                         <Package size={48} className="mb-4 text-emerald-500" />

@@ -55,12 +55,9 @@ export function AppHeader() {
         {pathname !== "/dashboard" && pathname !== "/" && (
           <BackButton size="sm" showText={false} className="h-7 w-7" />
         )}
-        <div className="flex flex-col">
-          {/* Branding removed: already present in sidebar */}
-        </div>
       </div>
 
-      <div className="flex-1 hidden sm:flex flex-col items-center justify-center overflow-hidden px-1 sm:px-2">
+      <div className="flex-1 flex flex-col items-center justify-center overflow-hidden px-1 sm:px-2">
         <div className="flex items-center gap-1 md:gap-3 bg-default-100/50 dark:bg-zinc-800/80 px-1 sm:px-4 py-1 rounded-lg md:rounded-xl border border-divider dark:border-white/5 backdrop-blur-md">
           <div className="flex flex-col items-center leading-none">
             <span className="text-[5px] md:text-[7px] font-black text-emerald-500 uppercase tracking-[0.2em] md:tracking-[0.3em] mb-0.5 opacity-80">Hora</span>

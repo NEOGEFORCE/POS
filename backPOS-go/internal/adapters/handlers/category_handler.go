@@ -12,11 +12,12 @@ import (
 )
 
 type CategoryHandler struct {
-	service *services.CategoryService
+	service      *services.CategoryService
+	auditService *services.AuditService
 }
 
-func NewCategoryHandler(s *services.CategoryService) *CategoryHandler {
-	return &CategoryHandler{service: s}
+func NewCategoryHandler(s *services.CategoryService, a *services.AuditService) *CategoryHandler {
+	return &CategoryHandler{service: s, auditService: a}
 }
 
 func (h *CategoryHandler) Create(c *gin.Context) {
@@ -26,8 +27,19 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Mayúsculas y Metadatos
-	category.Name = strings.ToUpper(category.Name)
+	// Mayúsculas, Sanitización y Metadatos
+	category.Name = strings.ToUpper(strings.TrimSpace(category.Name))
+	
+	// Verificar Duplicados
+	if existing, err := h.service.GetCategoryByName(category.Name); err == nil && existing != nil {
+		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El nombre de la categoría ya existe en el sistema", gin.H{
+			"id":     existing.ID,
+			"name":   existing.Name,
+			"active": existing.IsActive,
+		})
+		return
+	}
+
 	dni, _ := c.Get("dni")
 	dniStr := fmt.Sprintf("%v", dni)
 	category.CreatedByDNI = dniStr
@@ -44,6 +56,13 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, category)
+
+	// Auditoría de Creación
+	name, _ := c.Get("userName")
+	h.auditService.Log(dniStr, name.(string), "CREATE_CATEGORY", "TAXONOMY", 
+		fmt.Sprintf("Nueva categoría: %s", category.Name),
+		fmt.Sprintf("Se registró la categoría: %s", category.Name),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *CategoryHandler) GetAll(c *gin.Context) {
@@ -86,6 +105,7 @@ func (h *CategoryHandler) Update(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
+	category.Name = strings.ToUpper(strings.TrimSpace(category.Name))
 	if err := h.service.UpdateCategory(uint(id), &category); err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "not found") {
@@ -101,6 +121,14 @@ func (h *CategoryHandler) Update(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, category)
+
+	// Auditoría de Actualización
+	dni, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(fmt.Sprintf("%v", dni), name.(string), "UPDATE_CATEGORY", "TAXONOMY", 
+		fmt.Sprintf("Actualizada categoría ID: %d (%s)", id, category.Name),
+		fmt.Sprintf("Se modificó la categoría: %s (ID #%d)", category.Name, id),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *CategoryHandler) Delete(c *gin.Context) {
@@ -119,4 +147,12 @@ func (h *CategoryHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Category deleted"})
+
+	// Auditoría de Eliminación
+	dni, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(fmt.Sprintf("%v", dni), name.(string), "DELETE_CATEGORY", "TAXONOMY", 
+		fmt.Sprintf("Desactivada categoría ID: %d", id),
+		fmt.Sprintf("Se desactivó la categoría con ID #%d", id),
+		"", c.ClientIP(), c.Request.UserAgent(), true)
 }

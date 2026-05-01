@@ -53,4 +53,9 @@ type SaleRepository interface {
 	GetSalesByPaymentMethod(from, to string) (map[string]float64, error)
 	GetMonthlyStatsFromMV(monthYear string) (*MVMonthlyStats, error)
 	GetMonthlyStatsTrendFromMV() ([]MVMonthlyStats, error)
+	GetGlobalTotalSales() (float64, error)
+	GetGlobalSalesByMethod() (map[string]float64, error)
+	GetGlobalCollectedDebtsByMethod() (map[string]float64, error)
+	GetGlobalCOGS() (float64, error)
+	GetCOGSByRange(from, to string) (float64, error)
 }

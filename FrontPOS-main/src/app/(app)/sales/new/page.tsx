@@ -3,12 +3,11 @@
 import { useEffect, useRef } from 'react';
 import {
     Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-    Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
-    Spinner, Card, CardHeader, CardBody, ScrollShadow
+    Spinner
 } from "@heroui/react";
 
 import {
-    ChevronDown, Plus, Trash2, User, Grid, Camera, Package, Search, Scale, Barcode,
+    Plus, Trash2, User, Grid, Camera, Search, Scale, Barcode,
     Wifi, WifiOff
 } from 'lucide-react';
 
@@ -36,7 +35,6 @@ export default function NewSalePage() {
         loading, submitting, searchQuery, setSearchQuery,
         selectedCategory, setSelectedCategory,
         selectedItemId, setSelectedItemId,
-        barcodeInput, setBarcodeInput,
         isPaymentDialogOpen, setIsPaymentDialogOpen,
         isClientDialogOpen, setIsClientDialogOpen,
         clientSearch, setClientSearch,
@@ -48,86 +46,154 @@ export default function NewSalePage() {
         showSuccessScreen, setShowSuccessScreen,
         lastChange, hiddenScannerRef, returnFocusToScanner,
         scaleWeight, isScaleOnline, isOffline,
+        scannerBuffer, setScannerBuffer, playBeep, feedbackCode, isFeedbackError,
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart,
-        updateQuantity, removeFromCart, addToCart,
+        updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity,
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight,
         setOriginalCustomerDniBeforeSplit, setRemainingItemsAfterSplit, setSplitItemsToPay
     } = useNewSale();
 
     const searchRef = useRef<HTMLInputElement>(null);
+    const lastKeyPressTime = useRef<number>(0);
+    const isScanningRef = useRef<boolean>(false);
+    const autoSubmitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // --- SMART FOCUS AGENT ---
+    // --- AUTO-SUBMIT JALTECH POS 2D: Buffer quieto 150ms = código completo ---
+    // Jaltech omnidireccional completa un EAN-13 en ~130ms (10-15ms entre chars)
     useEffect(() => {
-        const interval = setInterval(() => {
-            if (typeof window === 'undefined') return;
-            const target = document.activeElement as HTMLElement;
-            const isRealInput = (
-                target?.tagName === 'INPUT' || 
-                target?.tagName === 'TEXTAREA' || 
-                target?.tagName === 'BUTTON' ||
-                target?.closest('button') ||
-                target?.closest('[role="combobox"]') ||
-                target?.closest('[role="listbox"]') ||
-                target?.closest('[role="menu"]') ||
-                target?.closest('[role="option"]') ||
-                target?.closest('[role="dialog"]') ||
-                target?.closest('.heroui-select') ||
-                target?.hasAttribute('data-slot')
-            ) && !target.classList.contains('scanner-gate');
-            const isModalOpen = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isMissingItemOpen;
-
-            if (!isRealInput && !isModalOpen && hiddenScannerRef.current) {
-                hiddenScannerRef.current.focus();
-            }
-        }, 1500);
-        return () => clearInterval(interval);
-    }, [isPaymentDialogOpen, isClientDialogOpen, isScannerOpen, isManualWeightOpen, isSplitDialogOpen, isMissingItemOpen, hiddenScannerRef]);
+        if (autoSubmitTimer.current) clearTimeout(autoSubmitTimer.current);
+        if (scannerBuffer.length >= 3) {
+            autoSubmitTimer.current = setTimeout(() => {
+                handleCodeSubmit(scannerBuffer);
+                setScannerBuffer('');
+                isScanningRef.current = false;
+            }, 150);
+        }
+        return () => { if (autoSubmitTimer.current) clearTimeout(autoSubmitTimer.current); };
+    }, [scannerBuffer, handleCodeSubmit, setScannerBuffer]);
 
     // ATAJOS DE TECLADO
     useEffect(() => {
-        let barcodeBuffer = '';
-        let lastKeyTime = Date.now();
-
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
-            const target = e.target as HTMLElement;
-            const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+            const now = performance.now();
+            const diff = now - lastKeyPressTime.current;
+            lastKeyPressTime.current = now;
 
-            if (!isInput || target.classList.contains('scanner-gate')) {
-                const currentTime = Date.now();
-                if (currentTime - lastKeyTime > 50) barcodeBuffer = '';
-                lastKeyTime = currentTime;
+            // JALTECH POS 2D Omnidireccional: ráfagas de ~10-15ms entre chars
+            // Umbral 35ms separa escáner (10-15ms) de humano rápido (80ms+)
+            const isFast = diff < 35;
+            if (isFast) isScanningRef.current = true;
 
-                if (e.key === 'Enter') {
-                    if (barcodeBuffer.length >= 4) {
-                        e.preventDefault();
-                        handleCodeSubmit(barcodeBuffer);
-                        barcodeBuffer = '';
-                        return;
+            const isSearchFocused = document.activeElement === searchRef.current;
+            const isModalOpen = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isMissingItemOpen;
+
+            // REGLA DE ORO V6.7: Si estamos en el buscador o un modal, el motor global se pausa
+            if (isSearchFocused && e.key !== 'Escape' && e.key !== 'Enter') return;
+            if (isModalOpen && e.key !== 'Escape') return;
+
+            // --- MOTOR DE CAJA ZERO-FRICTION (V7.0) ---
+
+            // 1. Intercepción de Teclas de Acción y Comandos
+            if (['-', '+', '*', 'Delete', 'Backspace'].includes(e.key) || e.key === 'NumpadAdd') {
+                // Si hay algo en el buffer, Backspace borra caracteres
+                if (e.key === 'Backspace' && scannerBuffer.length > 0) {
+                    setScannerBuffer(prev => prev.slice(0, -1));
+                    e.preventDefault();
+                    return;
+                }
+
+                e.preventDefault();
+
+                if (e.key === '-') {
+                    if (selectedItemId) updateQuantity(selectedItemId, -1);
+                } else if (e.key === '+' || e.key === 'NumpadAdd') {
+                    if (scannerBuffer.length > 0) {
+                        addMiscItem(scannerBuffer);
+                    } else if (selectedItemId) {
+                        updateQuantity(selectedItemId, 1);
                     }
-                } else if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
-                    barcodeBuffer += e.key;
+                } else if (e.key === '*') {
+                    if (scannerBuffer.length > 0 && selectedItemId) {
+                        const newQty = parseFloat(scannerBuffer);
+                        if (!isNaN(newQty) && newQty > 0) {
+                            setCartItemQuantity(selectedItemId, newQty);
+                            setScannerBuffer('');
+                        }
+                    }
+                } else if (e.key === 'Backspace' || e.key === 'Delete') {
+                    if (scannerBuffer.length === 0 && selectedItemId) {
+                        removeFromCart(selectedItemId);
+                    }
+                }
+                return;
+            }
+
+            // 2. Control de Flujo (Enter, Escape, Espacio)
+            if (e.key === 'Enter') {
+                if (showSuccessScreen) {
+                    e.preventDefault();
+                    setShowSuccessScreen(false);
+                    return;
+                }
+                if (scannerBuffer.length > 0 || isScanningRef.current) {
+                    e.preventDefault();
+                    if (autoSubmitTimer.current) clearTimeout(autoSubmitTimer.current);
+                    handleCodeSubmit(scannerBuffer);
+                    isScanningRef.current = false;
+                    return;
                 }
             }
 
-            if (e.code === 'Space' && (!isInput || target.classList.contains('scanner-gate')) && currentCart.length > 0 && !isPaymentDialogOpen) {
+            if (e.key === 'Escape') {
+                if (showSuccessScreen) {
+                    setShowSuccessScreen(false);
+                } else {
+                    setIsPaymentDialogOpen(false);
+                    setIsClientDialogOpen(false);
+                    setIsScannerOpen(false);
+                    setIsManualWeightOpen(false);
+                    setIsSplitDialogOpen(false);
+                    setIsMissingItemOpen(false);
+                }
+                setScannerBuffer('');
+                isScanningRef.current = false;
+                if (isSearchFocused) searchRef.current?.blur();
+                return;
+            }
+
+            if (e.key === ' ') {
                 e.preventDefault();
-                setIsPaymentDialogOpen(true); return;
+                // Si hay buffer pendiente del escáner, procesarlo primero
+                if (scannerBuffer.length > 0) {
+                    if (autoSubmitTimer.current) clearTimeout(autoSubmitTimer.current);
+                    handleCodeSubmit(scannerBuffer);
+                    setScannerBuffer('');
+                    isScanningRef.current = false;
+                    // Abrir pago tras procesar (Jaltech es rápido, 80ms suficiente)
+                    setTimeout(() => setIsPaymentDialogOpen(true), 80);
+                } else if (currentCart.length > 0) {
+                    setIsPaymentDialogOpen(true);
+                }
+                return;
             }
-            if (e.key === 'Enter' && showSuccessScreen) {
-                e.preventDefault(); setShowSuccessScreen(false); setIsPaymentDialogOpen(false); returnFocusToScanner(); return;
-            }
-            if (isPaymentDialogOpen && !showSuccessScreen) {
-                if (e.key === 'Escape') { e.preventDefault(); setIsPaymentDialogOpen(false); returnFocusToScanner(); return; }
-            }
-            if ((!isInput || target.classList.contains('scanner-gate')) && selectedItemId && !isPaymentDialogOpen) {
-                if (e.key === '+') { e.preventDefault(); updateQuantity(selectedItemId, 1); }
-                else if (e.key === '-') { e.preventDefault(); updateQuantity(selectedItemId, -1); }
+
+            // 3. Captura de Números (Background Engine)
+            const isNumeric = /^[0-9]$/.test(e.key);
+            if (isNumeric || isFast) {
+                // Si es ráfaga de escáner (isFast), capturamos siempre
+                // Si es escritura humana, solo si no estamos en un input
+                if (isFast || (!isSearchFocused && !isModalOpen)) {
+                    if (isNumeric) {
+                        setScannerBuffer(prev => prev + e.key);
+                        if (!isFast) isScanningRef.current = false;
+                    }
+                }
             }
         };
 
         window.addEventListener('keydown', handleGlobalKeyDown);
         return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-    }, [currentCart.length, isPaymentDialogOpen, selectedItemId, updateQuantity, showSuccessScreen, returnFocusToScanner, handleCodeSubmit, setIsPaymentDialogOpen, setShowSuccessScreen]);
+    }, [scannerBuffer, handleCodeSubmit, addMiscItem, setScannerBuffer, selectedItemId, isPaymentDialogOpen, updateQuantity, currentCart.length, showSuccessScreen, returnFocusToScanner, setIsPaymentDialogOpen, setShowSuccessScreen, setIsClientDialogOpen, setIsScannerOpen, setIsManualWeightOpen, setIsSplitDialogOpen, setIsMissingItemOpen]);
 
     if (loading) {
         return (
@@ -141,13 +207,8 @@ export default function NewSalePage() {
     const iva = total - subtotal;
 
     return (
-        <div className="flex flex-col h-screen gap-1 p-1 bg-gray-100 dark:bg-zinc-950 overflow-hidden select-none transition-colors duration-500">
+        <div className="flex flex-col h-full gap-1 p-1 bg-gray-100 dark:bg-zinc-950 overflow-hidden select-none transition-colors duration-500">
             {/* INPUT INVISIBLE PARA CAPTURA DE ESCÁNER FÍSICO */}
-            <input 
-                ref={hiddenScannerRef} 
-                className="opacity-0 absolute -z-10 scanner-gate" 
-                autoFocus 
-            />
             <div id="pos-main-container" className="flex-1 flex flex-col gap-1 min-h-0 overflow-hidden relative">
                 <div className="flex-[7] lg:flex-[5] flex flex-col lg:flex-row gap-1 min-h-0">
                     {/* PANEL IZQUIERDO: CARRITO */}
@@ -208,7 +269,22 @@ export default function NewSalePage() {
 
                         <div className="flex-1 overflow-hidden flex flex-col min-h-0 bg-white dark:bg-zinc-900/40">
                             <div className="flex-1 overflow-y-auto custom-scrollbar px-1 [scrollbar-gutter:stable]">
-                                <Table aria-label="Carrito" isCompact removeWrapper classNames={{ th: "bg-gray-50 dark:bg-zinc-800/80 text-gray-500 font-bold uppercase text-[8px] sm:text-[9px] tracking-widest sticky top-0 z-10 border-b border-gray-200 h-7 sm:h-8 py-0.5 sm:py-1", td: "py-0.5 sm:py-1 font-medium border-b border-gray-100 dark:border-white/5", tr: "hover:bg-gray-50 dark:hover:bg-zinc-800/50 cursor-pointer" }}>
+                                <Table
+                                    aria-label="Carrito"
+                                    isCompact
+                                    removeWrapper
+                                    selectionMode="single"
+                                    selectedKeys={selectedItemId ? new Set([selectedItemId]) : new Set()}
+                                    onSelectionChange={(keys) => {
+                                        const selected = Array.from(keys as Set<string>)[0];
+                                        if (selected) setSelectedItemId(selected);
+                                    }}
+                                    classNames={{
+                                        th: "bg-gray-50 dark:bg-zinc-800/80 text-gray-500 font-bold uppercase text-[8px] sm:text-[9px] tracking-widest sticky top-0 z-10 border-b border-gray-200 h-7 sm:h-8 py-0.5 sm:py-1",
+                                        td: "py-0.5 sm:py-1 font-medium border-b border-gray-100 dark:border-white/5",
+                                        tr: "hover:bg-gray-50 dark:hover:bg-zinc-800/50 cursor-pointer data-[selected=true]:bg-emerald-500/20 dark:data-[selected=true]:bg-emerald-500/30 data-[selected=true]:border-l-4 data-[selected=true]:border-emerald-500"
+                                    }}
+                                >
                                     <TableHeader>
                                         <TableColumn>ARTÍCULO</TableColumn>
                                         <TableColumn align="center">PVP</TableColumn>
@@ -218,7 +294,7 @@ export default function NewSalePage() {
                                     </TableHeader>
                                     <TableBody emptyContent={<div className="py-10 text-gray-400 text-xs font-bold uppercase tracking-widest text-center">Carrito vacío</div>}>
                                         {currentCart.map((item) => (
-                                            <TableRow key={item.barcode} className={selectedItemId === item.barcode ? "bg-emerald-500/20 dark:bg-emerald-500/30 border-l-4 border-emerald-500" : ""} onClick={() => { setSelectedItemId(item.barcode); }}>
+                                            <TableRow key={item.cartItemId}>
                                                 <TableCell>
                                                     <div className="text-[10px] sm:text-[11px] font-bold text-gray-900 dark:text-white uppercase leading-tight truncate max-w-[100px] sm:max-w-none">{item.productName}</div>
                                                     <div className="text-[8px] sm:text-[9px] text-gray-400 dark:text-zinc-500 font-mono">{item.barcode}</div>
@@ -230,7 +306,7 @@ export default function NewSalePage() {
                                                 <TableCell className="text-right font-black text-emerald-600 dark:text-emerald-500 text-xs tabular-nums">${formatCurrency(applyRounding(Number(item.salePrice) * item.cartQuantity))}</TableCell>
                                                 <TableCell className="text-center p-0">
                                                     <div onClick={(e) => e.stopPropagation()}>
-                                                        <Button isIconOnly color="danger" variant="light" size="sm" className="h-6 w-6 min-w-6 hover:bg-rose-100" onPress={() => removeFromCart(item.barcode)}>
+                                                        <Button isIconOnly color="danger" variant="light" size="sm" className="h-6 w-6 min-w-6 hover:bg-rose-100" onPress={() => removeFromCart(item.cartItemId)}>
                                                             <Trash2 size={18} className="text-rose-500" strokeWidth={2.5} />
                                                         </Button>
                                                     </div>
@@ -265,7 +341,16 @@ export default function NewSalePage() {
                         <div className="flex-1 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg p-2 shadow-sm flex flex-col gap-1">
                             <div className="flex items-center gap-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 px-2 py-1 rounded-md shadow-inner h-10 shrink-0">
                                 <Barcode className="h-4 w-4 text-emerald-600 shrink-0" />
-                                <Input size="sm" value={barcodeInput} onChange={e => setBarcodeInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleCodeSubmit(barcodeInput)} placeholder="CÓDIGO..." classNames={{ inputWrapper: "bg-transparent border-none shadow-none h-8 px-0", input: "scanner-gate font-mono font-bold text-xs text-gray-900 dark:text-emerald-500" }} />
+                                <div className="relative flex-1 h-8 flex items-center px-1">
+                                    <div className="font-mono font-bold text-xs text-gray-900 dark:text-emerald-500 bg-transparent flex-1 truncate">
+                                        {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÁNER...")}
+                                    </div>
+                                    {!scannerBuffer && feedbackCode && (
+                                        <div className={`absolute left-0 pointer-events-none font-mono font-bold text-xs italic ${isFeedbackError ? 'text-rose-400' : 'text-emerald-500/50'} animate-out fade-out duration-1000 fill-mode-forwards`}>
+                                            {isFeedbackError ? 'ERROR: ' : 'VISTO: '}{feedbackCode}
+                                        </div>
+                                    )}
+                                </div>
                                 <Button isIconOnly size="sm" variant="flat" className="h-7 w-7 min-w-7 rounded bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 dark:text-emerald-500 hover:bg-emerald-500 hover:text-white transition-colors" onPress={() => setIsScannerOpen(true)}>
                                     <Camera className="h-3.5 w-3.5" />
                                 </Button>
@@ -304,9 +389,9 @@ export default function NewSalePage() {
                         <div className="p-1.5 border-b border-gray-200 dark:border-white/5 bg-white dark:bg-zinc-900/50 shrink-0">
                             <Input size="sm" placeholder="BUSCAR PRODUCTO..." value={searchQuery} onValueChange={setSearchQuery} ref={searchRef} startContent={<Search className="text-gray-400 h-3 w-3" />} classNames={{ inputWrapper: "bg-gray-100 dark:bg-zinc-950 border-transparent h-8 min-h-[32px] rounded-md", input: "text-[10px] font-bold uppercase text-gray-900 dark:text-white" }} />
                         </div>
-                        <ProductGrid 
-                            products={filteredProductsGrid} 
-                            addToCart={addToCart} 
+                        <ProductGrid
+                            products={filteredProductsGrid}
+                            addToCart={addToCart}
                         />
                     </section>
                 </div>
@@ -317,20 +402,20 @@ export default function NewSalePage() {
             <ClientSelectionModal isOpen={isClientDialogOpen} onOpenChange={setIsClientDialogOpen} clientSearch={clientSearch} setClientSearch={setClientSearch} filteredCustomers={filteredCustomers} handleClientSelect={handleClientSelect} selectedClientDni={selectedCustomerDni} />
             <ManualWeightModal isOpen={isManualWeightOpen} onOpenChange={setIsManualWeightOpen} manualWeightProduct={manualWeightProduct} manualWeightValue={manualWeightValue} setManualWeightValue={setManualWeightValue} confirmManualWeight={confirmManualWeight} />
             <ScannerOverlay isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onResult={(res) => { handleCodeSubmit(res); setIsScannerOpen(false); }} title="Escáner POS" />
-            <SplitBillDialog 
-                isOpen={isSplitDialogOpen} 
-                onClose={() => setIsSplitDialogOpen(false)} 
-                originalItems={currentCart} 
-                customers={customers} 
-                currentCustomerDni={selectedCustomerDni} 
-                onConfirm={(l, r, targetDni) => { 
-                    setOriginalCustomerDniBeforeSplit(selectedCustomerDni); 
-                    setRemainingItemsAfterSplit(l); 
-                    setSplitItemsToPay(r); 
-                    handleClientSelect(targetDni); 
-                    setIsSplitDialogOpen(false); 
-                    setIsPaymentDialogOpen(true); 
-                }} 
+            <SplitBillDialog
+                isOpen={isSplitDialogOpen}
+                onClose={() => setIsSplitDialogOpen(false)}
+                originalItems={currentCart}
+                customers={customers}
+                currentCustomerDni={selectedCustomerDni}
+                onConfirm={(l, r, targetDni) => {
+                    setOriginalCustomerDniBeforeSplit(selectedCustomerDni);
+                    setRemainingItemsAfterSplit(l);
+                    setSplitItemsToPay(r);
+                    handleClientSelect(targetDni);
+                    setIsSplitDialogOpen(false);
+                    setIsPaymentDialogOpen(true);
+                }}
             />
             <MissingItemModal isOpen={isMissingItemOpen} onOpenChange={setIsMissingItemOpen} />
         </div>

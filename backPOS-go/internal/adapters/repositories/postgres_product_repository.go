@@ -48,6 +48,12 @@ func (r *PostgresProductRepository) GetByBarcode(barcode string) (*models.Produc
 	return &product, err
 }
 
+func (r *PostgresProductRepository) GetByName(name string) (*models.Product, error) {
+	var product models.Product
+	err := r.db.Where("UPPER(\"productName\") = UPPER(?)", name).First(&product).Error
+	return &product, err
+}
+
 func (r *PostgresProductRepository) GetByBarcodeWithPreloads(barcode string, preloads ...string) (*models.Product, error) {
 	var product models.Product
 	query := r.db.Model(&models.Product{})
@@ -65,7 +71,7 @@ func (r *PostgresProductRepository) GetAll() ([]models.Product, error) {
 	}
 
 	var products []models.Product
-	err := r.db.Preload("Category").Order("\"productName\" ASC").Find(&products).Error
+	err := r.db.Preload("Category").Where("\"isActive\" = ?", true).Order("\"productName\" ASC").Find(&products).Error
 
 	// PERSISTENCIA EN RAM: Guardar si la consulta fue exitosa
 	if err == nil {
@@ -77,7 +83,7 @@ func (r *PostgresProductRepository) GetAll() ([]models.Product, error) {
 
 func (r *PostgresProductRepository) GetAllWithLimit(limit int) ([]models.Product, error) {
 	var products []models.Product
-	err := r.db.Preload("Category").Limit(limit).Find(&products).Error
+	err := r.db.Preload("Category").Where("\"isActive\" = ?", true).Limit(limit).Find(&products).Error
 	return products, err
 }
 
@@ -85,7 +91,7 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	var products []models.Product
 	var total int64
 
-	query := r.db.Model(&models.Product{}).Preload("Category")
+	query := r.db.Model(&models.Product{}).Preload("Category").Where("products.\"isActive\" = ?", true)
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Joins("LEFT JOIN categories ON categories.id = products.\"categoryId\"").
@@ -136,7 +142,7 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 }
 
 func (r *PostgresProductRepository) Delete(barcode string) error {
-	err := r.db.Where("barcode = ?", barcode).Delete(&models.Product{}).Error
+	err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("isActive", false).Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		cache.InvalidateCache(cache.CacheKeyProductCount)
@@ -149,7 +155,7 @@ func (r *PostgresProductRepository) Count() (int64, error) {
 		return cached.(int64), nil
 	}
 	var count int64
-	err := r.db.Model(&models.Product{}).Count(&count).Error
+	err := r.db.Model(&models.Product{}).Where("\"isActive\" = ?", true).Count(&count).Error
 	if err == nil {
 		cache.CacheManager.Set(cache.CacheKeyProductCount, count, 1*time.Hour)
 	}

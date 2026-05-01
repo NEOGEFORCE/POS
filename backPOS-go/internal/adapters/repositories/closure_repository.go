@@ -40,3 +40,10 @@ func (r *closureRepository) GetLast() (*models.CashierClosure, error) {
 	}
 	return &closure, nil
 }
+func (r *closureRepository) GetGlobalReportedBalance() (float64, error) {
+	var total float64
+	err := r.db.Model(&models.CashierClosure{}).
+		Select("COALESCE(SUM(total_cash_real + total_nequi_real + total_daviplata_real), 0)").
+		Scan(&total).Error
+	return total, err
+}

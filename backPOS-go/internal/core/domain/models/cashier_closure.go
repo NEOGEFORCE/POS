@@ -33,7 +33,10 @@ type CashierClosure struct {
 	Coins500_1000   float64        `json:"coins500_1000"`
 	ClosedByDNI     string         `json:"closedByDni"`
 	ClosedByName    string         `json:"closedByName"`
-	PhysicalCash    float64        `json:"physicalCash"`
+	PhysicalCash    float64        `gorm:"column:physical_cash" json:"physicalCash"`
+	TotalCashReal   float64        `gorm:"column:total_cash_real" json:"totalCashReal"`
+	TotalNequiReal  float64        `gorm:"column:total_nequi_real" json:"totalNequiReal"`
+	TotalDaviplataReal float64     `gorm:"column:total_daviplata_real" json:"totalDaviplataReal"`
 	Difference      float64        `json:"difference"`
 	AuthorizedBy    string         `json:"authorizedBy"`
 	SalariesDetail  string         `gorm:"type:text" json:"salariesDetail"`

@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Button, Input, Spinner } from "@heroui/react";
-import { 
+import {
     Package, Search, AlertTriangle, PlusCircle, RefreshCw, Barcode, Warehouse, ShoppingBag, ShieldCheck
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
@@ -79,51 +79,58 @@ export default function ProductsPage() {
     // Paginación y Filtrado 
     const products: Product[] = useMemo(() => productsData?.items || [], [productsData]);
     const totalItems = productsData?.total || 0;
-    const totalPages = productsData?.totalPages || 1;
+    const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
     const stats = useMemo(() => {
         const cost = products.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.purchasePrice)), 0);
         const retail = products.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.salePrice)), 0);
-        
+
         // Semáforo dinámico: contar críticos (rojo) y advertencias (ámbar) por separado
         const criticalCount = products.filter(p => {
             if (p.isWeighted) return false;
             const threshold = getCriticalThreshold(p.minStock || 5);
             return p.quantity <= threshold;
         }).length;
-        
+
         const warningCount = products.filter(p => {
             if (p.isWeighted) return false;
             const minStock = p.minStock || 5;
             const threshold = getCriticalThreshold(minStock);
             return p.quantity <= minStock && p.quantity > threshold;
         }).length;
-        
-        return { 
-            totalCost: cost, 
-            totalRetail: retail, 
+
+        return {
+            totalCost: cost,
+            totalRetail: retail,
             criticalStock: criticalCount,
             warningStock: warningCount,
-            totalItems: products.length 
+            totalItems: products.length
         };
     }, [products]);
+    
+    // Switch automático de Crear -> Editar si se detecta producto existente
+    useEffect(() => {
+        if (addDialogOpen && editingProduct) {
+            setAddDialogOpen(false);
+            setEditDialogOpen(true);
+            // Sincronizar margen
+            setEditMargin(editingProduct.marginPercentage || 20);
+        }
+    }, [addDialogOpen, editingProduct]);
 
     const handleAddProduct = async () => {
         const token = Cookies.get('org-pos-token');
         setApiFieldErrors({}); // Limpiar errores previos
         try {
             // Sanitizar payload: limpiar formato de moneda antes de enviar
-            const rawData = { 
-                ...newProduct, 
-                productName: newProduct.productName.toUpperCase(), 
-                barcode: newProduct.barcode.toUpperCase(),
+            const rawData = {
+                ...newProduct,
+                productName: newProduct.productName.toUpperCase().trim(),
+                barcode: newProduct.barcode.toUpperCase().trim(),
                 suppliers: (newProduct as any).suppliers || []
             };
             const data = sanitizeProductPayload(rawData);
-            
-            // DEBUG: Ver qué se está enviando
-            console.log('PAYLOAD ENVIADO AL BACKEND:', JSON.stringify(data, null, 2));
-            
+
             await apiFetch('/products/create-products', {
                 method: 'POST', body: JSON.stringify(data), fallbackError: 'FALLO AL CREAR PRODUCTO'
             }, token!);
@@ -132,18 +139,52 @@ export default function ProductsPage() {
             setNewProduct({ barcode: '', productName: '', quantity: undefined as any, isWeighted: false, purchasePrice: 0, salePrice: 0, categoryId: 0, marginPercentage: 20, minStock: undefined as any, packMultiplier: undefined as any });
             mutateProducts();
         } catch (err: any) {
-            // DEBUG: Ver el error real
-            console.error('ERROR REAL ATRAPADO:', err);
-            
+            console.error('ERROR EN CREACIÓN:', err);
+
+            // Manejar Conflict (Duplicado o Inactivo)
+            if (err instanceof ApiError && err.status === 409) {
+                const existingData = err.data?.error?.data || err.data || {};
+                const isActive = existingData.is_active ?? true;
+                const barcode = existingData.barcode || newProduct.barcode;
+
+                toast({
+                    variant: 'destructive',
+                    title: 'PRODUCTO DUPLICADO',
+                    description: isActive
+                        ? `El código "${barcode}" ya pertenece a un producto activo.`
+                        : `Existe un registro inactivo para "${barcode}". ¿Deseas reactivarlo?`,
+                    action: !isActive ? (
+                        <Button
+                            size="sm"
+                            color="success"
+                            className="font-black text-[9px] uppercase"
+                            onPress={async () => {
+                                try {
+                                    await apiFetch(`/products/update-products/${barcode}`, {
+                                        method: 'PUT',
+                                        body: JSON.stringify({ barcode, isActive: true }),
+                                    }, token!);
+                                    toast({ title: 'ÉXITO', description: 'PRODUCTO REACTIVADO' });
+                                    setAddDialogOpen(false);
+                                    mutateProducts();
+                                } catch (e: any) {
+                                    toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
+                                }
+                            }}
+                        >
+                            REACTIVAR
+                        </Button>
+                    ) : undefined
+                });
+                return;
+            }
+
             // Manejar errores de validación del backend (400 con campos específicos)
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
                 setApiFieldErrors(err.data.error.fields);
                 toast({ variant: 'destructive', title: 'ERROR DE VALIDACIÓN', description: 'Revisa los campos marcados en rojo' });
-            } else if (err instanceof ApiError && err.status >= 500) {
-                // Solo mostrar mensaje genérico para errores 500
-                toast({ variant: 'destructive', title: 'ERROR', description: err.message });
             } else {
-                toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO EN OPERACIÓN' });
             }
         }
     };
@@ -177,10 +218,10 @@ export default function ProductsPage() {
             };
             // Sanitizar números formateados como moneda
             const payload = sanitizeProductPayload(rawPayload);
-            
+
             // DEBUG: Ver qué se está enviando
             console.log('PAYLOAD ENVIADO AL BACKEND:', JSON.stringify(payload, null, 2));
-            
+
             await apiFetch(`/products/update-products/${editingProduct.barcode}`, {
                 method: 'PUT', body: JSON.stringify(payload), fallbackError: 'FALLO AL ACTUALIZAR'
             }, token!);
@@ -190,7 +231,7 @@ export default function ProductsPage() {
         } catch (err: any) {
             // DEBUG: Ver el error real
             console.error('ERROR REAL ATRAPADO:', err);
-            
+
             // Manejar errores de validación del backend (400 con campos específicos)
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
                 setApiFieldErrors(err.data.error.fields);
@@ -263,9 +304,9 @@ export default function ProductsPage() {
 
     return (
         <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-            
+
             {/* HEADER COMPACTO PREMIUM "STOCKS" */}
-            <div className="shrink-0 px-4 pt-2 pb-2 flex flex-col gap-2 bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/5">
+            <div className="shrink-0 px-4 pt-1 pb-1 flex flex-col gap-1.5 bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/5">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="bg-emerald-500 h-10 w-10 rounded-xl text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3">
@@ -282,7 +323,7 @@ export default function ProductsPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <Button 
+                        <Button
                             isIconOnly
                             variant="flat"
                             onPress={() => mutateProducts()}
@@ -291,8 +332,8 @@ export default function ProductsPage() {
                             <RefreshCw size={16} />
                         </Button>
                         {isAdmin && (
-                            <Button 
-                                onPress={() => setAddDialogOpen(true)} 
+                            <Button
+                                onPress={() => setAddDialogOpen(true)}
                                 className="h-9 px-3 md:px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
                             >
                                 <PlusCircle size={16} />
@@ -303,41 +344,40 @@ export default function ProductsPage() {
                     </div>
                 </div>
 
-                <div className="flex flex-col md:flex-row items-center gap-2">
+                <div className="flex flex-col md:flex-row items-center gap-1.5">
                     <div className="relative flex-1 w-full group/search">
-                        <Input 
-                            placeholder="ESCANEÉ O BUSQUE POR REFERENCIA O CATEGORÍA..." 
-                            value={searchTerm} 
-                            onValueChange={setSearchTerm} 
+                        <Input
+                            placeholder="ESCANEÉ O BUSQUE POR REFERENCIA O CATEGORÍA..."
+                            value={searchTerm}
+                            onValueChange={setSearchTerm}
                             startContent={<Search size={16} className="text-emerald-500 ml-2" />}
                             endContent={<Barcode size={16} className="text-gray-400 mr-2" />}
-                            classNames={{ 
-                                inputWrapper: "h-11 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-data-[focus=true]:border-emerald-500 transition-all", 
-                                input: "text-[11px] font-black tracking-widest italic uppercase ml-2" 
-                            }} 
+                            classNames={{
+                                inputWrapper: "h-11 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-data-[focus=true]:border-emerald-500 transition-all",
+                                input: "text-[11px] font-black tracking-widest italic uppercase ml-2"
+                            }}
                         />
                     </div>
-                    <Button 
+                    <Button
                         variant="flat"
                         onPress={() => setAlertsDialogOpen(true)}
-                        className={`h-11 w-full md:w-auto px-6 rounded-xl font-black text-[10px] uppercase tracking-widest italic border transition-all ${
-                            stats.criticalStock > 0 
-                                ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-lg shadow-rose-500/10 ring-2 ring-rose-500/20' 
-                                : stats.warningStock > 0
-                                    ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-lg shadow-amber-500/10 ring-2 ring-amber-500/20'
-                                    : 'bg-gray-50 dark:bg-zinc-900 text-gray-400 dark:text-zinc-600 border-gray-200 dark:border-white/10'
-                        }`}
+                        className={`h-11 w-full md:w-auto px-6 rounded-xl font-black text-[10px] uppercase tracking-widest italic border transition-all ${stats.criticalStock > 0
+                            ? 'bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-lg shadow-rose-500/10 ring-2 ring-rose-500/20'
+                            : stats.warningStock > 0
+                                ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-lg shadow-amber-500/10 ring-2 ring-amber-500/20'
+                                : 'bg-gray-50 dark:bg-zinc-900 text-gray-400 dark:text-zinc-600 border-gray-200 dark:border-white/10'
+                            }`}
                     >
-                        <AlertTriangle size={16} className="mr-2" /> 
-                        {stats.criticalStock > 0 ? `${stats.criticalStock} crítico${stats.criticalStock > 1 ? 's' : ''}` : 
-                         stats.warningStock > 0 ? `${stats.warningStock} advertencia${stats.warningStock > 1 ? 's' : ''}` : 
-                         'Sin alertas'}
+                        <AlertTriangle size={16} className="mr-2" />
+                        {stats.criticalStock > 0 ? `${stats.criticalStock} crítico${stats.criticalStock > 1 ? 's' : ''}` :
+                            stats.warningStock > 0 ? `${stats.warningStock} advertencia${stats.warningStock > 1 ? 's' : ''}` :
+                                'Sin alertas'}
                     </Button>
                 </div>
             </div>
 
             {/* CONTENT: misma cadena flex que categorías — solo la tabla hace scroll interno */}
-            <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 bg-gray-100 dark:bg-[#09090b] relative flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-0.5 bg-gray-100 dark:bg-[#09090b] relative flex flex-col">
                 {productsLoading && !productsData && (
                     <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-white/80 dark:bg-black/90 backdrop-blur-sm gap-4 transition-all">
                         <Spinner color="success" size="lg" />
@@ -349,7 +389,7 @@ export default function ProductsPage() {
                         <ProductStats {...stats} />
                     </div>
                     <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
-                        <ProductTable 
+                        <ProductTable
                             products={products}
                             currentPage={currentPage}
                             totalPages={totalPages}
@@ -367,14 +407,14 @@ export default function ProductsPage() {
             </div>
 
             {/* MODALS */}
-            <ProductFormModal 
+            <ProductFormModal
                 isOpen={addDialogOpen || editDialogOpen}
-                onOpenChange={(open) => { 
-                    if(!open) { 
-                        setAddDialogOpen(false); 
-                        setEditDialogOpen(false); 
+                onOpenChange={(open) => {
+                    if (!open) {
+                        setAddDialogOpen(false);
+                        setEditDialogOpen(false);
                         setApiFieldErrors({}); // Limpiar errores al cerrar
-                    } 
+                    }
                 }}
                 addDialogOpen={addDialogOpen}
                 newProduct={newProduct}
@@ -394,20 +434,20 @@ export default function ProductsPage() {
                 apiFieldErrors={apiFieldErrors}
             />
 
-            <DeleteProtocolModal 
+            <DeleteProtocolModal
                 isOpen={deleteDialogOpen}
                 onOpenChange={setDeleteDialogOpen}
                 deletingBarcode={deletingBarcode}
                 onDelete={handleDelete}
             />
 
-            <InventoryAlertsModal 
+            <InventoryAlertsModal
                 isOpen={alertsDialogOpen}
                 onOpenChange={setAlertsDialogOpen}
                 products={products.filter(p => !p.isWeighted && p.quantity <= (p.minStock || 5))}
             />
 
-            <ScannerOverlay 
+            <ScannerOverlay
                 isOpen={isScannerOpen}
                 onResult={handleScannerResult}
                 onClose={handleScannerClose}

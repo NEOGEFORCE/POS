@@ -83,16 +83,13 @@ func (r *PostgresProductRepository) GetSavingsOpportunities() ([]ports.SavingsOp
 	return opportunities, nil
 }
 
-// GetAllWithLowStock devuelve productos con stock bajo o crítico optimizado para el dashboard
 func (r *PostgresProductRepository) GetAllWithLowStock() ([]models.Product, error) {
 	var products []models.Product
 
+	// Devolver todos los productos activos para que el usuario pueda paginar libremente en el Radar Global
 	err := r.db.
-		Where("\"quantity\" <= \"minStock\"").
-		Where("\"isWeighted\" = ?", false).
 		Where("\"isActive\" = ?", true).
 		Order("\"quantity\" ASC").
-		Limit(100).
 		Find(&products).Error
 
 	if err != nil {
@@ -100,4 +97,36 @@ func (r *PostgresProductRepository) GetAllWithLowStock() ([]models.Product, erro
 	}
 
 	return products, nil
+}
+
+// GetProductsWithBestSupplier - Obtiene productos y su mejor opción de proveedor inyectada
+func (r *PostgresProductRepository) GetProductsWithBestSupplier(supplierID *uint) ([]ports.ProductRestockInfo, error) {
+	var results []ports.ProductRestockInfo
+
+	query := r.db.Model(&models.Product{}).
+		Select(`products.*, 
+			bs.best_supplier_id, 
+			bs.best_supplier_name, 
+			bs.lowest_price`).
+		Joins(`LEFT JOIN (
+			SELECT 
+				ps.product_barcode, 
+				ps.supplier_id as best_supplier_id, 
+				s.name as best_supplier_name, 
+				ps."purchasePrice" as lowest_price,
+				ROW_NUMBER() OVER(PARTITION BY ps.product_barcode ORDER BY ps."purchasePrice" ASC) as rn
+			FROM product_suppliers ps
+			JOIN suppliers s ON ps.supplier_id = s.id
+		) bs ON products.barcode = bs.product_barcode AND bs.rn = 1`).
+		Where("products.\"isActive\" = ?", true)
+
+	if supplierID != nil {
+		query = query.Where(`(
+			products.barcode IN (SELECT "productBarcode" FROM product_suppliers WHERE "supplierId" = ?) 
+			OR products."supplierId" = ?
+		)`, *supplierID, *supplierID)
+	}
+
+	err := query.Order("products.quantity ASC").Scan(&results).Error
+	return results, err
 }

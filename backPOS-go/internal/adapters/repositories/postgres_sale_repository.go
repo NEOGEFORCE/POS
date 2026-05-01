@@ -4,6 +4,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"fmt"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -404,4 +405,111 @@ func (r *PostgresSaleRepository) GetMonthlyStatsTrendFromMV() ([]ports.MVMonthly
 		Order("month_year ASC").
 		Find(&stats).Error
 	return stats, err
+}
+func (r *PostgresSaleRepository) GetGlobalTotalSales() (float64, error) {
+	var total float64
+	err := r.db.Model(&models.Sale{}).Select("COALESCE(SUM(\"totalAmount\"), 0)").Scan(&total).Error
+	return total, err
+}
+
+func (r *PostgresSaleRepository) GetGlobalCOGS() (float64, error) {
+	var total float64
+	err := r.db.Table("sale_details").
+		Joins("JOIN products ON products.barcode = sale_details.barcode").
+		Select("COALESCE(SUM(sale_details.quantity * COALESCE(NULLIF(sale_details.\"costPrice\", 0), products.\"purchasePrice\", 0)), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (r *PostgresSaleRepository) GetCOGSByRange(from, to string) (float64, error) {
+	var total float64
+	err := r.db.Table("sale_details").
+		Joins("JOIN sales ON sales.\"saleId\" = sale_details.\"saleId\"").
+		Joins("JOIN products ON products.barcode = sale_details.barcode").
+		Where("sales.\"saleDate\" >= ? AND sales.\"saleDate\" < ? AND sales.deleted_at IS NULL", from, to).
+		Select("COALESCE(SUM(sale_details.quantity * COALESCE(NULLIF(sale_details.\"costPrice\", 0), products.\"purchasePrice\", 0)), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (r *PostgresSaleRepository) GetGlobalSalesByMethod() (map[string]float64, error) {
+	results := make(map[string]float64)
+	
+	var stats struct {
+		TotalCash     float64
+		TotalTransfer float64
+		TotalCredit   float64
+	}
+
+	err := r.db.Model(&models.Sale{}).
+		Select("COALESCE(SUM(\"cashAmount\"), 0) as total_cash, COALESCE(SUM(\"transferAmount\"), 0) as total_transfer, COALESCE(SUM(\"creditAmount\"), 0) as total_credit").
+		Scan(&stats).Error
+	
+	if err != nil {
+		return nil, err
+	}
+
+	results["EFECTIVO"] = stats.TotalCash
+	results["TRANSFERENCIA"] = stats.TotalTransfer
+	results["FIADO"] = stats.TotalCredit
+
+	// Breakdown for TransferSource
+	rows, err := r.db.Table("sales").
+		Select("\"transferSource\", SUM(\"transferAmount\") as total").
+		Where("\"transferAmount\" > 0").
+		Group("\"transferSource\"").
+		Rows()
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var source string
+			var total float64
+			if err := rows.Scan(&source, &total); err == nil {
+				if source == "" { source = "NEQUI" }
+				results[strings.ToUpper(source)] = total
+			}
+		}
+	}
+
+	return results, nil
+}
+
+func (r *PostgresSaleRepository) GetGlobalCollectedDebtsByMethod() (map[string]float64, error) {
+	results := make(map[string]float64)
+	
+	var stats struct {
+		TotalCash     float64
+		TotalTransfer float64
+	}
+
+	err := r.db.Table("credit_payments").
+		Select("COALESCE(SUM(\"amountCash\"), 0) as total_cash, COALESCE(SUM(\"amountTransfer\"), 0) as total_transfer").
+		Scan(&stats).Error
+	
+	if err != nil {
+		return nil, err
+	}
+
+	results["EFECTIVO"] = stats.TotalCash
+	results["TRANSFERENCIA"] = stats.TotalTransfer
+
+	// Breakdown for TransferSource
+	rows, err := r.db.Table("credit_payments").
+		Select("\"transferSource\", SUM(\"amountTransfer\") as total").
+		Where("\"amountTransfer\" > 0").
+		Group("\"transferSource\"").
+		Rows()
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var source string
+			var total float64
+			if err := rows.Scan(&source, &total); err == nil {
+				if source == "" { source = "NEQUI" }
+				results[strings.ToUpper(source)] = total
+			}
+		}
+	}
+
+	return results, nil
 }

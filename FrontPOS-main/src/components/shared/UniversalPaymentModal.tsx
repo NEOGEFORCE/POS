@@ -90,7 +90,16 @@ export default function UniversalPaymentModal({
   // Teclado físico - MOVIDO AQUÍ PARA EVITAR ERROR DE HOOKS CONDICIONALES
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen || showSuccessScreen) return;
+      if (!isOpen) return;
+      // PANTALLA DE ÉXITO: Enter o Escape cierran y preparan nueva venta
+      if (showSuccessScreen) {
+        if (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ') {
+          e.preventDefault();
+          e.stopPropagation();
+          onOpenChange(false);
+        }
+        return;
+      }
       if (/^[0-9]$/.test(e.key)) {
         e.preventDefault();
         setDialogAmount(prev => prev + e.key);
@@ -109,7 +118,7 @@ export default function UniversalPaymentModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showSuccessScreen, dialogAmount, activePaymentTab, cashPaid, transferPaid, creditPaid, totalToPay]);
+  }, [isOpen, showSuccessScreen, dialogAmount, activePaymentTab, cashPaid, transferPaid, creditPaid, totalToPay, onOpenChange]);
 
   if (!isOpen) return null;
 
@@ -198,14 +207,14 @@ export default function UniversalPaymentModal({
     <Modal 
       isOpen={isOpen} 
       onOpenChange={onOpenChange} 
-      placement="top"
+      placement="center"
       backdrop="blur" 
       size="full" 
       onClose={onCloseComplete}
       classNames={{ 
-        base: "bg-gray-50 dark:bg-zinc-950 max-w-[1300px] h-full md:h-auto md:max-h-[85vh] md:rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-hidden mx-2 md:mx-0", 
+        base: "bg-gray-50 dark:bg-zinc-950 max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-2xl overflow-hidden m-0 md:mx-2 rounded-none", 
         closeButton: "hidden", 
-        wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center" 
+        wrapper: "items-center justify-center" 
       }}
     >
       <ModalContent>

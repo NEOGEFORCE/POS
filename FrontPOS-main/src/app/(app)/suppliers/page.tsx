@@ -3,8 +3,8 @@
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Button, Input, Spinner } from "@heroui/react";
-import { 
-  Truck, Search, PlusCircle, Clock, Sparkles, RefreshCw 
+import {
+  Truck, Search, PlusCircle, Clock, Sparkles, RefreshCw
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Supplier } from '@/lib/definitions';
@@ -26,12 +26,12 @@ async function fetchSuppliers(token: string): Promise<Supplier[]> {
 }
 
 // COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO
-const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: { 
-    filter: string, 
-    onSearch: (v: string) => void, 
-    onAdd: () => void,
-    onReload: () => void,
-    isLoading: boolean
+const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
+  filter: string,
+  onSearch: (v: string) => void,
+  onAdd: () => void,
+  onReload: () => void,
+  isLoading: boolean
 }) => (
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
@@ -46,28 +46,28 @@ const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       </div>
       <div className="flex items-center gap-2">
         <Button
-            isIconOnly
-            size="sm"
-            onPress={onReload}
-            isLoading={isLoading}
-            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          isIconOnly
+          size="sm"
+          onPress={onReload}
+          isLoading={isLoading}
+          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
-            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+          <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
-            size="sm"
-            onPress={onAdd}
-            className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+          size="sm"
+          onPress={onAdd}
+          className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
         >
-            <PlusCircle size={16} /> 
-            <span className="ml-2 tracking-widest">NUEVO</span>
+          <PlusCircle size={16} />
+          <span className="ml-2 tracking-widest">NUEVO</span>
         </Button>
       </div>
     </div>
     <Input
       size="sm"
-      placeholder="RASTREAR POR NOMBRE / NIT..." 
-      value={filter} 
+      placeholder="RASTREAR POR NOMBRE / NIT..."
+      value={filter}
       onValueChange={onSearch}
       classNames={{
         inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
@@ -123,7 +123,7 @@ export default function SuppliersPage() {
     );
   }, [suppliers, filter]);
 
-  const paginatedSuppliers = useMemo(() => 
+  const paginatedSuppliers = useMemo(() =>
     filteredSuppliers.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [filteredSuppliers, currentPage, pageSize]
   );
@@ -139,7 +139,7 @@ export default function SuppliersPage() {
   const handleAddSupplier = async (data: any) => {
     const name = data.name?.trim().toUpperCase();
     if (!name) return toast({ variant: 'destructive', title: 'ERROR', description: 'NOMBRE REQUERIDO' });
-    
+
     const token = Cookies.get('org-pos-token');
     try {
       await apiFetch('/suppliers/create-suppliers', {
@@ -149,9 +149,9 @@ export default function SuppliersPage() {
       }, token!);
       // Recargar datos ANTES de cerrar modal para mostrar cambios inmediatamente
       await loadSuppliers();
-      toast({ 
+      toast({
         variant: "success",
-        title: "ÉXITO", 
+        title: "ÉXITO",
         description: "VÍNCULO CREADO CORRECTAMENTE",
       });
       setAddDialogOpen(false);
@@ -173,8 +173,8 @@ export default function SuppliersPage() {
       }, token!);
       // Recargar datos ANTES de cerrar modal para mostrar cambios inmediatamente
       await loadSuppliers();
-      toast({ 
-        title: "ÉXITO", 
+      toast({
+        title: "ÉXITO",
         description: "REGISTRO ACTUALIZADO",
         className: "bg-emerald-500 text-white border-none"
       });
@@ -208,45 +208,59 @@ export default function SuppliersPage() {
 
   return (
     <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-      
+
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
-        <SupplierHeader 
-            filter={filter} 
-            onSearch={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
-            onAdd={() => setAddDialogOpen(true)} 
-            onReload={loadSuppliers}
-            isLoading={loading}
+        <SupplierHeader
+          filter={filter}
+          onSearch={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
+          onAdd={() => setAddDialogOpen(true)}
+          onReload={loadSuppliers}
+          isLoading={loading}
         />
         <SupplierStats total={stats.total} withPhone={stats.withPhone} />
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
-        <SupplierTable 
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col min-w-0">
+        <SupplierTable
           suppliers={paginatedSuppliers}
           currentPage={currentPage}
           totalPages={totalPages}
           pageSize={pageSize}
           totalFiltered={filteredSuppliers.length}
-          onEdit={(s) => { setEditingSupplier({...s}); setEditDialogOpen(true); }}
+          onEdit={(s) => { setEditingSupplier({ ...s }); setEditDialogOpen(true); }}
           onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
           onPageChange={setCurrentPage}
           onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
         />
 
-        <SupplierFormModal 
+        <SupplierFormModal
           isOpen={addDialogOpen || editDialogOpen}
           onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingSupplier(null); } }}
           isEdit={editDialogOpen}
           supplier={addDialogOpen ? null : editingSupplier}
+          onLookupName={(name) => {
+            if (!addDialogOpen) return;
+            const existing = suppliers.find(s => s.name.toUpperCase() === name.trim().toUpperCase());
+            if (existing) {
+              toast({
+                variant: "success",
+                title: "PROVEEDOR DETECTADO",
+                description: "CARGANDO FICHA LOGÍSTICA EXISTENTE..."
+              });
+              setAddDialogOpen(false);
+              setEditingSupplier(existing);
+              setEditDialogOpen(true);
+            }
+          }}
           onSave={async (data) => {
             if (addDialogOpen) await handleAddSupplier(data);
             else await handleEditSupplier(data);
           }}
         />
 
-        <DeleteSupplierModal 
+        <DeleteSupplierModal
           isOpen={deleteDialogOpen}
           onOpenChange={setDeleteDialogOpen}
           onConfirm={handleDeleteSupplier}

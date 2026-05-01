@@ -20,7 +20,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
     const maxQty = products?.length > 0 ? Math.max(...products.map(p => p.quantity)) : 0;
 
     return (
-        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-[2rem] p-8 shadow-sm h-full flex flex-col">
+        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-[2rem] p-8 shadow-sm h-full flex flex-col overflow-x-hidden">
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <div className="h-12 w-12 bg-amber-500/10 text-amber-500 flex items-center justify-center rounded-2xl shadow-inner">
@@ -40,14 +40,14 @@ const RankingList = memo(({ products }: RankingListProps) => {
                 </div>
             </div>
 
-            <div className="space-y-6 flex-1 overflow-y-auto custom-scrollbar pr-2">
+            <div className="space-y-6 flex-1 overflow-hidden custom-scrollbar pr-2">
                 {(!products || products.length === 0) ? (
                     <div className="h-full flex flex-col items-center justify-center text-center py-10 opacity-50">
                         <Box size={40} className="mb-4 text-gray-300 dark:text-zinc-700" />
                         <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Sin datos de ventas este mes</p>
                     </div>
                 ) : (
-                    products.slice(0, 5).map((p, index) => {
+                    products.slice(0, 10).map((p, index) => {
                         const percentage = maxQty > 0 ? (p.quantity / maxQty) * 100 : 0;
                         const rankColors = [
                             "from-amber-400 to-amber-600 shadow-amber-500/20",
@@ -77,13 +77,13 @@ const RankingList = memo(({ products }: RankingListProps) => {
                                         </span>
                                     </div>
                                 </div>
-                                <Tooltip 
-                                    content={`Total: ${p.total.toLocaleString()} COP`} 
+                                <Tooltip
+                                    content={`Total: ${p.total.toLocaleString()} COP`}
                                     placement="top"
                                     classNames={{ content: "font-bold text-[8px] uppercase tracking-wider bg-emerald-500 text-white py-0.5 px-2 shadow-xl" }}
                                 >
                                     <div className="relative w-full h-1.5 bg-gray-100 dark:bg-zinc-800 rounded-full overflow-hidden shadow-inner">
-                                        <div 
+                                        <div
                                             className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${rankColors[index] || "from-gray-500 to-gray-700"} transition-all duration-1000 ease-out shadow-lg`}
                                             style={{ width: `${percentage}%` }}
                                         />
@@ -94,7 +94,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
                     })
                 )}
             </div>
-            
+
             <div className="mt-6 pt-6 border-t border-gray-100 dark:border-white/5">
                 <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic text-center">
                     Cálculo basado en movimientos de los últimos 30 días

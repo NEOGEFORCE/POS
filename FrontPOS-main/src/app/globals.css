@@ -100,32 +100,41 @@
      UTILIDADES DEL PUNTO DE VENTA (POS)
      ========================================= */
 
-  /* SCROLLBAR PREMIUM (Unificado) */
-  ::-webkit-scrollbar {
+  /* SCROLLBAR PREMIUM (Zero Friction Aesthetic) */
+  .custom-scrollbar::-webkit-scrollbar {
     width: 6px;
     height: 6px;
   }
-  ::-webkit-scrollbar-track {
+
+  .custom-scrollbar::-webkit-scrollbar-track {
     background: transparent;
   }
-  ::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted-foreground) / 0.3);
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.2);
     border-radius: 10px;
-    border: 1px solid transparent;
-    background-clip: padding-box;
+    transition: all 0.3s ease;
   }
-  ::-webkit-scrollbar-thumb:hover {
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
     background: hsl(var(--primary) / 0.5);
   }
 
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.1);
   }
 
-  .custom-scrollbar {
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: thin;
-    scrollbar-color: hsl(var(--primary) / 0.3) transparent;
+  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--primary) / 0.4);
+  }
+
+  /* SCROLLBAR OCULTA (Zero Friction - Sin barra visible) */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari, Opera */
   }
 
   /* EFECTO NEÓN (Para botones principales como "COBRAR") */
@@ -143,10 +152,25 @@
   }
 
   @keyframes scan-y {
-    0%, 100% { top: 0%; opacity: 0; }
-    10% { opacity: 1; }
-    90% { opacity: 1; }
-    100% { top: 100%; opacity: 0; }
+
+    0%,
+    100% {
+      top: 0%;
+      opacity: 0;
+    }
+
+    10% {
+      opacity: 1;
+    }
+
+    90% {
+      opacity: 1;
+    }
+
+    100% {
+      top: 100%;
+      opacity: 0;
+    }
   }
 
   /* Fix para imágenes pixeladas en pantallas grandes */
@@ -176,34 +200,53 @@
   }
 
   /* COMPORTAMIENTO NATIVO DE INTERFAZ */
-  html, body {
+  html,
+  body {
     touch-action: manipulation;
-    height: 100%;
+    min-height: 100vh;
     width: 100%;
     margin: 0;
-    overflow: hidden;
-    height: 100vh;
-    position: fixed;
   }
-  
+
   @media screen and (max-width: 768px) {
-    input, select, textarea, button {
+
+    input,
+    select,
+    textarea,
+    button {
       font-size: 14px !important;
     }
-    html, body {
+
+    html,
+    body {
       font-size: 14px;
     }
-    .p-5 { padding: 0.5rem !important; }
-    .p-4 { padding: 0.4rem !important; }
-    .p-3 { padding: 0.25rem !important; }
-    .gap-4 { gap: 0.5rem !important; }
-    .gap-3 { gap: 0.35rem !important; }
+
+    .p-5 {
+      padding: 0.5rem !important;
+    }
+
+    .p-4 {
+      padding: 0.4rem !important;
+    }
+
+    .p-3 {
+      padding: 0.25rem !important;
+    }
+
+    .gap-4 {
+      gap: 0.5rem !important;
+    }
+
+    .gap-3 {
+      gap: 0.35rem !important;
+    }
   }
 
   /* Forzar transparencia en Autofill */
   input:-webkit-autofill,
-  input:-webkit-autofill:hover, 
-  input:-webkit-autofill:focus, 
+  input:-webkit-autofill:hover,
+  input:-webkit-autofill:focus,
   input:-webkit-autofill:active {
     -webkit-background-clip: text;
     -webkit-text-fill-color: currentColor;
@@ -212,7 +255,7 @@
   }
 
   /* Estilo Global para el contenedor de Input de HeroUI */
-  [data-slot="input-wrapper"], 
+  [data-slot="input-wrapper"],
   .heroui-input-wrapper {
     background-color: transparent !important;
     backdrop-filter: blur(10px);
@@ -225,7 +268,7 @@
     border-color: rgba(255, 255, 255, 0.1) !important;
   }
 
-  input:focus, 
+  input:focus,
   .heroui-input-wrapper:focus-within,
   [data-slot="input-wrapper"][data-focus="true"],
   [data-slot="input-wrapper"][data-focus-visible="true"] {
@@ -260,11 +303,25 @@
 
 
   /* OPTIMIZACIÓN DE DENSIDAD 1440x900 */
-  .p-5 { padding: 0.75rem !important; }
-  .p-4 { padding: 0.625rem !important; }
-  .p-3 { padding: 0.5rem !important; }
-  .gap-4 { gap: 0.75rem !important; }
-  .gap-3 { gap: 0.5rem !important; }
+  .p-5 {
+    padding: 0.75rem !important;
+  }
+
+  .p-4 {
+    padding: 0.625rem !important;
+  }
+
+  .p-3 {
+    padding: 0.5rem !important;
+  }
+
+  .gap-4 {
+    gap: 0.75rem !important;
+  }
+
+  .gap-3 {
+    gap: 0.5rem !important;
+  }
 
   /* OCULTAR FLECHAS DE INPUTS DE NÚMERO (Premium Look) */
   input::-webkit-outer-spin-button,

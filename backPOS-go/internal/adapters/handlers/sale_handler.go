@@ -51,6 +51,13 @@ func (h *SaleHandler) Create(c *gin.Context) {
 	go h.sseService.BroadcastNewSale(sale)
 
 	c.JSON(http.StatusCreated, sale)
+
+	// Auditoría de Venta
+	name, _ := c.Get("userName")
+	h.auditService.Log(dniStr, name.(string), "CREATE_SALE", "SALES", 
+		fmt.Sprintf("Venta registrada: #%d", sale.SaleID),
+		fmt.Sprintf("Se registró una nueva venta (#%d) por valor de $%s", sale.SaleID, fmt.Sprintf("%.2f", sale.TotalAmount)),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *SaleHandler) GetAll(c *gin.Context) {

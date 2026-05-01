@@ -106,7 +106,6 @@ type DashboardOverview struct {
 	// V5 fields
 	TodaySalesAmount      float64                    `json:"todaySalesAmount"`
 	TodaySalesCount       int64                      `json:"todaySalesCount"`
-	TodayExpenses         float64                    `json:"todayExpenses"`
 	TodayCollectedDebts   float64                    `json:"todayCollectedDebts"`
 	MonthlyCollectedDebts float64                    `json:"monthlyCollectedDebts"`
 	ActiveProducts        int64                      `json:"activeProducts"`
@@ -120,6 +119,35 @@ type DashboardOverview struct {
 	TopProducts           []ports.ProductRankingItem `json:"topProducts"`
 	MissingItems          []models.MissingItem       `json:"missingItems"`
 	SavingsOpportunities  []ports.SavingsOpportunity `json:"savingsOpportunities"`
+	// Financial Refactor V5.3 - Strict JSON Tags
+	RealCashFlow  CashFlowSummary `json:"realCashFlow"`
+	PendingDebts  DebtSummary     `json:"pendingDebts"`
+	TodayExpenses ExpenseSummary  `json:"todayExpenses"`
+	// Financial Reconciliation V5.5
+	SystemBalance      float64 `json:"systemBalance"`
+	ReportedBalance    float64 `json:"reportedBalance"`
+	GlobalDifference   float64 `json:"globalDifference"`
+	TotalExpensesPaid    float64 `json:"totalExpensesPaid"`
+	EstimatedNetProfit   float64 `json:"estimatedNetProfit"`
+	InventoryCostValue   float64 `json:"inventoryCostValue"`
+	InventoryRetailValue float64 `json:"inventoryRetailValue"`
+}
+
+type CashFlowSummary struct {
+	Cash      float64 `json:"cash"`
+	Nequi     float64 `json:"nequi"`
+	Daviplata float64 `json:"daviplata"`
+}
+
+type DebtSummary struct {
+	Amount float64          `json:"amount"`
+	Count  int              `json:"count"`
+	Items  []models.Expense `json:"items"`
+}
+
+type ExpenseSummary struct {
+	Amount float64 `json:"amount"`
+	Count  int     `json:"count"`
 }
 
 
@@ -208,12 +236,30 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	var topProducts []ports.ProductRankingItem
 	var missingItems []models.MissingItem
 	var savingsOpportunities []ports.SavingsOpportunity
+	var todaySalesByPayment map[string]float64
+	var pendingDebtsAmount float64
+	var pendingDebtsCount int64
+	var pendingDebtsList []models.Expense
+	var globalSales, globalExpenses, globalReported float64
+	var inventoryCostValue, inventoryRetailValue float64
+	var monthlyCOGS, monthlyExpensesAmount float64
+	var globalSalesByMethod, globalCollectedByMethod, globalPaidByMethod map[string]float64
 
 	// 1. Get Materialized View Stats (Instant)
 	g.Go(func() error {
 		var err error
 		mvStats, err = s.saleRepo.GetMonthlyStatsFromMV(currentMonthKey)
 		return err
+	})
+	g.Go(func() error {
+		amount, count, err := s.expenseRepo.GetPendingDebtsSummary()
+		if err == nil {
+			pendingDebtsAmount = amount
+			pendingDebtsCount = count
+		}
+		// Fetch the actual list of pending debts for the dashboard
+		pendingDebtsList, _ = s.expenseRepo.GetExpensesByStatus("PENDING")
+		return nil
 	})
 	g.Go(func() error {
 		var err error
@@ -267,7 +313,7 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	g.Go(func() error {
 		var err error
 		// Recent sales is already small (limit 5)
-		salesFilter := ports.SaleFilter{Page: 1, PageSize: 5, From: currentMonthStr, To: nextMonthStr}
+		salesFilter := ports.SaleFilter{Page: 1, PageSize: 20, From: currentMonthStr, To: nextMonthStr}
 		recentSalesRaw, _, err = s.saleRepo.FindAll(salesFilter)
 		return err
 	})
@@ -283,17 +329,81 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	})
 	g.Go(func() error {
 		var err error
-		topProducts, err = s.saleRepo.GetTopSellingProducts(currentMonthStr, nextMonthStr, 5)
+		topProducts, err = s.saleRepo.GetTopSellingProducts(currentMonthStr, nextMonthStr, 7)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		missingItems, err = s.adminRepo.GetRecentPendingMissingItems(5)
+		missingItems, err = s.adminRepo.GetRecentPendingMissingItems(7)
 		return err
 	})
 	g.Go(func() error {
 		var err error
 		savingsOpportunities, err = s.getSavingsOpportunitiesCached()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		todaySalesByPayment, err = s.saleRepo.GetSalesByPaymentMethod(todayStr, tomorrowStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		pendingDebtsAmount, pendingDebtsCount, err = s.expenseRepo.GetPendingDebtsSummary()
+		return err
+	})
+	// Global Reconciliation Queries
+	g.Go(func() error {
+		var err error
+		globalSales, err = s.saleRepo.GetGlobalTotalSales()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		globalExpenses, err = s.expenseRepo.GetGlobalTotalPaidExpenses()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		globalReported, err = s.closureRepo.GetGlobalReportedBalance()
+		return err
+	})
+	// Financial Stats V5.5
+	g.Go(func() error {
+		var err error
+		inventoryCostValue, err = s.productRepo.GetGlobalInventoryValue()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		inventoryRetailValue, err = s.productRepo.GetGlobalInventoryRetailValue()
+		return err
+	})
+	// Breakdown Reconciliation Queries
+	g.Go(func() error {
+		var err error
+		globalSalesByMethod, err = s.saleRepo.GetGlobalSalesByMethod()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		globalCollectedByMethod, err = s.saleRepo.GetGlobalCollectedDebtsByMethod()
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		globalPaidByMethod, err = s.expenseRepo.GetGlobalPaidExpensesByMethod()
+		return err
+	})
+	// Monthly Profit Components
+	g.Go(func() error {
+		var err error
+		monthlyCOGS, err = s.saleRepo.GetCOGSByRange(currentMonthStr, nextMonthStr)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		monthlyExpensesAmount, err = s.expenseRepo.GetPaidAmountByRange(currentMonthStr, nextMonthStr)
 		return err
 	})
 
@@ -307,14 +417,46 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	totalExpensesAmount = mvStats.TotalExpenses
 	monthlyCollectedDebts = mvStats.TotalAbonos
 
+	todayExpenses := 0.0
+	todayExpensesCount := int64(0)
+	expensesByMethod := make(map[string]float64)
+
+	for _, e := range todayExpensesRaw {
+		status := strings.ToUpper(e.Status)
+		source := strings.ToUpper(e.PaymentSource)
+		isPending := status == "PENDING" || source == "PRESTAMO" || source == "PREST."
+
+		if !isPending && status == "PAID" {
+			todayExpenses += e.Amount
+			todayExpensesCount++
+			method := strings.ToUpper(e.PaymentSource)
+			expensesByMethod[method] += e.Amount
+		}
+	}
+
+	// Categorize Abonos (Collected Debts) by Payment Method
+	paymentsByMethod := make(map[string]float64)
 	todayCollectedDebts := 0.0
 	for _, p := range todayPaymentsRaw {
 		todayCollectedDebts += p.TotalPaid
+		// Direct Cash portion
+		if p.AmountCash > 0 {
+			paymentsByMethod["EFECTIVO"] += p.AmountCash
+		}
+		// Transfer portion
+		if p.AmountTransfer > 0 {
+			method := strings.ToUpper(p.TransferSource)
+			if method == "" {
+				method = "NEQUI" // Default if empty, common in this system
+			}
+			paymentsByMethod[method] += p.AmountTransfer
+		}
 	}
 
-	todayExpenses := 0.0
-	for _, e := range todayExpensesRaw {
-		todayExpenses += e.Amount
+	// Normalize Sales by Payment Method keys to Uppercase
+	normalizedSales := make(map[string]float64)
+	for k, v := range todaySalesByPayment {
+		normalizedSales[strings.ToUpper(k)] = v
 	}
 
 	// Reconstruir mapas históricos desde MV Trend
@@ -355,6 +497,9 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 			})
 		}
 	}
+	if len(lowStockProducts) > 18 {
+		lowStockProducts = lowStockProducts[:18]
+	}
 
 	recentSales := []map[string]interface{}{}
 	for _, sale := range recentSalesRaw {
@@ -363,6 +508,9 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		recentSales = append(recentSales, map[string]interface{}{
 			"id": sale.SaleID, "total": sale.TotalAmount, "date": sale.SaleDate.Format(time.RFC3339), "client": clientName, "payment_method": sale.PaymentMethod,
 		})
+	}
+	if len(recentSales) > 18 {
+		recentSales = recentSales[:18]
 	}
 
 	dailySalesLast7 := []DailyPoint{}
@@ -384,7 +532,6 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		},
 		TodaySalesAmount:      todaySalesAmount,
 		TodaySalesCount:       todaySalesCount,
-		TodayExpenses:         todayExpenses,
 		TodayCollectedDebts:   todayCollectedDebts,
 		MonthlyCollectedDebts: monthlyCollectedDebts,
 		ActiveProducts:        activeProducts,
@@ -398,6 +545,31 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		TopProducts:           topProducts,
 		MissingItems:          missingItems,
 		SavingsOpportunities:  savingsOpportunities,
+		RealCashFlow: CashFlowSummary{
+			Cash:      globalSalesByMethod["EFECTIVO"] + globalCollectedByMethod["EFECTIVO"] - globalPaidByMethod["EFECTIVO"],
+			Nequi:     globalSalesByMethod["NEQUI"] + globalCollectedByMethod["NEQUI"] - globalPaidByMethod["NEQUI"],
+			Daviplata: globalSalesByMethod["DAVIPLATA"] + globalCollectedByMethod["DAVIPLATA"] - globalPaidByMethod["DAVIPLATA"],
+		},
+		PendingDebts: DebtSummary{
+			Amount: pendingDebtsAmount,
+			Count:  int(pendingDebtsCount),
+			Items:  pendingDebtsList,
+		},
+		TodayExpenses: ExpenseSummary{
+			Amount: todayExpenses,
+			Count:  int(todayExpensesCount),
+		},
+		SystemBalance:    globalSales - globalExpenses,
+		ReportedBalance:  globalReported,
+		GlobalDifference: globalReported - (func() float64 {
+			sb := globalSales - globalExpenses
+			if sb < 0 { return 0 }
+			return sb
+		})(),
+		TotalExpensesPaid:    globalExpenses,
+		EstimatedNetProfit:   (mvStats.TotalSales - monthlyCOGS) - monthlyExpensesAmount,
+		InventoryCostValue:   inventoryCostValue,
+		InventoryRetailValue: inventoryRetailValue,
 	}
 
 	// PERSISTENCIA EN RAM: TTL de 60s para datos frescos pero sin I/O repetitivo
@@ -475,6 +647,58 @@ func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []
 		ranking = ranking[:5]
 	}
 	return ranking
+}
+
+func (s *DashboardService) AdjustInitialBalance(realBalance float64, employeeName string, employeeDNI string) error {
+	// 1. Obtener totales actuales
+	globalSales, _ := s.saleRepo.GetGlobalTotalSales()
+	globalExpenses, _ := s.expenseRepo.GetGlobalTotalPaidExpenses()
+	globalReported, _ := s.closureRepo.GetGlobalReportedBalance()
+
+	currentSystemBalance := globalSales - globalExpenses
+	// Si el balance teórico es negativo, lo tratamos como 0 para la base
+	if currentSystemBalance < 0 {
+		currentSystemBalance = 0
+	}
+
+	// 2. Calcular ajustes necesarios para que ambos totales sean igual a realBalance
+	saleAdjustment := realBalance - currentSystemBalance
+	closureAdjustment := realBalance - globalReported
+
+	// 3. Aplicar Ajuste de Ventas (para normalizar el Saldo Esperado)
+	if saleAdjustment != 0 {
+		adjSale := &models.Sale{
+			TotalAmount:   saleAdjustment,
+			CashAmount:    saleAdjustment,
+			PaymentMethod: "EFECTIVO",
+			SaleDate:      time.Now(),
+			EmployeeDNI:   "SYSTEM",
+			ClientDNI:     "S.N.",
+		}
+		_ = s.saleRepo.Create(adjSale)
+	}
+
+	// 4. Aplicar Ajuste de Cierres (para normalizar el Saldo Real)
+	if closureAdjustment != 0 {
+		adjClosure := &models.CashierClosure{
+			Date:          time.Now(),
+			StartDate:     time.Now(),
+			EndDate:       time.Now(),
+			TotalCashReal: closureAdjustment,
+			ClosedByDNI:   employeeDNI,
+			ClosedByName:  employeeName,
+			Difference:    0,
+			AuthorizedBy:  "SYSTEM_RESET",
+			ExpensesDetail: "AJUSTE MANUAL DE SALDO INICIAL",
+		}
+		_ = s.closureRepo.Save(adjClosure)
+	}
+
+	// Invalidar caché para que el frontend vea los cambios
+	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+
+	log.Printf("📊 [AdjustInitialBalance] Reseteo completado. Nuevo Saldo Base: $%f", realBalance)
+	return nil
 }
 
 type CashierClosure struct {
@@ -652,7 +876,9 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 	for _, expense := range expenses {
 		if !expense.Date.Before(startDate) {
-			closure.TotalExpenses += expense.Amount
+			if strings.ToUpper(expense.Status) != "PENDING" {
+				closure.TotalExpenses += expense.Amount
+			}
 			closure.Expenses = append(closure.Expenses, expense)
 		}
 	}

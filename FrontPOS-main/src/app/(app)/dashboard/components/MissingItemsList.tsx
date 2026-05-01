@@ -73,7 +73,7 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                 </Chip>
             </div>
 
-            <div className="space-y-4 flex-1 overflow-y-auto custom-scrollbar pr-2">
+            <div className="space-y-4 flex-1 overflow-hidden custom-scrollbar pr-2">
                 {(!items || items.length === 0) ? (
                     <div className="h-full flex flex-col items-center justify-center text-center py-10 opacity-50">
                         <CheckCircle2 size={40} className="mb-4 text-emerald-500 opacity-20" />

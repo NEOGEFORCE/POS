@@ -214,7 +214,7 @@ export default function InventoryHub() {
     ];
 
     return (
-        <div className="h-full w-full overflow-y-auto custom-scrollbar pb-32 bg-transparent text-zinc-900 dark:text-white transition-all duration-500 relative">
+        <div className="h-full w-full overflow-y-auto bg-transparent text-zinc-900 dark:text-white transition-all duration-500 relative scroll-smooth custom-scrollbar">
             <div className="flex flex-col gap-6 min-h-max w-full max-w-[1200px] mx-auto p-3 md:p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
             
             {/* HEADER HUB */}

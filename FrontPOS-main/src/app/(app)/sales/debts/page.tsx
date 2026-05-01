@@ -1,14 +1,14 @@
 "use client";
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Button, Card, CardBody, Table, TableHeader, TableColumn, TableBody, 
+import {
+  Button, Card, CardBody, Table, TableHeader, TableColumn, TableBody,
   TableRow, TableCell, Input, Chip, Divider,
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from "@heroui/react";
-import { 
-  Search, Landmark, Calendar, Users, ArrowUpRight, 
+import {
+  Search, Landmark, Calendar, Users, ArrowUpRight,
   AlertTriangle, MoreVertical, Receipt, DollarSign,
   Sparkles, CreditCard
 } from 'lucide-react';
@@ -35,7 +35,7 @@ export default function DebtsControlPage() {
       const data = await res.json();
       setDebts(Array.isArray(data) ? data : []);
     } catch (error) {
-       toast({ title: "Error", description: "Error al cargar cartera", variant: "destructive" });
+      toast({ title: "Error", description: "Error al cargar cartera", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -69,7 +69,7 @@ export default function DebtsControlPage() {
     }
   };
 
-  const filteredDebts = debts.filter(d => 
+  const filteredDebts = debts.filter(d =>
     d.client?.name.toLowerCase().includes(search.toLowerCase()) ||
     d.client?.dni.includes(search)
   );
@@ -121,7 +121,7 @@ export default function DebtsControlPage() {
       {/* TABLE SECTION */}
       <Card className="bg-white/80 dark:bg-zinc-950/60 backdrop-blur-3xl rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-hidden min-h-[600px]">
         <CardBody className="p-0">
-          <Table 
+          <Table
             aria-label="Debts table"
             className="p-8"
             classNames={{
@@ -166,8 +166,8 @@ export default function DebtsControlPage() {
                     <div className="flex flex-col">
                       <span className="font-black text-amber-500 text-lg italic tracking-tighter">${debt.debtPending.toLocaleString()}</span>
                       <div className="h-1.5 w-24 bg-gray-100 dark:bg-white/5 rounded-full mt-1 overflow-hidden">
-                        <div 
-                          className="h-full bg-amber-500 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)]" 
+                        <div
+                          className="h-full bg-amber-500 rounded-full shadow-[0_0_10px_rgba(245,158,11,0.5)]"
                           style={{ width: `${(debt.debtPending / debt.total) * 100}%` }}
                         />
                       </div>
@@ -180,8 +180,8 @@ export default function DebtsControlPage() {
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Button 
-                        size="sm" 
+                      <Button
+                        size="sm"
                         className="bg-amber-500 text-white font-black text-[9px] uppercase italic tracking-widest px-4 rounded-xl shadow-lg shadow-amber-500/20 hover:scale-110 active:scale-95 transition-all"
                         onPress={() => {
                           setSelectedDebt(debt);
@@ -212,8 +212,8 @@ export default function DebtsControlPage() {
       </Card>
 
       {/* PAYMENT MODAL */}
-      <Modal 
-        isOpen={isOpen} 
+      <Modal
+        isOpen={isOpen}
         onOpenChange={onOpenChange}
         backdrop="blur"
         size="md"
@@ -250,7 +250,7 @@ export default function DebtsControlPage() {
                 <div className="space-y-6">
                   <div className="space-y-3">
                     <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1 italic">MONTO DEL ABONO</label>
-                    <Input 
+                    <Input
                       type="number"
                       placeholder="0"
                       value={paymentAmount}
@@ -267,7 +267,7 @@ export default function DebtsControlPage() {
                     <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1 italic">MÉTODO DE PAGO</label>
                     <div className="grid grid-cols-2 gap-3">
                       {["EFECTIVO", "NEQUI", "DAVIPLATA", "OTRO"].map(m => (
-                        <Button 
+                        <Button
                           key={m}
                           variant={paymentMethod === m ? "solid" : "flat"}
                           className={`h-14 font-black uppercase italic text-[10px] tracking-widest rounded-2xl ${paymentMethod === m ? 'bg-amber-500 text-white shadow-lg' : 'bg-gray-50 dark:bg-zinc-900 text-gray-400 opacity-60'}`}

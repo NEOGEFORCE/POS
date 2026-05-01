@@ -21,6 +21,10 @@ func (s *CategoryService) GetCategory(id uint) (*models.Category, error) {
 	return s.repo.GetByID(id)
 }
 
+func (s *CategoryService) GetCategoryByName(name string) (*models.Category, error) {
+	return s.repo.GetByName(name)
+}
+
 func (s *CategoryService) GetAllCategories() ([]models.Category, error) {
 	return s.repo.GetAll()
 }

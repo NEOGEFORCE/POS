@@ -39,6 +39,10 @@ func (s *ProductService) GetProduct(barcode string) (*models.Product, error) {
 	return s.repo.GetByBarcode(barcode)
 }
 
+func (s *ProductService) GetProductByName(name string) (*models.Product, error) {
+	return s.repo.GetByName(name)
+}
+
 func (s *ProductService) GetProductWithPreloads(barcode string, preloads ...string) (*models.Product, error) {
 	return s.repo.GetByBarcodeWithPreloads(barcode, preloads...)
 }
@@ -220,26 +224,19 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		product.Quantity += addedQuantity
 	}
 
+	// === LÓGICA DE COSTO PROMEDIO PONDERADO (WAC) ===
+	currentStock := product.Quantity - addedQuantity
+	if currentStock < 0 {
+		currentStock = 0
+	}
+
 	// El costo real de esta entrada es base + impuestos
 	entryTotalCost := newPurchasePrice + iva + icui + ibua
 
-	if entryTotalCost > 0 && supplierID != nil {
-		// 1. Guardar/Actualizar el precio específico de este proveedor
-		if err := s.repo.UpdateSupplierPrice(barcode, *supplierID, entryTotalCost); err != nil {
-			return err
-		}
-
-		// 2. Obtener todos los precios de proveedores para este producto
-		supplierPrices, err := s.repo.GetSupplierPrices(barcode)
-		if err == nil && len(supplierPrices) > 0 {
-			maxCost := 0.0
-			for _, sp := range supplierPrices {
-				if sp.PurchasePrice > maxCost {
-					maxCost = sp.PurchasePrice
-				}
-			}
-			// 3. El costo del producto siempre es el MÁXIMO histórico de sus proveedores
-			product.PurchasePrice = maxCost
+	if entryTotalCost > 0 {
+		if currentStock+addedQuantity > 0 {
+			// Fórmula: (StockAnterior * CostoAnterior + StockNuevo * CostoNuevo) / StockTotal
+			product.PurchasePrice = ((currentStock * product.PurchasePrice) + (addedQuantity * entryTotalCost)) / (currentStock + addedQuantity)
 		} else {
 			product.PurchasePrice = entryTotalCost
 		}
@@ -248,19 +245,24 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		product.Iva = iva
 		product.Icui = icui
 		product.Ibua = ibua
+
+		// Actualizar el precio específico del proveedor (como referencia histórica)
+		if supplierID != nil {
+			_ = s.repo.UpdateSupplierPrice(barcode, *supplierID, entryTotalCost)
+		}
 	}
 
 	if newSalePrice > 0 {
 		product.SalePrice = applyRounding(newSalePrice)
-		// Update persistent margin based on newest sale price vs current max cost
+		// Update persistent margin based on newest sale price vs current WAC cost
 		if product.PurchasePrice > 0 {
 			margin := ((product.SalePrice / product.PurchasePrice) - 1) * 100
 			product.MarginPercentage = margin
 		}
-	} else if product.PurchasePrice > 0 && product.MarginPercentage > 0 {
-		// Re-calculate based on current (potentially updated) max cost and existing margin
-		suggested := product.PurchasePrice * (1 + product.MarginPercentage/100)
-		product.SalePrice = applyRounding(suggested)
+	} else if product.PurchasePrice > 0 {
+		// El precio de venta NO SE TOCA automáticamente.
+		// Solo recalculamos el margen informativo.
+		product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 	}
 
 	if supplierID != nil {
@@ -375,8 +377,8 @@ func (s *ProductService) FixAllProductPrices() error {
 	return nil
 }
 
-func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint) error {
-	return s.repo.BulkReceive(entries, orderID)
+func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string) error {
+	return s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI)
 }
 
 func (s *ProductService) GetSavingsOpportunities() ([]ports.SavingsOpportunity, error) {

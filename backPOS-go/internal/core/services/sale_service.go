@@ -30,7 +30,7 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	productCache := make(map[string]*models.Product)
 
 	for _, detail := range sale.SaleDetails {
-		if strings.HasPrefix(detail.Barcode, "MISC-") {
+		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
 			continue
 		}
 
@@ -80,7 +80,7 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	// 3. Procesar detalles de la venta y calcular totales
 	for i := range sale.SaleDetails {
 		detail := &sale.SaleDetails[i]
-		if strings.HasPrefix(detail.Barcode, "MISC-") {
+		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
 			total += detail.Subtotal
 			continue
 		}
@@ -149,7 +149,7 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 		// 4.5. Log movements for Kárdex
 		for i := range sale.SaleDetails {
 			detail := sale.SaleDetails[i]
-			if strings.HasPrefix(detail.Barcode, "MISC-") {
+			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
 				continue
 			}
 			movement := &models.StockMovement{

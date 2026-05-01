@@ -26,12 +26,12 @@ export default function ClientSelectionModal({
     selectedClientDni
 }: ClientSelectionModalProps) {
     return (
-        <Modal 
-            isOpen={isOpen} 
-            onOpenChange={onOpenChange} 
-            backdrop="blur" 
+        <Modal
+            isOpen={isOpen}
+            onOpenChange={onOpenChange}
+            backdrop="blur"
             hideCloseButton
-            classNames={{ 
+            classNames={{
                 base: "bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-gray-200 dark:border-white/10 overflow-hidden max-w-md mx-4",
                 wrapper: "z-[1001]"
             }}
@@ -44,10 +44,10 @@ export default function ClientSelectionModal({
                             <h2 className="text-sm font-bold tracking-[0.15em] text-gray-900 dark:text-white uppercase italic">
                                 Seleccionar Cliente
                             </h2>
-                            <Button 
-                                isIconOnly 
-                                variant="light" 
-                                size="sm" 
+                            <Button
+                                isIconOnly
+                                variant="light"
+                                size="sm"
                                 onPress={onClose}
                                 className="text-gray-400 hover:text-gray-700 dark:hover:text-white transition-colors rounded-full"
                             >
@@ -59,13 +59,13 @@ export default function ClientSelectionModal({
                             {/* FASE 2: BUSCADOR ZERO FRICTION */}
                             <div className="p-4 bg-white dark:bg-zinc-900">
                                 <div className="relative group">
-                                    <Search 
-                                        className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors z-10" 
+                                    <Search
+                                        className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 group-focus-within:text-emerald-500 transition-colors z-10"
                                     />
-                                    <input 
-                                        autoFocus 
-                                        placeholder="Buscar por nombre o DNI..." 
-                                        value={clientSearch} 
+                                    <input
+                                        autoFocus
+                                        placeholder="Buscar por nombre o DNI..."
+                                        value={clientSearch}
                                         onChange={(e) => setClientSearch(e.target.value)}
                                         className="w-full bg-gray-50 dark:bg-zinc-950/50 border border-gray-200 dark:border-white/5 text-gray-900 dark:text-white rounded-xl px-4 py-3 pl-11 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 transition-all font-bold text-sm placeholder:text-gray-400 placeholder:font-medium"
                                     />
@@ -75,23 +75,20 @@ export default function ClientSelectionModal({
                             {/* FASE 3: LISTA DE CLIENTES Y FORMATEO */}
                             <div className="px-2 pb-4 max-h-[400px] overflow-y-auto custom-scrollbar">
                                 {/* CONSUMIDOR FINAL SIEMPRE PRIMERO */}
-                                <div 
+                                <div
                                     onClick={() => { handleClientSelect('0'); onClose(); }}
-                                    className={`flex items-center gap-4 p-4 mx-2 my-1 rounded-2xl cursor-pointer transition-all duration-200 group border ${
-                                        selectedClientDni === '0' 
-                                            ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20' 
+                                    className={`flex items-center gap-4 p-4 mx-2 my-1 rounded-2xl cursor-pointer transition-all duration-200 group border ${selectedClientDni === '0'
+                                            ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20'
                                             : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-white/5'
-                                    }`}
+                                        }`}
                                 >
-                                    <div className={`h-10 w-10 rounded-xl flex items-center justify-center transition-colors shadow-sm ${
-                                        selectedClientDni === '0' ? 'bg-emerald-500 text-white' : 'bg-sky-100 dark:bg-sky-500/10 text-sky-500'
-                                    }`}>
+                                    <div className={`h-10 w-10 rounded-xl flex items-center justify-center transition-colors shadow-sm ${selectedClientDni === '0' ? 'bg-emerald-500 text-white' : 'bg-sky-100 dark:bg-sky-500/10 text-sky-500'
+                                        }`}>
                                         <User size={20} />
                                     </div>
                                     <div className="flex flex-col">
-                                        <span className={`text-[11px] font-black uppercase tracking-wider ${
-                                            selectedClientDni === '0' ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'
-                                        }`}>
+                                        <span className={`text-[11px] font-black uppercase tracking-wider ${selectedClientDni === '0' ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'
+                                            }`}>
                                             Consumidor Final
                                         </span>
                                         <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">General</span>
@@ -102,26 +99,23 @@ export default function ClientSelectionModal({
                                 {filteredCustomers.filter(c => c.dni !== '0').map(c => {
                                     const isActive = selectedClientDni === c.dni;
                                     return (
-                                        <div 
-                                            key={c.dni} 
+                                        <div
+                                            key={c.dni}
                                             onClick={() => { handleClientSelect(c.dni); onClose(); }}
-                                            className={`flex items-center gap-4 p-4 mx-2 my-1 rounded-2xl cursor-pointer transition-all duration-200 group border ${
-                                                isActive 
-                                                    ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20 shadow-sm' 
+                                            className={`flex items-center gap-4 p-4 mx-2 my-1 rounded-2xl cursor-pointer transition-all duration-200 group border ${isActive
+                                                    ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-500/10 dark:border-emerald-500/20 shadow-sm'
                                                     : 'bg-transparent border-transparent hover:bg-gray-50 dark:hover:bg-white/5'
-                                            }`}
+                                                }`}
                                         >
-                                            <div className={`h-10 w-10 rounded-xl flex items-center justify-center transition-all duration-300 ${
-                                                isActive 
-                                                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' 
+                                            <div className={`h-10 w-10 rounded-xl flex items-center justify-center transition-all duration-300 ${isActive
+                                                    ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20'
                                                     : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-500 group-hover:bg-white dark:group-hover:bg-zinc-700 shadow-inner'
-                                            }`}>
+                                                }`}>
                                                 <User size={20} />
                                             </div>
                                             <div className="flex flex-col overflow-hidden">
-                                                <span className={`text-[11px] font-black uppercase tracking-wider truncate transition-colors ${
-                                                    isActive ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'
-                                                }`}>
+                                                <span className={`text-[11px] font-black uppercase tracking-wider truncate transition-colors ${isActive ? 'text-emerald-700 dark:text-emerald-400' : 'text-gray-900 dark:text-white'
+                                                    }`}>
                                                     {c.name}
                                                 </span>
                                                 <div className="flex items-center gap-2">

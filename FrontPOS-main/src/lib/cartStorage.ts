@@ -6,6 +6,7 @@ interface CartDB {
     carts: Record<string, any[]>;
     activeKey: string;
     customerDni: string;
+    selectedItemId: string | null;
     updatedAt: number;
 }
 
@@ -25,7 +26,7 @@ function openDB(): Promise<IDBDatabase> {
     });
 }
 
-export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeKey: string, customerDni: string): Promise<void> {
+export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeKey: string, customerDni: string, selectedItemId: string | null): Promise<void> {
     try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -35,6 +36,7 @@ export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeK
             carts,
             activeKey,
             customerDni,
+            selectedItemId,
             updatedAt: Date.now(),
         };
         
@@ -49,10 +51,11 @@ export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeK
         localStorage.setItem('pos-active-carts', JSON.stringify(carts));
         localStorage.setItem('pos-active-cart-key', activeKey);
         localStorage.setItem('pos-active-customer', customerDni);
+        localStorage.setItem('pos-active-selected-id', selectedItemId || '');
     }
 }
 
-export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, any[]>; activeKey: string; customerDni: string } | null> {
+export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, any[]>; activeKey: string; customerDni: string; selectedItemId: string | null } | null> {
     try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readonly');
@@ -67,6 +70,7 @@ export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, 
                         carts: result.carts,
                         activeKey: result.activeKey,
                         customerDni: result.customerDni,
+                        selectedItemId: result.selectedItemId || null,
                     });
                 } else {
                     resolve(null);
@@ -79,12 +83,14 @@ export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, 
         const savedCartsRaw = localStorage.getItem('pos-active-carts');
         const savedActive = localStorage.getItem('pos-active-cart-key');
         const savedCustomer = localStorage.getItem('pos-active-customer');
+        const savedSelectedId = localStorage.getItem('pos-active-selected-id');
         
         if (savedCartsRaw) {
             return {
                 carts: JSON.parse(savedCartsRaw),
                 activeKey: savedActive || 'Factura 1',
                 customerDni: savedCustomer || '0',
+                selectedItemId: savedSelectedId || null,
             };
         }
         return null;

@@ -64,11 +64,11 @@ const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-1.5 w-full mb-1">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5 w-full mb-0.5">
       {kpis.map((k, i) => (
         <div 
           key={i} 
-          className={`relative overflow-hidden group border p-2 px-3 rounded-lg flex flex-col justify-between shadow-sm transition-all active:scale-95 cursor-pointer h-[74px] ${
+          className={`relative overflow-hidden group border p-2 px-3 rounded-lg flex flex-col justify-between shadow-sm transition-all active:scale-95 cursor-pointer h-[66px] ${
             k.alert 
               ? 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 hover:border-rose-500/30' 
               : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 hover:border-emerald-500/30'

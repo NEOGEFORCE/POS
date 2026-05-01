@@ -60,6 +60,7 @@ type Supplier struct {
 	VisitDays     StringArray `gorm:"type:jsonb;column:visit_days" json:"visitDays"`
 	DeliveryDays  StringArray `gorm:"type:jsonb;column:delivery_days" json:"deliveryDays"`
 	RestockMethod string      `gorm:"column:restock_method" json:"restockMethod"`
+	IsActive      bool        `gorm:"default:true;column:is_active" json:"isActive"`
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 	// Relaciones

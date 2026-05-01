@@ -62,14 +62,14 @@ export default function PaymentModal({
     };
 
     return (
-        <Modal 
-            isOpen={isOpen} 
-            onOpenChange={onOpenChange} 
-            backdrop="blur" 
-            size="full" 
-            classNames={{ 
-                base: "bg-gray-100 dark:bg-zinc-950 border border-gray-300 dark:border-white/5 rounded-none md:rounded-[2rem] w-[100vw] md:w-[95vw] max-w-[1000px] h-[100vh] md:h-auto md:max-h-[90vh] overflow-hidden", 
-                closeButton: "hidden" 
+        <Modal
+            isOpen={isOpen}
+            onOpenChange={onOpenChange}
+            backdrop="blur"
+            size="full"
+            classNames={{
+                base: "bg-gray-100 dark:bg-zinc-950 border border-gray-300 dark:border-white/5 rounded-none md:rounded-[2rem] w-[100vw] md:w-[95vw] max-w-[1000px] h-[100vh] md:h-auto md:max-h-[90vh] overflow-hidden",
+                closeButton: "hidden"
             }}
         >
             <ModalContent className="flex flex-col p-0 overflow-hidden">
@@ -82,13 +82,13 @@ export default function PaymentModal({
                                 </div>
                                 <h2 className="text-4xl font-black text-gray-900 dark:text-white uppercase tracking-tighter italic mb-2">Venta Maestro</h2>
                                 <p className="text-[10px] font-black text-emerald-600 uppercase tracking-[0.4em] mb-12">Transacción Procesada con Éxito</p>
-                                
+
                                 <div className="bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 px-20 py-12 rounded-[3rem] text-center shadow-2xl mb-12">
                                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] mb-6">CAMBIO DISPONIBLE</p>
                                     <p className="text-[6rem] font-black text-emerald-600 tabular-nums leading-none tracking-tighter italic">${formatCurrency(lastChange)}</p>
                                 </div>
-                                <Button 
-                                    className="h-20 px-16 font-black text-xl uppercase rounded-[2rem] shadow-2xl bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 transition-all italic tracking-widest" 
+                                <Button
+                                    className="h-20 px-16 font-black text-xl uppercase rounded-[2rem] shadow-2xl bg-emerald-600 text-white hover:bg-emerald-500 active:scale-95 transition-all italic tracking-widest"
                                     onPress={() => {
                                         setShowSuccessScreen(false);
                                         onClose();
@@ -116,11 +116,10 @@ export default function PaymentModal({
                                 <button
                                     key={tab.id}
                                     onClick={() => handleTabSwitch(tab)}
-                                    className={`h-11 lg:h-14 px-4 rounded-2xl flex items-center gap-3 border transition-all shrink-0 font-black uppercase text-[10px] tracking-[0.1em] ${
-                                        activePaymentTab === tab.id
-                                        ? `bg-emerald-500/10 dark:bg-emerald-500/20 border-emerald-500/50 text-emerald-600 dark:text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.15)] italic`
-                                        : 'border-transparent text-gray-500 hover:bg-gray-50 dark:hover:bg-zinc-800/50'
-                                    }`}
+                                    className={`h-11 lg:h-14 px-4 rounded-2xl flex items-center gap-3 border transition-all shrink-0 font-black uppercase text-[10px] tracking-[0.1em] ${activePaymentTab === tab.id
+                                            ? `bg-emerald-500/10 dark:bg-emerald-500/20 border-emerald-500/50 text-emerald-600 dark:text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.15)] italic`
+                                            : 'border-transparent text-gray-500 hover:bg-gray-50 dark:hover:bg-zinc-800/50'
+                                        }`}
                                 >
                                     {tab.logo ? <img src={tab.logo} className="h-5 w-5 object-contain rounded-md" /> : <tab.icon size={18} className={activePaymentTab === tab.id ? 'text-emerald-500 animate-pulse' : ''} />}
                                     {tab.label}
@@ -129,17 +128,17 @@ export default function PaymentModal({
 
                             <div className="mt-auto pt-8 border-t border-gray-100 dark:border-white/5 flex flex-col gap-3">
                                 <p className="text-[8px] font-black text-gray-400 uppercase tracking-widest pl-1 mb-2">OPERACIÓN CLIENTE</p>
-                                <Button 
-                                    className="w-full justify-start h-14 px-4 rounded-xl font-black text-[10px] uppercase bg-gray-50 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 border border-gray-200 dark:border-white/10 italic truncate tracking-widest" 
+                                <Button
+                                    className="w-full justify-start h-14 px-4 rounded-xl font-black text-[10px] uppercase bg-gray-50 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 border border-gray-200 dark:border-white/10 italic truncate tracking-widest"
                                     onPress={() => setIsClientDialogOpen(true)}
                                 >
                                     <User size={16} className="mr-2" />
                                     <span className="truncate">{selectedCustomer?.name || 'CONSUMIDOR FINAL'}</span>
                                 </Button>
-                                <Button 
-                                    variant="flat" 
-                                    color="danger" 
-                                    className="w-full h-14 font-black uppercase text-[10px] rounded-xl bg-rose-500/10 text-rose-500 italic tracking-widest" 
+                                <Button
+                                    variant="flat"
+                                    color="danger"
+                                    className="w-full h-14 font-black uppercase text-[10px] rounded-xl bg-rose-500/10 text-rose-500 italic tracking-widest"
                                     onPress={onClose}
                                 >
                                     CANCELAR VENTA
@@ -196,16 +195,16 @@ export default function PaymentModal({
                                                 <Users size={64} className="stroke-[3]" />
                                             </div>
                                         ) : (
-                                            <img 
-                                                src={activePaymentTab === 'NEQUI' ? '/logos/nequi.png' : '/logos/daviplata.png'} 
-                                                className="w-full h-full object-contain filter drop-shadow-[0_0_30px_rgba(0,0,0,0.15)]" 
+                                            <img
+                                                src={activePaymentTab === 'NEQUI' ? '/logos/nequi.png' : '/logos/daviplata.png'}
+                                                className="w-full h-full object-contain filter drop-shadow-[0_0_30px_rgba(0,0,0,0.15)]"
                                                 alt={activePaymentTab}
                                             />
                                         )}
                                     </div>
                                     <h3 className="text-2xl font-black uppercase text-gray-900 dark:text-white tracking-widest italic mb-2">{activePaymentTab === 'credit' ? 'CARTERA FIADO' : activePaymentTab}</h3>
                                     <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.4em] mb-12">Confirmación de Recibo Digital</p>
-                                    
+
                                     <div className="bg-white dark:bg-zinc-900 px-12 py-6 rounded-[2rem] border border-gray-200 dark:border-white/5 shadow-xl">
                                         <p className="text-[10px] font-black text-emerald-600 uppercase mb-2 tracking-[0.2em] text-center">VALOR A CARGAR</p>
                                         <p className="text-4xl font-black text-gray-900 dark:text-white tabular-nums tracking-tighter italic">${formatCurrency(remaining)}</p>
@@ -222,17 +221,16 @@ export default function PaymentModal({
                                     {dialogAmount ? `$${formatCurrency(dialogAmount)}` : ''}
                                 </p>
                             </div>
-                            
+
                             <div className="grid grid-cols-3 gap-3 flex-1">
                                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
-                                    <Button 
-                                        key={n} 
+                                    <Button
+                                        key={n}
                                         variant="flat"
-                                        className={`h-full text-2xl font-black rounded-2xl transition-all active:scale-95 ${
-                                            n === 'CE' 
-                                            ? 'text-rose-500 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-500 hover:text-white' 
-                                            : 'text-gray-900 dark:text-white bg-gray-50 dark:bg-zinc-800 hover:bg-emerald-500 hover:text-white'
-                                        }`}
+                                        className={`h-full text-2xl font-black rounded-2xl transition-all active:scale-95 ${n === 'CE'
+                                                ? 'text-rose-500 bg-rose-50 dark:bg-rose-500/10 hover:bg-rose-500 hover:text-white'
+                                                : 'text-gray-900 dark:text-white bg-gray-50 dark:bg-zinc-800 hover:bg-emerald-500 hover:text-white'
+                                            }`}
                                         onPress={() => n === 'CE' ? setDialogAmount('') : setDialogAmount((p: string) => p + String(n))}
                                     >
                                         {n}
@@ -240,12 +238,11 @@ export default function PaymentModal({
                                 ))}
                             </div>
 
-                            <Button 
-                                className={`h-24 font-black text-lg uppercase rounded-[2rem] shadow-2xl transition-all tracking-[0.1em] italic ${
-                                    isReadyToFinalize 
-                                    ? 'bg-emerald-600 text-white shadow-emerald-500/20' 
-                                    : 'bg-sky-600 text-white shadow-sky-500/20'
-                                }`}
+                            <Button
+                                className={`h-24 font-black text-lg uppercase rounded-[2rem] shadow-2xl transition-all tracking-[0.1em] italic ${isReadyToFinalize
+                                        ? 'bg-emerald-600 text-white shadow-emerald-500/20'
+                                        : 'bg-sky-600 text-white shadow-sky-500/20'
+                                    }`}
                                 isLoading={submitting}
                                 onPress={handleNumpadAction}
                             >

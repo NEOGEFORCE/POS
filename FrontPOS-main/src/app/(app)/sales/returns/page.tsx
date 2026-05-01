@@ -45,7 +45,7 @@ function ReturnsContent() {
     const [returnDialogOpen, setReturnDialogOpen] = useState(false);
     const [exchangeSearch, setExchangeSearch] = useState('');
     const [exchangeProducts, setExchangeProducts] = useState<Product[]>([]);
-    
+
     // Estados para el Motor Universal de Pagos
     const [submittingPayment, setSubmittingPayment] = useState(false);
     const [showSuccessScreen, setShowSuccessScreen] = useState(false);
@@ -110,10 +110,10 @@ function ReturnsContent() {
                 // Frontend sorting: newest first
                 setRecentReturns([...items].sort((a: any, b: any) => b.id - a.id));
             }
-        } catch (error) { 
-            console.error("Error fetching returns:", error); 
-        } finally { 
-            setIsHistoryLoading(false); 
+        } catch (error) {
+            console.error("Error fetching returns:", error);
+        } finally {
+            setIsHistoryLoading(false);
         }
     };
 
@@ -174,8 +174,8 @@ function ReturnsContent() {
                     const data = await res.json();
                     loadSale(data);
                 } else {
-                    const p = allProducts.find(x => 
-                        x.barcode === searchId || 
+                    const p = allProducts.find(x =>
+                        x.barcode === searchId ||
                         x.productName.toLowerCase().includes(searchId.toLowerCase())
                     );
                     if (p) {
@@ -188,7 +188,7 @@ function ReturnsContent() {
                             const data = await resByProd.json();
                             const allSales = data.items || [];
                             // Filter sales that contain this product
-                            const filteredSales = allSales.filter((s: Sale) => 
+                            const filteredSales = allSales.filter((s: Sale) =>
                                 s.details.some(d => d.barcode === p.barcode)
                             );
 
@@ -241,9 +241,9 @@ function ReturnsContent() {
             if (res.ok) {
                 const data = await res.json();
                 const allSales = data.items || [];
-                
+
                 // Filter sales that contain the product barcode
-                const productSales = allSales.filter((s: Sale) => 
+                const productSales = allSales.filter((s: Sale) =>
                     s.details.some(d => d.barcode === product.barcode)
                 );
 
@@ -263,10 +263,10 @@ function ReturnsContent() {
                         if (available > 0) {
                             const isCash = s.paymentMethod?.toUpperCase().includes('EFECTIVO') || s.cashAmount > 0;
                             const isTransfer = s.paymentMethod?.toUpperCase().includes('TRANSFERENCIA') || s.transferAmount > 0;
-                            
+
                             if (isCash && !isTransfer) cash += available;
                             else if (isTransfer && !isCash) transfer += available;
-                            else if (isCash && isTransfer) cash += available; 
+                            else if (isCash && isTransfer) cash += available;
                         }
                     }
                 });
@@ -314,7 +314,7 @@ function ReturnsContent() {
     const addProductToReturn = async (p: any, isExchange = false) => {
         let cashAvailableForThisProduct = 999999;
         let totalAvailableForThisProduct = 999999;
-        
+
         if (!isExchange && !sale) {
             setLoading(true);
             const stats = await fetchSoldStats(p);
@@ -323,7 +323,7 @@ function ReturnsContent() {
             totalAvailableForThisProduct = stats.cash + stats.transfer;
             p.lastSaleId = stats.lastSaleId || 0;
             setSelectedProductMain(p);
-            
+
             if (totalAvailableForThisProduct <= 0) {
                 toast({ variant: 'destructive', title: 'SISTEMA', description: 'SIN VENTAS PREVIAS' });
                 return;
@@ -349,7 +349,7 @@ function ReturnsContent() {
                     toast({ variant: 'destructive', title: 'ERROR', description: 'LÍMITE ALCANZADO' });
                     return prev;
                 }
-                return prev.map(i => i.barcode === p.barcode ? 
+                return prev.map(i => i.barcode === p.barcode ?
                     { ...i, returnQty: isExchange ? 0 : newQty, cartQuantity: isExchange ? newQty : 0 } : i
                 );
             }
@@ -383,16 +383,16 @@ function ReturnsContent() {
             const saleCashAmount = Number(sale.cashAmount) || 0;
             const saleTotal = Number(sale.total) || 1;
             // Proporcionalmente o simplemente el total de efectivo de la factura
-            return saleCashAmount; 
+            return saleCashAmount;
         } else {
             // En modo global, sumamos el valor de las unidades que fueron históricamente en efectivo
             return acc + (item.unitPrice * Math.min(item.returnQty || 0, item.cashAvailable || 0));
         }
     }, 0);
 
-    const isTransfer = sale?.paymentMethod?.toUpperCase().includes('TRANSFER') || 
-                      sale?.paymentMethod?.toUpperCase().includes('MIXTO') ||
-                      (balance > cashRefundablePool && !sale);
+    const isTransfer = sale?.paymentMethod?.toUpperCase().includes('TRANSFER') ||
+        sale?.paymentMethod?.toUpperCase().includes('MIXTO') ||
+        (balance > cashRefundablePool && !sale);
 
     useEffect(() => {
         if (returnDialogOpen && isTransfer && balance > cashRefundablePool) {
@@ -415,7 +415,7 @@ function ReturnsContent() {
 
         setSubmittingPayment(true);
         const token = Cookies.get('org-pos-token');
-        
+
         try {
             const allDetails = [
                 ...returningItems.filter(i => i.returnQty > 0).map(i => {
@@ -610,7 +610,7 @@ function ReturnsContent() {
                             value={searchId}
                             onValueChange={setSearchId}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-                            classNames={{ 
+                            classNames={{
                                 inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/search:border-rose-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-rose-500/20 transition-all",
                                 input: "font-black text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest italic"
                             }}
@@ -627,7 +627,7 @@ function ReturnsContent() {
                                 setSearchDate(val);
                                 if (val) handleSearch(true);
                             }}
-                            classNames={{ 
+                            classNames={{
                                 inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/date:border-rose-500/50 group-focus-within/date:ring-2 group-focus-within/date:ring-rose-500/20 transition-all",
                                 input: "font-black text-xs uppercase text-zinc-900 dark:text-white tracking-widest italic"
                             }}
@@ -639,13 +639,13 @@ function ReturnsContent() {
                             aria-label="Buscar producto o código de barras"
                             value={productSearch}
                             onValueChange={setProductSearch}
-                            classNames={{ 
+                            classNames={{
                                 inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/prod:border-rose-500/50 group-focus-within/prod:ring-2 group-focus-within/prod:ring-rose-500/20 transition-all",
                                 input: "font-black text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest italic"
                             }}
                             startContent={<Search size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/prod:text-rose-500" />}
                         />
-                         {productSearch.length > 0 && products.length > 0 && (
+                        {productSearch.length > 0 && products.length > 0 && (
                             <div className="absolute z-[300] left-0 right-0 top-14 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl overflow-hidden backdrop-blur-3xl">
                                 {products.slice(0, 5).map(p => (
                                     <button
@@ -669,43 +669,43 @@ function ReturnsContent() {
             {/* CONTENT SECTION (SCROLLABLE) */}
             <div className="flex-1 overflow-y-auto custom-scrollbar pb-4 px-1">
                 <div className="px-2 pt-3 pb-3 shrink-0">
-                <ReturnsKPIs 
-                    totalReturns={recentReturns.length} 
-                    totalRefunded={`$${recentReturns.reduce((acc, curr) => acc + (curr.totalReturned || 0), 0).toLocaleString()}`} 
-                    itemsReturned={recentReturns.reduce((acc, curr) => acc + (curr.details || []).reduce((sum: number, d: any) => sum + (d.quantity || 0), 0), 0)}
-                />
-            </div>
-            {/* Banner de Contexto de Venta Activa */}
-            {sale && (
-                <div className="flex items-center gap-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl animate-in fade-in zoom-in-95 duration-300">
-                    <div className="h-12 w-12 rounded-xl bg-rose-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-rose-500/20">
-                        <CheckCircle2 size={24} />
-                    </div>
-                    <div className="flex-1 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        <div>
-                            <div className="flex items-center gap-3 mb-2">
-                                <span className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
-                                <Chip size="sm" variant="shadow" color={paymentInfo?.color as any || 'default'} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
-                                    PAGADO EN: {paymentInfo?.label}
-                                </Chip>
-                            </div>
-                            <h2 className="text-xl font-black text-gray-900 dark:text-white uppercase leading-tight">
-                                #{sale.id} · {sale.client?.name || 'CONSUMIDOR FINAL'}
-                            </h2>
-                        </div>
-                        <div className="flex items-center gap-8">
-                            <div className="text-right">
-                                <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1">TOTAL VENTA</p>
-                                <p className="text-lg font-black text-gray-900 dark:text-white tabular-nums leading-none tracking-tighter">${sale.total.toLocaleString()}</p>
-                            </div>
-                            <Button isIconOnly size="sm" variant="flat" color="danger" className="h-8 w-8 rounded-lg" onPress={() => setSale(null)}>X</Button>
-                        </div>
-                    </div>
+                    <ReturnsKPIs
+                        totalReturns={recentReturns.length}
+                        totalRefunded={`$${recentReturns.reduce((acc, curr) => acc + (curr.totalReturned || 0), 0).toLocaleString()}`}
+                        itemsReturned={recentReturns.reduce((acc, curr) => acc + (curr.details || []).reduce((sum: number, d: any) => sum + (d.quantity || 0), 0), 0)}
+                    />
                 </div>
-            )}
+                {/* Banner de Contexto de Venta Activa */}
+                {sale && (
+                    <div className="flex items-center gap-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl animate-in fade-in zoom-in-95 duration-300">
+                        <div className="h-12 w-12 rounded-xl bg-rose-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-rose-500/20">
+                            <CheckCircle2 size={24} />
+                        </div>
+                        <div className="flex-1 flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            <div>
+                                <div className="flex items-center gap-3 mb-2">
+                                    <span className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
+                                    <Chip size="sm" variant="shadow" color={paymentInfo?.color as any || 'default'} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
+                                        PAGADO EN: {paymentInfo?.label}
+                                    </Chip>
+                                </div>
+                                <h2 className="text-xl font-black text-gray-900 dark:text-white uppercase leading-tight">
+                                    #{sale.id} · {sale.client?.name || 'CONSUMIDOR FINAL'}
+                                </h2>
+                            </div>
+                            <div className="flex items-center gap-8">
+                                <div className="text-right">
+                                    <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1">TOTAL VENTA</p>
+                                    <p className="text-lg font-black text-gray-900 dark:text-white tabular-nums leading-none tracking-tighter">${sale.total.toLocaleString()}</p>
+                                </div>
+                                <Button isIconOnly size="sm" variant="flat" color="danger" className="h-8 w-8 rounded-lg" onPress={() => setSale(null)}>X</Button>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-1">
-                {/* COLUMNA IZQUIERDA: LO QUE EL CLIENTE TRAE */}
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-1">
+                    {/* COLUMNA IZQUIERDA: LO QUE EL CLIENTE TRAE */}
                     <div className="space-y-2">
                         <Card className="rounded-xl bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden min-h-[450px]">
                             <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
@@ -716,10 +716,10 @@ function ReturnsContent() {
                             </CardHeader>
                             <CardBody className="p-0">
                                 {returningItems.length > 0 ? (
-                                    <Table aria-label="Devoluciones" isHeaderSticky isCompact removeWrapper classNames={{ 
-                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-xs h-10 py-0.5 px-3 border-b border-white/5", 
-                                        td: "px-3 py-0.5", 
-                                        tr: "border-b border-white/5 hover:bg-rose-500/5 border-l-4 border-transparent hover:border-rose-500 transition-colors h-12" 
+                                    <Table aria-label="Devoluciones" isHeaderSticky isCompact removeWrapper classNames={{
+                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-xs h-10 py-0.5 px-3 border-b border-white/5",
+                                        td: "px-3 py-0.5",
+                                        tr: "border-b border-white/5 hover:bg-rose-500/5 border-l-4 border-transparent hover:border-rose-500 transition-colors h-12"
                                     }}>
                                         <TableHeader>
                                             <TableColumn>PRODUCTO</TableColumn>
@@ -774,7 +774,7 @@ function ReturnsContent() {
                                     </div>
                                 )}
                             </CardBody>
-                             {returningItems.length > 0 && (
+                            {returningItems.length > 0 && (
                                 <div className="p-3 bg-gray-50/50 dark:bg-zinc-900/30 border-t border-gray-100 dark:border-white/5">
                                     <div className="flex justify-between items-end">
                                         <div>
@@ -783,7 +783,7 @@ function ReturnsContent() {
                                         </div>
                                     </div>
                                 </div>
-                             )}
+                            )}
                         </Card>
                     </div>
 
@@ -815,7 +815,7 @@ function ReturnsContent() {
                                                 content: "bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-2xl rounded-2xl p-2",
                                             }
                                         }}
-                                        classNames={{ 
+                                        classNames={{
                                             trigger: "h-9 bg-gray-100 dark:bg-zinc-800 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm px-3 min-h-unit-8 pr-10",
                                             value: "text-[10px] font-black uppercase italic",
                                             selectorIcon: "absolute right-3 text-gray-500",
@@ -830,9 +830,9 @@ function ReturnsContent() {
                                             ));
                                         }}
                                     >
-                                        <SelectItem 
-                                            key="REFUND" 
-                                            textValue="Reembolso de Dinero" 
+                                        <SelectItem
+                                            key="REFUND"
+                                            textValue="Reembolso de Dinero"
                                             className="group p-2 rounded-xl hover:bg-rose-500/10 transition-colors"
                                         >
                                             <div className="flex items-center gap-3">
@@ -845,9 +845,9 @@ function ReturnsContent() {
                                                 </div>
                                             </div>
                                         </SelectItem>
-                                        <SelectItem 
-                                            key="EXCHANGE" 
-                                            textValue="Cambio por Artículo" 
+                                        <SelectItem
+                                            key="EXCHANGE"
+                                            textValue="Cambio por Artículo"
                                             className="group p-2 rounded-xl hover:bg-blue-500/10 transition-colors"
                                         >
                                             <div className="flex items-center gap-3">
@@ -862,7 +862,7 @@ function ReturnsContent() {
                                         </SelectItem>
                                     </Select>
                                 </div>
-                                  {returnType === 'EXCHANGE' && (
+                                {returnType === 'EXCHANGE' && (
                                     <div className="space-y-2 animate-in slide-in-from-top-2 duration-300">
                                         <div className="relative z-[200]">
                                             <Input
@@ -873,9 +873,9 @@ function ReturnsContent() {
                                                 labelPlacement="outside"
                                                 value={exchangeSearch}
                                                 onValueChange={setExchangeSearch}
-                                                classNames={{ 
+                                                classNames={{
                                                     label: "hidden",
-                                                    inputWrapper: "h-7 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-500/10 rounded-md font-bold text-[9px] uppercase min-h-unit-6" 
+                                                    inputWrapper: "h-7 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-500/10 rounded-md font-bold text-[9px] uppercase min-h-unit-6"
                                                 }}
                                                 startContent={<Search size={14} className="text-blue-500/50" />}
                                             />
@@ -943,7 +943,7 @@ function ReturnsContent() {
                                 )}
 
                                 {returnType === 'REFUND' && (
-                                     <div className="h-full flex flex-col items-center justify-center space-y-4 py-10 bg-rose-500/5 rounded-[2.5rem] border border-dashed border-rose-500/20 animate-in fade-in duration-500">
+                                    <div className="h-full flex flex-col items-center justify-center space-y-4 py-10 bg-rose-500/5 rounded-[2.5rem] border border-dashed border-rose-500/20 animate-in fade-in duration-500">
                                         <div className="h-16 w-16 rounded-3xl bg-rose-500/10 flex items-center justify-center text-rose-500">
                                             <RotateCcw size={32} />
                                         </div>
@@ -968,11 +968,11 @@ function ReturnsContent() {
                     </div>
                 </div>
 
-                               {/* HISTORIAL RECIENTE DOBLE COLUMNA: VENTAS VS DEVOLUCIONES */}
+                {/* HISTORIAL RECIENTE DOBLE COLUMNA: VENTAS VS DEVOLUCIONES */}
                 {!sale && (recentSales.length > 0 || recentReturns.length > 0) && (
                     <div className="mt-4 px-1 pb-4 animate-in fade-in slide-in-from-bottom-5 duration-700">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            
+
                             {/* COLUMNA IZQUIERDA: VENTAS PARA GESTIÓN */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3 pl-1">
@@ -982,10 +982,10 @@ function ReturnsContent() {
                                     <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 dark:text-zinc-500">Ventas para Gestión</h3>
                                     <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
-                                
+
                                 <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
-                                    <Table isCompact removeWrapper aria-label="Ventas Recientes" classNames={{ 
-                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5", 
+                                    <Table isCompact removeWrapper aria-label="Ventas Recientes" classNames={{
+                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5",
                                         td: "py-2 px-4 whitespace-nowrap",
                                         tr: "border-b border-white/5 hover:bg-emerald-500/5 transition-colors cursor-pointer group border-l-4 border-transparent hover:border-emerald-500"
                                     }}>
@@ -1005,9 +1005,9 @@ function ReturnsContent() {
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
-                                                      <span className="text-[9px] font-black uppercase italic dark:text-zinc-300 max-w-[120px] truncate block">
-                                                          {s.client?.name || 'CONSU. FINAL'}
-                                                      </span>
+                                                        <span className="text-[9px] font-black uppercase italic dark:text-zinc-300 max-w-[120px] truncate block">
+                                                            {s.client?.name || 'CONSU. FINAL'}
+                                                        </span>
                                                     </TableCell>
                                                     <TableCell>
                                                         <span className="text-[11px] font-black italic tabular-nums dark:text-white">
@@ -1037,10 +1037,10 @@ function ReturnsContent() {
                                     <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 dark:text-zinc-500">Auditoría Devoluciones</h3>
                                     <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
-                                
+
                                 <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
-                                    <Table isCompact removeWrapper aria-label="Devoluciones Recientes" classNames={{ 
-                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5", 
+                                    <Table isCompact removeWrapper aria-label="Devoluciones Recientes" classNames={{
+                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5",
                                         td: "py-2 px-4 whitespace-nowrap",
                                         tr: "border-b border-white/5 hover:bg-rose-500/5 transition-colors cursor-default group border-l-4 border-transparent hover:border-rose-500"
                                     }}>
@@ -1090,199 +1090,199 @@ function ReturnsContent() {
                     </div>
                 )}
 
-            {/* BARRA INFERIOR DE ACCIÓN (FIXED) */}
-            {(returningItems.length > 0 || exchangeItems.length > 0) && (
-                <div className="fixed bottom-0 left-0 right-0 z-40 animate-in slide-in-from-bottom-full duration-500 px-2 pb-2">
-                    <div className="bg-white/80 dark:bg-zinc-950/90 backdrop-blur-2xl p-2 border border-gray-200 dark:border-white/10 flex items-center justify-between max-w-7xl mx-auto w-full rounded-xl shadow-2xl transition-all">
-                        <div className="flex items-center gap-6 pl-4">
-                            <div className="flex flex-col">
-                                <span className={`text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center gap-2 ${balance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                    <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${balance >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
-                                    {balance >= 0 ? "REINTEGRO" : "EXCEDENTE"}
-                                </span>
-                                <div className={`text-2xl font-black tabular-nums tracking-tighter leading-none ${balance >= 0 ? 'text-gray-900 dark:text-white' : 'text-rose-500'} italic`}>
-                                    {balance >= 0 ? `$${balance.toLocaleString()}` : `-$${Math.abs(balance).toLocaleString()}`}
-                                </div>
-                            </div>
-                            
-                            <div className="hidden md:flex flex-col gap-0.5 border-l border-gray-100 dark:border-white/5 pl-6">
-                                <p className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Resumen</p>
-                                <div className="flex gap-3">
-                                    <div className="flex items-center gap-1.5">
-                                        <div className="h-1 w-1 rounded-full bg-emerald-500" />
-                                        <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">+{totalReturned.toLocaleString()}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                        <div className="h-1 w-1 rounded-full bg-blue-500" />
-                                        <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">-{totalExchange.toLocaleString()}</span>
+                {/* BARRA INFERIOR DE ACCIÓN (FIXED) */}
+                {(returningItems.length > 0 || exchangeItems.length > 0) && (
+                    <div className="fixed bottom-0 left-0 right-0 z-40 animate-in slide-in-from-bottom-full duration-500 px-2 pb-2">
+                        <div className="bg-white/80 dark:bg-zinc-950/90 backdrop-blur-2xl p-2 border border-gray-200 dark:border-white/10 flex items-center justify-between max-w-7xl mx-auto w-full rounded-xl shadow-2xl transition-all">
+                            <div className="flex items-center gap-6 pl-4">
+                                <div className="flex flex-col">
+                                    <span className={`text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center gap-2 ${balance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                        <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${balance >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                        {balance >= 0 ? "REINTEGRO" : "EXCEDENTE"}
+                                    </span>
+                                    <div className={`text-2xl font-black tabular-nums tracking-tighter leading-none ${balance >= 0 ? 'text-gray-900 dark:text-white' : 'text-rose-500'} italic`}>
+                                        {balance >= 0 ? `$${balance.toLocaleString()}` : `-$${Math.abs(balance).toLocaleString()}`}
                                     </div>
                                 </div>
+
+                                <div className="hidden md:flex flex-col gap-0.5 border-l border-gray-100 dark:border-white/5 pl-6">
+                                    <p className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Resumen</p>
+                                    <div className="flex gap-3">
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="h-1 w-1 rounded-full bg-emerald-500" />
+                                            <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">+{totalReturned.toLocaleString()}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5">
+                                            <div className="h-1 w-1 rounded-full bg-blue-500" />
+                                            <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">-{totalExchange.toLocaleString()}</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
 
                             <Button
                                 className={`h-14 px-10 text-xs font-black rounded-lg shadow-2xl transition-all hover:scale-[1.02] active:scale-95 ${balance >= 0
-                                        ? "bg-emerald-600 text-white shadow-emerald-500/20"
-                                        : "bg-rose-600 text-white shadow-rose-500/20"
+                                    ? "bg-emerald-600 text-white shadow-emerald-500/20"
+                                    : "bg-rose-600 text-white shadow-rose-500/20"
                                     }`}
                                 onPress={() => setReturnDialogOpen(true)}
                                 isDisabled={(returningItems.length === 0 && exchangeItems.length === 0)}
                             >
                                 <span className="uppercase tracking-[0.2em]">{balance >= 0 ? 'PROCESAR DEVOLUCIÓN' : 'COBRAR EXCEDENTE Y FINALIZAR'}</span>
                             </Button>
-                    </div>
-                </div>
-            )}
-
-            {/* MODAL: CONFIRMAR DEVOLUCIÓN (Optimizado Mobile) */}
-            <UniversalPaymentModal
-                isOpen={returnDialogOpen}
-                onOpenChange={setReturnDialogOpen}
-                title="DINERO A DEVOLVER AL CLIENTE"
-                client={sale?.client || null}
-                totalToPay={Math.abs(balance)}
-                showSuccessScreen={showSuccessScreen}
-                submittingPayment={submittingPayment}
-                lastChange={lastChange}
-                onPay={handleFinalPayment}
-                onCloseComplete={handleClosePaymentModal}
-                reason={returnReason}
-                onReasonChange={setReturnReason}
-                showCreditTab={false}
-                flowType="out"
-            />
-
-            {/* MODAL: RESULTADOS BÚSQUEDA */}
-            <Modal isOpen={isResultsDialogOpen} onOpenChange={setIsResultsDialogOpen} backdrop="blur" size="4xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-2xl", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
-                <ModalContent>
-                    {(onClose) => (
-                        <>
-                            <ModalHeader className="flex flex-col gap-1">
-                                <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight flex items-center gap-3">
-                                    <History className="h-6 w-6 text-rose-600 dark:text-rose-500" /> Resultados
-                                </h2>
-                                <p className="text-gray-500 dark:text-zinc-500 font-bold uppercase tracking-widest text-[10px] mt-1">
-                                    Selecciona la venta para iniciar el proceso
-                                </p>
-                            </ModalHeader>
-                            <ModalBody>
-                                <div className="rounded-[2rem] border border-gray-200 dark:border-white/5 overflow-hidden shadow-sm">
-                                    <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 font-black uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-emerald-500/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
-                                        <TableHeader>
-                                            <TableColumn>ID</TableColumn>
-                                            <TableColumn>CLIENTE</TableColumn>
-                                            <TableColumn align="end">TOTAL</TableColumn>
-                                            <TableColumn align="center">ACCIÓN</TableColumn>
-                                        </TableHeader>
-                                        <TableBody>
-                                            {searchResults.map((s) => (
-                                                <TableRow key={s.id} onClick={() => loadSale(s)}>
-                                                    <TableCell className="font-black text-sm text-gray-400 dark:text-zinc-500 group-hover:text-emerald-500 transition-colors">#{s.id}</TableCell>
-                                                    <TableCell>
-                                                        <div className="font-bold text-sm text-gray-900 dark:text-white uppercase">{s.client?.name || 'Consumidor Final'}</div>
-                                                        <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-widest mt-1">
-                                                            {new Date(s.date).toLocaleDateString()} · {new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                        </div>
-                                                    </TableCell>
-                                                    <TableCell className="font-black text-base text-gray-900 dark:text-white tabular-nums">${s.total.toLocaleString()}</TableCell>
-                                                    <TableCell>
-                                                        <Button size="sm" variant="flat" className="font-bold text-[9px] uppercase tracking-widest bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 group-hover:bg-gray-900 group-hover:text-white dark:group-hover:bg-white dark:group-hover:text-black transition-all" onPress={() => loadSale(s)}>
-                                                            Gestionar
-                                                        </Button>
-                                                    </TableCell>
-                                                </TableRow>
-                                            ))}
-                                        </TableBody>
-                                    </Table>
-                                </div>
-
-                                {searchResultsTotal > 10 && (
-                                    <div className="flex justify-between items-center mt-6">
-                                        <span className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest hidden sm:block">
-                                            Total: {searchResultsTotal}
-                                        </span>
-                                        <Pagination
-                                            isCompact
-                                            showControls
-                                            color="danger"
-                                            page={searchResultsPage}
-                                            total={Math.max(1, Math.ceil(searchResultsTotal / 10))}
-                                            onChange={(page) => handleSearch(true, page)}
-                                            classNames={{
-                                                wrapper: "gap-2",
-                                                item: "w-10 h-10 min-w-10 rounded-xl font-black text-xs bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5",
-                                                cursor: "bg-rose-600 dark:bg-rose-500 text-white shadow-lg shadow-rose-500/30",
-                                                next: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5",
-                                                prev: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5"
-                                            }}
-                                        />
-                                    </div>
-                                )}
-                            </ModalBody>
-                            <ModalFooter>
-                                <Button variant="light" onPress={onClose} className="font-bold uppercase text-[10px] tracking-widest text-gray-500 dark:text-zinc-400 h-12 px-8">
-                                    Cerrar
-                                </Button>
-                            </ModalFooter>
-                        </>
-                    )}
-                </ModalContent>
-            </Modal>
-
-            {/* SCANNER OVERLAY (Este se mantiene oscuro por diseño de UI de cámaras) */}
-            {isScannerOpen && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-                    <div className="relative w-full max-w-2xl aspect-video bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
-                        <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 pointer-events-none">
-                            <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2">
-                                <Camera className="h-5 w-5 text-rose-500" /> Escáner Activo
-                            </h2>
                         </div>
-                        <ScannerOverlay
-                            isOpen={isScannerOpen}
-                            onClose={() => setIsScannerOpen(false)}
-                            title=""
-                            onResult={(barcode) => {
-                                const p = allProducts.find(x => x.barcode === barcode);
-                                if (p) {
-                                    addProductToReturn(p);
-                                    setIsScannerOpen(false);
-                                } else {
-                                    toast({ variant: 'destructive', title: 'No encontrado', description: 'El producto escaneado no existe.' });
-                                }
-                            }}
-                        />
-                        <Button
-                            isIconOnly
-                            variant="flat"
-                            className="absolute top-6 right-6 h-10 w-10 rounded-xl bg-black/50 hover:bg-rose-500 text-white border border-white/10 backdrop-blur-md transition-all z-20"
-                            onPress={() => setIsScannerOpen(false)}
-                        >
-                            X
-                        </Button>
                     </div>
-                </div>
-            )}
+                )}
 
-            {/* INPUT INVISIBLE DEL LECTOR */}
-            <input
-                ref={hiddenScannerRef}
-                type="text"
-                className="scanner-gate absolute opacity-0 pointer-events-none -z-50 h-0 w-0 overflow-hidden"
-                value={barcodeInput}
-                autoComplete="off"
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleCodeSubmit(barcodeInput);
-                        setBarcodeInput('');
-                        setTimeout(() => hiddenScannerRef.current?.focus(), 10);
-                    }
-                }}
-            />
+                {/* MODAL: CONFIRMAR DEVOLUCIÓN (Optimizado Mobile) */}
+                <UniversalPaymentModal
+                    isOpen={returnDialogOpen}
+                    onOpenChange={setReturnDialogOpen}
+                    title="DINERO A DEVOLVER AL CLIENTE"
+                    client={sale?.client || null}
+                    totalToPay={Math.abs(balance)}
+                    showSuccessScreen={showSuccessScreen}
+                    submittingPayment={submittingPayment}
+                    lastChange={lastChange}
+                    onPay={handleFinalPayment}
+                    onCloseComplete={handleClosePaymentModal}
+                    reason={returnReason}
+                    onReasonChange={setReturnReason}
+                    showCreditTab={false}
+                    flowType="out"
+                />
+
+                {/* MODAL: RESULTADOS BÚSQUEDA */}
+                <Modal isOpen={isResultsDialogOpen} onOpenChange={setIsResultsDialogOpen} backdrop="blur" size="4xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-2xl", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
+                    <ModalContent>
+                        {(onClose) => (
+                            <>
+                                <ModalHeader className="flex flex-col gap-1">
+                                    <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight flex items-center gap-3">
+                                        <History className="h-6 w-6 text-rose-600 dark:text-rose-500" /> Resultados
+                                    </h2>
+                                    <p className="text-gray-500 dark:text-zinc-500 font-bold uppercase tracking-widest text-[10px] mt-1">
+                                        Selecciona la venta para iniciar el proceso
+                                    </p>
+                                </ModalHeader>
+                                <ModalBody>
+                                    <div className="rounded-[2rem] border border-gray-200 dark:border-white/5 overflow-hidden shadow-sm">
+                                        <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 font-black uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-emerald-500/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
+                                            <TableHeader>
+                                                <TableColumn>ID</TableColumn>
+                                                <TableColumn>CLIENTE</TableColumn>
+                                                <TableColumn align="end">TOTAL</TableColumn>
+                                                <TableColumn align="center">ACCIÓN</TableColumn>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {searchResults.map((s) => (
+                                                    <TableRow key={s.id} onClick={() => loadSale(s)}>
+                                                        <TableCell className="font-black text-sm text-gray-400 dark:text-zinc-500 group-hover:text-emerald-500 transition-colors">#{s.id}</TableCell>
+                                                        <TableCell>
+                                                            <div className="font-bold text-sm text-gray-900 dark:text-white uppercase">{s.client?.name || 'Consumidor Final'}</div>
+                                                            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-widest mt-1">
+                                                                {new Date(s.date).toLocaleDateString()} · {new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                            </div>
+                                                        </TableCell>
+                                                        <TableCell className="font-black text-base text-gray-900 dark:text-white tabular-nums">${s.total.toLocaleString()}</TableCell>
+                                                        <TableCell>
+                                                            <Button size="sm" variant="flat" className="font-bold text-[9px] uppercase tracking-widest bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 group-hover:bg-gray-900 group-hover:text-white dark:group-hover:bg-white dark:group-hover:text-black transition-all" onPress={() => loadSale(s)}>
+                                                                Gestionar
+                                                            </Button>
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ))}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+
+                                    {searchResultsTotal > 10 && (
+                                        <div className="flex justify-between items-center mt-6">
+                                            <span className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest hidden sm:block">
+                                                Total: {searchResultsTotal}
+                                            </span>
+                                            <Pagination
+                                                isCompact
+                                                showControls
+                                                color="danger"
+                                                page={searchResultsPage}
+                                                total={Math.max(1, Math.ceil(searchResultsTotal / 10))}
+                                                onChange={(page) => handleSearch(true, page)}
+                                                classNames={{
+                                                    wrapper: "gap-2",
+                                                    item: "w-10 h-10 min-w-10 rounded-xl font-black text-xs bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5",
+                                                    cursor: "bg-rose-600 dark:bg-rose-500 text-white shadow-lg shadow-rose-500/30",
+                                                    next: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5",
+                                                    prev: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5"
+                                                }}
+                                            />
+                                        </div>
+                                    )}
+                                </ModalBody>
+                                <ModalFooter>
+                                    <Button variant="light" onPress={onClose} className="font-bold uppercase text-[10px] tracking-widest text-gray-500 dark:text-zinc-400 h-12 px-8">
+                                        Cerrar
+                                    </Button>
+                                </ModalFooter>
+                            </>
+                        )}
+                    </ModalContent>
+                </Modal>
+
+                {/* SCANNER OVERLAY (Este se mantiene oscuro por diseño de UI de cámaras) */}
+                {isScannerOpen && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+                        <div className="relative w-full max-w-2xl aspect-video bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
+                            <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 pointer-events-none">
+                                <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2">
+                                    <Camera className="h-5 w-5 text-rose-500" /> Escáner Activo
+                                </h2>
+                            </div>
+                            <ScannerOverlay
+                                isOpen={isScannerOpen}
+                                onClose={() => setIsScannerOpen(false)}
+                                title=""
+                                onResult={(barcode) => {
+                                    const p = allProducts.find(x => x.barcode === barcode);
+                                    if (p) {
+                                        addProductToReturn(p);
+                                        setIsScannerOpen(false);
+                                    } else {
+                                        toast({ variant: 'destructive', title: 'No encontrado', description: 'El producto escaneado no existe.' });
+                                    }
+                                }}
+                            />
+                            <Button
+                                isIconOnly
+                                variant="flat"
+                                className="absolute top-6 right-6 h-10 w-10 rounded-xl bg-black/50 hover:bg-rose-500 text-white border border-white/10 backdrop-blur-md transition-all z-20"
+                                onPress={() => setIsScannerOpen(false)}
+                            >
+                                X
+                            </Button>
+                        </div>
+                    </div>
+                )}
+
+                {/* INPUT INVISIBLE DEL LECTOR */}
+                <input
+                    ref={hiddenScannerRef}
+                    type="text"
+                    className="scanner-gate absolute opacity-0 pointer-events-none -z-50 h-0 w-0 overflow-hidden"
+                    value={barcodeInput}
+                    autoComplete="off"
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleCodeSubmit(barcodeInput);
+                            setBarcodeInput('');
+                            setTimeout(() => hiddenScannerRef.current?.focus(), 10);
+                        }
+                    }}
+                />
+            </div>
         </div>
-    </div>
     );
 }
 

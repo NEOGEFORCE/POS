@@ -26,6 +26,12 @@ func (r *PostgresSupplierRepository) GetByID(id uint) (*models.Supplier, error) 
 	return &supplier, err
 }
 
+func (r *PostgresSupplierRepository) GetByName(name string) (*models.Supplier, error) {
+	var supplier models.Supplier
+	err := r.db.Where("UPPER(name) = UPPER(?)", name).First(&supplier).Error
+	return &supplier, err
+}
+
 func (r *PostgresSupplierRepository) GetAll() ([]models.Supplier, error) {
 	log.Printf("[PostgresSupplierRepository] Iniciando GetAll...")
 
@@ -33,7 +39,7 @@ func (r *PostgresSupplierRepository) GetAll() ([]models.Supplier, error) {
 
 	// Usar Find simple con Limit y Order
 	log.Printf("[PostgresSupplierRepository] Ejecutando consulta Find con LIMIT 100...")
-	err := r.db.Order("name ASC").Limit(100).Find(&suppliers).Error
+	err := r.db.Where("\"is_active\" = ?", true).Order("name ASC").Limit(100).Find(&suppliers).Error
 
 	if err != nil {
 		log.Printf("[PostgresSupplierRepository] ERROR en consulta SQL: %v", err)
@@ -60,11 +66,11 @@ func (r *PostgresSupplierRepository) Update(id uint, supplier *models.Supplier) 
 }
 
 func (r *PostgresSupplierRepository) Delete(id uint) error {
-	return r.db.Delete(&models.Supplier{}, id).Error
+	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("is_active", false).Error
 }
 
 func (r *PostgresSupplierRepository) GetByVisitDay(day string) ([]models.Supplier, error) {
 	var suppliers []models.Supplier
-	err := r.db.Where("\"visitDay\" = ?", day).Order("name ASC").Limit(100).Find(&suppliers).Error
+	err := r.db.Where("\"visitDay\" = ? AND \"is_active\" = ?", day, true).Order("name ASC").Limit(100).Find(&suppliers).Error
 	return suppliers, err
 }

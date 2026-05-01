@@ -16,6 +16,8 @@ import {
     Info,
     LayoutGrid
 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/EmptyState';
+import { IconCategory } from '@tabler/icons-react';
 import { Category } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
 
@@ -129,7 +131,7 @@ const CategoryTable = memo(({
                             aria-label="Jerarquía de Categorías Maestras"
                             classNames={{ 
                                 base: "flex-1 overflow-hidden",
-                                wrapper: "flex-1 overflow-auto bg-transparent shadow-none p-0 rounded-none",
+                                wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
                                 th: "bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
                                 td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-6", 
                                 tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-pointer group h-10" 
@@ -140,12 +142,16 @@ const CategoryTable = memo(({
                                 <TableColumn align="center">DENSIDAD DE STOCK</TableColumn>
                                 <TableColumn align="end">ACCIONES DE GESTIÓN</TableColumn>
                             </TableHeader>
-                            <TableBody items={categories} emptyContent={
-                                <div className="py-24 flex flex-col items-center justify-center text-gray-400 dark:text-zinc-700">
-                                    <SearchX size={48} strokeWidth={1} className="mb-4 opacity-20" />
-                                    <span className="text-[10px] font-black uppercase tracking-[0.5em] italic">No hay departamentos registrados</span>
-                                </div>
-                            }>
+                            <TableBody 
+                                items={categories} 
+                                emptyContent={
+                                    <EmptyState 
+                                        title="Sin departamentos registrados" 
+                                        description="No hemos encontrado categorías en este catálogo. Registra una nueva para comenzar a organizar tu inventario."
+                                        icon={<IconCategory size={48} className="text-gray-300" />}
+                                    />
+                                }
+                            >
                                 {(item) => (
                                     <TableRow key={item.id}>
                                         <TableCell>{renderCell(item, "identity")}</TableCell>
@@ -159,10 +165,11 @@ const CategoryTable = memo(({
                 ) : (
                     <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-zinc-950/40 custom-scrollbar">
                         {categories.length === 0 ? (
-                            <div className="py-12 flex flex-col items-center justify-center text-gray-400 dark:text-zinc-700">
-                                <SearchX size={32} strokeWidth={1} className="mb-2 opacity-20" />
-                                <span className="text-[8px] font-black uppercase tracking-widest italic text-center">Sin resultados de búsqueda</span>
-                            </div>
+                            <EmptyState 
+                                title="Sin resultados" 
+                                description="No hay categorías que coincidan con tu búsqueda."
+                                compact
+                            />
                         ) : (
                             categories.map((c) => (
                                 <div key={c.id} className="p-3.5 rounded-2xl border bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 shadow-sm flex items-center justify-between gap-3 transform active:scale-[0.98] transition-all shrink-0">
@@ -232,7 +239,7 @@ const CategoryTable = memo(({
                             isIconOnly
                             size="sm"
                             variant="flat"
-                            onPress={() => onPageChange(Math.max(1, currentPage - 1))}
+                            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
                             isDisabled={currentPage === 1}
                             className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
                         >
@@ -252,7 +259,7 @@ const CategoryTable = memo(({
                             isIconOnly
                             size="sm"
                             variant="flat"
-                            onPress={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+                            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
                             isDisabled={currentPage === totalPages || totalPages === 0}
                             className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
                         >
@@ -267,7 +274,7 @@ const CategoryTable = memo(({
                                 onChange={(e) => onPageSizeChange(Number(e.target.value))} 
                                 className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-2 pr-6 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none"
                             >
-                                {[10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
+                                {[10, 20, 50, 10000].map(n => <option key={n} value={n}>{n === 10000 ? 'TODOS' : n}</option>)}
                             </select>
                             <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
                                 <Info size={10} />

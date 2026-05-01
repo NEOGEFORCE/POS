@@ -467,7 +467,7 @@ export default function CashierClosurePage() {
     }
 
     return (
-        <div className="flex flex-col w-full bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white p-1 md:p-3 pt-0 md:pt-0 gap-3 md:gap-4 overflow-y-auto scrollbar-hide pb-10">
+        <div className="flex flex-col w-full bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white p-1 md:p-3 pt-0 md:pt-0 gap-3 md:gap-4 pb-10">
 
 
             

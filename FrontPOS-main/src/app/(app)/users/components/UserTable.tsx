@@ -5,9 +5,9 @@ import {
     Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
     Button, Avatar, Tooltip
 } from "@heroui/react";
-import { 
-    Edit, Trash2, Zap, ShieldCheck, Info, RefreshCw, 
-    ChevronLeft, ChevronRight 
+import {
+    Edit, Trash2, Zap, ShieldCheck, Info, RefreshCw,
+    ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { User } from '@/lib/definitions';
 
@@ -34,9 +34,9 @@ const COLUMNS = [
     { name: "GESTIÓN", uid: "actions", align: "end" },
 ];
 
-const UserTable = memo(({ 
-    users, onEdit, onDelete, onResetPassword, currentPage, totalPages, pageSize, 
-    totalRecords, onPageChange, onPageSizeChange, onReload, isLoading, currentDni 
+const UserTable = memo(({
+    users, onEdit, onDelete, onResetPassword, currentPage, totalPages, pageSize,
+    totalRecords, onPageChange, onPageSizeChange, onReload, isLoading, currentDni
 }: TableProps) => {
     const [isMobile, setIsMobile] = React.useState(false);
 
@@ -58,9 +58,9 @@ const UserTable = memo(({
                 return (
                     <div className="flex items-center justify-center gap-3 py-0.5">
                         <div className="relative group shrink-0">
-                            <Avatar 
-                                size="sm" 
-                                name={nameDisplay} 
+                            <Avatar
+                                size="sm"
+                                name={nameDisplay}
                                 className={`transition-all border-2 ${isSuperAdmin ? 'border-black dark:border-white shadow-lg' : 'border-emerald-500/20'}`}
                                 classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-emerald-500/10", name: isSuperAdmin ? "text-white dark:text-black font-black" : "text-emerald-500 font-black text-[10px]" }}
                             />
@@ -79,9 +79,8 @@ const UserTable = memo(({
             case "role":
                 return (
                     <div className="flex flex-col items-center">
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${
-                            isSuperAdmin ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
-                        }`}>
+                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isSuperAdmin ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                            }`}>
                             {roleDisplay}
                         </span>
                     </div>
@@ -114,7 +113,7 @@ const UserTable = memo(({
                                 <Edit size={14} />
                             </Button>
                         </Tooltip>
-                        <Tooltip content={isSuperAdmin ? "INAMOVIBLE" : "PASS RESET"} delay={0} closeDelay={0} showArrow classNames={{ content: `font-black text-[9px] uppercase tracking-widest drop-shadow-xl py-1 px-2 rounded-none shadow-xl ${isSuperAdmin ? 'bg-slate-900 text-white' : 'bg-amber-500 text-white'}` }}>
+                        <Tooltip content={isSuperAdmin ? "INAMOVIBLE" : "RESETEAR CLAVE"} delay={0} closeDelay={0} showArrow classNames={{ content: `font-black text-[9px] uppercase tracking-widest drop-shadow-xl py-1 px-2 rounded-none shadow-xl ${isSuperAdmin ? 'bg-slate-900 text-white' : 'bg-amber-500 text-white'}` }}>
                             <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-white transition-all rounded-lg ${isSuperAdmin ? 'opacity-10 grayscale cursor-not-allowed' : ''}`} onPress={() => onResetPassword(u)}>
                                 <Zap size={14} />
                             </Button>
@@ -137,23 +136,23 @@ const UserTable = memo(({
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 {/* VISTA DESKTOP */}
                 {!isMobile && (
-                    <Table 
-                        isCompact 
+                    <Table
+                        isCompact
                         isHeaderSticky
-                        aria-label="Directorio Empleados" 
+                        aria-label="Directorio Empleados"
                         className="flex-1"
-                        classNames={{ 
+                        classNames={{
                             base: "flex-1 overflow-hidden",
                             wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
-                            th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-sm", 
-                            td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5", 
-                            tr: "hover:bg-emerald-500/5 dark:hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 h-10 relative z-0" 
+                            th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-sm",
+                            td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5",
+                            tr: "hover:bg-emerald-500/5 dark:hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 h-10 relative z-0"
                         }}
                     >
                         <TableHeader columns={COLUMNS}>
                             {(column) => (
-                                <TableColumn 
-                                    key={column.uid} 
+                                <TableColumn
+                                    key={column.uid}
                                     align={column.align as any}
                                     className={column.hideOnMobile ? "hidden md:table-cell" : ""}
                                 >
@@ -183,9 +182,9 @@ const UserTable = memo(({
                                 <div key={u.id || u.dni} className={`p-4 rounded-xl border transition-all flex items-center justify-between shrink-0 ${u.is_active ? 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 shadow-sm' : 'bg-white dark:bg-zinc-900 border-emerald-500/20 shadow-sm border-dashed'}`}>
                                     <div className="flex items-center gap-3">
                                         <div className="relative">
-                                            <Avatar 
-                                                size="sm" 
-                                                name={nameDisplay} 
+                                            <Avatar
+                                                size="sm"
+                                                name={nameDisplay}
                                                 className={`h-10 w-10 border ${isSuperAdmin ? 'border-black dark:border-white shadow-lg' : 'border-emerald-500/20'}`}
                                                 classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-emerald-500/10", name: isSuperAdmin ? "text-white dark:text-black font-black text-[10px]" : "text-emerald-500 font-black text-[10px]" }}
                                             />
@@ -214,9 +213,9 @@ const UserTable = memo(({
                                         </div>
                                     </div>
                                     <div className="flex gap-1">
-                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 rounded-lg" onPress={() => onEdit(u)}><Edit size={12}/></Button>
-                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-amber-500/10 text-amber-500 rounded-lg ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onResetPassword(u)}><Zap size={12}/></Button>
-                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onDelete(u.dni)}><Trash2 size={12}/></Button>
+                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 rounded-lg" onPress={() => onEdit(u)}><Edit size={12} /></Button>
+                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-amber-500/10 text-amber-500 rounded-lg ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onResetPassword(u)}><Zap size={12} /></Button>
+                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onDelete(u.dni)}><Trash2 size={12} /></Button>
                                     </div>
                                 </div>
                             );
@@ -234,18 +233,18 @@ const UserTable = memo(({
                             isIconOnly
                             size="sm"
                             variant="flat"
-                            onPress={() => onPageChange(Math.max(1, currentPage - 1))}
+                            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
                             isDisabled={currentPage === 1}
                             className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
                         >
                             <ChevronLeft size={18} />
                         </Button>
-                        
+
                         <div className="flex flex-col items-start px-1 leading-none">
                             <span className="text-[7px] text-gray-400 dark:text-zinc-500 uppercase font-black tracking-tighter">MOSTRANDO</span>
                             <p className="text-[10px] text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-1">
-                                <span className="italic font-black text-emerald-500">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalRecords)}</span> 
-                                <span className="opacity-20 text-[8px]">DE</span> 
+                                <span className="italic font-black text-emerald-500">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalRecords)}</span>
+                                <span className="opacity-20 text-[8px]">DE</span>
                                 <span className="italic font-black">{totalRecords}</span>
                             </p>
                         </div>
@@ -254,7 +253,7 @@ const UserTable = memo(({
                             isIconOnly
                             size="sm"
                             variant="flat"
-                            onPress={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+                            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
                             isDisabled={currentPage === totalPages || totalPages === 0}
                             className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
                         >
@@ -264,12 +263,12 @@ const UserTable = memo(({
 
                     <div className="flex items-center gap-2">
                         <div className="relative">
-                            <select 
-                                value={pageSize} 
-                                onChange={(e) => onPageSizeChange(Number(e.target.value))} 
+                            <select
+                                value={pageSize}
+                                onChange={(e) => onPageSizeChange(Number(e.target.value))}
                                 className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-2 pr-6 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none"
                             >
-                                {[10, 20, 50].map(n => <option key={n} value={n}>{n}</option>)}
+                                {[10, 20, 50, 10000].map(n => <option key={n} value={n}>{n === 10000 ? 'TODOS' : n}</option>)}
                             </select>
                             <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
                                 <Info size={10} />

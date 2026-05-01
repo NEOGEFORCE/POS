@@ -97,7 +97,15 @@ export default function CustomerFormModal({
                     labelPlacement="inside"
                     placeholder=" "
                     value={customer?.dni || ''} 
-                    onValueChange={(v) => !isEdit && setCustomer((p: any) => ({ ...p, dni: v }))} 
+                    onValueChange={(v) => {
+                      if (!isEdit) {
+                        setCustomer((p: any) => ({ ...p, dni: v }));
+                        // Auto-lookup si tiene longitud mínima
+                        if (v.length >= 5 && onLookupDni) {
+                          onLookupDni(v);
+                        }
+                      }
+                    }} 
                     isDisabled={isEdit} 
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !isEdit && customer?.dni && customer.dni.length >= 5 && onLookupDni) {

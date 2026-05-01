@@ -6,7 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import dynamic from 'next/dynamic';
 import Cookies from 'js-cookie';
 import { extractApiError, apiFetch } from '@/lib/api-error';
-import { 
+import {
   Users, Search, PlusCircle, RefreshCw
 } from 'lucide-react';
 import { Input, Button, Spinner } from "@heroui/react";
@@ -66,12 +66,12 @@ async function lookupUser(dni: string, token: string): Promise<User | null> {
 }
 
 // COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO
-const UserHeader = memo(({ searchInput, onSearch, onAdd, onReload, isLoading }: { 
-    searchInput: string, 
-    onSearch: (v: string) => void, 
-    onAdd: () => void,
-    onReload: () => void,
-    isLoading: boolean
+const UserHeader = memo(({ searchInput, onSearch, onAdd, onReload, isLoading }: {
+  searchInput: string,
+  onSearch: (v: string) => void,
+  onAdd: () => void,
+  onReload: () => void,
+  isLoading: boolean
 }) => (
 
   <header className="flex flex-col gap-2.5 transition-all">
@@ -87,28 +87,28 @@ const UserHeader = memo(({ searchInput, onSearch, onAdd, onReload, isLoading }: 
       </div>
       <div className="flex items-center gap-2">
         <Button
-            isIconOnly
-            size="sm"
-            onPress={onReload}
-            isLoading={isLoading}
-            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          isIconOnly
+          size="sm"
+          onPress={onReload}
+          isLoading={isLoading}
+          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
-            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+          <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
-            size="sm"
-            onPress={onAdd}
-            className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+          size="sm"
+          onPress={onAdd}
+          className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
         >
-            <PlusCircle size={16} /> 
-            <span className="ml-2 tracking-widest">NUEVO</span>
+          <PlusCircle size={16} />
+          <span className="ml-2 tracking-widest">NUEVO</span>
         </Button>
       </div>
     </div>
     <Input
       size="sm"
       placeholder="FILTRAR POR NOMBRE O DNI..."
-      value={searchInput} 
+      value={searchInput}
       onValueChange={onSearch}
       classNames={{
         inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
@@ -161,7 +161,7 @@ export default function UsersPage() {
     if (!authLoading) {
       const role = user?.role?.toLowerCase();
       const hasAccess = role === 'admin' || role === 'administrador' || role === 'superadmin';
-      
+
       if (!hasAccess) {
         router.replace('/dashboard');
       } else {
@@ -182,8 +182,8 @@ export default function UsersPage() {
     const query = filter.toLowerCase();
     return users.filter(u =>
       u.name.toLowerCase().includes(query) ||
-             (u.email && u.email.toLowerCase().includes(query)) ||
-             (u.dni && u.dni.includes(query))
+      (u.email && u.email.toLowerCase().includes(query)) ||
+      (u.dni && u.dni.includes(query))
     );
   }, [users, filter, user]);
 
@@ -289,11 +289,11 @@ export default function UsersPage() {
   const handlePageSizeChange = useCallback((size: number) => { setPageSize(size); setCurrentPage(1); }, []);
   const handleAddOpen = useCallback(() => setAddDialogOpen(true), []);
   const handleModalClose = useCallback((o: boolean) => {
-      if (!o) { 
-        setAddDialogOpen(false); 
-        setEditDialogOpen(false); 
-        setEditingUser(null); 
-      }
+    if (!o) {
+      setAddDialogOpen(false);
+      setEditDialogOpen(false);
+      setEditingUser(null);
+    }
   }, []);
 
   const handleLookupUser = useCallback(async (dni: string) => {
@@ -302,16 +302,16 @@ export default function UsersPage() {
 
     const existingUser = await lookupUser(dni, token);
     if (existingUser) {
-        toast({ 
-            variant: 'success',
-            title: 'USUARIO IDENTIFICADO', 
-            description: `EL DNI ${dni} YA EXISTE. ABRIENDO MODO EDICIÓN PARA ${existingUser.name}.` 
-        });
-        
-        // Cambiar de modo Agregar a modo Editar
-        setAddDialogOpen(false);
-        setEditingUser({ ...existingUser, is_active: existingUser.is_active ?? true });
-        setEditDialogOpen(true);
+      toast({
+        variant: 'success',
+        title: 'USUARIO IDENTIFICADO',
+        description: `EL DNI ${dni} YA EXISTE. ABRIENDO MODO EDICIÓN PARA ${existingUser.name}.`
+      });
+
+      // Cambiar de modo Agregar a modo Editar
+      setAddDialogOpen(false);
+      setEditingUser({ ...existingUser, is_active: existingUser.is_active ?? true });
+      setEditDialogOpen(true);
     }
   }, [toast]);
 
@@ -327,50 +327,50 @@ export default function UsersPage() {
 
   return (
     <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-      
+
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
-        <UserHeader 
-            searchInput={searchInput} 
-            onSearch={setSearchInput} 
-            onAdd={handleAddOpen} 
-            onReload={loadUsers}
-            isLoading={loading}
+        <UserHeader
+          searchInput={searchInput}
+          onSearch={setSearchInput}
+          onAdd={handleAddOpen}
+          onReload={loadUsers}
+          isLoading={loading}
         />
         <UserStats total={stats.total} admins={stats.admins} employees={stats.employees} />
       </div>
 
       {/* LIST SECTION - STRICT INTERNAL SCROLL */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
-          <UserTable 
-              users={paginatedUsers}
-              currentDni={user?.dni}
-            onEdit={handleEditOpen}
-            onDelete={handleDeleteOpen}
-            onResetPassword={handleResetOpen}
-            currentPage={currentPage}
-            totalPages={totalPages}
-            pageSize={pageSize}
-            totalRecords={filteredUsers.length}
-            onPageChange={handlePageChange}
-            onPageSizeChange={handlePageSizeChange}
-            onReload={loadUsers}
-            isLoading={loading}
-          />
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col min-w-0">
+        <UserTable
+          users={paginatedUsers}
+          currentDni={user?.dni}
+          onEdit={handleEditOpen}
+          onDelete={handleDeleteOpen}
+          onResetPassword={handleResetOpen}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          pageSize={pageSize}
+          totalRecords={filteredUsers.length}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handlePageSizeChange}
+          onReload={loadUsers}
+          isLoading={loading}
+        />
       </div>
 
       {/* MODALS SECTION */}
-      <UserModals 
-        isOpen={addDialogOpen || editDialogOpen} 
+      <UserModals
+        isOpen={addDialogOpen || editDialogOpen}
         onOpenChange={handleModalClose}
         editMode={editDialogOpen}
         user={editingUser}
         onSave={modalOnSave}
         onLookupDni={handleLookupUser}
       />
-      
+
       {deleteDialogOpen && (
-        <DeleteUserModal 
+        <DeleteUserModal
           isOpen={deleteDialogOpen}
           onOpenChange={setDeleteDialogOpen}
           onConfirm={handleDeleteUser}
@@ -378,7 +378,7 @@ export default function UsersPage() {
       )}
 
       {resetDialogOpen && (
-        <ResetPasswordModal 
+        <ResetPasswordModal
           isOpen={resetDialogOpen}
           onOpenChange={setResetDialogOpen}
           user={resetUser || {}}

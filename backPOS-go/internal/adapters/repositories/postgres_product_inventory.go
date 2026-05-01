@@ -7,6 +7,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/cache"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -14,7 +15,11 @@ import (
 
 // UpdateQuantity actualiza el stock de un producto de forma atómica
 func (r *PostgresProductRepository) UpdateQuantity(barcode string, newQuantity float64) error {
-	return r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQuantity).Error
+	err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQuantity).Error
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyProducts)
+	}
+	return err
 }
 
 // BatchUpdateQuantities realiza actualizaciones masivas de stock en una sola transacción
@@ -35,7 +40,11 @@ func (r *PostgresProductRepository) BatchUpdateQuantities(updates map[string]flo
 		}
 	}
 
-	return tx.Commit().Error
+	err := tx.Commit().Error
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyProducts)
+	}
+	return err
 }
 
 // SyncSuppliers sincroniza la lista de proveedores autorizados para un producto
@@ -50,9 +59,13 @@ func (r *PostgresProductRepository) SyncSuppliers(barcode string, supplierIDs []
 	return r.db.Model(&models.Product{Barcode: barcode}).Association("Suppliers").Replace(suppliers)
 }
 
-// BulkReceive procesa una recepción masiva de mercancía, gestionando costos, impuestos y productos tipo pack
-func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
+// BulkReceive procesa una recepción masiva de mercancía, gestionando costos, impuestos y productos tipo pack.
+// Si bypassExpense es false, registra automáticamente un egreso contable.
+func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string) error {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		totalAmount := 0.0
+		var mainSupplierID *uint
+		
 		for _, entry := range entries {
 			var product models.Product
 			if err := tx.Where("barcode = ?", entry.Barcode).First(&product).Error; err != nil {
@@ -92,40 +105,49 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				product.Quantity += entry.AddedQuantity
 			}
 
-			// 2. Gestión de Costos y Proveedores
+			// === LÓGICA DE COSTO PROMEDIO PONDERADO (WAC) ===
+			currentStock := product.Quantity - entry.AddedQuantity
+			if currentStock < 0 {
+				currentStock = 0
+			}
+
 			totalEntryCost := entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount
 
-			if totalEntryCost > 0 && entry.SupplierID != nil {
-				ps := models.ProductSupplier{
-					ProductID:     entry.Barcode,
-					SupplierID:    *entry.SupplierID,
-					PurchasePrice: totalEntryCost,
-				}
-				if err := tx.Clauses(clause.OnConflict{
-					Columns:   []clause.Column{{Name: "product_barcode"}, {Name: "supplier_id"}},
-					DoUpdates: clause.AssignmentColumns([]string{"purchasePrice"}),
-				}).Create(&ps).Error; err != nil {
-					return err
+			if totalEntryCost > 0 {
+				if currentStock+entry.AddedQuantity > 0 {
+					product.PurchasePrice = ((currentStock * product.PurchasePrice) + (entry.AddedQuantity * totalEntryCost)) / (currentStock + entry.AddedQuantity)
+				} else {
+					product.PurchasePrice = totalEntryCost
 				}
 
-				var maxCost float64
-				tx.Model(&models.ProductSupplier{}).
-					Where("\"productBarcode\" = ?", entry.Barcode).
-					Select("COALESCE(MAX(\"purchasePrice\"), 0)").
-					Scan(&maxCost)
-
-				product.PurchasePrice = maxCost
 				product.Iva = entry.Iva
 				product.Icui = entry.Icui
 				product.Ibua = entry.Ibua
+
+				if entry.SupplierID != nil {
+					ps := models.ProductSupplier{
+						ProductID:     entry.Barcode,
+						SupplierID:    *entry.SupplierID,
+						PurchasePrice: totalEntryCost,
+					}
+					if err := tx.Clauses(clause.OnConflict{
+						Columns:   []clause.Column{{Name: "product_barcode"}, {Name: "supplier_id"}},
+						DoUpdates: clause.AssignmentColumns([]string{"purchasePrice"}),
+					}).Create(&ps).Error; err != nil {
+						return err
+					}
+				}
 			}
 
-			// 3. Actualización de Precios de Venta
+			// 3. Actualización de Precios de Venta (PROTEGIDA)
 			if entry.NewSalePrice > 0 {
 				product.SalePrice = entry.NewSalePrice
 				if product.PurchasePrice > 0 {
 					product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 				}
+			} else if product.PurchasePrice > 0 {
+				// No actualizamos el precio de venta, solo recalculamos el margen informativo
+				product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 			}
 
 			if entry.SupplierID != nil {
@@ -150,6 +172,40 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			if err := tx.Create(&movement).Error; err != nil {
 				return err
 			}
+
+			// Acumular total para el egreso (solo compras, no regalos ni devoluciones)
+			// Nota: devoluciones restan, pero aquí asumimos flujo de entrada positiva
+			lineTotal := (entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount) * entry.AddedQuantity
+			if lineTotal > 0 {
+				totalAmount += lineTotal
+			}
+			if mainSupplierID == nil && entry.SupplierID != nil {
+				mainSupplierID = entry.SupplierID
+			}
+		}
+
+		// 4.5. Creación de Egreso Automático (si no hay bypass)
+		if !bypassExpense && totalAmount > 0 {
+			description := "RECEPCIÓN DE MERCANCÍA MASIVA"
+			if mainSupplierID != nil {
+				var supplier models.Supplier
+				if err := tx.First(&supplier, *mainSupplierID).Error; err == nil {
+					description = fmt.Sprintf("RECEPCIÓN DE MERCANCÍA - %s", supplier.Name)
+				}
+			}
+			
+			expense := models.Expense{
+				Description:   description,
+				Amount:        totalAmount,
+				Date:          time.Now(),
+				PaymentSource: paymentSource,
+				Category:      "Proveedores",
+				SupplierID:    mainSupplierID,
+				CreatedByDNI:  employeeDNI,
+			}
+			if err := tx.Create(&expense).Error; err != nil {
+				return fmt.Errorf("error creando egreso: %w", err)
+			}
 		}
 
 		// 5. Cierre de Órdenes Relacionadas
@@ -160,4 +216,28 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 
 		return nil
 	})
+
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyProducts)
+		cache.InvalidateCache(cache.CacheKeyProductCount + "_active")
+	}
+	return err
+}
+
+func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
+	var total float64
+	err := r.db.Model(&models.Product{}).
+		Where("\"isActive\" = ?", true).
+		Select("COALESCE(SUM(quantity * \"purchasePrice\"), 0)").
+		Scan(&total).Error
+	return total, err
+}
+
+func (r *PostgresProductRepository) GetGlobalInventoryRetailValue() (float64, error) {
+	var total float64
+	err := r.db.Model(&models.Product{}).
+		Where("\"isActive\" = ?", true).
+		Select("COALESCE(SUM(quantity * \"salePrice\"), 0)").
+		Scan(&total).Error
+	return total, err
 }

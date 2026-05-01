@@ -1,1143 +1,755 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { 
-  Button, Card, CardBody, Autocomplete, AutocompleteItem, Table, TableHeader, 
-  TableColumn, TableBody, TableRow, TableCell, Input, Chip, Select, SelectItem,
-  Divider, Skeleton
-} from "@heroui/react";
-import { 
-  ShoppingBag, Truck, Calendar, DollarSign, Plus, FileText, 
-  Trash2, ChevronRight, Sparkles, Filter, CheckCircle2, AlertCircle, Send, Building2,
-  PackageSearch, Clock, User, CheckCircle
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  ShoppingBag, Truck, Calendar, DollarSign, Plus, FileText,
+  Sparkles, CheckCircle, Building2, PackageSearch, Check,
+  ChevronLeft, ChevronRight, Info
 } from 'lucide-react';
+import {
+  Card, CardBody, Button, Input, Table, TableHeader,
+  TableColumn, TableBody, TableRow, TableCell, Chip,
+  Autocomplete, AutocompleteItem, Select, SelectItem,
+  Pagination, Skeleton
+} from "@heroui/react";
+import { useAuth } from '@/lib/auth';
+import { useToast } from '@/hooks/use-toast';
 import Cookies from 'js-cookie';
 import { Supplier } from '@/lib/definitions';
-import { useToast } from "@/hooks/use-toast";
-import { formatCurrency } from "@/lib/utils";
-import SupplierFormModal from "@/app/(app)/suppliers/components/SupplierFormModal";
+import SupplierFormModal from '../../suppliers/components/SupplierFormModal';
 
-const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? '';
 
-function authHeaders(json = false): HeadersInit {
-  let token = Cookies.get('org-pos-token');
-  // BLINDAJE DEFENSIVO: Limpiar token si tiene Bearer duplicado
-  if (token) {
-    token = token.replace(/^Bearer\s+/i, '').trim();
-  }
-  // CRITICAL FIX: Debug del token
-  if (!token) {
-    console.error("🔥 AUTH ERROR: No se encontró la cookie 'org-pos-token'. El usuario debe iniciar sesión.");
-  }
-  const h: Record<string, string> = {
-    Authorization: `Bearer ${token ?? ''}`,
-  };
-  if (json) h['Content-Type'] = 'application/json';
-  return h;
+
+interface SuggestedOrder {
+  barcode: string;
+  productName: string;
+  stock: number;
+  minStock: number;
+  isPack: boolean;
+  packMultiplier: number;
+  requiredMin: number;
+  projectedSales: number;
+  totalIdeal: number;
+  recentSales: number;
+  avgDailySales: number;
+  suggested: number;
+  purchasePrice: number;
+  supplierId: number;
+  threshold: number;
+  status: string;
+  bestSupplierId: number;
+  bestSupplierName: string;
+  lowestPrice: number;
+  isHighRotation: boolean;
+  quantity: number;
 }
 
-interface ExpectedOrder {
+interface MissingItem {
   id: number;
-  supplierName: string;
-  expectedDate: string;
-  totalEstimated: number;
-  status: 'PENDING' | 'IN_TRANSIT' | 'RECEIVED';
-  itemCount: number;
+  product_name: string;
+  status: string;
 }
 
-export default function SmartOrdersPage() {
+export default function SmartRestockPage() {
+  const { user } = useAuth();
   const { toast } = useToast();
+
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL;
+  const authHeaders = useCallback((isJson = true) => {
+    const token = Cookies.get('org-pos-token');
+    const headers: any = { 'Authorization': `Bearer ${token}` };
+    if (isJson) headers['Content-Type'] = 'application/json';
+    return headers;
+  }, []);
+
+  // States
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [selectedSupplier, setSelectedSupplier] = useState<string>("global");
+  const [items, setItems] = useState<SuggestedOrder[]>([]);
+  const [orderItems, setOrderItems] = useState<SuggestedOrder[]>([]);
   const [loading, setLoading] = useState(false);
-  const [orderItems, setOrderItems] = useState<any[]>([]);
-  const [isSaving, setIsSaving] = useState(false);
-  const [daysCoverage, setDaysCoverage] = useState<number>(7);
-  const [selectedMethod, setSelectedMethod] = useState<string>("default");
-  const [selectedSupplierData, setSelectedSupplierData] = useState<Supplier | null>(null);
+  const [selectedSupplier, setSelectedSupplier] = useState<string>("global");
 
-  // Estado para pedidos esperados (Preventa)
-  const [expectedOrders, setExpectedOrders] = useState<ExpectedOrder[]>([]);
-  const [newPreventa, setNewPreventa] = useState({ 
-    supplierId: 0 as number | null, 
-    supplierName: '', 
-    date: '', 
-    total: '' // Valor raw sin formato para envío
-  });
-  // FASE 2: Estado para display formateado del precio (con separadores de miles)
-  const [totalDisplay, setTotalDisplay] = useState('');
+  // Pagination
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  // Computed pagination values
+  const totalItemsCount = useMemo(() => {
+    return selectedSupplier === "global" ? items.length : orderItems.length;
+  }, [selectedSupplier, items, orderItems]);
+
+  const totalPagesCount = useMemo(() => {
+    return Math.ceil(totalItemsCount / pageSize) || 1;
+  }, [totalItemsCount, pageSize]);
+
+  // Preventa Form
   const [isSubmittingPreventa, setIsSubmittingPreventa] = useState(false);
-  const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
-  const [isNewSupplier, setIsNewSupplier] = useState(false);
-
-  // Estado para reportes de faltantes (caja)
-  const [missingItems, setMissingItems] = useState<any[]>([]);
-  const [loadingMissingItems, setLoadingMissingItems] = useState(false);
-
-  // FASE 2: Estado para opciones de fechas calculadas
-  const [dateOptions, setDateOptions] = useState<Array<{ label: string; value: string }>>([]);
-  const [selectedSupplierForDates, setSelectedSupplierForDates] = useState<Supplier | null>(null);
-  const [showManualDate, setShowManualDate] = useState(false);
-
-  // FASE 3: Estado para modal de creación rápida de proveedor
+  const [newPreventa, setNewPreventa] = useState({ supplierId: 0, supplierName: '', date: '', total: '' });
+  const [dateOptions, setDateOptions] = useState<{ label: string, value: string }[]>([]);
+  const [totalDisplay, setTotalDisplay] = useState('');
+  const [supplierSearchTerm, setSupplierSearchTerm] = useState("");
   const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
 
-  // Opciones filtradas para el Autocomplete de proveedores
-  const filteredSupplierOptions = React.useMemo(() => {
-    const filtered = suppliers.filter(s => 
-      s.name.toLowerCase().includes(supplierSearchTerm.toLowerCase()) ||
-      (s.vendorName && s.vendorName.toLowerCase().includes(supplierSearchTerm.toLowerCase()))
-    );
-    
-    // Agregar opción de crear nuevo si hay texto y no coincide exacto
-    const hasExactMatch = suppliers.some(s => 
-      s.name.toLowerCase() === supplierSearchTerm.toLowerCase()
-    );
-    
-    if (supplierSearchTerm && !hasExactMatch) {
-      return [
-        ...filtered,
-        { id: '__new__', name: supplierSearchTerm, vendorName: null, isNew: true } as any
-      ];
-    }
-    
-    return filtered;
-  }, [suppliers, supplierSearchTerm]);
+  // Missing Items
+  const [missingItems, setMissingItems] = useState<MissingItem[]>([]);
+  const [loadingMissingItems, setLoadingMissingItems] = useState(false);
 
-  // Fetch missing items (reportes de faltantes)
-  const fetchMissingItems = useCallback(async () => {
-    setLoadingMissingItems(true);
-    try {
-      const res = await fetch(`${apiUrl}/missing-items`, {
-        headers: authHeaders(),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setMissingItems(data || []);
-      }
-    } catch (error) {
-      console.error("Error fetching missing items:", error);
-    } finally {
-      setLoadingMissingItems(false);
-    }
-  }, []);
+  // Client-side pagination for the table
+  const displayedItems = useMemo(() => {
+    const all = selectedSupplier === "global" ? items : orderItems;
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize;
+    return all.slice(start, end);
+  }, [selectedSupplier, items, orderItems, page, pageSize]);
 
   const fetchSuppliers = useCallback(async () => {
     try {
-      const res = await fetch(`${apiUrl}/suppliers/all-suppliers`, {
-        headers: authHeaders(),
-      });
+      const res = await fetch(`${apiUrl}/suppliers/all-suppliers`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Error al cargar proveedores');
       const data = await res.json();
-      // Validar que la respuesta sea un array
-      if (Array.isArray(data)) {
-        setSuppliers(data);
-      } else if (data && Array.isArray(data.suppliers)) {
-        // Si viene envuelto en un objeto { suppliers: [...] }
-        setSuppliers(data.suppliers);
-      } else {
-        setSuppliers([]);
-        console.error('Respuesta de proveedores no es un array:', data);
-      }
-    } catch (error) {
-       toast({ title: "Error", description: "Error al cargar proveedores", variant: "destructive" });
-       setSuppliers([]);
+      const suppliersList = Array.isArray(data) ? data : (data?.items || []);
+      setSuppliers(suppliersList);
+    } catch (err) {
+      console.error(err);
     }
-  }, [toast]);
+  }, [apiUrl, authHeaders]);
 
-  // Fetch suppliers on mount y cargar Radar Global por defecto
-  useEffect(() => {
-    fetchSuppliers();
-    fetchMissingItems();
-  }, [fetchSuppliers, fetchMissingItems]);
-
-  // Fetch pedidos esperados para hoy
-  // BLINDAJE DEFENSIVO: Siempre retornar array vacío si hay error, nunca colapsar
-  useEffect(() => {
-    const fetchExpectedOrders = async () => {
-      try {
-        const token = Cookies.get('org-pos-token');
-        const res = await fetch(`${apiUrl}/orders/expected-today`, {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          },
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // Asegurar que siempre sea un array
-          setExpectedOrders(Array.isArray(data) ? data : []);
-        } else {
-          // BLINDAJE: Si no es ok, setear array vacío silenciosamente
-          console.warn('⚠️ Expected orders fetch no-OK, usando array vacío:', res.status);
-          setExpectedOrders([]);
-        }
-      } catch (err) {
-        // BLINDAJE DEFENSIVO: Nunca propagar error, siempre retornar array vacío
-        console.error('🔥 Error fetching expected orders (silenciado):', err);
-        setExpectedOrders([]);
+  const fetchMissingItems = useCallback(async () => {
+    setLoadingMissingItems(true);
+    try {
+      const res = await fetch(`${apiUrl}/missing-items`, { headers: authHeaders() });
+      if (res.ok) {
+        const data = await res.json();
+        const itemsList = Array.isArray(data) ? data : (data?.items || []);
+        setMissingItems(itemsList.filter((i: any) => i.status === 'PENDIENTE'));
       }
-    };
-    fetchExpectedOrders();
-  }, []);
-
-  // Cargar Radar Global automáticamente cuando los proveedores estén listos
-  useEffect(() => {
-    if (suppliers.length > 0 && selectedSupplier === "global") {
-      loadGlobalSuggestions();
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingMissingItems(false);
     }
-  }, [suppliers, selectedSupplier]);
+  }, [apiUrl, authHeaders]);
 
-  // FASE 2: Cobertura automática basada en frecuencia de visita del proveedor
-  useEffect(() => {
-    if (selectedSupplier && selectedSupplier !== 'none' && selectedSupplier !== 'global') {
-      const supplier = suppliers.find(s => String(s.id) === selectedSupplier);
-      if (supplier) {
-        // Determinar días de visita (usar deliveryDays o visitDays)
-        const visitDays = supplier.deliveryDays || supplier.visitDays || [];
-        const dayCount = visitDays.length;
-
-        // Lógica de cobertura según frecuencia
-        let newCoverage = 7; // Default
-        if (dayCount === 1) newCoverage = 7;
-        else if (dayCount === 2) newCoverage = 4;
-        else if (dayCount >= 3) newCoverage = 3;
-
-        setDaysCoverage(newCoverage);
-        setSelectedSupplierData(supplier);
-      }
-    } else if (selectedSupplier === 'global') {
-      // Para Radar Global, usar cobertura por defecto
-      setDaysCoverage(7);
-    }
-  }, [selectedSupplier, suppliers]);
-
-  // FASE 1 Fix: Función para calcular status basado en matemática pura (stock vs min_stock)
-  const calculateStatus = (stock: number, minStock: number): 'CRITICAL' | 'WARNING' | 'OPTIMAL' => {
-    if (stock < minStock) return 'CRITICAL';
-    if (stock === minStock) return 'WARNING';
-    return 'OPTIMAL';
-  };
-
-  const loadSuggestions = async (supplierId: string) => {
-    if (!supplierId || supplierId === "none") return;
+  const loadGlobalSuggestions = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `${apiUrl}/inventory/suggested-orders?supplier_id=${encodeURIComponent(supplierId)}`,
-        { headers: authHeaders() }
-      );
+      const res = await fetch(`${apiUrl}/inventory/global-restock`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Error al cargar radar global');
       const data = await res.json();
-      // FASE 1 Fix: Calcular status localmente para consistencia entre vistas
-      setOrderItems(data.map((item: any) => ({
-        ...item,
-        quantity: item.totalIdeal || 0,
-        unitPrice: item.purchasePrice || 0,
-        status: calculateStatus(item.stock, item.minStock)
-      })));
-    } catch (error) {
-      toast({ title: "Error", description: "Error al cargar sugerencias inteligentes", variant: "destructive" });
+      const itemsList = Array.isArray(data) ? data : (data?.items || []);
+      const mapped = itemsList.map((item: any) => ({
+        barcode: item.barcode,
+        productName: item.productName || item.product_name,
+        stock: Number(item.stock) || 0,
+        requiredMin: Number(item.requiredMin) || Number(item.required_min) || 0,
+        suggested: Number(item.suggested) || 0,
+        totalIdeal: Number(item.totalIdeal) || Number(item.total_ideal) || 0,
+        purchasePrice: Number(item.purchasePrice) || Number(item.purchase_price) || 0,
+        status: item.status || 'NORMAL',
+        quantity: Number(item.suggested) || Number(item.total_ideal) || 0,
+        bestSupplierId: Number(item.bestSupplierId) || 0,
+        bestSupplierName: item.bestSupplierName || '',
+        lowestPrice: Number(item.lowestPrice) || 0,
+        minStock: Number(item.minStock) || 0,
+        supplierId: Number(item.supplierId) || 0,
+        isHighRotation: !!item.isHighRotation,
+        avgDailySales: Number(item.avgDailySales) || 0,
+        isPack: !!item.isPack,
+        packMultiplier: Number(item.packMultiplier) || 0,
+        projectedSales: Number(item.projectedSales) || 0,
+        recentSales: Number(item.recentSales) || 0,
+        threshold: Number(item.threshold) || 0
+      }));
+      setItems(mapped);
+    } catch (err) {
+      console.error(err);
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiUrl, authHeaders]);
 
-  const handleSupplierChange = (key: React.Key | null) => {
-    const id = String(key ?? "none");
-    setSelectedSupplier(id);
-    setSelectedMethod("default"); // Resetear método al cambiar proveedor
-    
-    if (id === "none" || id === "global") {
-      if (id === "none") {
-        setOrderItems([]);
-        setSelectedSupplierData(null);
-      } else {
-        // Cargar Radar Global
-        loadGlobalSuggestions();
-        // Limpiar formulario de preventa cuando es Radar Global
-        setNewPreventa({ supplierId: 0, supplierName: '', date: '', total: '' });
-        setTotalDisplay(''); // FASE 2: Limpiar display formateado
-        setSupplierSearchTerm('');
-        setIsNewSupplier(false);
-      }
+  const loadSuggestions = useCallback(async (supplierId: string) => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${apiUrl}/inventory/suggested-orders?supplier_id=${supplierId}`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Error al cargar sugerencias');
+      const data = await res.json();
+      const itemsList = Array.isArray(data) ? data : (data?.items || []);
+      const mapped = itemsList.map((item: any) => ({
+        barcode: item.barcode,
+        productName: item.productName || item.product_name,
+        stock: Number(item.stock) || 0,
+        requiredMin: Number(item.requiredMin) || Number(item.required_min) || 0,
+        suggested: Number(item.suggested) || 0,
+        totalIdeal: Number(item.totalIdeal) || Number(item.total_ideal) || 0,
+        purchasePrice: Number(item.purchasePrice) || Number(item.purchase_price) || 0,
+        status: item.status || 'NORMAL',
+        quantity: Number(item.suggested) || Number(item.total_ideal) || 0,
+        bestSupplierId: Number(item.bestSupplierId) || 0,
+        bestSupplierName: item.bestSupplierName || '',
+        minStock: Number(item.minStock) || 0,
+        supplierId: Number(supplierId),
+        isHighRotation: !!item.isHighRotation,
+        avgDailySales: Number(item.avgDailySales) || 0,
+        isPack: !!item.isPack,
+        packMultiplier: Number(item.packMultiplier) || 0,
+        projectedSales: Number(item.projectedSales) || 0,
+        recentSales: Number(item.recentSales) || 0,
+        threshold: Number(item.threshold) || 0
+      }));
+      setOrderItems(mapped);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiUrl, authHeaders]);
+
+  const calculateDeliveryDates = (supplier: Supplier) => {
+    if (!supplier.deliveryDays || supplier.deliveryDays.length === 0) {
+      setDateOptions([]);
       return;
     }
-    
-    // Buscar datos del proveedor seleccionado
-    const supplier = suppliers.find(s => String(s.id) === id);
-    setSelectedSupplierData(supplier || null);
-    
-    loadSuggestions(id);
-  };
+    const today = new Date();
+    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+    const options: any[] = [];
+    const deliveryIndices = (supplier.deliveryDays || []).map(d => {
+      const dl = d.toLowerCase();
+      if (dl.includes('lun')) return 1; if (dl.includes('mar')) return 2; if (dl.includes('mié')) return 3;
+      if (dl.includes('jue')) return 4; if (dl.includes('vie')) return 5; if (dl.includes('sáb')) return 6;
+      if (dl.includes('dom')) return 0; return -1;
+    }).filter(i => i !== -1);
 
-  const loadGlobalSuggestions = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `${apiUrl}/inventory/global-restock`,
-        { headers: authHeaders() }
-      );
-      const data = await res.json();
-      // FASE 1 Fix: Calcular status localmente para consistencia entre vistas
-      setOrderItems(data.map((item: any) => ({
-        ...item,
-        isOrphan: item.supplierId === 0 || !item.supplierId,
-        quantity: item.totalIdeal || 0,
-        unitPrice: item.purchasePrice || 0,
-        status: calculateStatus(item.stock, item.minStock)
-      })));
-    } catch (error) {
-      toast({ title: "Error", description: "Error al cargar Radar Global", variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Recalcular sugerencias cuando cambia daysCoverage o método
-  const recalculateSuggestions = useCallback(() => {
-    if (orderItems.length === 0) return;
-    
-    // Calcular lead time según método seleccionado
-    let leadTimeDays = 0;
-    if (selectedMethod !== "default" && selectedSupplierData?.orderMethods) {
-      const method = selectedSupplierData.orderMethods.find(m => String(m.id) === selectedMethod);
-      if (method) {
-        leadTimeDays = method.leadTimeDays;
+    for (let i = 1; i < 15 && options.length < 4; i++) {
+      const d = new Date(today); d.setDate(today.getDate() + i);
+      if ((deliveryIndices as number[]).includes(d.getDay())) {
+        options.push({ label: `${dayNames[d.getDay()]} ${d.getDate()}`, value: d.toISOString().split('T')[0] });
       }
     }
-    
-    // FÓRMULA MAESTRA: (Velocidad × (Días Cobertura + Lead Time)) + SafetyStock - Stock Actual
-    const totalCoverageDays = daysCoverage + leadTimeDays;
-    
-    setOrderItems(prev => prev.map(item => {
-      const avgDaily = item.avgDailySales || 0;
-      const safetyStock = item.safetyStock || 0;
-      // FÓRMULA MAESTRA: (Velocidad * (Cobertura + Lead Time)) + SafetyStock - Stock
-      const newQty = Math.max(0, Math.ceil((avgDaily * totalCoverageDays) + safetyStock - item.stock));
-      return { ...item, quantity: newQty };
-    }));
-  }, [daysCoverage, orderItems.length, selectedMethod, selectedSupplierData]);
+    setDateOptions(options);
+    if (options.length > 0) setNewPreventa(prev => ({ ...prev, date: options[0].value }));
+  };
 
-  // Efecto para recalcular cuando cambia daysCoverage o método
-  useEffect(() => {
-    recalculateSuggestions();
-  }, [daysCoverage, selectedMethod, recalculateSuggestions]);
+  const handleSupplierChange = (key: any) => {
+    if (!key || key === "none") return;
+    const id = String(key);
 
-  // FASE 2: Función para calcular próximas fechas de entrega basadas en deliveryDays del proveedor
-  const calculateDeliveryDates = (supplier: Supplier) => {
-    // Si el proveedor usa APP o no tiene días configurados, dejar opciones abiertas
-    if (supplier.restockMethod === 'APP' || (!supplier.deliveryDays || supplier.deliveryDays.length === 0)) {
+    if (id === "global") {
+      setSelectedSupplier("global");
+      loadGlobalSuggestions();
+      setNewPreventa(p => ({ ...p, supplierId: 0, supplierName: '', date: '' }));
+      setSupplierSearchTerm("");
       setDateOptions([]);
       return;
     }
 
-    const today = new Date();
-    const currentDayIndex = today.getDay(); // 0=Domingo, 1=Lunes, ..., 6=Sábado
-    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const dayNamesShort = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-    
-    const options: Array<{ label: string; value: string }> = [];
-    const addedDates = new Set<string>();
-
-    // Mapear nombres de días a índices
-    const deliveryDayIndices = supplier.deliveryDays?.map(day => {
-      const dayLower = day.toLowerCase();
-      if (dayLower.includes('lun')) return 1;
-      if (dayLower.includes('mar')) return 2;
-      if (dayLower.includes('mié') || dayLower.includes('mie')) return 3;
-      if (dayLower.includes('jue')) return 4;
-      if (dayLower.includes('vie')) return 5;
-      if (dayLower.includes('sáb') || dayLower.includes('sab')) return 6;
-      if (dayLower.includes('dom')) return 0;
-      return -1;
-    }).filter(d => d !== -1) || [];
-
-    // Buscar próximas 4 fechas de entrega (hasta 30 días en el futuro)
-    for (let i = 0; i <= 30; i++) {
-      const futureDate = new Date(today);
-      futureDate.setDate(today.getDate() + i);
-      const futureDayIndex = futureDate.getDay() as 0 | 1 | 2 | 3 | 4 | 5 | 6;
-      
-      if (deliveryDayIndices.includes(futureDayIndex)) {
-        const dateStr = futureDate.toISOString().split('T')[0];
-        if (!addedDates.has(dateStr)) {
-          addedDates.add(dateStr);
-          
-          // Formatear etiqueta amigable
-          let labelPrefix = '';
-          if (i === 0) labelPrefix = 'Hoy';
-          else if (i === 1) labelPrefix = 'Mañana';
-          else labelPrefix = `Próximo ${dayNames[futureDayIndex]}`;
-          
-          const dayShort = dayNamesShort[futureDayIndex];
-          const dayNum = futureDate.getDate();
-          const monthShort = futureDate.toLocaleDateString('es-CO', { month: 'short' });
-          
-          options.push({
-            label: `${labelPrefix} (${dayShort} ${dayNum} ${monthShort})`,
-            value: dateStr
-          });
-          
-          if (options.length >= 4) break; // Limitar a 4 opciones
-        }
-      }
-    }
-
-    setDateOptions(options);
-    // Auto-seleccionar la primera fecha si hay opciones
-    if (options.length > 0 && !newPreventa.date) {
-      setNewPreventa(prev => ({ ...prev, date: options[0].value }));
+    const s = suppliers.find(sup => String(sup.id) === id);
+    if (s) {
+      setSelectedSupplier(id);
+      loadSuggestions(id);
+      calculateDeliveryDates(s);
+      setNewPreventa(p => ({
+        ...p,
+        supplierId: Number(s.id),
+        supplierName: s.name
+      }));
+      setSupplierSearchTerm(s.name);
     }
   };
 
-  // FASE 1: Sincronizar selector superior con formulario de preventa
   useEffect(() => {
-    // Si se seleccionó un proveedor específico (no global ni none), sincronizar con formulario
-    if (selectedSupplier && selectedSupplier !== 'none' && selectedSupplier !== 'global') {
-      const supplier = suppliers.find(s => String(s.id) === selectedSupplier);
-      if (supplier) {
-        setNewPreventa(prev => ({
-          ...prev,
-          supplierId: typeof supplier.id === 'string' ? parseInt(supplier.id) : supplier.id,
-          supplierName: supplier.name
-        }));
-        setSupplierSearchTerm(supplier.name);
-        setIsNewSupplier(false);
-        // FASE 1: Calcular fechas de entrega para el proveedor seleccionado
-        setSelectedSupplierForDates(supplier);
-        calculateDeliveryDates(supplier);
-      }
-    }
-  }, [selectedSupplier, suppliers]);
+    fetchSuppliers();
+    fetchMissingItems();
+    loadGlobalSuggestions();
+  }, [page, pageSize]);
 
-  const totalEstimated = orderItems.reduce((acc, item) => acc + (item.quantity * item.unitPrice), 0);
+  const handleResolveMissingItem = async (id: number) => {
+    try {
+      const res = await fetch(`${apiUrl}/admin/missing-items/status`, {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({ id, status: 'RESUELTO' })
+      });
+      if (res.ok) {
+        setMissingItems(prev => prev.filter(item => item.id !== id));
+        toast({ title: "Éxito", description: "Faltante marcado como resuelto" });
+        fetchMissingItems();
+      }
+    } catch (err) { }
+  };
 
   const handleSaveOrder = async () => {
-    if (selectedSupplier === "none") {
-      toast({ title: "Error", description: "Selecciona un proveedor", variant: "destructive" });
+    if (!newPreventa.supplierName || !newPreventa.date) {
+      toast({
+        title: "Proveedor Requerido",
+        description: "Debe seleccionar un proveedor para completar esta acción",
+        variant: "destructive"
+      });
       return;
     }
-    if (orderItems.length === 0) {
-      toast({ title: "Error", description: "No hay productos en la orden", variant: "destructive" });
-      return;
-    }
-    setIsSaving(true);
+    setIsSubmittingPreventa(true);
     try {
-      const res = await fetch(`${apiUrl}/inventory/orders`, {
+      const res = await fetch(`${apiUrl}/orders/expected`, {
         method: 'POST',
         headers: authHeaders(true),
         body: JSON.stringify({
-          supplierId: parseInt(selectedSupplier),
-          estimatedCost: totalEstimated,
-          status: 'PENDING',
-          items: orderItems.map(item => ({
-            productBarcode: item.barcode,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            subtotal: item.quantity * item.unitPrice
-          }))
+          supplierId: newPreventa.supplierId || 0,
+          supplierName: newPreventa.supplierName,
+          expectedDate: newPreventa.date,
+          totalEstimated: parseFloat(newPreventa.total) || 0
         })
       });
-
       if (res.ok) {
-        toast({ title: "Éxito", description: "¡Orden Maestra generada con éxito!" });
-      } else {
-        toast({ title: "Error", description: "Error al guardar la orden", variant: "destructive" });
+        toast({ title: "Éxito", description: "Preventa guardada" });
+
+        // Actualizar días de entrega del proveedor si es necesario
+        if (newPreventa.supplierId) {
+          const supplier = suppliers.find(s => Number(s.id) === newPreventa.supplierId);
+          if (supplier) {
+            const date = new Date(newPreventa.date + 'T12:00:00'); // Asegurar parsing local correcto
+            const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+            const dayName = dayNames[date.getDay()];
+
+            const currentDays = supplier.deliveryDays || [];
+            if (!currentDays.includes(dayName)) {
+              try {
+                await fetch(`${apiUrl}/suppliers/update-suppliers/${supplier.id}`, {
+                  method: 'PUT',
+                  headers: authHeaders(true),
+                  body: JSON.stringify({ ...supplier, deliveryDays: [...currentDays, dayName] })
+                });
+                await fetchSuppliers();
+              } catch (err) {
+                console.error("Error al actualizar días del proveedor:", err);
+              }
+            }
+          }
+        }
+
+        setNewPreventa({ supplierId: 0, supplierName: '', date: '', total: '' });
+        setTotalDisplay('');
       }
-    } catch (error) {
-      toast({ title: "Error", description: "Error de conexión", variant: "destructive" });
     } finally {
-      setIsSaving(false);
+      setIsSubmittingPreventa(false);
     }
   };
 
-  return (
-    <div className="h-full w-full overflow-y-auto custom-scrollbar pb-32 bg-transparent text-gray-900 dark:text-white transition-all duration-500 relative">
-      <div className="flex flex-col gap-6 min-h-max w-full max-w-[1400px] mx-auto p-4 md:p-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      
-      {/* HEADER SECTION */}
-      <div className="px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md rounded-2xl">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-emerald-500 h-10 w-10 rounded-xl text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3">
-              <ShoppingBag size={20} />
-            </div>
-            <div className="flex flex-col">
-              <h1 className="text-[13px] font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
-                Smart <span className="text-emerald-500">Restock</span>
-              </h1>
-              <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic mt-1 flex items-center gap-1">
-                <Sparkles size={10} className="text-emerald-500" /> Abastecimiento IA V4.5
+  const handleSaveSupplier = async (data: any) => {
+    try {
+      const res = await fetch(`${apiUrl}/suppliers/create-suppliers`, {
+        method: 'POST',
+        headers: authHeaders(true),
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        toast({ title: "Éxito", description: "Proveedor creado correctamente" });
+        await fetchSuppliers();
+        setIsSupplierModalOpen(false);
+      } else {
+        const err = await res.json();
+        toast({ title: "Error", description: err.error || "No se pudo crear el proveedor", variant: "destructive" });
+      }
+    } catch (error) {
+      console.error(error);
+      toast({ title: "Error", description: "Error de conexión", variant: "destructive" });
+    }
+  };
+
+  const filteredSupplierOptions = useMemo(() => {
+    const filtered = suppliers.filter(s => s.name.toLowerCase().includes(supplierSearchTerm.toLowerCase()));
+    return [{ id: '__new__', name: '+ NUEVO PROVEEDOR' }, ...filtered];
+  }, [suppliers, supplierSearchTerm]);
+
+  const SmartSourcingAlerts = () => {
+    // SPRINT: Analizamos TODO el catálogo cargado para encontrar ahorros reales, 
+    // pero limitamos la visualización a los top 15 para no romper el layout.
+    const allItems = selectedSupplier === "global" ? items : orderItems;
+
+    // Filtramos los que tienen una mejor opción de precio (Smart Sourcing)
+    const savingOpportunities = allItems.filter(item =>
+      item.bestSupplierId !== 0 &&
+      (selectedSupplier === 'global' ? (item.bestSupplierId !== item.supplierId) : (item.bestSupplierId !== Number(selectedSupplier))) &&
+      item.lowestPrice < item.purchasePrice &&
+      item.purchasePrice > 0
+    );
+
+    if (savingOpportunities.length === 0) return null;
+
+    // Ordenar por mayor ahorro potencial total (opcional, aquí por unidad)
+    const topOpportunities = savingOpportunities
+      .sort((a, b) => (b.purchasePrice - b.lowestPrice) - (a.purchasePrice - a.lowestPrice))
+      .slice(0, 15);
+
+    return (
+      <div className="bg-emerald-950/20 border border-emerald-500/50 rounded-lg p-4 mt-4 flex flex-col gap-4 shadow-lg shadow-emerald-500/5 animate-in fade-in slide-in-from-top-2 duration-500">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">💡</span>
+          <h3 className="text-[11px] font-black uppercase tracking-widest text-emerald-400">Oportunidades de Ahorro</h3>
+        </div>
+        <div className="flex flex-col gap-3 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
+          {topOpportunities.map(item => (
+            <div key={item.barcode} className="flex flex-col gap-1.5 border-l-2 border-emerald-500/30 pl-3 py-1 hover:bg-emerald-500/5 transition-colors rounded-r-md">
+              <span className="text-[10px] font-black text-emerald-500 uppercase leading-none tracking-tight">
+                {item.productName}
+              </span>
+              <p className="text-[10px] font-medium text-emerald-100/90 leading-tight">
+                Cómpralo con <span className="text-emerald-400 font-black uppercase italic underline decoration-emerald-500/30">{item.bestSupplierName}</span> y ahorra <span className="text-emerald-400 font-black">${(item.purchasePrice - item.lowestPrice).toLocaleString()}</span> por unidad.
               </p>
             </div>
-          </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
 
-          <div className="flex items-center gap-2 min-w-0">
-            <div className="flex items-center gap-2 bg-gray-100/50 dark:bg-zinc-900/50 rounded-xl px-2 py-1 border border-gray-200/50 dark:border-white/5">
-              <span className="text-[9px] font-black uppercase italic text-gray-500 dark:text-zinc-400">COBERTURA</span>
-              <Input
-                type="number"
-                size="sm"
-                value={daysCoverage.toString()}
-                onValueChange={(v) => setDaysCoverage(Math.max(1, parseInt(v) || 7))}
-                classNames={{
-                  inputWrapper: "w-14 h-8 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-lg",
-                  input: "text-[10px] font-black text-center text-emerald-600 dark:text-emerald-400"
-                }}
-                min={1}
-                max={90}
-              />
-              <span className="text-[9px] font-black uppercase italic text-gray-400 dark:text-zinc-500">DÍAS</span>
-            </div>
-            <div className="flex items-center gap-2">
-              {/* Selector de Método de Abastecimiento (solo cuando hay proveedor seleccionado) */}
-              {selectedSupplier !== "none" && selectedSupplier !== "global" && selectedSupplierData?.orderMethods && selectedSupplierData.orderMethods.length > 0 && (
-                <Select
-                  size="sm"
-                  aria-label="Seleccionar método de abastecimiento"
-                  selectedKeys={[selectedMethod]}
-                  onSelectionChange={(keys) => setSelectedMethod(Array.from(keys)[0] as string)}
-                  classNames={{
-                    trigger: "h-9 w-32 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl",
-                    value: "text-[9px] font-black uppercase italic text-emerald-600 dark:text-emerald-400"
-                  }}
-                >
-                  <SelectItem key="default" textValue="Canal por defecto">
-                    <span className="text-[10px] font-black uppercase italic">Canal por defecto</span>
-                  </SelectItem>
-                  {selectedSupplierData.orderMethods.map((method) => (
-                    <SelectItem 
-                      key={String(method.id)} 
-                      textValue={`${method.type === 'ROUTE' ? 'Ruta' : method.platformName} (${method.leadTimeDays}d)`}
-                    >
-                      <span className="text-[10px] font-black uppercase italic">
-                        {method.type === 'ROUTE' ? 'Ruta' : method.platformName} ({method.leadTimeDays}d)
-                      </span>
-                    </SelectItem>
-                  )) as any}
-                </Select>
-              )}
-              
-              <div className="w-full max-w-[min(100%,20rem)] translate-y-[1px]">
-                <Autocomplete
-                  aria-label="Proveedor para pedido sugerido"
-                  size="sm"
-                  placeholder="PROV..."
-                  defaultItems={[{ id: "none", name: "PROVEEDOR" }, { id: "global", name: "🌍 RADAR GLOBAL" }, ...suppliers]}
-                  selectedKey={selectedSupplier || "none"}
-                  onSelectionChange={(key) => handleSupplierChange(key)}
-                  startContent={<Truck size={14} className="text-emerald-500 hidden sm:block" />}
-                  inputProps={{
-                    classNames: {
-                      inputWrapper:
-                        "h-10 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl data-[focused=true]:border-emerald-500 transition-all px-2 sm:px-3 !mask-none",
-                      input:
-                        "text-[8.5px] md:text-[10px] font-black uppercase italic text-emerald-700 dark:text-emerald-400 !overflow-visible",
-                    },
-                  }}
-                  popoverProps={{
-                    classNames: {
-                      content:
-                        "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-xl",
-                    },
-                  }}
-                  listboxProps={{
-                    itemClasses: {
-                      base: "rounded-lg gap-3 data-[hover=true]:bg-emerald-500 data-[hover=true]:text-white",
-                      title: "text-[11px] font-black uppercase italic",
-                    },
-                  }}
-                >
-                  {(item) => (
-                    <AutocompleteItem key={String(item.id)} textValue={item.name} className="dark:text-white">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className={`w-6 h-6 rounded-lg flex items-center justify-center ${
-                            item.id === "none" ? "bg-gray-100 dark:bg-zinc-800" : 
-                            item.id === "global" ? "bg-rose-100 dark:bg-rose-900/30" :
-                            "bg-emerald-100 dark:bg-emerald-900/30"
-                          }`}
-                        >
-                          {item.id === "none" ? (
-                            <span className="text-[10px] text-gray-400">-</span>
-                          ) : item.id === "global" ? (
-                            <span className="text-[10px]">🌍</span>
-                          ) : (
-                            <Truck size={12} className="text-emerald-500" />
-                          )}
-                        </div>
-                        <span className={`font-bold ${item.id === "global" ? "text-rose-500" : ""}`}>{item.name}</span>
-                      </div>
-                    </AutocompleteItem>
-                  )}
-                </Autocomplete>
-              </div>
-            </div>
+  return (
+    <div className="h-full flex flex-col bg-gray-50 dark:bg-black overflow-y-auto md:overflow-hidden select-none text-zinc-900 dark:text-zinc-100">
+
+      {/* HEADER SUPERIOR (FIJO) */}
+      <div className="p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/10 shadow-sm gap-4 shrink-0 z-50">
+        <div className="flex items-center gap-3">
+          <div className="bg-emerald-500 h-10 w-10 rounded-xl flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 transform -rotate-3">
+            <ShoppingBag size={20} />
+          </div>
+          <div>
+            <h1 className="text-sm font-black uppercase italic tracking-tighter leading-none">Smart <span className="text-emerald-500">Restock</span></h1>
+            <p className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest mt-0.5">IA y Radar de Abastecimiento</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 bg-gray-100 dark:bg-zinc-900 p-1 rounded-2xl border border-gray-200 dark:border-white/5">
+          <button
+            onClick={() => handleSupplierChange("global")}
+            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all ${selectedSupplier === "global" ? 'bg-white dark:bg-zinc-800 text-emerald-500 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'}`}
+          >
+            Radar Global
+          </button>
+          <div className="w-[1px] h-4 bg-gray-200 dark:bg-white/10 mx-1" />
+          <div className="min-w-[180px]">
+            <Autocomplete
+              size="sm"
+              placeholder="Elegir Proveedor..."
+              className="max-w-xs"
+              selectedKey={selectedSupplier === "global" ? "none" : selectedSupplier}
+              onSelectionChange={handleSupplierChange}
+              popoverProps={{
+                classNames: {
+                  content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-xl"
+                }
+              }}
+              inputProps={{
+                classNames: {
+                  inputWrapper: "bg-transparent border-none shadow-none h-8",
+                  input: "text-[10px] font-bold uppercase"
+                }
+              }}
+            >
+              {suppliers.map((s) => (
+                <AutocompleteItem key={String(s.id)} textValue={s.name}>
+                  <div className="flex items-center gap-2">
+                    <Building2 size={14} className="text-zinc-400" />
+                    <span className="text-[11px] font-bold uppercase">{s.name}</span>
+                  </div>
+                </AutocompleteItem>
+              ))}
+            </Autocomplete>
           </div>
         </div>
       </div>
 
-      {/* CONTENT SECTION */}
-      <div className="flex flex-col gap-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* COLUMNA IZQUIERDA: Tabla + Faltantes */}
-            <div className="col-span-1 lg:col-span-8 flex flex-col gap-3">
-            {/* MAIN ORDER TABLE - SOLO LECTURA */}
-            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden">
-          <CardBody className="p-0">
-              <div className="p-4 border-b border-gray-200 dark:border-white/5 flex items-center justify-between bg-white dark:bg-zinc-950">
-                <div className="flex items-center gap-2">
-                  <FileText size={16} className="text-emerald-500" />
-                  <h3 className="font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter text-sm">Recomendaciones por Ventas</h3>
-                </div>
-                <Chip size="sm" variant="flat" className="font-black text-[9px] uppercase italic tracking-widest px-3 py-3 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                  {orderItems.length} RECOMENDADOS
-                </Chip>
-              </div>
+      {/* CONTENIDO PRINCIPAL */}
+      <div className="flex-1 p-1 md:p-2 min-h-0 md:overflow-hidden">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0 md:overflow-hidden">
 
-            <div className="overflow-x-auto w-full">
+          {/* COLUMNA IZQUIERDA: RECOMENDACIONES */}
+          <div className="lg:col-span-8 flex flex-col min-h-0 flex-1">
+            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden h-full flex flex-col">
+              <CardBody className="p-0 flex flex-col flex-1 min-h-0 overflow-hidden">
 
-            <Table 
-              aria-label="Order items table - Solo Lectura"
-              className="p-4"
-              classNames={{
-                th: "bg-gray-100 dark:bg-zinc-950/80 h-10 font-black text-xs uppercase tracking-wider border-b border-gray-200 dark:border-white/5 text-gray-500 dark:text-zinc-400",
-                td: "py-3 text-sm h-10 border-l-4 border-l-transparent",
-                tbody: "divide-y divide-gray-100 dark:divide-white/5",
-                tr: "hover:bg-emerald-500/5 hover:border-l-emerald-500 transition-all text-zinc-900 dark:text-white"
-              }}
-              removeWrapper
-            >
-              <TableHeader>
-                <TableColumn width={360}>PRODUCTO / BARCODE</TableColumn>
-                <TableColumn width={100}>STOCK</TableColumn>
-                <TableColumn width={120}>FALTANTE MÍNIMO</TableColumn>
-                <TableColumn width={120}>PROYECCIÓN VENTAS</TableColumn>
-              </TableHeader>
-              <TableBody emptyContent={loading ? <Skeleton className="h-32 w-full rounded-3xl" /> : "No hay productos en estado crítico o bajo stock"}>
-                {orderItems.map((item) => (
-                  <TableRow key={item.barcode}>
-                    <TableCell>
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-zinc-900 dark:text-white uppercase italic truncate max-w-[300px] text-xs">{item.productName}</span>
-                          {item.isOrphan && (
-                            <Chip 
-                              size="sm" 
-                              variant="flat"
-                              className="text-[8px] font-black uppercase italic px-2 h-5 bg-rose-100 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-500/20"
-                            >
-                              SIN PROVEEDOR
-                            </Chip>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-mono tracking-widest">{item.barcode}</span>
-                        <span className="text-[8px] text-gray-500 dark:text-zinc-500/80 font-black uppercase tracking-wider">
-                          Venta: {Math.round(item.avgDailySales || 0)}/día
-                          {item.isPack && item.packMultiplier > 1 && (
-                            <span className="text-blue-600 dark:text-blue-400/80 ml-1">
-                              | 📦 Pacas: {item.packMultiplier} und
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Chip 
-                          size="sm" 
-                          variant="flat"
-                          className={`font-black text-[10px] border ${
-                            item.status === 'CRITICAL' 
-                              ? 'bg-rose-100 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-200 dark:border-rose-500/20' 
-                              : item.status === 'WARNING' 
-                                ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-200 dark:border-amber-500/20'
-                                : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          }`}
-                        >
-                          {item.stock} und
-                        </Chip>
-                        <span className="text-[10px] text-zinc-500 italic">mín: {item.minStock}</span>
-                      </div>
-                    </TableCell>
-                    {/* FASE 1: FALTANTE MÍNIMO - Cálculo estricto: max(0, min_stock - stock) */}
-                    <TableCell>
-                      {(() => {
-                        const missingMin = Math.max(0, (item.minStock || 0) - item.stock);
-                        return missingMin > 0 ? (
-                          <div className="flex flex-col">
-                            <span className="text-lg font-black text-rose-500">
-                              {missingMin} UND
-                            </span>
-                            <span className="text-[9px] text-rose-400/70 font-medium uppercase tracking-wider">
-                              Requerido
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 text-emerald-500/60">
-                            <CheckCircle size={18} />
-                            <span className="text-sm text-zinc-500">—</span>
-                          </div>
-                        );
-                      })()}
-                    </TableCell>
-                    {/* FASE 1: PROYECCIÓN VENTAS - Sugerencia adicional de la IA */}
-                    <TableCell>
-                      {(() => {
-                        const missingMin = Math.round(Math.max(0, (item.minStock || 0) - item.stock));
-                        // La proyección de ventas es la cantidad sugerida ADICIONAL después del mínimo
-                        const salesProjection = Math.round(Math.max(0, item.quantity - missingMin));
-                        return salesProjection > 0 ? (
-                          <div className="flex flex-col">
-                            <span className="text-lg font-black text-emerald-500">
-                              +{salesProjection} UND
-                            </span>
-                            <span className="text-[9px] text-emerald-400/70 font-medium uppercase tracking-wider">
-                              Sugerido
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 text-zinc-600">
-                            <span className="text-sm">—</span>
-                          </div>
-                        );
-                      })()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-            </div>
-          </CardBody>
-        </Card>
-
-        {/* 📦 REPORTES DE CAJA (FALTANTES) - En la columna izquierda */}
-        <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-lg overflow-hidden">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <div className="h-8 w-8 bg-rose-500/20 text-rose-500 dark:text-rose-400 flex items-center justify-center rounded-xl shadow-lg shadow-rose-500/20">
-                  <PackageSearch size={18} />
-                </div>
-                <div>
-                  <h3 className="text-xs font-black text-zinc-900 dark:text-white uppercase italic tracking-tighter leading-none">
-                    📦 Reportes de <span className="text-rose-500">Caja</span>
-                  </h3>
-                  <p className="text-[9px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest mt-0.5 leading-none">
-                    Faltantes reportados
-                  </p>
-                </div>
-              </div>
-              <Chip 
-                variant="flat" 
-                color="danger" 
-                className="h-5 font-black text-[8px] uppercase tracking-wider px-2 border-none bg-rose-100 dark:bg-rose-500/10 text-rose-600 dark:text-rose-400"
-              >
-                {missingItems?.length || 0} PENDIENTES
-              </Chip>
-            </div>
-
-            {loadingMissingItems ? (
-              <div className="space-y-2">
-                <Skeleton className="h-8 w-full rounded-lg" />
-                <Skeleton className="h-8 w-full rounded-lg" />
-              </div>
-            ) : missingItems.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-4 text-center">
-                <div className="h-10 w-10 bg-emerald-500/10 rounded-full flex items-center justify-center mb-2">
-                  <CheckCircle size={20} className="text-emerald-500" />
-                </div>
-                <p className="text-[10px] font-black text-zinc-400 uppercase tracking-widest">
-                  Todo bajo control
-                </p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-white/5">
-                <table className="w-full">
-                  <thead className="bg-gray-100 dark:bg-zinc-900/80">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-[8px] font-black text-zinc-400 uppercase tracking-wider">
-                        Producto
-                      </th>
-                      <th className="px-3 py-2 text-left text-[8px] font-black text-zinc-400 uppercase tracking-wider">
-                        Estado
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                    {missingItems.slice(0, 4).map((item) => (
-                      <tr 
-                        key={item.id} 
-                        className="hover:bg-rose-500/5 transition-colors group border-l-4 border-transparent hover:border-rose-500"
-                      >
-                        <td className="px-3 py-2">
-                          <span className="font-black text-xs text-zinc-900 dark:text-white uppercase italic truncate block max-w-[120px]">
-                            {item.product_name}
-                          </span>
-                          <span className="text-[8px] text-gray-500 dark:text-zinc-500">
-                            {item.reporter?.name || "Cajero"} • {new Date(item.created_at).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}
-                          </span>
-                        </td>
-                        <td className="px-3 py-2">
-                          <Chip 
-                            size="sm" 
-                            variant="flat"
-                            className={`text-[8px] font-black uppercase px-2 h-5 ${
-                              item.status === 'PENDING' 
-                                ? 'bg-amber-100 dark:bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-500/20' 
-                                : item.status === 'COMPLETED'
-                                ? 'bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-500/20'
-                                : 'bg-gray-100 dark:bg-zinc-500/10 text-gray-600 dark:text-zinc-400 border border-gray-200 dark:border-zinc-500/20'
-                            }`}
-                          >
-                            {item.status === 'PENDING' ? 'PENDIENTE' : item.status === 'COMPLETED' ? 'RESUELTO' : item.status}
-                          </Chip>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {missingItems.length > 4 && (
-                  <div className="px-3 py-1.5 bg-gray-50 dark:bg-zinc-900/50 border-t border-gray-100 dark:border-white/5 text-center">
-                    <span className="text-[8px] text-gray-500 dark:text-zinc-500">
-                      +{missingItems.length - 4} más...
-                    </span>
-                  </div>
-                )}
-              </div>
-            )}
-          </CardBody>
-        </Card>
-      </div> {/* FIN COLUMNA IZQUIERDA */}
-
-      {/* COLUMNA DERECHA: Registrar Pedido Esperado */}
-      <div className="col-span-1 lg:col-span-4">
-          <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-lg overflow-hidden">
-            <CardBody className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <div className="h-8 w-8 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                  <Calendar size={16} className="text-amber-500" />
-                </div>
-                <h3 className="font-black text-zinc-900 dark:text-white uppercase italic tracking-tight text-xs">Registrar Pedido Esperado</h3>
-              </div>
-                
-                <div className="space-y-3">
-                  <div>
-                    <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
-                      <Building2 size={9} className="inline mr-1" /> Proveedor
-                    </label>
-                    <div className="flex gap-2">
-                      <Autocomplete
-                        aria-label="Seleccionar o crear proveedor"
-                        placeholder="Buscar proveedor..."
-                        className="flex-1"
-                      size="sm"
-                      allowsCustomValue
-                      items={filteredSupplierOptions}
-                      inputValue={supplierSearchTerm}
-                      onInputChange={(value) => {
-                        setSupplierSearchTerm(value);
-                        setNewPreventa(prev => ({ ...prev, supplierName: value }));
-                        setIsNewSupplier(true);
-                      }}
-                      onSelectionChange={(key) => {
-                        if (key) {
-                          if (key === "__new__") {
-                            // Opción de crear nuevo
-                            setNewPreventa({ 
-                              supplierId: 0, 
-                              supplierName: supplierSearchTerm, 
-                              date: '', 
-                              total: newPreventa.total 
-                            });
-                            setIsNewSupplier(true);
-                            setDateOptions([]); // Limpiar opciones de fechas
-                            setSelectedSupplierForDates(null);
-                          } else {
-                            const selected = suppliers.find(s => String(s.id) === String(key));
-                            if (selected) {
-                              setNewPreventa({ 
-                                supplierId: typeof selected.id === 'string' ? parseInt(selected.id) : selected.id, 
-                                supplierName: selected.name, 
-                                date: '', 
-                                total: newPreventa.total 
-                              });
-                              setSupplierSearchTerm(selected.name);
-                              setIsNewSupplier(false);
-                              // FASE 2: Calcular fechas de entrega para el proveedor seleccionado
-                              setSelectedSupplierForDates(selected);
-                              calculateDeliveryDates(selected);
-                            }
-                          }
-                        }
-                      }}
+                {/* ÁREA DE DATOS (SCROLLABLE) */}
+                <div className="flex-1 overflow-y-auto overscroll-contain pb-16 custom-scrollbar min-h-0 w-full">
+                  {/* TABLA DESKTOP */}
+                  <div className="hidden sm:block">
+                    <Table
+                      isCompact
+                      removeWrapper
+                      isHeaderSticky
+                      aria-label="Recomendaciones"
                       classNames={{
                         base: "w-full",
-                      }}
-                      inputProps={{
-                        classNames: {
-                          inputWrapper: "h-9 bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-lg data-[focused=true]:border-emerald-500",
-                          input: "text-xs text-zinc-900 dark:text-white",
-                        }
-                      }}
-                      popoverProps={{
-                        classNames: {
-                          content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-xl",
-                        }
-                      }}
-                      listboxProps={{
-                        itemClasses: {
-                          base: "rounded-lg data-[hover=true]:bg-emerald-500/10 data-[hover=true]:text-emerald-500 text-zinc-900 dark:text-white",
-                          title: "text-xs font-black uppercase italic",
-                        }
+                        wrapper: "flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
+                        th: "bg-gray-50/90 dark:bg-zinc-950/90 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-11 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-20 px-4",
+                        td: "py-2 border-b border-gray-100 dark:border-white/5 px-4",
+                        tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 h-12",
                       }}
                     >
-                      {(item: any) => {
-                        const isNew = item.id === "__new__";
-                        return (
-                          <AutocompleteItem
-                            key={String(item.id)}
-                            textValue={isNew ? `+ Crear nuevo: "${item.name}"` : item.name}
-                            className={isNew ? "text-emerald-500" : "text-zinc-900 dark:text-white"}
-                          >
-                            <div className={`flex items-center gap-2 ${isNew ? "border-t border-white/5 pt-1 mt-1" : ""}`}>
-                              <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${isNew ? "bg-emerald-500/20" : "bg-emerald-500/20"}`}>
-                                {isNew ? (
-                                  <Plus size={12} className="text-emerald-500" />
-                                ) : (
-                                  <Truck size={12} className="text-emerald-500" />
-                                )}
-                              </div>
+                      <TableHeader>
+                        <TableColumn>PRODUCTO</TableColumn>
+                        <TableColumn align="center">STOCK ACTUAL</TableColumn>
+                        <TableColumn align="center">STOCK REQUERIDO</TableColumn>
+                        <TableColumn align="center">PEDIDO OBLIGATORIO</TableColumn>
+                        <TableColumn align="center">SUGERIDO ROTACIÓN (IA)</TableColumn>
+                      </TableHeader>
+                      <TableBody emptyContent={loading ? <Skeleton className="h-32 w-full rounded-2xl" /> : "Sin recomendaciones activas"}>
+                        {displayedItems.map((item) => (
+                          <TableRow key={item.barcode}>
+                            <TableCell>
                               <div className="flex flex-col">
-                                <span className={`font-black text-xs uppercase italic ${isNew ? "text-emerald-500" : ""}`}>
-                                  {isNew ? `+ Crear nuevo proveedor: "${item.name}"` : item.name}
-                                </span>
-                                {!isNew && item.vendorName && (
-                                  <span className="text-[9px] text-zinc-500">{item.vendorName}</span>
-                                )}
+                                <span className="font-bold text-zinc-900 dark:text-white uppercase truncate max-w-[300px] text-[11px] leading-none">{item.productName}</span>
+                                <span className="text-[8px] font-mono text-zinc-400 mt-1 tracking-tighter leading-none">{item.barcode}</span>
                               </div>
-                            </div>
-                          </AutocompleteItem>
-                        );
-                      }}
-                    </Autocomplete>
-                    {/* FASE 3: Botón [+] para crear proveedor rápido */}
-                    <Button
-                      isIconOnly
-                      size="sm"
-                      variant="flat"
-                      onPress={() => setIsSupplierModalOpen(true)}
-                      className="h-9 w-9 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 text-gray-400 dark:text-zinc-400 hover:text-emerald-400 hover:border-emerald-500/50 shrink-0"
-                    >
-                      <Plus size={16} />
-                    </Button>
+                            </TableCell>
+                            <TableCell align="center">
+                              <span className="font-black text-xs tabular-nums">{Number(item.stock)}</span>
+                            </TableCell>
+                            <TableCell align="center">
+                              <span className="font-black text-xs tabular-nums text-zinc-400">
+                                {item.minStock}
+                              </span>
+                            </TableCell>
+                            <TableCell align="center">
+                              <span className={`font-black text-xs tabular-nums ${item.requiredMin > 0 ? 'text-amber-500' : 'text-zinc-500'}`}>
+                                {item.requiredMin > 0 ? `+${item.requiredMin}` : '0'}
+                              </span>
+                            </TableCell>
+                            <TableCell align="center">
+                              <div className="flex flex-col items-center leading-none">
+                                <span className={`font-black text-sm ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-400'}`}>
+                                  {item.projectedSales > 0 ? `+${Math.round(item.projectedSales)}` : '0'}
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </div>
-                  {isNewSupplier && newPreventa.supplierName && (
-                    <p className="text-[8px] text-emerald-500/80 mt-1 italic">
-                      Se creará nuevo proveedor: {newPreventa.supplierName}
+
+                  {/* VISTA MÓVIL (CARDS) */}
+                  <div className="sm:hidden h-full overflow-y-auto p-2 flex flex-col gap-2 custom-scrollbar">
+                    {displayedItems.map((item) => (
+                      <div key={item.barcode} className="bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 p-3 rounded-xl shadow-sm flex flex-col gap-3">
+                        <div className="flex flex-col">
+                          <span className="font-black text-[11px] uppercase truncate text-zinc-800 dark:text-zinc-200 italic leading-none">{item.productName}</span>
+                          <span className="text-[8px] font-mono text-zinc-400 mt-1">{item.barcode}</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 bg-gray-50 dark:bg-black/20 p-2 rounded-lg border border-gray-100 dark:border-white/5">
+                          <div className="flex flex-col"><span className="text-[7px] font-black text-zinc-400 uppercase">STOCK</span><span className="text-[11px] font-black">{Number(item.stock)}</span></div>
+                          <div className="flex flex-col items-end"><span className="text-[7px] font-black text-zinc-400 uppercase">REQUERIDO</span><span className="text-[11px] font-black">{item.minStock}</span></div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2 px-1">
+                          <div className="flex flex-col">
+                            <span className="text-[7px] font-black text-amber-500 uppercase italic">OBLIGATORIO</span>
+                            <span className="text-[11px] font-black text-amber-500">+{item.requiredMin}</span>
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className={`text-[7px] font-black uppercase italic ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-500'}`}>SUGERIDO IA</span>
+                            <span className={`text-[11px] font-black ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-500'}`}>+{Math.round(item.projectedSales)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* PIE DE PÁGINA (HORIZONTAL) */}
+                <div className="shrink-0 bg-white dark:bg-zinc-950 border-t border-gray-200 dark:border-white/10 p-4 flex flex-wrap items-center justify-center sm:justify-between gap-4 backdrop-blur-md">
+                  <div className="flex flex-col gap-1">
+                    <p className="text-[11px] text-gray-900 dark:text-white uppercase tracking-widest font-black italic leading-none">
+                      MOSTRANDO <span className="text-emerald-500">{totalItemsCount === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItemsCount)}</span> DE {totalItemsCount} <span className="text-[8px] opacity-30 ml-2">({pageSize} por pág.)</span>
                     </p>
-                  )}
+                    <span className="text-[9px] font-black text-emerald-500/60 uppercase tracking-widest italic">Página {page} de {totalPagesCount}</span>
                   </div>
-                  <div>
-                    <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
-                      <Calendar size={9} className="inline mr-1" /> Fecha Esperada
-                    </label>
-                    {/* FASE 2: Select inteligente con fechas calculadas + opción manual */}
-                    {dateOptions.length > 0 && !showManualDate ? (
+
+                  <div className="flex items-center gap-6">
+                    <Pagination
+                      key={totalPagesCount}
+                      showControls
+                      total={totalPagesCount}
+                      page={page}
+                      onChange={setPage}
+                      color="success"
+                      variant="flat"
+                      size="sm"
+                      siblings={1}
+                      boundaries={1}
+                    />
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest italic">Ver:</span>
+                      <div className="relative">
+                        <select
+                          value={pageSize}
+                          onChange={(e) => {
+                            setPageSize(Number(e.target.value));
+                            setPage(1);
+                          }}
+                          className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-3 pr-8 outline-none rounded-xl border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none hover:border-emerald-500/50 transition-all"
+                        >
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                          <option value={10000}>TODOS</option>
+                        </select>
+                        <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
+                          <Info size={12} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          </div>
+
+          {/* COLUMNA DERECHA: REGISTRO Y FALTANTES */}
+          <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1 min-h-0">
+            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-lg relative overflow-hidden shrink-0">
+              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 to-amber-600" />
+              <CardBody className="p-5 flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <Calendar size={18} className="text-amber-500" />
+                  <h3 className="text-xs font-black uppercase italic tracking-tight">Registrar Preventa</h3>
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[9px] font-black uppercase text-zinc-400 tracking-widest pl-1">Proveedor</label>
+                    <div className="flex gap-2">
+                      <Autocomplete
+                        size="sm"
+                        placeholder="Buscar..."
+                        className="flex-1"
+                        selectedKey={newPreventa.supplierId ? String(newPreventa.supplierId) : undefined}
+                        inputValue={supplierSearchTerm}
+                        onInputChange={setSupplierSearchTerm}
+                        items={filteredSupplierOptions}
+                        popoverProps={{
+                          classNames: {
+                            content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-xl"
+                          }
+                        }}
+                        onSelectionChange={(key) => {
+                          if (key === '__new__') {
+                            setIsSupplierModalOpen(true);
+                            setSupplierSearchTerm("");
+                          } else {
+                            handleSupplierChange(key);
+                          }
+                        }}
+                        inputProps={{ classNames: { inputWrapper: "bg-gray-100 dark:bg-zinc-900 border-none rounded-xl", input: "text-[10px] font-bold" } }}
+                      >
+                        {(item: any) => (
+                          <AutocompleteItem key={String(item.id)} textValue={item.name}>
+                            <span className="text-[11px] font-bold uppercase">{item.name}</span>
+                          </AutocompleteItem>
+                        )}
+                      </Autocomplete>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[9px] font-black uppercase text-zinc-400 tracking-widest pl-1">Entrega Estimada</label>
+                    {dateOptions.length > 0 ? (
                       <Select
                         size="sm"
-                        aria-label="Seleccionar fecha de entrega"
-                        placeholder="Seleccionar fecha..."
+                        placeholder="Fecha..."
                         selectedKeys={newPreventa.date ? [newPreventa.date] : []}
-                        onSelectionChange={(keys) => {
-                          const selectedDate = Array.from(keys)[0] as string;
-                          if (selectedDate === '__manual__') {
-                            setShowManualDate(true);
-                            setNewPreventa(prev => ({ ...prev, date: '' }));
-                          } else {
-                            setNewPreventa(prev => ({ ...prev, date: selectedDate }));
+                        onSelectionChange={k => {
+                          const s = Array.from(k)[0] as string;
+                          setNewPreventa(p => ({ ...p, date: s }));
+                        }}
+                        popoverProps={{
+                          classNames: {
+                            content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-xl"
                           }
                         }}
-                        classNames={{
-                          trigger: "h-9 bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-lg data-[focused=true]:border-emerald-500",
-                          value: "text-xs text-zinc-900 dark:text-white font-medium",
-                          listbox: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-xl",
-                          popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl",
-                        }}
-                        listboxProps={{
-                          itemClasses: {
-                            base: "text-xs text-zinc-900 dark:text-white data-[selected=true]:bg-emerald-500/20 data-[selected=true]:text-emerald-400 hover:bg-gray-100 dark:hover:bg-white/5",
-                          }
-                        }}
+                        classNames={{ trigger: "bg-gray-100 dark:bg-zinc-900 border-none rounded-xl", value: "text-[10px] font-bold uppercase" }}
                       >
-                        {[...dateOptions, { value: '__manual__', label: 'Otra fecha (Manual)...' }].map((option) => (
-                          <SelectItem 
-                            key={option.value} 
-                            textValue={option.label}
-                            className={option.value === '__manual__' ? 'text-zinc-400 italic' : ''}
-                          >
-                            <span className={`text-xs font-medium ${option.value === '__manual__' ? 'text-zinc-400 italic' : ''}`}>
-                              {option.label}
-                            </span>
-                          </SelectItem>
+                        {dateOptions.map(o => (
+                          <SelectItem key={o.value} textValue={o.label}><span className="text-[10px] font-bold uppercase">{o.label}</span></SelectItem>
                         ))}
                       </Select>
                     ) : (
-                      <div className="flex gap-2">
-                        <Input
-                          type="date"
-                          value={newPreventa.date}
-                          onChange={(e) => setNewPreventa({ ...newPreventa, date: e.target.value })}
-                          className="h-9 flex-1"
-                          classNames={{
-                            inputWrapper: "h-9 bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-lg",
-                            input: "text-xs text-zinc-900 dark:text-white"
-                          }}
-                        />
-                        {dateOptions.length > 0 && (
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            onPress={() => {
-                              setShowManualDate(false);
-                              setNewPreventa(prev => ({ ...prev, date: '' }));
-                            }}
-                            className="h-9 px-2 bg-gray-200 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white"
-                          >
-                            ←
-                          </Button>
-                        )}
-                      </div>
+                      <Input
+                        type="date"
+                        size="sm"
+                        value={newPreventa.date}
+                        onChange={(e) => setNewPreventa(p => ({ ...p, date: e.target.value }))}
+                        classNames={{ inputWrapper: "bg-gray-100 dark:bg-zinc-900 border-none rounded-xl", input: "text-[10px] font-bold uppercase" }}
+                      />
                     )}
                   </div>
-                  <div>
-                    <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-wider block mb-1.5">
-                      <DollarSign size={9} className="inline mr-1" /> Total Estimado (COP)
-                    </label>
+
+                  <div className="flex flex-col gap-1.5">
+                    <label className="text-[9px] font-black uppercase text-zinc-400 tracking-widest pl-1">Monto Estimado</label>
                     <Input
                       type="text"
-                      placeholder="0"
+                      size="sm"
+                      placeholder="$ 0"
                       value={totalDisplay}
                       onChange={(e) => {
-                        // FASE 2: Formato de moneda en vivo - extraer solo números
-                        const rawValue = e.target.value.replace(/[^0-9]/g, '');
-                        // Guardar valor raw para el payload
-                        setNewPreventa({ ...newPreventa, total: rawValue });
-                        // Formatear con separadores de miles para display
-                        if (rawValue) {
-                          const numValue = parseInt(rawValue, 10);
-                          setTotalDisplay(numValue.toLocaleString('es-CO'));
-                        } else {
-                          setTotalDisplay('');
-                        }
+                        const val = e.target.value.replace(/\D/g, '');
+                        setTotalDisplay(new Intl.NumberFormat('es-CO').format(Number(val)));
+                        setNewPreventa(prev => ({ ...prev, total: val }));
                       }}
-                      className="h-9"
-                      classNames={{
-                        inputWrapper: "h-9 bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-lg",
-                        input: "text-xs text-zinc-900 dark:text-white"
-                      }}
-                      startContent={<span className="text-gray-400 dark:text-zinc-500 text-xs">$</span>}
+                      classNames={{ inputWrapper: "bg-gray-100 dark:bg-zinc-900 border-none rounded-xl", input: "text-lg font-black italic text-emerald-500" }}
+                      startContent={<DollarSign size={16} className="text-emerald-500" />}
                     />
                   </div>
-                  <Button
-                    onPress={async () => {
-                      if (!newPreventa.supplierName || !newPreventa.date) {
-                        toast({ title: "Error", description: "Proveedor y fecha son requeridos", variant: "destructive" });
-                        return;
-                      }
-                      setIsSubmittingPreventa(true);
-                      try {
-                        // FASE 1: Limpieza estricta del payload
-                        const cleanTotal = parseFloat(String(newPreventa.total).replace(/\D/g, '')) || 0;
-                        const payload = {
-                          supplierId: newPreventa.supplierId || 0,
-                          supplierName: newPreventa.supplierName.trim(),
-                          expectedDate: newPreventa.date, // Ya viene como YYYY-MM-DD
-                          totalEstimated: cleanTotal,
-                          itemCount: 0
-                        };
-                        // DEBUG: Ver payload en consola
-                        console.log("🚀 Payload enviado:", payload);
-                        console.log("📅 Fecha formato:", payload.expectedDate, "¿Es válida ISO?", /^\d{4}-\d{2}-\d{2}$/.test(payload.expectedDate));
-                        console.log("💰 Total limpio:", cleanTotal, "¿Es número?", typeof cleanTotal === 'number');
 
-                        const res = await fetch(`${apiUrl}/orders/expected`, {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
-                          },
-                          body: JSON.stringify(payload)
-                        });
-                        if (res.ok) {
-                          toast({ 
-                            title: "✅ REGISTRO EXITOSO", 
-                            description: "La preventa ha sido sincronizada correctamente.",
-                            className: "bg-zinc-900 border border-emerald-500/50 text-white shadow-2xl shadow-emerald-500/10"
-                          });
-                          setNewPreventa({ supplierId: 0, supplierName: '', date: '', total: '' });
-                          setTotalDisplay(''); // FASE 2: Limpiar display formateado
-                          setSupplierSearchTerm('');
-                          setIsNewSupplier(false);
-                          // Refresh list
-                          const refreshRes = await fetch(`${apiUrl}/orders/expected-today`, { 
-                            headers: {
-                              'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
-                            } 
-                          });
-                          if (refreshRes.ok) {
-                            const data = await refreshRes.json();
-                            setExpectedOrders(data || []);
-                          }
-                        } else {
-                          toast({ title: "Error", description: "No se pudo registrar", variant: "destructive" });
-                        }
-                      } catch (err) {
-                        toast({ title: "Error", description: "Error de conexión", variant: "destructive" });
-                      } finally {
-                        setIsSubmittingPreventa(false);
-                      }
-                    }}
-                    isDisabled={!newPreventa.supplierName || !newPreventa.date || isSubmittingPreventa}
-                    className="w-full h-10 bg-emerald-500 hover:bg-emerald-600 text-white font-black uppercase text-[10px] tracking-wider rounded-xl mt-1"
-                    startContent={<Plus size={14} />}
+                  <Button
+                    className="w-full bg-emerald-500 text-white font-black uppercase italic tracking-widest py-6 rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95"
+                    isLoading={isSubmittingPreventa}
+                    onPress={handleSaveOrder}
+                    startContent={<CheckCircle size={18} />}
                   >
-                    Guardar Preventa
+                    Confirmar Registro
                   </Button>
                 </div>
               </CardBody>
             </Card>
-        </div> {/* FIN COLUMNA DERECHA */}
-      </div> {/* FIN GRID */}
-    </div> {/* FIN CONTENT SECTION (579) */}
-  </div> {/* FIN INNER WRAPPER (454) */}
 
-    {/* FASE 3: Modal para creación rápida de proveedor */}
-    <SupplierFormModal
-      isOpen={isSupplierModalOpen}
-      onOpenChange={setIsSupplierModalOpen}
-      supplier={null}
-      isEdit={false}
-      onSave={async (savedSupplier: Partial<Supplier>) => {
-        // Recargar proveedores
-        await fetchSuppliers();
-        // Auto-seleccionar el nuevo proveedor en el formulario
-        if (savedSupplier && savedSupplier.id) {
-          setNewPreventa({
-            supplierId: typeof savedSupplier.id === 'string' ? parseInt(savedSupplier.id) : savedSupplier.id,
-            supplierName: savedSupplier.name || '',
-            date: '',
-            total: newPreventa.total
-          });
-          setSupplierSearchTerm(savedSupplier.name || '');
-          setIsNewSupplier(false);
-          // Calcular fechas si tiene días configurados
-          if (savedSupplier.deliveryDays && savedSupplier.deliveryDays.length > 0) {
-            setSelectedSupplierForDates(savedSupplier as Supplier);
-            calculateDeliveryDates(savedSupplier as Supplier);
-          }
-        }
-        setIsSupplierModalOpen(false);
-      }}
-    />
+            <SmartSourcingAlerts />
+
+            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden shrink-0">
+              <CardBody className="p-4 flex flex-col gap-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <PackageSearch size={16} className="text-rose-500" />
+                    <h3 className="text-[10px] font-black uppercase italic text-zinc-500 tracking-wider">Faltantes en Caja</h3>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                  {loadingMissingItems ? <Skeleton className="h-10 w-full rounded-lg" /> : missingItems.length > 0 ? (
+                    missingItems.map(m => (
+                      <div key={m.id} className="flex items-center justify-between p-2.5 bg-rose-500/[0.03] rounded-xl border border-rose-500/10">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <Button isIconOnly size="sm" variant="flat" onPress={() => handleResolveMissingItem(m.id)} className="h-8 w-8 rounded-full bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 hover:bg-emerald-500 hover:text-white transition-all shadow-sm"><Check size={14} /></Button>
+                          <div className="flex flex-col min-w-0">
+                            <span className="font-bold uppercase truncate text-[10px]">{m.product_name}</span>
+                            <span className="text-[8px] text-zinc-400 uppercase font-bold italic tracking-tighter">Pendiente</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  ) : <div className="p-8 text-center text-[9px] font-black text-zinc-400 uppercase italic tracking-widest">Sin pendientes</div>}
+                </div>
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+      </div>
+
+      <SupplierFormModal
+        isOpen={isSupplierModalOpen}
+        onOpenChange={setIsSupplierModalOpen}
+        supplier={null}
+        isEdit={false}
+        onSave={handleSaveSupplier}
+      />
     </div>
   );
 }

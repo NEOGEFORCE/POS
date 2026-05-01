@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"time"
 
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
@@ -39,6 +40,14 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 			expense.Description = "PAGO PROVEEDOR: " + newSup.Name
 		}
 	}
+
+	// Lógica de Estado Inicial para Préstamos
+	if expense.PaymentSource == "PRESTAMO" || expense.PaymentSource == "PREST." {
+		expense.Status = "PENDING"
+	} else if expense.Status == "" {
+		expense.Status = "PAID"
+	}
+
 	return s.repo.Save(expense)
 }
 
@@ -55,6 +64,33 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 		return errors.New("el monto del egreso debe ser mayor a cero")
 	}
 	return s.repo.Update(id, expense)
+}
+
+// SettleExpense marca un egreso como pagado y define su fuente real de dinero
+func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string) (*models.Expense, error) {
+	expense, err := s.repo.GetByID(id)
+	if err != nil {
+		return nil, errors.New("egreso no encontrado")
+	}
+
+	if expense.Status == "PAID" {
+		return nil, errors.New("este egreso ya está marcado como pagado")
+	}
+
+	// Actualizar campos
+	expense.Status = "PAID"
+	expense.PaymentSource = newPaymentSource
+	// Al saldar una deuda, la fecha se actualiza a HOY para que impacte el cierre actual
+	expense.Date = time.Now()
+	
+	// Registramos quién hizo el pago real
+	expense.CreatedByDNI = updaterDNI
+
+	if err := s.repo.Update(id, expense); err != nil {
+		return nil, err
+	}
+
+	return expense, nil
 }
 
 // CreateLinkedExpense crea un egreso vinculado a una orden de compra pendiente
@@ -107,7 +143,8 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 	}
 
 	// Actualizar stock usando BulkReceive (que también marca la orden como recibida)
-	if err := s.productRepo.BulkReceive(receiveEntries, &orderID); err != nil {
+	// BypassExpense = true porque el egreso se acaba de crear arriba manualmente
+	if err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI); err != nil {
 		// No retornamos error aquí para no bloquear el egreso
 		// El stock puede actualizarse manualmente después
 		// TODO: Loggear el error para auditoría

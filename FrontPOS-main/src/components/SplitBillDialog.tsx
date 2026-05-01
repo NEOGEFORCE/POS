@@ -35,6 +35,7 @@ import { formatCurrency, applyRounding } from "@/lib/utils"
 
 interface CartItem extends Product {
     cartQuantity: number;
+    cartItemId: string;
 }
 
 interface SplitBillDialogProps {
@@ -60,7 +61,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
         if (isOpen && !prevIsOpen.current) {
             setLeftItems([...originalItems])
             setRightItems([])
-            setSelectedLeft(originalItems.length > 0 ? originalItems[0].barcode : null)
+            setSelectedLeft(originalItems.length > 0 ? originalItems[0].cartItemId : null)
             setSelectedRight(null)
             const initialCustomer = customers.find(c => String(c.dni) === String(currentCustomerDni)) || { dni: String(currentCustomerDni), name: 'Consumidor Final' };
             setTargetCustomer(initialCustomer);
@@ -70,23 +71,23 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
 
     // Auto-select first item when list changes
     useEffect(() => {
-        if (leftItems.length > 0 && (!selectedLeft || !leftItems.find(i => i.barcode === selectedLeft))) {
-            setSelectedLeft(leftItems[0].barcode)
+        if (leftItems.length > 0 && (!selectedLeft || !leftItems.find(i => i.cartItemId === selectedLeft))) {
+            setSelectedLeft(leftItems[0].cartItemId)
         } else if (leftItems.length === 0) {
             setSelectedLeft(null)
         }
     }, [leftItems, selectedLeft])
 
     useEffect(() => {
-        if (rightItems.length > 0 && (!selectedRight || !rightItems.find(i => i.barcode === selectedRight))) {
-            setSelectedRight(rightItems[0].barcode)
+        if (rightItems.length > 0 && (!selectedRight || !rightItems.find(i => i.cartItemId === selectedRight))) {
+            setSelectedRight(rightItems[0].cartItemId)
         } else if (rightItems.length === 0) {
             setSelectedRight(null)
         }
     }, [rightItems, selectedRight])
 
-    const moveToRight = (barcode: string, all: boolean = false) => {
-        const index = leftItems.findIndex(i => i.barcode === barcode)
+    const moveToRight = (cartItemId: string, all: boolean = false) => {
+        const index = leftItems.findIndex(i => i.cartItemId === cartItemId)
         if (index === -1) return
 
         const item = leftItems[index]
@@ -103,7 +104,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
 
         // Update Right
         const newRight = [...rightItems]
-        const rightIndex = newRight.findIndex(i => i.barcode === barcode)
+        const rightIndex = newRight.findIndex(i => i.cartItemId === cartItemId)
         if (rightIndex > -1) {
             newRight[rightIndex] = { ...newRight[rightIndex], cartQuantity: newRight[rightIndex].cartQuantity + qtyToMove }
         } else {
@@ -112,8 +113,8 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
         setRightItems(newRight)
     }
 
-    const moveToLeft = (barcode: string, all: boolean = false) => {
-        const index = rightItems.findIndex(i => i.barcode === barcode)
+    const moveToLeft = (cartItemId: string, all: boolean = false) => {
+        const index = rightItems.findIndex(i => i.cartItemId === cartItemId)
         if (index === -1) return
 
         const item = rightItems[index]
@@ -130,7 +131,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
 
         // Update Left
         const newLeft = [...leftItems]
-        const leftIndex = newLeft.findIndex(i => i.barcode === barcode)
+        const leftIndex = newLeft.findIndex(i => i.cartItemId === cartItemId)
         if (leftIndex > -1) {
             newLeft[leftIndex] = { ...newLeft[leftIndex], cartQuantity: newLeft[leftIndex].cartQuantity + qtyToMove }
         } else {
@@ -141,7 +142,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
 
     const moveAllToRight = () => {
         setRightItems([...rightItems, ...leftItems.map(li => {
-            const existing = rightItems.find(ri => ri.barcode === li.barcode)
+            const existing = rightItems.find(ri => ri.cartItemId === li.cartItemId)
             if (existing) {
                 // This shouldn't normally happen if we manage state correctly, but for safety:
                 return { ...li, cartQuantity: li.cartQuantity + existing.cartQuantity }
@@ -151,7 +152,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
         // Simplified move all:
         const combined = [...rightItems]
         leftItems.forEach(li => {
-            const idx = combined.findIndex(ri => ri.barcode === li.barcode)
+            const idx = combined.findIndex(ri => ri.cartItemId === li.cartItemId)
             if (idx > -1) combined[idx].cartQuantity += li.cartQuantity
             else combined.push({...li})
         })
@@ -162,7 +163,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
     const moveAllToLeft = () => {
         const combined = [...leftItems]
         rightItems.forEach(ri => {
-            const idx = combined.findIndex(li => li.barcode === ri.barcode)
+            const idx = combined.findIndex(li => li.cartItemId === ri.cartItemId)
             if (idx > -1) combined[idx].cartQuantity += ri.cartQuantity
             else combined.push({...ri})
         })
@@ -221,10 +222,10 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                 <TableBody>
                                     {leftItems.map(item => (
                                         <TableRow 
-                                            key={item.barcode} 
-                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedLeft === item.barcode ? 'bg-emerald-100 dark:bg-emerald-500 text-emerald-900 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-900 dark:text-gray-100'}`}
-                                            onClick={() => setSelectedLeft(item.barcode)}
-                                            onDoubleClick={() => moveToRight(item.barcode)}
+                                            key={item.cartItemId} 
+                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedLeft === item.cartItemId ? 'bg-emerald-100 dark:bg-emerald-500 text-emerald-900 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-900 dark:text-gray-100'}`}
+                                            onClick={() => setSelectedLeft(item.cartItemId)}
+                                            onDoubleClick={() => moveToRight(item.cartItemId)}
                                         >
                                             <TableCell className="text-[8px] font-black uppercase tracking-tight py-1 pl-2 max-w-[120px] truncate">{item.productName}</TableCell>
                                             <TableCell className="text-[8px] font-black tabular-nums text-center py-1">x{item.cartQuantity.toFixed(item.isWeighted ? 3 : 0)}</TableCell>
@@ -293,10 +294,10 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                 <TableBody>
                                     {rightItems.map(item => (
                                         <TableRow 
-                                            key={item.barcode} 
-                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedRight === item.barcode ? 'bg-emerald-100 dark:bg-emerald-500 text-emerald-900 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-900 dark:text-gray-100'}`}
-                                            onClick={() => setSelectedRight(item.barcode)}
-                                            onDoubleClick={() => moveToLeft(item.barcode)}
+                                            key={item.cartItemId} 
+                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedRight === item.cartItemId ? 'bg-emerald-100 dark:bg-emerald-500 text-emerald-900 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-900 dark:text-gray-100'}`}
+                                            onClick={() => setSelectedRight(item.cartItemId)}
+                                            onDoubleClick={() => moveToLeft(item.cartItemId)}
                                         >
                                             <TableCell className="text-[8px] font-black uppercase tracking-tight py-1 pl-2 max-w-[120px] truncate">{item.productName}</TableCell>
                                             <TableCell className="text-[8px] font-black tabular-nums text-center py-1">x{item.cartQuantity.toFixed(item.isWeighted ? 3 : 0)}</TableCell>

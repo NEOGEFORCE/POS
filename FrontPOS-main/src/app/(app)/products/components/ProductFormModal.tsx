@@ -357,14 +357,32 @@ const ProductFormModal = memo(function ProductFormModal({
                 </div>
 
                 <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="flex flex-col justify-center gap-0.5">
+                    <div className="flex flex-col justify-center gap-0.5">
                     <label className={`${itemInputClass.label} flex items-center gap-1`}><Barcode size={10} className="text-emerald-500" /> CÓDIGO</label>
                     <div className="relative">
                       <Input
                         value={addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '')}
                         onValueChange={(v) => {
-                          if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: v.toUpperCase() }));
-                          else setEditingProduct((p: any) => p ? { ...p, barcode: v.toUpperCase() } : null);
+                          const val = v.toUpperCase().trim();
+                          
+                          // Lógica de detección automática para evitar duplicados
+                          if (addDialogOpen && val.length >= 3) {
+                            const existing = allProducts.find(p => p.barcode === val);
+                            if (existing) {
+                              toast({
+                                title: "PRODUCTO DETECTADO",
+                                description: `CARGANDO DATOS DE: ${existing.productName}`,
+                                variant: "success"
+                              });
+                              setEditingProduct(existing);
+                              // El padre (page.tsx) detectará que editingProduct no es null 
+                              // pero necesitamos avisarle que cambie el modo visual si es posible
+                              // Por ahora, cargamos los datos en el estado de edición.
+                            }
+                          }
+
+                          if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: val }));
+                          else setEditingProduct((p: any) => p ? { ...p, barcode: val } : null);
                         }}
                         classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} pr-14` }}
                       />

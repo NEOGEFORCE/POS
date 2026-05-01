@@ -34,7 +34,7 @@ func (r *PostgresAdminRepository) FindByDNI(dni string) (*models.Employee, error
 
 func (r *PostgresAdminRepository) GetAll() ([]models.Employee, error) {
 	var employees []models.Employee
-	err := r.db.Find(&employees).Error
+	err := r.db.Where("is_active = ?", true).Find(&employees).Error
 	return employees, err
 }
 
@@ -60,7 +60,7 @@ func (r *PostgresAdminRepository) Update(dni string, employee *models.Employee) 
 }
 
 func (r *PostgresAdminRepository) Delete(dni string) error {
-	return r.db.Where("dni = ?", dni).Delete(&models.Employee{}).Error
+	return r.db.Model(&models.Employee{}).Where("dni = ?", dni).Update("is_active", false).Error
 }
 
 func (r *PostgresAdminRepository) CountAll() (int64, error) {

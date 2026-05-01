@@ -6,9 +6,10 @@ import (
 
 // APIError define el formato estándar de errores para el frontend
 type APIError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-	Details string `json:"details,omitempty"`
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Details  string `json:"details,omitempty"`
+	Metadata any    `json:"metadata,omitempty"`
 }
 
 // ErrorResponse envuelve el APIError en un objeto "error" para fácil lectura
@@ -17,17 +18,24 @@ type ErrorResponse struct {
 }
 
 // SendError centraliza la respuesta de errores en el backend
-func SendError(c *gin.Context, status int, code, message string, err error) {
+func SendError(c *gin.Context, status int, code, message string, errOrMeta any) {
 	details := ""
-	if err != nil {
-		details = err.Error()
+	var metadata any
+
+	if errOrMeta != nil {
+		if e, ok := errOrMeta.(error); ok {
+			details = e.Error()
+		} else {
+			metadata = errOrMeta
+		}
 	}
 
 	c.JSON(status, ErrorResponse{
 		Error: APIError{
-			Code:    code,
-			Message: message,
-			Details: details,
+			Code:     code,
+			Message:  message,
+			Details:  details,
+			Metadata: metadata,
 		},
 	})
 }

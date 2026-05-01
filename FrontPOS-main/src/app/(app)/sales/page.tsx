@@ -71,7 +71,7 @@ export default function SalesHistoryPage() {
 
     return (
         <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent transition-all duration-500 overflow-hidden relative">
-            
+
             {/* HEADER SECTION: FIXED (TOP) */}
             <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200 dark:border-white/5 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md">
                 <div className="flex items-center justify-between">
@@ -90,7 +90,7 @@ export default function SalesHistoryPage() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <Button 
+                        <Button
                             isIconOnly
                             onPress={() => mutate()}
                             className="h-10 w-10 min-w-0 bg-gray-100 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm active:scale-90"
@@ -102,15 +102,15 @@ export default function SalesHistoryPage() {
 
                 <div className="flex items-center gap-2">
                     <div className="relative flex-1 group/search">
-                        <Input 
-                            placeholder="BUSCAR VENTA / CLIENTE..." 
-                            value={searchQuery} 
-                            onValueChange={(v) => setSearchQuery(v.toUpperCase())} 
-                            startContent={<Search size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/search:text-emerald-500" />} 
-                            classNames={{ 
-                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/search:border-emerald-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-emerald-500/20 transition-all", 
-                                input: "text-xs font-bold tracking-widest italic uppercase text-zinc-900 dark:text-white" 
-                            }} 
+                        <Input
+                            placeholder="BUSCAR VENTA / CLIENTE..."
+                            value={searchQuery}
+                            onValueChange={(v) => setSearchQuery(v.toUpperCase())}
+                            startContent={<Search size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/search:text-emerald-500" />}
+                            classNames={{
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/search:border-emerald-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-emerald-500/20 transition-all",
+                                input: "text-xs font-bold tracking-widest italic uppercase text-zinc-900 dark:text-white"
+                            }}
                         />
                     </div>
                 </div>
@@ -119,8 +119,8 @@ export default function SalesHistoryPage() {
             {/* CONTENT SECTION (SCROLLABLE) */}
             <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-transparent overflow-hidden">
                 <SalesKPIs totalItems={totalItems} />
-                <div className="flex-1 bg-white/40 dark:bg-zinc-900/40 border border-gray-200 dark:border-white/5 rounded-2xl overflow-y-auto custom-scrollbar flex flex-col min-h-0 shadow-sm">
-                    <SalesTable 
+                <div className="flex-1 bg-white/40 dark:bg-zinc-900/40 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden custom-scrollbar flex flex-col min-h-0 shadow-sm">
+                    <SalesTable
                         sales={sales}
                         onOpenPreview={(s) => { setSelectedSale(s); setIsPreviewOpen(true); }}
                         onOpenEdit={(s) => { setSelectedSale(s); setIsEditOpen(true); }}
@@ -134,7 +134,7 @@ export default function SalesHistoryPage() {
                             </p>
                             <span className="text-[8px] font-bold text-emerald-500/60 uppercase tracking-widest italic">Sincronización Auditoría Activa</span>
                         </div>
-                        
+
                         <Pagination
                             isCompact
                             showControls
@@ -147,33 +147,33 @@ export default function SalesHistoryPage() {
                                 cursor: "bg-gray-100 text-gray-900 font-bold dark:bg-zinc-800 dark:text-white border-gray-300 dark:border-white/20",
                                 prev: "flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-zinc-900/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white",
                                 next: "flex items-center justify-center w-8 h-8 rounded-lg border bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-zinc-900/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-white"
-                            }} 
+                            }}
                         />
                     </div>
                 </div>
             </div>
 
-            <SaleDetailModal 
-                isOpen={isPreviewOpen} 
-                onOpenChange={setIsPreviewOpen} 
-                sale={selectedSale} 
+            <SaleDetailModal
+                isOpen={isPreviewOpen}
+                onOpenChange={setIsPreviewOpen}
+                sale={selectedSale}
                 onPrint={handlePrint}
             />
-            <SaleEditModal 
-                isOpen={isEditOpen} 
-                onOpenChange={setIsEditOpen} 
-                sale={selectedSale} 
+            <SaleEditModal
+                isOpen={isEditOpen}
+                onOpenChange={setIsEditOpen}
+                sale={selectedSale}
                 customers={customers}
                 onClientSelectorOpen={() => setIsClientDialogOpen(true)}
                 onSuccess={() => { mutate(); setIsEditOpen(false); }}
             />
-            <ClientSelectorModal 
-                isOpen={isClientDialogOpen} 
-                onOpenChange={setIsClientDialogOpen} 
+            <ClientSelectorModal
+                isOpen={isClientDialogOpen}
+                onOpenChange={setIsClientDialogOpen}
                 customers={customers}
-                onSelect={(c) => { 
+                onSelect={(c) => {
                     // Si se selecciona un cliente desde el selector de la edición
-                    if(isEditOpen && selectedSale) {
+                    if (isEditOpen && selectedSale) {
                         // El modal de edición suele manejar su propio estado interno
                     }
                 }}

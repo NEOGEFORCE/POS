@@ -1,9 +1,9 @@
 "use client";
 
 import { Card, CardBody, Button } from "@heroui/react";
-import { 
-    PlusCircle, ShoppingBag, Landmark, ReceiptText, 
-    ArrowUpRight, Calculator
+import {
+    PlusCircle, ShoppingBag, Landmark, ReceiptText,
+    ArrowUpRight, Calculator, PackageSearch
 } from "lucide-react";
 import Link from "next/link";
 
@@ -29,6 +29,20 @@ export default function QuickActionsPanel() {
             href: "/dashboard/closure",
             color: "sky",
             shadow: "shadow-sky-500/20"
+        },
+        {
+            label: "Nuevo Egreso",
+            icon: ReceiptText,
+            href: "/expenses",
+            color: "rose",
+            shadow: "shadow-rose-500/20"
+        },
+        {
+            label: "Pedidos Inteligentes",
+            icon: PackageSearch,
+            href: "/inventory/restock",
+            color: "purple",
+            shadow: "shadow-purple-500/20"
         }
     ];
 

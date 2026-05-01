@@ -76,11 +76,11 @@ func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 	}
 
 	emp := models.Employee{
-		DNI:      req.DNI,
-		Name:     strings.ToUpper(req.Name),
-		Email:    strings.ToUpper(req.Email),
+		DNI:      strings.ToUpper(strings.TrimSpace(req.DNI)),
+		Name:     strings.ToUpper(strings.TrimSpace(req.Name)),
+		Email:    strings.ToUpper(strings.TrimSpace(req.Email)),
 		Password: req.Password,
-		Role:     strings.ToUpper(req.Role),
+		Role:     strings.ToUpper(strings.TrimSpace(req.Role)),
 		IsActive: isActive,
 	}
 
@@ -172,10 +172,10 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 	// Mapeo manual para asegurar normalización
 	emp := models.Employee{
 		DNI:      dni,
-		Name:     strings.ToUpper(req.Name),
-		Email:    strings.ToUpper(req.Email),
+		Name:     strings.ToUpper(strings.TrimSpace(req.Name)),
+		Email:    strings.ToUpper(strings.TrimSpace(req.Email)),
 		Password: req.Password, // Si viene vacía, el service/repo no la tocará
-		Role:     strings.ToUpper(req.Role),
+		Role:     strings.ToUpper(strings.TrimSpace(req.Role)),
 		IsActive: isActive,
 	}
 
@@ -226,7 +226,7 @@ func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
 	}
 
 	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
-	h.auditService.Log(requesterDNI, requesterName, "DELETE_EMPLOYEE", "ADMIN", fmt.Sprintf("Eliminado usuario DNI: %s", dni), fmt.Sprintf("Se eliminó permanentemente al usuario con DNI: %s", dni), "{}", ip, device, true)
+	h.auditService.Log(requesterDNI, requesterName, "DELETE_EMPLOYEE", "ADMIN", fmt.Sprintf("Desactivado usuario DNI: %s", dni), fmt.Sprintf("Se desactivó el acceso para el usuario con DNI: %s", dni), "{}", ip, device, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado eliminado correctamente"})
 }

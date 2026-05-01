@@ -27,6 +27,13 @@ type SavingsOpportunity struct {
 	Stock         float64 `json:"stock"`
 }
 
+type ProductRestockInfo struct {
+	models.Product
+	BestSupplierID   uint    `json:"bestSupplierId"`
+	BestSupplierName string  `json:"bestSupplierName"`
+	LowestPrice      float64 `json:"lowestPrice"`
+}
+
 type ReceiveEntry struct {
 	Barcode          string  `json:"barcode"`
 	AddedQuantity    float64 `json:"addedQuantity"`
@@ -42,6 +49,7 @@ type ReceiveEntry struct {
 type ProductRepository interface {
 	Save(product *models.Product) error
 	GetByBarcode(barcode string) (*models.Product, error)
+	GetByName(name string) (*models.Product, error)
 	GetByBarcodeWithPreloads(barcode string, preloads ...string) (*models.Product, error)
 	GetAll() ([]models.Product, error)
 	GetAllWithLimit(limit int) ([]models.Product, error)
@@ -57,9 +65,12 @@ type ProductRepository interface {
 	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
 	GetBySupplier(supplierID uint) ([]models.Product, error)
 	SyncSuppliers(productBarcode string, supplierIDs []uint) error
-	BulkReceive(entries []ReceiveEntry, orderID *uint) error
+	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string) error
 	GetSavingsOpportunities() ([]SavingsOpportunity, error)
-	GetAllWithLowStock() ([]models.Product, error) // Nuevo: para Radar Global
+	GetAllWithLowStock() ([]models.Product, error)
+	GetProductsWithBestSupplier(supplierID *uint) ([]ProductRestockInfo, error)
+	GetGlobalInventoryValue() (float64, error)
+	GetGlobalInventoryRetailValue() (float64, error)
 }
 
 type SupplierOrderMethodRepository interface {

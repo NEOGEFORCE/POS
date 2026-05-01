@@ -32,6 +32,7 @@ interface SupplierFormModalProps {
   onSave: (supplier: Partial<Supplier>) => Promise<void>;
   isEdit: boolean;
   supplier?: Supplier | null;
+  onLookupName?: (name: string) => void;
 }
 
 // Días de la semana para selección múltiple
@@ -46,7 +47,7 @@ const DAY_SHORT_NAMES: Record<string, string> = {
   'Domingo': 'DO'
 };
 
-const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, supplier }: SupplierFormModalProps) => {
+const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, supplier, onLookupName }: SupplierFormModalProps) => {
   const { toast } = useToast();
   const [isSaving, setIsSaving] = useState(false);
   const [validationErrors, setValidationErrors] = useState<FieldError[]>([]);
@@ -118,10 +119,50 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
     setValidationErrors([]);
     setIsSaving(true);
     try {
-      await onSave(localSupplier);
+      // Sanitización final antes de enviar
+      const dataToSave = {
+        ...localSupplier,
+        name: localSupplier.name?.trim().toUpperCase(),
+        phone: localSupplier.phone?.trim(),
+      };
+      await onSave(dataToSave);
     } catch (error: any) {
       console.error(error);
-      toast({ variant: 'destructive', title: 'ERROR', description: error?.message || 'FALLO AL GUARDAR PROVEEDOR' });
+      
+      // Manejo de Conflicto (Duplicados / Inactivos)
+      if (error?.status === 409 || error?.message?.includes('ya existe')) {
+        const existingData = error?.data || {};
+        const isActive = existingData.active;
+        const existingId = existingData.id;
+
+        toast({
+          variant: 'destructive',
+          title: 'PROVEEDOR DUPLICADO',
+          description: isActive 
+            ? `Ya existe un proveedor activo con el nombre "${localSupplier.name}".`
+            : `Existe un registro inactivo para "${localSupplier.name}". ¿Deseas reactivarlo?`,
+          action: !isActive && existingId ? (
+            <Button 
+              size="sm" 
+              color="success" 
+              className="font-black text-[9px] uppercase"
+              onPress={async () => {
+                try {
+                  await onSave({ id: existingId, isActive: true });
+                  toast({ title: 'ÉXITO', description: 'PROVEEDOR REACTIVADO CORRECTAMENTE' });
+                  onOpenChange(false);
+                } catch (e: any) {
+                  toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
+                }
+              }}
+            >
+              REACTIVAR
+            </Button>
+          ) : undefined
+        });
+      } else {
+        toast({ variant: 'destructive', title: 'ERROR', description: error?.message || 'FALLO AL GUARDAR PROVEEDOR' });
+      }
     } finally {
       setIsSaving(false);
     }
@@ -168,14 +209,20 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
               </div>
             </ModalHeader>
 
-            <ModalBody className="px-6 md:px-10 py-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+            <ModalBody className="px-6 md:px-10 py-4 flex flex-col gap-4 overflow-hidden custom-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-0.5">
                     <label className={commonInputClasses.label}>EMPRESA / RAZÓN SOCIAL</label>
                     <Input
                       placeholder=" "
                       value={localSupplier.name}
-                      onValueChange={(v) => updateField('name', v.toUpperCase())}
+                      onValueChange={(v) => {
+                        const name = v.toUpperCase();
+                        updateField('name', name);
+                        if (!isEdit && name.length >= 3 && onLookupName) {
+                          onLookupName(name);
+                        }
+                      }}
                       classNames={commonInputClasses}
                       startContent={<Building2 size={16} className="text-emerald-500 mr-2" />}
                     />

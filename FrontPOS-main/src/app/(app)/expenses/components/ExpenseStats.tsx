@@ -1,13 +1,15 @@
 "use client";
 
 import React, { memo } from 'react';
-import { TrendingDown, CreditCard, Activity, DollarSign } from 'lucide-react';
+import { TrendingDown, CreditCard, Activity, DollarSign, HandCoins, ChevronRight } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 
 interface StatsProps {
   totalMonth: number;
   topSource: string;
   count: number;
+  totalPending: number;
+  onOpenPending: () => void;
 }
 
 const dummyData = [
@@ -28,7 +30,8 @@ const AnalyticalCard = ({
     icon: Icon, 
     color, 
     chartData, 
-    isCurrency = false
+    isCurrency = false,
+    onClick
 }: { 
     label: string, 
     value: string | number, 
@@ -36,9 +39,13 @@ const AnalyticalCard = ({
     icon: any, 
     color: string, 
     chartData?: any[],
-    isCurrency?: boolean
+    isCurrency?: boolean,
+    onClick?: () => void
 }) => (
-    <div className="relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20">
+    <div 
+        onClick={onClick}
+        className={`relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20 ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
+    >
         {/* Background Sparkline */}
         {chartData && (
             <div className="absolute inset-x-0 bottom-0 h-6 sm:h-10 opacity-30 dark:opacity-20 pointer-events-none">
@@ -82,15 +89,20 @@ const AnalyticalCard = ({
             <div className="flex flex-col gap-1">
                 <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-black uppercase tracking-wider">
                     <span className="text-gray-400 dark:text-zinc-500 truncate">{subValue}</span>
+                    {onClick && (
+                        <span className="text-[7px] font-black text-rose-500 flex items-center gap-0.5 animate-pulse">
+                            VER DETALLES <ChevronRight size={8} />
+                        </span>
+                    )}
                 </div>
             </div>
         </div>
     </div>
 );
 
-const ExpenseStats = memo(({ totalMonth, topSource, count }: StatsProps) => {
+const ExpenseStats = memo(({ totalMonth, topSource, count, totalPending, onOpenPending }: StatsProps) => {
   return (
-    <div className="grid grid-cols-2 md:grid-cols-3 gap-2 shrink-0 px-1">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 shrink-0 px-1">
       <AnalyticalCard 
         label="Egreso Mensual"
         value={totalMonth.toLocaleString()}
@@ -101,22 +113,30 @@ const ExpenseStats = memo(({ totalMonth, topSource, count }: StatsProps) => {
         chartData={dummyData}
       />
       <AnalyticalCard 
+        label="Cuentas por Pagar"
+        value={totalPending.toLocaleString()}
+        isCurrency={true}
+        subValue="Deudas Activas"
+        icon={HandCoins}
+        color="#f59e0b"
+        chartData={totalPending > 0 ? dummyData : undefined}
+        onClick={onOpenPending}
+      />
+      <AnalyticalCard 
         label="Fuente Principal"
         value={topSource}
         subValue="Canal preferente"
         icon={CreditCard}
         color="#0ea5e9"
       />
-      <div className="col-span-2 md:col-span-1">
-        <AnalyticalCard 
-          label="Operaciones"
-          value={count}
-          subValue="Registros activos"
-          icon={Activity}
-          color="#10b981"
-          chartData={dummyData.slice().reverse()}
-        />
-      </div>
+      <AnalyticalCard 
+        label="Operaciones"
+        value={count}
+        subValue="Registros activos"
+        icon={Activity}
+        color="#10b981"
+        chartData={dummyData.slice().reverse()}
+      />
     </div>
   );
 });

@@ -31,6 +31,12 @@ func (r *PostgresCategoryRepository) GetByID(id uint) (*models.Category, error) 
 	return &category, err
 }
 
+func (r *PostgresCategoryRepository) GetByName(name string) (*models.Category, error) {
+	var category models.Category
+	err := r.db.Where("UPPER(name) = UPPER(?)", name).First(&category).Error
+	return &category, err
+}
+
 func (r *PostgresCategoryRepository) GetAll() ([]models.Category, error) {
 	// CACHÉ L1: Intentar recuperar de RAM primero
 	if cached, found := cache.CacheManager.Get(cache.CacheKeyCategories); found {
@@ -42,6 +48,7 @@ func (r *PostgresCategoryRepository) GetAll() ([]models.Category, error) {
 	rows, err := r.db.Table("categories").
 		Select("categories.*, COUNT(products.barcode) as product_count").
 		Joins("LEFT JOIN products ON products.\"categoryId\" = categories.id AND products.deleted_at IS NULL").
+		Where("categories.is_active = ?", true).
 		Group("categories.id").
 		Order("name ASC").
 		Rows()
@@ -77,7 +84,7 @@ func (r *PostgresCategoryRepository) Update(id uint, category *models.Category) 
 }
 
 func (r *PostgresCategoryRepository) Delete(id uint) error {
-	err := r.db.Delete(&models.Category{}, id).Error
+	err := r.db.Model(&models.Category{}).Where("id = ?", id).Update("is_active", false).Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyCategories)
 		cache.InvalidateCache(cache.CacheKeyCategoryCount)
@@ -89,7 +96,7 @@ func (r *PostgresCategoryRepository) Count() (int64, error) {
 		return cached.(int64), nil
 	}
 	var count int64
-	err := r.db.Model(&models.Category{}).Count(&count).Error
+	err := r.db.Model(&models.Category{}).Where("is_active = ?", true).Count(&count).Error
 	if err == nil {
 		cache.CacheManager.Set(cache.CacheKeyCategoryCount, count, 1*time.Hour)
 	}

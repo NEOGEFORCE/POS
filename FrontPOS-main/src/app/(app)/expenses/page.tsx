@@ -3,8 +3,8 @@
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Button, Input, Spinner } from "@heroui/react";
-import { 
-  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles 
+import {
+  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Expense } from '@/lib/definitions';
@@ -17,14 +17,15 @@ const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: f
 const ExpenseTable = dynamic(() => import('./components/ExpenseTable'), { ssr: false });
 const ExpenseFormModal = dynamic(() => import('./components/ExpenseFormModal'), { ssr: false });
 const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal'), { ssr: false });
+const PendingDebtsModal = dynamic(() => import('./components/PendingDebtsModal'), { ssr: false });
 
 // COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (ESTILO USUARIOS)
-const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: { 
-    filter: string, 
-    onSearch: (v: string) => void, 
-    onAdd: () => void,
-    onReload: () => void,
-    isLoading: boolean
+const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
+  filter: string,
+  onSearch: (v: string) => void,
+  onAdd: () => void,
+  onReload: () => void,
+  isLoading: boolean
 }) => (
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
@@ -41,28 +42,28 @@ const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       </div>
       <div className="flex items-center gap-2">
         <Button
-            isIconOnly
-            size="sm"
-            onPress={onReload}
-            isLoading={isLoading}
-            className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-rose-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          isIconOnly
+          size="sm"
+          onPress={onReload}
+          isLoading={isLoading}
+          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-rose-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
-            <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
+          <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
-            size="sm"
-            onPress={onAdd}
-            className="h-10 bg-rose-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-rose-500/20 italic transition-all active:scale-95 shrink-0"
+          size="sm"
+          onPress={onAdd}
+          className="h-10 bg-rose-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-rose-500/20 italic transition-all active:scale-95 shrink-0"
         >
-            <PlusCircle size={16} /> 
-            <span className="ml-2 tracking-widest">NUEVA SALIDA</span>
+          <PlusCircle size={16} />
+          <span className="ml-2 tracking-widest">NUEVA SALIDA</span>
         </Button>
       </div>
     </div>
     <Input
       size="sm"
       placeholder="FILTRAR POR CONCEPTO O CATEGORÍA..."
-      value={filter} 
+      value={filter}
       onValueChange={onSearch}
       classNames={{
         inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
@@ -85,7 +86,7 @@ async function fetchExpenses(token: string): Promise<Expense[]> {
 export default function ExpensesPage() {
   const { user } = useAuth();
   const { toast } = useToast();
-  
+
   const isAdmin = useMemo(() => {
     const role = user?.role?.toLowerCase() || user?.Role?.toLowerCase() || '';
     return role === 'admin' || role === 'administrador' || role === 'superadmin';
@@ -100,6 +101,7 @@ export default function ExpensesPage() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [pendingModalOpen, setPendingModalOpen] = useState(false);
 
   // Estados de Datos
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -132,7 +134,11 @@ export default function ExpensesPage() {
       return acc;
     }, {});
     const topSource = Object.entries(bySource).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'EFECTIVO';
-    return { totalMonth, topSource, count: expenses.length };
+
+    const pendingExpenses = expenses.filter(e => e.status === 'PENDING' || e.paymentSource === 'PRESTAMO' || e.paymentSource === 'PREST.');
+    const totalPending = pendingExpenses.reduce((acc, e) => acc + Number(e.amount), 0);
+
+    return { totalMonth, topSource, count: expenses.length, totalPending, pendingExpenses };
   }, [expenses]);
 
   const filteredExpenses = useMemo(() => {
@@ -164,10 +170,10 @@ export default function ExpensesPage() {
 
     try {
       const currentDate = new Date().toISOString();
-      
+
       // Si hay linkedOrderId y es creación, usar endpoint especial vinculado
       const isLinkedOrder = addDialogOpen && data.linkedOrderId;
-      
+
       const path = addDialogOpen
         ? (isLinkedOrder ? '/expenses/create-linked' : '/expenses/create')
         : `/expenses/update/${editingExpense?.id}`;
@@ -181,7 +187,8 @@ export default function ExpensesPage() {
         date: currentDate,
         paymentSource: data.paymentSource || 'EFECTIVO',
         category: data.category,
-        lenderName: data.paymentSource === 'PRESTADO' ? data.lenderName : null,
+        lenderName: data.paymentSource === 'PRESTAMO' ? data.lenderName : null,
+        status: data.status,
         supplierId: data.category === 'Proveedores' && data.supplierId ? Number(data.supplierId) : null,
         newSupplierName: data.category === 'Proveedores' && !data.supplierId ? data.newSupplierName : null
       };
@@ -199,33 +206,32 @@ export default function ExpensesPage() {
 
       // Mensaje de éxito específico para orden vinculada
       if (isLinkedOrder && result?.message) {
-        toast({ 
+        toast({
           variant: "success",
-          title: "ÉXITO", 
+          title: "ÉXITO",
           description: `${result.message}. Stock actualizado automáticamente.`,
         });
       } else {
-        toast({ 
+        toast({
           variant: "success",
-          title: "ÉXITO", 
+          title: "ÉXITO",
           description: "MOVIMIENTO REGISTRADO CORRECTAMENTE",
         });
       }
-      
+
       setAddDialogOpen(false);
       setEditDialogOpen(false);
       setEditingExpense(null);
       loadExpenses();
-    } catch (err: any) { 
-      toast({ 
-        variant: "destructive", 
-        title: "FALLO OPERATIVO", 
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "FALLO OPERATIVO",
         description: err.message || 'FALLO AL REGISTRAR MOVIMIENTO',
         className: "bg-rose-500 text-white border-none"
-      }); 
+      });
     }
   };
-
   const handleDeleteExpense = async () => {
     if (!deletingId) return;
     const token = Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token');
@@ -234,20 +240,46 @@ export default function ExpensesPage() {
         method: 'DELETE',
         fallbackError: 'FALLO AL ELIMINAR EGRESO'
       }, token!);
-      toast({ 
+      toast({
         variant: "success",
-        title: "ÉXITO", 
-        description: "REGISTRO ELIMINADO", 
+        title: "ÉXITO",
+        description: "REGISTRO ELIMINADO",
       });
       setDeleteDialogOpen(false);
       loadExpenses();
-    } catch (err: any) { 
-      toast({ 
-        variant: "destructive", 
-        title: "FALLO AL ANULAR", 
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "FALLO AL ANULAR",
         description: err.message || 'FALLO AL ELIMINAR EGRESO',
         className: "bg-rose-500 text-white border-none"
-      }); 
+      });
+    }
+  };
+
+  const handleSettleDebt = async (id: string, paymentSource: string) => {
+    const token = Cookies.get('org-pos-token');
+    if (!token) return;
+
+    try {
+      await apiFetch(`/expenses/settle/${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ paymentSource }),
+        fallbackError: 'FALLO AL SALDAR DEUDA'
+      }, token);
+
+      toast({
+        variant: "success",
+        title: "DEUDA SALDADA",
+        description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentSource}`,
+      });
+      loadExpenses();
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "FALLO AL SALDAR",
+        description: err.message || 'FALLO AL SALDAR DEUDA',
+      });
     }
   };
 
@@ -255,30 +287,33 @@ export default function ExpensesPage() {
 
   return (
     <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-      
+
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
-        <ExpenseHeader 
-            filter={filter} 
-            onSearch={(v) => setFilter(v.toUpperCase())} 
-            onAdd={() => setAddDialogOpen(true)} 
-            onReload={loadExpenses}
-            isLoading={loading}
+        <ExpenseHeader
+          filter={filter}
+          onSearch={(v) => setFilter(v.toUpperCase())}
+          onAdd={() => setAddDialogOpen(true)}
+          onReload={loadExpenses}
+          isLoading={loading}
         />
-        <ExpenseStats 
+        <ExpenseStats
           totalMonth={stats.totalMonth}
           topSource={stats.topSource}
           count={stats.count}
+          totalPending={stats.totalPending}
+          onOpenPending={() => setPendingModalOpen(true)}
         />
       </div>
 
       {/* CONTENT SECTION (INTERNAL SCROLLABLE) */}
       <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
-        <ExpenseTable 
+        <ExpenseTable
           expenses={paginatedExpenses}
           isAdmin={isAdmin}
           onEdit={(e) => { setEditingExpense({ ...e }); setEditDialogOpen(true); }}
           onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
+          onSettle={handleSettleDebt}
           currentPage={currentPage}
           totalPages={totalPages}
           pageSize={pageSize}
@@ -290,7 +325,7 @@ export default function ExpensesPage() {
 
 
       {/* Modals Orchestration */}
-      <ExpenseFormModal 
+      <ExpenseFormModal
         isOpen={addDialogOpen || editDialogOpen}
         onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingExpense(null); } }}
         isEdit={editDialogOpen}
@@ -298,10 +333,17 @@ export default function ExpensesPage() {
         onSave={handleSaveExpense}
       />
 
-      <DeleteExpenseModal 
+      <DeleteExpenseModal
         isOpen={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteExpense}
+      />
+
+      <PendingDebtsModal
+        isOpen={pendingModalOpen}
+        onOpenChange={setPendingModalOpen}
+        debts={stats.pendingExpenses}
+        onSettle={handleSettleDebt}
       />
 
     </div>

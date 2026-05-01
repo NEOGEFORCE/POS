@@ -3,8 +3,8 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { Button, Input, Spinner } from "@heroui/react";
-import { 
-    LayoutGrid, Search, PlusCircle, Clock, Sparkles 
+import {
+  LayoutGrid, Search, PlusCircle, Clock, Sparkles
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Category } from '@/lib/definitions';
@@ -78,7 +78,7 @@ export default function CategoriesPage() {
     return { total, topCat: topCatName, totalProds };
   }, [categories]);
 
-  const paginatedCategories = useMemo(() => 
+  const paginatedCategories = useMemo(() =>
     filteredCategories.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [filteredCategories, currentPage, pageSize]
   );
@@ -87,15 +87,56 @@ export default function CategoriesPage() {
 
   // Acciones (Handlers)
   const handleAddCategory = async () => {
-    if (!newCatName.trim()) return;
+    const name = newCatName.trim().toUpperCase();
+    if (!name) return;
     const token = Cookies.get('org-pos-token');
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/create-categories`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ name: newCatName.toUpperCase() })
+        body: JSON.stringify({ name })
       });
+
       if (!res.ok) {
+        if (res.status === 409) {
+          const errData = await res.json();
+          const category = errData.error?.data || {};
+          const isActive = category.is_active ?? true;
+          const catId = category.id;
+
+          toast({
+            variant: 'destructive',
+            title: 'CATEGORÍA DUPLICADA',
+            description: isActive
+              ? `"${name}" ya existe como una categoría activa.`
+              : `Existe un registro inactivo para "${name}". ¿Deseas reactivarlo?`,
+            action: !isActive ? (
+              <Button
+                size="sm"
+                color="success"
+                className="font-black text-[9px] uppercase"
+                onPress={async () => {
+                  try {
+                    const reactRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/update-categories/${catId}`, {
+                      method: 'PUT',
+                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                      body: JSON.stringify({ name, isActive: true })
+                    });
+                    if (!reactRes.ok) throw new Error('Fallo al reactivar');
+                    toast({ title: 'ÉXITO', description: 'CATEGORÍA REACTIVADA' });
+                    setAddDialogOpen(false);
+                    loadCategories();
+                  } catch (e: any) {
+                    toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
+                  }
+                }}
+              >
+                REACTIVAR
+              </Button>
+            ) : undefined
+          });
+          return;
+        }
         const errorMsg = await extractApiError(res, "FALLO AL CREAR CATEGORÍA");
         throw new Error(errorMsg);
       }
@@ -103,7 +144,9 @@ export default function CategoriesPage() {
       setAddDialogOpen(false);
       setNewCatName('');
       loadCategories();
-    } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL CREAR" }); }
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL CREAR" });
+    }
   };
 
   const handleEditCategory = async () => {
@@ -152,10 +195,10 @@ export default function CategoriesPage() {
 
   return (
     <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
-      
+
       {/* HEADER SECTION: FIXED (TOP) - MATCHING SUPPLIERS/USERS 3-PANEL STYLE */}
       <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
-        
+
         {/* PANEL 1: TITULO Y BOTONES ACCIÓN */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-3">
@@ -173,41 +216,41 @@ export default function CategoriesPage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <Button 
-                isIconOnly
-                size="sm"
-                onPress={() => loadCategories()}
-                className="h-8 w-8 bg-white/80 dark:bg-zinc-900/80 text-gray-400 dark:text-zinc-500 rounded-lg shadow-sm border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
+            <Button
+              isIconOnly
+              size="sm"
+              onPress={() => loadCategories()}
+              className="h-8 w-8 bg-white/80 dark:bg-zinc-900/80 text-gray-400 dark:text-zinc-500 rounded-lg shadow-sm border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
             >
-                <Clock size={14} />
+              <Clock size={14} />
             </Button>
-            <Button 
-                onPress={() => setAddDialogOpen(true)} 
-                className="h-8 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-lg shadow-lg shadow-emerald-500/20 active:scale-95 transition-all shrink-0"
+            <Button
+              onPress={() => setAddDialogOpen(true)}
+              className="h-8 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-lg shadow-lg shadow-emerald-500/20 active:scale-95 transition-all shrink-0"
             >
-                <PlusCircle size={14} className="mr-2" /> NUEVO
+              <PlusCircle size={14} className="mr-2" /> NUEVO
             </Button>
           </div>
         </div>
 
         {/* PANEL 2: BARRA DE BÚSQUEDA NIVEL 2 */}
         <div className="px-1">
-          <Input 
+          <Input
             size="sm"
-            placeholder="LOCALIZAR DEPARTAMENTO O ID..." 
-            value={filter} 
-            onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }} 
-            startContent={<Search size={14} className="text-emerald-500 mr-2" />} 
-            classNames={{ 
-              inputWrapper: "h-11 px-4 bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-xl", 
-              input: "text-[11px] font-black tracking-widest uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600" 
-            }} 
+            placeholder="LOCALIZAR DEPARTAMENTO O ID..."
+            value={filter}
+            onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
+            startContent={<Search size={14} className="text-emerald-500 mr-2" />}
+            classNames={{
+              inputWrapper: "h-11 px-4 bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-xl",
+              input: "text-[11px] font-black tracking-widest uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+            }}
           />
         </div>
 
         {/* PANEL 3: ESTADÍSTICAS INTEGRADAS EN HEADER */}
         <div className="px-1 pb-1">
-          <CategoryStats 
+          <CategoryStats
             total={stats.total}
             topCat={stats.topCat}
             totalProds={stats.totalProds}
@@ -216,14 +259,14 @@ export default function CategoriesPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
-        <CategoryTable 
+      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col min-w-0">
+        <CategoryTable
           categories={paginatedCategories}
           currentPage={currentPage}
           totalPages={totalPages}
           pageSize={pageSize}
           totalFiltered={filteredCategories.length}
-          onEdit={(cat) => { setEditingCategory({...cat}); setEditDialogOpen(true); }}
+          onEdit={(cat) => { setEditingCategory({ ...cat }); setEditDialogOpen(true); }}
           onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
           onPageChange={setCurrentPage}
           onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
@@ -231,16 +274,38 @@ export default function CategoriesPage() {
       </div>
 
       {/* Modals */}
-      <CategoryFormModal 
+      <CategoryFormModal
         isOpen={addDialogOpen || editDialogOpen}
         onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingCategory(null); setNewCatName(''); } }}
         isEdit={editDialogOpen}
         categoryName={addDialogOpen ? newCatName : (editingCategory?.name || '')}
-        setCategoryName={addDialogOpen ? setNewCatName : (name) => setEditingCategory(p => p ? {...p, name} : null)}
+        setCategoryName={(name) => {
+          const val = name.toUpperCase().trim();
+          if (addDialogOpen) {
+            setNewCatName(name);
+            // Detección automática de categoría existente
+            if (val.length >= 3) {
+              const existing = categories.find(c => c.name.toUpperCase() === val);
+              if (existing) {
+                toast({
+                  variant: "success",
+                  title: "CATEGORÍA DETECTADA",
+                  description: "CARGANDO DATOS EXISTENTES..."
+                });
+                setAddDialogOpen(false);
+                setEditingCategory(existing);
+                setEditDialogOpen(true);
+                setNewCatName('');
+              }
+            }
+          } else {
+            setEditingCategory(p => p ? { ...p, name } : null);
+          }
+        }}
         onSave={addDialogOpen ? handleAddCategory : handleEditCategory}
       />
 
-      <DeleteCategoryModal 
+      <DeleteCategoryModal
         isOpen={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteCategory}

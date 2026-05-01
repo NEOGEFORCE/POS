@@ -19,14 +19,16 @@ type OrderHandler struct {
 	orderService         *services.PurchaseOrderService
 	expectedOrderService *services.ExpectedOrderService
 	telegramService      *services.TelegramService
+	auditService         *services.AuditService
 }
 
-func NewOrderHandler(inv *services.InventoryService, ord *services.PurchaseOrderService, expOrd *services.ExpectedOrderService, tg *services.TelegramService) *OrderHandler {
+func NewOrderHandler(inv *services.InventoryService, ord *services.PurchaseOrderService, expOrd *services.ExpectedOrderService, tg *services.TelegramService, a *services.AuditService) *OrderHandler {
 	return &OrderHandler{
 		inventoryService:     inv,
 		orderService:         ord,
 		expectedOrderService: expOrd,
 		telegramService:      tg,
+		auditService:         a,
 	}
 }
 
@@ -100,6 +102,14 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, order)
+
+	// Auditoría de Pedido
+	dniEmployee, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), fmt.Sprintf("%v", name), "CREATE_ORDER", "LOGISTICS", 
+		fmt.Sprintf("Nuevo pedido a proveedor ID: %d", order.SupplierID),
+		fmt.Sprintf("Se generó una orden de compra para el proveedor ID #%d por $%s", order.SupplierID, fmt.Sprintf("%.2f", order.EstimatedCost)),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *OrderHandler) GetAllOrders(c *gin.Context) {
@@ -115,6 +125,26 @@ func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		// SPRINT: También incluir "ExpectedOrders" (preventas/pedidos informales)
+		expected, err := h.expectedOrderService.GetExpectedOrdersBySupplier(uint(supplierID))
+		if err == nil {
+			for _, eo := range expected {
+				// Mapear ExpectedOrder a una estructura que el frontend entienda (PurchaseOrder dummy)
+				// El frontend espera .orderItems.length para mostrar el conteo
+				dummyItems := make([]models.PurchaseOrderItem, eo.ItemCount)
+				
+				orders = append(orders, models.PurchaseOrder{
+					ID:            eo.ID,
+					SupplierID:    eo.SupplierID,
+					EstimatedCost: eo.TotalEstimated,
+					Status:        models.PurchaseOrderPending,
+					OrderDate:     eo.CreatedAt,
+					OrderItems:    dummyItems,
+				})
+			}
+		}
+
 		c.JSON(http.StatusOK, orders)
 		return
 	}
@@ -274,6 +304,12 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 		"message": "Pedido esperado registrado correctamente",
 		"order":   order,
 	})
+
+	// Auditoría de Preventa
+	h.auditService.Log(dni, name, "CREATE_EXPECTED_ORDER", "LOGISTICS", 
+		fmt.Sprintf("Preventa registrada: %s ($%.2f)", req.SupplierName, req.TotalEstimated),
+		fmt.Sprintf("Se registró una preventa para %s por $%s", req.SupplierName, fmt.Sprintf("%.2f", req.TotalEstimated)),
+		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 // GetExpectedOrdersToday - GET /orders/expected-today

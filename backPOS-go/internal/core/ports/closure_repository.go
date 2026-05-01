@@ -9,4 +9,5 @@ type ClosureRepository interface {
 	GetAll() ([]models.CashierClosure, error)
 	GetByID(id uint) (*models.CashierClosure, error)
 	GetLast() (*models.CashierClosure, error)
+	GetGlobalReportedBalance() (float64, error)
 }

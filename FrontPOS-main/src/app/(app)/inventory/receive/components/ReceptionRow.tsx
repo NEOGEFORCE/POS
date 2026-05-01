@@ -57,12 +57,18 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const costWithDiscount = totalRow / Math.max(1, item.addedQuantity);
         const discountPct = Number(item.discount || 0);
         const costBaseSinDiscount = costWithDiscount / (1 + discountPct / 100);
-        const newSale = applyRounding(calculateFinalPrice(costBaseSinDiscount, discountPct, Number(item.iva), Number(item.icui), Number(item.ibua), Number(item.marginPercentage)));
+        
+        // REGLA: No actualizar el PVP automáticamente, recalculamos el MARGEN
+        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
+        const totalUnitCost = costWithDiscount * taxMultiplier;
+        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        
         setLocalCost(formatCOP(costWithDiscount));
-        setLocalSalePrice(formatCOP(newSale));
+        setLocalMargin(String(Math.round(newMargin)));
+        
         onUpdate(item.barcode, {
             newPurchasePrice: costBaseSinDiscount,
-            newSalePrice: newSale
+            marginPercentage: newMargin
         });
     };
 
@@ -74,11 +80,16 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const costBaseSinDiscount = costWithDiscount / (1 + discountPct / 100);
         const newTotal = costWithDiscount * item.addedQuantity;
         setLocalTotal(formatCOP(newTotal));
-        const newSale = applyRounding(calculateFinalPrice(costBaseSinDiscount, discountPct, Number(item.iva), Number(item.icui), Number(item.ibua), Number(item.marginPercentage)));
-        setLocalSalePrice(formatCOP(newSale));
+        
+        // REGLA: No actualizar el PVP automáticamente, recalculamos el MARGEN
+        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
+        const totalUnitCost = costWithDiscount * taxMultiplier;
+        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        
+        setLocalMargin(String(Math.round(newMargin)));
         onUpdate(item.barcode, {
             newPurchasePrice: costBaseSinDiscount,
-            newSalePrice: newSale
+            marginPercentage: newMargin
         });
     };
 
@@ -106,12 +117,20 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const currentIva = type === 'iva' ? value : Number(item.iva);
         const currentIcui = type === 'icui' ? value : Number(item.icui);
         const currentIbua = type === 'ibua' ? value : Number(item.ibua);
+        
         const discountPct = Number(item.discount || 0);
-        const updates: any = { [type]: value };
-        const newSale = applyRounding(calculateFinalPrice(item.newPurchasePrice, discountPct, currentIva, currentIcui, currentIbua, Number(item.marginPercentage)));
-        updates.newSalePrice = newSale;
-        setLocalSalePrice(formatCOP(newSale));
-        onUpdate(item.barcode, updates);
+        const costWithDiscount = item.newPurchasePrice * (1 + discountPct / 100);
+        const taxMultiplier = 1 + (currentIva + currentIcui + currentIbua) / 100;
+        const totalUnitCost = costWithDiscount * taxMultiplier;
+        
+        // REGLA: Recalculamos el MARGEN informativo, protegemos PVP
+        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        
+        setLocalMargin(String(Math.round(newMargin)));
+        onUpdate(item.barcode, { 
+            [type]: value,
+            marginPercentage: newMargin
+        });
     };
 
     const handleMarginChange = (val: string) => {
@@ -132,11 +151,16 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         setLocalCost(formatCOP(costWithDiscount));
         const newTotal = costWithDiscount * item.addedQuantity;
         setLocalTotal(formatCOP(newTotal));
-        const newSale = applyRounding(calculateFinalPrice(item.newPurchasePrice, value, Number(item.iva), Number(item.icui), Number(item.ibua), Number(item.marginPercentage)));
-        setLocalSalePrice(formatCOP(newSale));
+        
+        // REGLA: Recalculamos el MARGEN informativo, protegemos PVP
+        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
+        const totalUnitCost = costWithDiscount * taxMultiplier;
+        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        
+        setLocalMargin(String(Math.round(newMargin)));
         onUpdate(item.barcode, { 
             discount: value,
-            newSalePrice: newSale
+            marginPercentage: newMargin
         });
     };
 

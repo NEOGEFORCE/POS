@@ -10,6 +10,7 @@ import { extractApiError } from '@/lib/api-error';
 
 export interface CartItem extends Product {
     cartQuantity: number;
+    cartItemId: string; // ID único para React keys
 }
 
 export function useNewSale() {
@@ -34,9 +35,15 @@ export function useNewSale() {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<string>('all');
     const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
-    const [barcodeInput, setBarcodeInput] = useState('');
     const [feedbackCode, setFeedbackCode] = useState('');
     const [isFeedbackError, setIsFeedbackError] = useState(false);
+
+    useEffect(() => {
+        if (feedbackCode) {
+            const t = setTimeout(() => setFeedbackCode(''), 1500);
+            return () => clearTimeout(t);
+        }
+    }, [feedbackCode]);
     
     // Modals & Dialogs State
     const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
@@ -59,6 +66,32 @@ export function useNewSale() {
     const [showSuccessScreen, setShowSuccessScreen] = useState(false);
     const [lastChange, setLastChange] = useState(0);
     const [lastReceipt, setLastReceipt] = useState<any>(null);
+    const [scannerBuffer, setScannerBuffer] = useState('');
+
+    const playBeep = useCallback((type: 'success' | 'error' = 'success') => {
+        if (typeof window === 'undefined') return;
+        try {
+            const AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
+            if (!AudioContext) return;
+            const ctx = new AudioContext();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(type === 'success' ? 880 : 220, ctx.currentTime);
+            
+            gain.gain.setValueAtTime(0.4, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+
+            osc.start();
+            osc.stop(ctx.currentTime + 0.1);
+        } catch (e) {
+            console.error("Audio error", e);
+        }
+    }, []);
 
     // Ultra-Instinto: Web Worker & Offline DB
     const workerRef = useRef<Worker | null>(null);
@@ -103,6 +136,21 @@ export function useNewSale() {
             workerRef.current?.postMessage({ 
                 type: 'UPDATE_SEARCH', 
                 payload: { query: searchQuery, category: selectedCategory } 
+            });
+
+            // NUEVO: Sincronizar stock de productos en carritos activos
+            setCarts(prev => {
+                const next = { ...prev };
+                Object.keys(next).forEach(key => {
+                    next[key] = next[key].map(item => {
+                        const latest = products.find(p => p.barcode === item.barcode);
+                        if (latest && latest.quantity !== item.quantity) {
+                            return { ...item, quantity: latest.quantity };
+                        }
+                        return item;
+                    });
+                });
+                return next;
             });
         }
     }, [products, customers, categories]);
@@ -227,122 +275,142 @@ export function useNewSale() {
         if (activeCartKey === key) handleCartSwitch(newKeys[newKeys.length - 1]);
     };
 
-    const updateQuantity = useCallback((barcode: string, delta: number) => {
-        const item = currentCart.find(i => i.barcode === barcode);
-        if (!item) return;
-
-        const newQty = item.cartQuantity + delta;
-
-        if (newQty <= 0) {
-            setCarts(prev => {
-                const current = [...(prev[activeCartKey] || [])];
-                const filtered = current.filter(i => i.barcode !== barcode);
-                if (barcode === selectedItemId) setSelectedItemId(filtered[0]?.barcode || null);
-                return { ...prev, [activeCartKey]: filtered };
-            });
-            return;
-        }
-
-        if (!item.isWeighted && delta > 0 && newQty > item.quantity) {
-            toast({ variant: "destructive", title: "SISTEMA", description: `STOCK INSUFICIENTE: SOLO QUEDAN ${item.quantity} UNIDADES` }); 
-            return;
-        }
-
+    const updateQuantity = useCallback((cartItemId: string, delta: number) => {
         setCarts(prev => {
             const current = [...(prev[activeCartKey] || [])];
-            const index = current.findIndex(i => i.barcode === barcode);
-            if (index === -1) return prev;
-            current[index] = { ...current[index], cartQuantity: newQty };
+            const idx = current.findIndex(item => item.cartItemId === cartItemId);
+            if (idx === -1) return prev;
+
+            const item = current[idx];
+            const newQty = item.cartQuantity + delta;
+
+            if (newQty <= 0) {
+                const filtered = current.filter(i => i.cartItemId !== cartItemId);
+                if (selectedItemId === cartItemId) setSelectedItemId(null);
+                return { ...prev, [activeCartKey]: filtered };
+            }
+
+            if (!item.isWeighted && delta > 0 && newQty > item.quantity) {
+                toast({ variant: "destructive", title: "SISTEMA", description: `STOCK INSUFICIENTE: SOLO QUEDAN ${item.quantity} UNIDADES` }); 
+                return prev;
+            }
+
+            current[idx] = { ...current[idx], cartQuantity: newQty };
             return { ...prev, [activeCartKey]: current };
         });
-    }, [activeCartKey, selectedItemId, currentCart, toast]);
+    }, [activeCartKey, selectedItemId, toast]);
 
-    const removeFromCart = useCallback((barcode: string) => {
+    const removeFromCart = useCallback((cartItemId: string) => {
         setCarts(prev => {
             const current = [...(prev[activeCartKey] || [])];
-            const filtered = current.filter(item => item.barcode !== barcode);
-            if (barcode === selectedItemId) setSelectedItemId(filtered[0]?.barcode || null);
+            const filtered = current.filter(item => item.cartItemId !== cartItemId);
+            if (selectedItemId === cartItemId) setSelectedItemId(null);
             return { ...prev, [activeCartKey]: filtered };
         }); 
         returnFocusToScanner();
     }, [activeCartKey, selectedItemId, returnFocusToScanner]);
 
+    const setCartItemQuantity = useCallback((cartItemId: string, quantity: number) => {
+        setCarts(prev => {
+            const current = [...(prev[activeCartKey] || [])];
+            const idx = current.findIndex(item => item.cartItemId === cartItemId);
+            if (idx === -1) return prev;
+
+            const item = current[idx];
+            if (quantity <= 0) {
+                const filtered = current.filter(i => i.cartItemId !== cartItemId);
+                if (selectedItemId === cartItemId) setSelectedItemId(null);
+                return { ...prev, [activeCartKey]: filtered };
+            }
+
+            if (!item.isWeighted && quantity > item.quantity) {
+                toast({ variant: "destructive", title: "SISTEMA", description: `STOCK INSUFICIENTE: SOLO QUEDAN ${item.quantity} UNIDADES` }); 
+                return prev;
+            }
+
+            current[idx] = { ...current[idx], cartQuantity: quantity };
+            return { ...prev, [activeCartKey]: current };
+        });
+    }, [activeCartKey, selectedItemId, toast]);
+
     const addMiscItem = useCallback((priceStr: string) => {
         const price = parseFloat(priceStr);
         if (isNaN(price) || price <= 0) return;
-        const miscProduct: Product = { 
-            barcode: `MISC-${price}`, 
-            productName: `PRODUCTO VARIO ($${price.toLocaleString()})`, 
+        const cartItemId = `0000-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+        const miscProduct: CartItem = { 
+            barcode: '0000', 
+            cartItemId: cartItemId,
+            productName: `VENTA RÁPIDA ($${price.toLocaleString()})`, 
             salePrice: price, 
             quantity: 999999, 
-            purchasePrice: price / 1.20, 
+            purchasePrice: price * 0.8, // 20% de Rentabilidad
             marginPercentage: 20, 
             categoryId: 0, 
-            isWeighted: false 
+            isWeighted: false,
+            cartQuantity: 1
         };
         setCarts(prev => {
             const current = [...(prev[activeCartKey] || [])];
-            const existingIndex = current.findIndex(item => item.barcode === miscProduct.barcode);
-            if (existingIndex > -1) { 
-                current[existingIndex] = { ...current[existingIndex], cartQuantity: current[existingIndex].cartQuantity + 1 }; 
-            } else { 
-                current.push({ ...miscProduct, cartQuantity: 1 }); 
-            }
+            current.push(miscProduct);
             return { ...prev, [activeCartKey]: current };
         });
-        setSelectedItemId(miscProduct.barcode); 
-        toast({ variant: "success", title: "ÉXITO", description: "AGREGADO" }); 
+        setSelectedItemId(cartItemId); 
+        setSearchQuery(''); 
+        setScannerBuffer('');
+        setFeedbackCode('0000'); // Triggers beep
+        setIsFeedbackError(false);
+        toast({ variant: "success", title: "ÉXITO", description: "VENTA RÁPIDA AGREGADA" }); 
         returnFocusToScanner();
-    }, [activeCartKey, toast, returnFocusToScanner]);
+    }, [activeCartKey, toast, returnFocusToScanner, setSearchQuery, setScannerBuffer]);
 
-    const addToCart = useCallback((product: Product) => {
-        if (product.quantity <= 0 && !product.isWeighted) { 
+    const addToCart = useCallback((p: Product) => {
+        if (p.quantity <= 0 && !p.isWeighted) { 
             toast({ variant: "destructive", title: "SISTEMA", description: "SIN STOCK" }); 
             setSearchQuery(''); 
             return; 
         }
 
-        const existingItem = currentCart.find(item => item.barcode === product.barcode);
-
-        if (product.isWeighted) {
+        if (p.isWeighted) {
             if (scaleWeight >= 0.010 && isScaleOnline) {
                 setCarts(prev => {
                     const current = [...(prev[activeCartKey] || [])];
-                    const idx = current.findIndex(item => item.barcode === product.barcode);
+                    const idx = current.findIndex(item => item.cartItemId === p.barcode);
                     if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + scaleWeight }; 
-                    else current.push({ ...product, cartQuantity: scaleWeight });
+                    else current.push({ ...p, cartQuantity: scaleWeight, cartItemId: p.barcode });
                     return { ...prev, [activeCartKey]: current };
                 }); 
-                setSelectedItemId(product.barcode); 
+                setSelectedItemId(p.barcode); 
                 setSearchQuery(''); 
                 returnFocusToScanner(); 
                 return;
             }
-            setManualWeightProduct(product); 
+            setManualWeightProduct(p); 
             setIsManualWeightOpen(true); 
             setSearchQuery(''); 
             return;
         }
 
-        if (existingItem && !product.isWeighted && existingItem.cartQuantity >= product.quantity) {
-            toast({ variant: "destructive", title: "SISTEMA", description: `MÁXIMO ALCANZADO: ${product.quantity} DISPONIBLES` });
+        const existingItem = (carts[activeCartKey] || []).find(item => item.cartItemId === p.barcode);
+        if (existingItem && existingItem.cartQuantity >= p.quantity) {
+            toast({ variant: "destructive", title: "SISTEMA", description: `MÁXIMO ALCANZADO: ${p.quantity} DISPONIBLES` });
             return;
         }
 
         setCarts(prev => {
             const current = [...(prev[activeCartKey] || [])];
-            const idx = current.findIndex(item => item.barcode === product.barcode);
+            const idx = current.findIndex(item => item.cartItemId === p.barcode);
             if (idx > -1) {
                 current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
             } else {
-                current.push({ ...product, cartQuantity: 1 });
+                current.push({ ...p, cartQuantity: 1, cartItemId: p.barcode });
             }
             return { ...prev, [activeCartKey]: current };
         }); 
-        setSelectedItemId(product.barcode); 
+        setSelectedItemId(p.barcode); 
         setSearchQuery(''); 
+        setScannerBuffer('');
         returnFocusToScanner();
-    }, [activeCartKey, scaleWeight, isScaleOnline, currentCart, returnFocusToScanner, toast]);
+    }, [activeCartKey, carts, scaleWeight, isScaleOnline, returnFocusToScanner, toast, setSearchQuery, setScannerBuffer]);
 
     const handleCodeSubmit = useCallback((code: string) => {
         let finalCode = code.trim();
@@ -369,8 +437,14 @@ export function useNewSale() {
                 setFeedbackCode(finalCode); setIsFeedbackError(true); toast({ variant: "destructive", title: "ERROR", description: "NO ENCONTRADO" });
             }
         }
-        setBarcodeInput(''); returnFocusToScanner();
-    }, [products, addToCart, addMiscItem, toast, returnFocusToScanner]);
+        // Limpieza INMEDIATA del buffer para permitir escaneo ultra-rápido (HFT)
+        setScannerBuffer('');
+        setSearchQuery('');
+        
+        // El feedback visual ahora es independiente del buffer real
+        // feedbackCode ya se encarga de disparar el sonido y puede usarse en la UI
+        returnFocusToScanner();
+    }, [products, addToCart, addMiscItem, toast, returnFocusToScanner, setScannerBuffer]);
 
     const handleScaleSync = useCallback(() => {
         if (!isScaleOnline || scaleWeight < 0.005 || !selectedItemId) return;
@@ -416,7 +490,11 @@ export function useNewSale() {
             creditAmount: credit,
             change: change,
             details: itemsToPay.map(item => ({
-                barcode: item.barcode, quantity: item.cartQuantity, unitPrice: Number(item.salePrice), subtotal: applyRounding(Number(item.salePrice) * item.cartQuantity)
+                barcode: item.barcode, 
+                quantity: item.cartQuantity, 
+                unitPrice: Number(item.salePrice), 
+                costPrice: Number(item.purchasePrice || 0),
+                subtotal: applyRounding(Number(item.salePrice) * item.cartQuantity)
             }))
         };
 
@@ -490,7 +568,7 @@ export function useNewSale() {
                 const current = [...(prev[activeCartKey] || [])];
                 const idx = current.findIndex(item => item.barcode === manualWeightProduct.barcode);
                 if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + weight };
-                else current.push({ ...manualWeightProduct, cartQuantity: weight });
+                else current.push({ ...manualWeightProduct, cartQuantity: weight, cartItemId: manualWeightProduct.barcode });
                 return { ...prev, [activeCartKey]: current };
             });
             setSelectedItemId(manualWeightProduct.barcode); 
@@ -504,10 +582,11 @@ export function useNewSale() {
     // Effects
     useEffect(() => {
         if (feedbackCode) {
+            playBeep(isFeedbackError ? 'error' : 'success');
             const t = setTimeout(() => { setFeedbackCode(''); setIsFeedbackError(false); }, 1500);
             return () => clearTimeout(t);
         }
-    }, [feedbackCode]);
+    }, [feedbackCode, isFeedbackError, playBeep]);
 
     useEffect(() => {
         const loadData = async () => {
@@ -541,6 +620,7 @@ export function useNewSale() {
                     setCartKeys(Object.keys(savedData.carts)); 
                     setActiveCartKey(savedData.activeKey || 'Factura 1'); 
                     setSelectedCustomerDni(savedData.customerDni || '0');
+                    setSelectedItemId(savedData.selectedItemId || null);
                 }
             } catch (err: any) {
                 console.error(err);
@@ -558,8 +638,17 @@ export function useNewSale() {
     }, [router, toast]);
 
     useEffect(() => {
-        if (!loading) saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni);
-    }, [carts, activeCartKey, selectedCustomerDni, loading]);
+        if (!loading && currentCart.length > 0) {
+            if (!selectedItemId || !currentCart.find(i => i.cartItemId === selectedItemId)) {
+                // Seleccionar el último agregado o el primero disponible
+                setSelectedItemId(currentCart[currentCart.length - 1].cartItemId);
+            }
+        }
+    }, [currentCart, selectedItemId, loading]);
+
+    useEffect(() => {
+        if (!loading) saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni, selectedItemId);
+    }, [carts, activeCartKey, selectedCustomerDni, selectedItemId, loading]);
 
     return {
         // Data
@@ -574,7 +663,6 @@ export function useNewSale() {
         loading, submitting, searchQuery, setSearchQuery,
         selectedCategory, setSelectedCategory,
         selectedItemId, setSelectedItemId,
-        barcodeInput, setBarcodeInput,
         feedbackCode, isFeedbackError,
         isOffline, // Exportamos estado de red
         
@@ -584,6 +672,7 @@ export function useNewSale() {
         clientSearch, setClientSearch,
         isScannerOpen, setIsScannerOpen,
         isManualWeightOpen, setIsManualWeightOpen,
+        scannerBuffer, setScannerBuffer,
         manualWeightProduct, manualWeightValue, setManualWeightValue,
         isSplitDialogOpen, setIsSplitDialogOpen,
         isCartDropdownOpen, setIsCartDropdownOpen,
@@ -599,12 +688,13 @@ export function useNewSale() {
         lastChange, lastReceipt,
         
         // Helpers & Refs
+        playBeep,
         hiddenScannerRef, returnFocusToScanner,
         scaleWeight, isScaleOnline,
         
         // Handlers
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart,
-        updateQuantity, removeFromCart, addToCart, addMiscItem,
+        updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity,
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight
     };
 }

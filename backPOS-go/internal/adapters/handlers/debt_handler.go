@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 
@@ -11,12 +12,14 @@ import (
 type DebtHandler struct {
 	clientService *services.ClientService
 	saleService   *services.SaleService
+	auditService  *services.AuditService
 }
 
-func NewDebtHandler(client *services.ClientService, sale *services.SaleService) *DebtHandler {
+func NewDebtHandler(client *services.ClientService, sale *services.SaleService, a *services.AuditService) *DebtHandler {
 	return &DebtHandler{
 		clientService: client,
 		saleService:   sale,
+		auditService:  a,
 	}
 }
 
@@ -60,4 +63,11 @@ func (h *DebtHandler) RegisterPayment(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "¡Abono registrado con éxito!"})
+
+	// Auditoría de Pago de Deuda
+	userName, _ := c.Get("userName")
+	h.auditService.Log(empDNIStr, fmt.Sprintf("%v", userName), "DEBT_PAYMENT", "FINANCES", 
+		fmt.Sprintf("Abono a deuda ID: %d ($%.2f)", id, paymentData.Amount),
+		fmt.Sprintf("Se registró un abono de $%s para la deuda con ID #%d usando el método %s", fmt.Sprintf("%.2f", paymentData.Amount), id, paymentData.Method),
+		"", c.ClientIP(), c.Request.UserAgent(), true)
 }

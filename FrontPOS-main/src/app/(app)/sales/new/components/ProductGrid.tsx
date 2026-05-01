@@ -13,8 +13,8 @@ interface ProductGridProps {
 // COMPONENTE MEMOIZADO: Solo se re-renderiza si el producto cambia
 const ProductItem = React.memo(({ product, onAdd }: { product: Product, onAdd: (p: Product) => void }) => {
     return (
-        <button 
-            className="group flex flex-col bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 p-2 rounded-lg text-left h-[80px] hover:bg-emerald-50 dark:hover:bg-emerald-500/10 hover:border-emerald-300 transition-all active:scale-95 shadow-sm overflow-hidden" 
+        <button
+            className="group flex flex-col bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 p-2 rounded-lg text-left h-[80px] hover:bg-emerald-50 dark:hover:bg-emerald-500/10 hover:border-emerald-300 transition-all active:scale-95 shadow-sm overflow-hidden"
             onClick={() => onAdd(product)}
         >
             <div className="flex justify-between items-start w-full mb-1">
@@ -31,9 +31,9 @@ const ProductItem = React.memo(({ product, onAdd }: { product: Product, onAdd: (
     );
 }, (prev, next) => {
     // Comparación profunda para evitar re-renders si solo cambia la referencia del objeto pero no su contenido vital
-    return prev.product.barcode === next.product.barcode && 
-           prev.product.quantity === next.product.quantity &&
-           prev.product.salePrice === next.product.salePrice;
+    return prev.product.barcode === next.product.barcode &&
+        prev.product.quantity === next.product.quantity &&
+        prev.product.salePrice === next.product.salePrice;
 });
 
 ProductItem.displayName = 'ProductItem';
@@ -51,7 +51,7 @@ export default function ProductGrid({ products, addToCart }: ProductGridProps) {
     });
 
     return (
-        <div 
+        <div
             ref={parentRef}
             className="flex-1 overflow-y-auto custom-scrollbar p-1.5 min-h-[200px] [scrollbar-gutter:stable]"
         >
@@ -76,10 +76,10 @@ export default function ProductGrid({ products, addToCart }: ProductGridProps) {
                             }}
                         >
                             {rowProducts.map((p) => (
-                                <ProductItem 
-                                    key={p.barcode || Math.random().toString()} 
-                                    product={p} 
-                                    onAdd={addToCart} 
+                                <ProductItem
+                                    key={p.barcode || Math.random().toString()}
+                                    product={p}
+                                    onAdd={addToCart}
                                 />
                             ))}
                         </div>

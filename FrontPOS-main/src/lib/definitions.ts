@@ -77,6 +77,7 @@ export type Expense = {
   paymentSource?: string;
   supplierId?: string | number;
   lenderName?: string;
+  status?: 'PAID' | 'PENDING';
   creator?: User; // El usuario que registró el gasto
 };
 

@@ -8,7 +8,7 @@
     "dev:plus": "next dev --turbopack -p 9002 -H 0.0.0.0 --experimental-https",
     "tunnel": "npx localtunnel --port 9002",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 0.0.0.0",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
   },
@@ -37,6 +37,7 @@
     "@radix-ui/react-tabs": "^1.1.3",
     "@radix-ui/react-toast": "^1.2.6",
     "@radix-ui/react-tooltip": "^1.1.8",
+    "@tabler/icons-react": "^3.41.1",
     "@tanstack/react-virtual": "^3.13.24",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

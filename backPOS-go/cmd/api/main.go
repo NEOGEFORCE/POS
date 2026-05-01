@@ -70,16 +70,16 @@ func main() {
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService)
 	saleHandler := handlers.NewSaleHandler(saleService, auditService, sseService)
 	authHandler := handlers.NewAuthHandler(authService)
-	categoryHandler := handlers.NewCategoryHandler(categoryService)
-	supplierHandler := handlers.NewSupplierHandler(supplierService)
+	categoryHandler := handlers.NewCategoryHandler(categoryService, auditService)
+	supplierHandler := handlers.NewSupplierHandler(supplierService, auditService)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService)
 	dashboardReportHandler := handlers.NewDashboardReportHandler(dashboardService, auditService)
-	clientHandler := handlers.NewClientHandler(clientService)
-	expenseHandler := handlers.NewExpenseHandler(expenseService)
+	clientHandler := handlers.NewClientHandler(clientService, auditService)
+	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService)
 	adminHandler := handlers.NewAdminHandler(adminService, auditService)
-	returnHandler := handlers.NewReturnHandler(returnService)
-	orderHandler := handlers.NewOrderHandler(inventoryService, orderService, expectedOrderService, telegramService)
-	debtHandler := handlers.NewDebtHandler(clientService, saleService)
+	returnHandler := handlers.NewReturnHandler(returnService, auditService)
+	orderHandler := handlers.NewOrderHandler(inventoryService, orderService, expectedOrderService, telegramService, auditService)
+	debtHandler := handlers.NewDebtHandler(clientService, saleService, auditService)
 	notificationHandler := handlers.NewNotificationHandler(telegramService)
 	sseHandler := handlers.NewSSEHandler(sseService)
 
@@ -103,6 +103,8 @@ func main() {
 		"http://localhost:9002":     true, // Alternative dev port
 		"https://tudominio.com":     true, // Production domain (update as needed)
 		"https://app.tudominio.com": true, // Production app subdomain
+		"http://192.168.1.21:9002":  true, // Specific user IP
+		"http://192.168.1.6:9002":   true, // New local IP
 	}
 
 	// Helper function to check if origin is a local/private IP
@@ -307,6 +309,7 @@ func main() {
 			expenseGroup.Use(middlewares.RoleMiddleware("empleado")) // Permite listar y registrar a todos
 			{
 				expenseGroup.POST("/create", expenseHandler.Create)
+				expenseGroup.PATCH("/settle/:id", expenseHandler.Settle)
 				expenseGroup.GET("/list", expenseHandler.GetAll)
 
 				// Acciones Administrativas (Restricción TOTAL para empleados)
@@ -322,6 +325,7 @@ func main() {
 			dashboard := protected.Group("/dashboard")
 			{
 				dashboard.GET("/overview", middlewares.RoleMiddleware("admin"), dashboardHandler.GetOverview)
+				dashboard.POST("/adjust-initial-balance", middlewares.RoleMiddleware("admin"), dashboardHandler.AdjustInitialBalance)
 				dashboard.GET("/cashier-closure", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetCashierClosure)
 				dashboard.POST("/cashier-closure/close", middlewares.RoleMiddleware("empleado"), dashboardHandler.SaveClosure)
 				dashboard.POST("/telegram-report-partial", middlewares.RoleMiddleware("empleado"), dashboardHandler.SendPartialReport)
