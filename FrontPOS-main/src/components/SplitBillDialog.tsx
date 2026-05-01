@@ -197,7 +197,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                             </div>
                             <div>
                                 <DialogTitle className="text-sm font-black text-gray-900 dark:text-white italic uppercase tracking-tighter leading-none">Dividir Cuenta</DialogTitle>
-                                <DialogDescription className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">V4.0 DENSITY</DialogDescription>
+                                <DialogDescription className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-0.5">POS PRO</DialogDescription>
                             </div>
                         </div>
                     </div>
@@ -333,7 +333,6 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                 onOpenChange={setIsClientModalOpen}
                 customers={customers}
                 onSelect={(c) => {
-                    console.log('DEBUG: Cliente seleccionado en Split:', c);
                     setTargetCustomer({ dni: String(c.dni), name: c.name });
                 }}
                 selectedClientDni={targetCustomer?.dni}

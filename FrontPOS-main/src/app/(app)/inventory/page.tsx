@@ -48,7 +48,7 @@ export default function InventoryHub() {
         });
         if (res.ok) {
           const data = await res.json();
-          console.log("📦 Pedidos Hoy (API):", data);
+
           setExpectedOrders(data || []);
         }
       } catch (err) {

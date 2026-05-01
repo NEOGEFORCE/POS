@@ -15,6 +15,13 @@ tmp/
 *.out
 *.test
 
+# Database dumps
+*.sql
+
+# Temp build artifacts
+tmp_build
+**/tmp_build
+
 # Large files / archives
 *.zip
 *.rar

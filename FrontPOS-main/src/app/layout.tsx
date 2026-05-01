@@ -21,12 +21,12 @@ const raleway = Raleway({
 });
 
 export const metadata: Metadata = {
-  title: 'POS-PRO',
+  title: 'POS PRO',
   description: 'Sistema de Punto de Venta Premium',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'POS-PRO',
+    title: 'POS PRO',
   },
 };
 
@@ -36,7 +36,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: '#10b981', // Verde Esmeralda POS-PRO
+  themeColor: '#10b981', // Verde Esmeralda POS PRO
 };
 
 export default function RootLayout({

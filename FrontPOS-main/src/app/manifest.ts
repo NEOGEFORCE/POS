@@ -2,8 +2,8 @@ import { MetadataRoute } from 'next'
  
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: 'POS-PRO Premium',
-    short_name: 'POS-PRO',
+    name: 'POS PRO',
+    short_name: 'POS PRO',
     description: 'Sistema de Punto de Venta de Alta Densidad',
     start_url: '/',
     display: 'standalone',

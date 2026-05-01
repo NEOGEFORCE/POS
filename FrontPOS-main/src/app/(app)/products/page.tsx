@@ -219,8 +219,7 @@ export default function ProductsPage() {
             // Sanitizar números formateados como moneda
             const payload = sanitizeProductPayload(rawPayload);
 
-            // DEBUG: Ver qué se está enviando
-            console.log('PAYLOAD ENVIADO AL BACKEND:', JSON.stringify(payload, null, 2));
+
 
             await apiFetch(`/products/update-products/${editingProduct.barcode}`, {
                 method: 'PUT', body: JSON.stringify(payload), fallbackError: 'FALLO AL ACTUALIZAR'

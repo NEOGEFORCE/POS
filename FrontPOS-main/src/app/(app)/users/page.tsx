@@ -320,7 +320,7 @@ export default function UsersPage() {
 
   if (authLoading || (loading && users.length === 0)) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
     <Spinner color="success" size="lg" />
-    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Iniciando POS-PRO...</p>
+    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Iniciando POS PRO...</p>
   </div>;
   const role = user?.role?.toLowerCase();
   if (role !== 'admin' && role !== 'administrador' && role !== 'superadmin') return null;
