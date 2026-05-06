@@ -28,6 +28,7 @@ type MVMonthlyStats struct {
 	SalesTransfer    float64 `json:"salesTransfer"`
 	SalesCredit      float64 `json:"salesCredit"`
 	ProductsSold     float64 `json:"productsSold"`
+	TotalCOGS        float64 `json:"totalCogs"`
 	TotalExpenses    float64 `json:"totalExpenses"`
 	TotalAbonos      float64 `json:"totalAbonos"`
 }
@@ -39,7 +40,7 @@ type SaleRepository interface {
 	GetByDateRange(from, to string) ([]models.Sale, error)
 	GetDeletedByDateRange(from, to string) ([]models.Sale, error)
 	GetByID(id uint) (*models.Sale, error)
-	Delete(id uint) error
+	Delete(id uint, reason string, employeeDNI string) error
 	UpdatePayment(id uint, sale *models.Sale) error
 	FindAll(filter SaleFilter) ([]models.Sale, int64, error)
 	FindPendingDebts() ([]models.Sale, error)
@@ -58,4 +59,5 @@ type SaleRepository interface {
 	GetGlobalCollectedDebtsByMethod() (map[string]float64, error)
 	GetGlobalCOGS() (float64, error)
 	GetCOGSByRange(from, to string) (float64, error)
+	GetSalesBreakdownByRange(from, to string) (map[string]float64, error)
 }

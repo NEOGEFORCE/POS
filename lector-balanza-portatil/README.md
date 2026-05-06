@@ -15,5 +15,5 @@ Usa `../scale-bridge/index.js` en su lugar. Es la versión unificada con mejoras
 
 ```bash
 cd ../scale-bridge
-SCALE_PORT=COM3 SCALE_WS_PORT=9876 node index.js
+SCALE_PORT=COM1 SCALE_BAUD=4800 node index.js
 ```

@@ -10,10 +10,12 @@ type ExpenseRepository interface {
 	Delete(id uint) error
 	Count() (int64, error)
 	Update(id uint, expense *models.Expense) error
+	Settle(id uint, paymentSource string) error
 	GetMonthlyTotals() (map[string]float64, error)
 	GetPendingDebtsSummary() (float64, int64, error)
 	GetExpensesByStatus(status string) ([]models.Expense, error)
 	GetGlobalTotalPaidExpenses() (float64, error)
 	GetGlobalPaidExpensesByMethod() (map[string]float64, error)
 	GetPaidAmountByRange(from, to string) (float64, error)
+	GetGlobalPaidExpensesByMethodInRange(from, to string) (map[string]float64, error)
 }

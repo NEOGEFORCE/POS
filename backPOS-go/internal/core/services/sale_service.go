@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"backPOS-go/internal/infrastructure/cache"
 )
 
 type SaleService struct {
@@ -15,11 +16,13 @@ type SaleService struct {
 	clientRepo   ports.ClientRepository
 	movementRepo ports.StockMovementRepository
 	creditRepo   ports.CreditPaymentRepository
-	printService *PrintService
+	printService    *PrintService
+	sseService      *SSEService
+	telegramService *TelegramService
 }
 
-func NewSaleService(sr ports.SaleRepository, pr ports.ProductRepository, cr ports.ClientRepository, mr ports.StockMovementRepository, ps *PrintService, cpr ports.CreditPaymentRepository) *SaleService {
-	return &SaleService{saleRepo: sr, productRepo: pr, clientRepo: cr, movementRepo: mr, printService: ps, creditRepo: cpr}
+func NewSaleService(sr ports.SaleRepository, pr ports.ProductRepository, cr ports.ClientRepository, mr ports.StockMovementRepository, ps *PrintService, cpr ports.CreditPaymentRepository, sse *SSEService, ts *TelegramService) *SaleService {
+	return &SaleService{saleRepo: sr, productRepo: pr, clientRepo: cr, movementRepo: mr, printService: ps, creditRepo: cpr, sseService: sse, telegramService: ts}
 }
 
 func (s *SaleService) CreateSale(sale *models.Sale) error {
@@ -63,7 +66,9 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 			}
 		}
 
-		deductions[targetBarcode] += effectiveQty
+		if !product.IsWeighted {
+			deductions[targetBarcode] += effectiveQty
+		}
 	}
 
 	// 2. Validar stock total requerido antes de procesar detalles
@@ -95,18 +100,20 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	sale.TotalAmount = total
 	paidTotal := sale.CashAmount + sale.TransferAmount + sale.CreditAmount
 
-	if paidTotal < (total - 0.01) {
-		return errors.New("pago insuficiente")
+	// ULTRA-INSTINTO: Tolerancia de 1.0 para evitar fallos por ruidos decimales de punto flotante.
+	// En el sistema POS de Surtifamiliar, los precios son redondeados a 100, por lo que 1.0 es seguro.
+	if paidTotal < (total - 1.0) {
+		return fmt.Errorf("pago insuficiente: total calculado %.2f, pagado %.2f", total, paidTotal)
 	}
 
 	if sale.CreditAmount > 0 {
 		sale.DebtPending = sale.CreditAmount
 		if sale.ClientDNI == "0" || sale.ClientDNI == "" {
-			return errors.New("debe seleccionar un cliente real para vender a crédito")
+			return errors.New("debe seleccionar un cliente real (no C. Final) para vender a crédito")
 		}
 		client, err := s.clientRepo.GetByDNI(sale.ClientDNI)
 		if err != nil {
-			return errors.New("cliente no encontrado para crédito")
+			return errors.New("cliente no encontrado para asignar crédito")
 		}
 		if client.CurrentCredit+sale.CreditAmount > client.CreditLimit {
 			return errors.New("el cliente supera su límite de crédito")
@@ -126,6 +133,12 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	sale.Change = sale.CashAmount - cashNeeded
 	if sale.Change < 0 {
 		sale.Change = 0
+	}
+
+	if sale.CreditAmount > 0 && sale.CashAmount == 0 && sale.TransferAmount == 0 {
+		sale.Status = "CREDIT"
+	} else {
+		sale.Status = "PAID"
 	}
 
 	if err := s.saleRepo.Create(sale); err != nil {
@@ -172,6 +185,12 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 		s.printService.PrintReceipt(fullSale)
 	}
 
+	// 6. INVALIDACIÓN DE CACHÉ: Asegurar que el dashboard se actualice inmediatamente
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	if s.sseService != nil {
+		s.sseService.BroadcastDashboardUpdate()
+	}
+
 	return nil
 }
 
@@ -190,8 +209,102 @@ func (s *SaleService) GetSale(id uint) (*models.Sale, error) {
 	return s.saleRepo.GetByID(id)
 }
 
-func (s *SaleService) DeleteSale(id uint) error {
-	return s.saleRepo.Delete(id)
+func (s *SaleService) DeleteSale(id uint, reason string, employeeDNI string) error {
+	sale, err := s.saleRepo.GetByID(id)
+	if err != nil {
+		return err
+	}
+
+	// 1. Restaurar Stock
+	stockUpdates := make(map[string]float64)
+	for _, detail := range sale.SaleDetails {
+		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
+			continue
+		}
+
+		product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "BaseProduct")
+		if err == nil {
+			effectiveQty := detail.Quantity
+			targetBarcode := detail.Barcode
+
+			// Lógica de Packs (Invertida)
+			if product.IsPack && product.BaseProduct != nil && product.PackMultiplier > 0 {
+				targetBarcode = *product.BaseProductBarcode
+				effectiveQty = detail.Quantity * float64(product.PackMultiplier)
+			}
+
+			// Acumular actualización de stock
+			if currentNewStock, exists := stockUpdates[targetBarcode]; exists {
+				stockUpdates[targetBarcode] = currentNewStock + effectiveQty
+			} else {
+				// Si no existe en el mapa, partimos del stock actual en DB
+				// Para packs, el producto cargado es el Pack, necesitamos el stock del Base
+				if product.IsPack && product.BaseProduct != nil {
+					baseProd, _ := s.productRepo.GetByBarcode(targetBarcode)
+					if baseProd != nil {
+						stockUpdates[targetBarcode] = baseProd.Quantity + effectiveQty
+					}
+				} else {
+					stockUpdates[targetBarcode] = product.Quantity + effectiveQty
+				}
+			}
+			
+			// Registrar movimiento de entrada por anulación
+			movement := &models.StockMovement{
+				Date:         time.Now(),
+				Barcode:      detail.Barcode,
+				Quantity:     detail.Quantity,
+				Type:         "IN",
+				Reason:       "VOID_SALE",
+				ReferenceID:  fmt.Sprintf("VOID-SALE-%d", sale.SaleID),
+				EmployeeDNI:  employeeDNI,
+				EmployeeName: "ADMIN/SUPERADMIN",
+			}
+			_ = s.movementRepo.Save(movement)
+		}
+	}
+
+	if len(stockUpdates) > 0 {
+		_ = s.productRepo.BatchUpdateQuantities(stockUpdates)
+	}
+
+	// 2. Revertir Crédito si aplica
+	if sale.CreditAmount > 0 && sale.ClientDNI != "" && sale.ClientDNI != "0" {
+		client, err := s.clientRepo.GetByDNI(sale.ClientDNI)
+		if err == nil {
+			client.CurrentCredit -= sale.DebtPending
+			if client.CurrentCredit < 0 {
+				client.CurrentCredit = 0
+			}
+			_ = s.clientRepo.Update(client.DNI, client)
+		}
+	}
+
+	// 3. Borrado Lógico en Repo
+	err = s.saleRepo.Delete(id, reason, employeeDNI)
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		if s.sseService != nil {
+			s.sseService.BroadcastDashboardUpdate()
+		}
+
+		// 4. Notificar a Telegram
+		if s.telegramService != nil {
+			msg := fmt.Sprintf("🚨 *VENTA ANULADA*\n\n"+
+				"*Venta:* #%d\n"+
+				"*Monto:* $%s\n"+
+				"*Motivo:* %s\n"+
+				"*Autor:* %s\n"+
+				"*Fecha:* %s",
+				sale.SaleID,
+				fmt.Sprintf("%.2f", sale.TotalAmount),
+				reason,
+				employeeDNI,
+				time.Now().Format("2006-01-02 15:04:05"))
+			s.telegramService.SendMarkdownAlert(msg)
+		}
+	}
+	return err
 }
 
 func (s *SaleService) UpdateSalePayment(id uint, paymentUpdate *models.Sale) error {
@@ -228,12 +341,23 @@ func (s *SaleService) UpdateSalePayment(id uint, paymentUpdate *models.Sale) err
 	} else if paymentUpdate.CreditAmount > 0 {
 		paymentUpdate.PaymentMethod = "FIADO"
 	} else if paymentUpdate.TransferAmount > 0 {
-		paymentUpdate.PaymentMethod = "TRANSFERENCIA"
+		source := strings.ToUpper(paymentUpdate.TransferSource)
+		if source == "" {
+			source = "TRANSFERENCIA"
+		}
+		paymentUpdate.PaymentMethod = source
 	} else {
 		paymentUpdate.PaymentMethod = "EFECTIVO"
 	}
 
-	return s.saleRepo.UpdatePayment(id, paymentUpdate)
+	err = s.saleRepo.UpdatePayment(id, paymentUpdate)
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		if s.sseService != nil {
+			s.sseService.BroadcastDashboardUpdate()
+		}
+	}
+	return err
 }
 
 func (s *SaleService) ListPendingDebts() ([]models.Sale, error) {
@@ -287,6 +411,11 @@ func (s *SaleService) RegisterDebtPayment(saleID uint, amount float64, method st
 			
 			_ = s.creditRepo.Save(payment)
 		}
+	}
+
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	if s.sseService != nil {
+		s.sseService.BroadcastDashboardUpdate()
 	}
 
 	return nil

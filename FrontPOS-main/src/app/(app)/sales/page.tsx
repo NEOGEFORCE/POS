@@ -19,6 +19,7 @@ const SaleDetailModal = dynamic(() => import('./components/SaleDetailModal'), { 
 const SaleEditModal = dynamic(() => import('./components/SaleEditModal'), { ssr: false });
 const ClientSelectorModal = dynamic(() => import('./components/ClientSelectorModal'), { ssr: false });
 const SalesTable = dynamic(() => import('./components/SalesTable'), { ssr: false });
+const SaleDeleteModal = dynamic(() => import('./components/SaleDeleteModal'), { ssr: false });
 
 import { useApi } from '@/hooks/use-api';
 import { Customer } from '@/lib/definitions';
@@ -33,6 +34,7 @@ export default function SalesHistoryPage() {
     const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
     const [isPreviewOpen, setIsPreviewOpen] = useState(false);
     const [isEditOpen, setIsEditOpen] = useState(false);
+    const [isDeleteOpen, setIsDeleteOpen] = useState(false);
     const [isClientDialogOpen, setIsClientDialogOpen] = useState(false);
 
     const { data: customersData } = useApi<Customer[]>('/clients/all-clients');
@@ -124,6 +126,7 @@ export default function SalesHistoryPage() {
                         sales={sales}
                         onOpenPreview={(s) => { setSelectedSale(s); setIsPreviewOpen(true); }}
                         onOpenEdit={(s) => { setSelectedSale(s); setIsEditOpen(true); }}
+                        onOpenDelete={(s) => { setSelectedSale(s); setIsDeleteOpen(true); }}
                     />
 
                     {/* Footer Paginación - RESTAURACIÓN CRÍTICA */}
@@ -166,6 +169,12 @@ export default function SalesHistoryPage() {
                 customers={customers}
                 onClientSelectorOpen={() => setIsClientDialogOpen(true)}
                 onSuccess={() => { mutate(); setIsEditOpen(false); }}
+            />
+            <SaleDeleteModal
+                isOpen={isDeleteOpen}
+                onOpenChange={setIsDeleteOpen}
+                sale={selectedSale}
+                onSuccess={() => { mutate(); setIsDeleteOpen(false); }}
             />
             <ClientSelectorModal
                 isOpen={isClientDialogOpen}

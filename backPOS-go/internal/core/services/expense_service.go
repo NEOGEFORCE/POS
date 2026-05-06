@@ -7,6 +7,7 @@ import (
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/cache"
 )
 
 type ExpenseService struct {
@@ -14,14 +15,16 @@ type ExpenseService struct {
 	supplierRepo *repositories.PostgresSupplierRepository
 	orderRepo    *repositories.PostgresPurchaseOrderRepository
 	productRepo  ports.ProductRepository
+	sseService   *SSEService
 }
 
-func NewExpenseService(repo ports.ExpenseRepository, supplierRepo *repositories.PostgresSupplierRepository, orderRepo *repositories.PostgresPurchaseOrderRepository, productRepo ports.ProductRepository) *ExpenseService {
+func NewExpenseService(repo ports.ExpenseRepository, supplierRepo *repositories.PostgresSupplierRepository, orderRepo *repositories.PostgresPurchaseOrderRepository, productRepo ports.ProductRepository, sse *SSEService) *ExpenseService {
 	return &ExpenseService{
 		repo:         repo,
 		supplierRepo: supplierRepo,
 		orderRepo:    orderRepo,
 		productRepo:  productRepo,
+		sseService:   sse,
 	}
 }
 
@@ -48,7 +51,14 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 		expense.Status = "PAID"
 	}
 
-	return s.repo.Save(expense)
+	err := s.repo.Save(expense)
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		if s.sseService != nil {
+			s.sseService.BroadcastDashboardUpdate()
+		}
+	}
+	return err
 }
 
 func (s *ExpenseService) GetAllExpenses() ([]models.Expense, error) {
@@ -56,14 +66,25 @@ func (s *ExpenseService) GetAllExpenses() ([]models.Expense, error) {
 }
 
 func (s *ExpenseService) DeleteExpense(id uint) error {
-	return s.repo.Delete(id)
+	err := s.repo.Delete(id)
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		if s.sseService != nil {
+			s.sseService.BroadcastDashboardUpdate()
+		}
+	}
+	return err
 }
 
 func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
-	if expense.Amount <= 0 {
-		return errors.New("el monto del egreso debe ser mayor a cero")
+	err := s.repo.Update(id, expense)
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		if s.sseService != nil {
+			s.sseService.BroadcastDashboardUpdate()
+		}
 	}
-	return s.repo.Update(id, expense)
+	return err
 }
 
 // SettleExpense marca un egreso como pagado y define su fuente real de dinero
@@ -88,6 +109,11 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 
 	if err := s.repo.Update(id, expense); err != nil {
 		return nil, err
+	}
+
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	if s.sseService != nil {
+		s.sseService.BroadcastDashboardUpdate()
 	}
 
 	return expense, nil

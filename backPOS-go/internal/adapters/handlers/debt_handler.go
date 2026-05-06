@@ -13,13 +13,15 @@ type DebtHandler struct {
 	clientService *services.ClientService
 	saleService   *services.SaleService
 	auditService  *services.AuditService
+	sseService    *services.SSEService
 }
 
-func NewDebtHandler(client *services.ClientService, sale *services.SaleService, a *services.AuditService) *DebtHandler {
+func NewDebtHandler(client *services.ClientService, sale *services.SaleService, a *services.AuditService, sse *services.SSEService) *DebtHandler {
 	return &DebtHandler{
 		clientService: client,
 		saleService:   sale,
 		auditService:  a,
+		sseService:    sse,
 	}
 }
 
@@ -70,4 +72,6 @@ func (h *DebtHandler) RegisterPayment(c *gin.Context) {
 		fmt.Sprintf("Abono a deuda ID: %d ($%.2f)", id, paymentData.Amount),
 		fmt.Sprintf("Se registró un abono de $%s para la deuda con ID #%d usando el método %s", fmt.Sprintf("%.2f", paymentData.Amount), id, paymentData.Method),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 }

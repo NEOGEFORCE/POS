@@ -10,7 +10,7 @@ import {
 import {
   BarChart3, FileText, Download, Wallet, ShoppingCart,
   Package, Users, AlertTriangle, TrendingUp, History,
-  FileSearch, Printer, Calendar, Target, Zap,
+  FileSearch, Printer, Calendar, Target, Zap, Banknote,
   CreditCard as CreditCardIcon, PlusCircle, Search,
   Clock, Mail, ChevronRight, Filter, MoreHorizontal, Trash2, Loader2
 } from "lucide-react";
@@ -25,16 +25,10 @@ import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 const DateRangeModal = dynamic(() => import("../dashboard/components/DateRangeModal"));
 // El nuevo Modal avanzado se creará en el siguiente paso
 const GenerateReportModal = dynamic(() => import("./components/GenerateReportModal"));
+const ClosuresHistory = dynamic(() => import("./components/ClosuresHistory"));
 
-// ----- DATOS SIMULADOS (MOCK) -----
-const ARCHIVED_REPORTS = [
-  { id: "1", name: "CIERRE_GENERAL_ABRIL", date: "2024-04-15", user: "Admin", format: "PDF", size: "1.2MB" },
-  { id: "2", name: "AUDITORIA_VENTAS_Q1", date: "2024-04-14", user: "Jaider", format: "XLS", size: "3.5MB" },
-  { id: "3", name: "VALORACION_INV_FIX", date: "2024-04-12", user: "SuperAdmin", format: "PDF", size: "850KB" },
-  { id: "4", name: "LOG_ANULACIONES_TURNO_A", date: "2024-04-10", user: "Cajero_2", format: "PDF", size: "420KB" },
-  { id: "5", name: "REPORTE_GASTOS_OPERATIVOS", date: "2024-04-05", user: "Admin", format: "CSV", size: "2.1MB" },
-  { id: "6", name: "AHORROS_COSTOS_MAYO", date: "2024-05-01", user: "Admin", format: "PDF", size: "680KB" },
-];
+// ----- DATOS REALES (FETCHED) -----
+// El estado se manejará dentro del componente
 
 // Mapeo de nombres técnicos a nombres comerciales
 const BUSINESS_NAMES: Record<string, string> = {
@@ -61,11 +55,7 @@ const FormatChip = ({ format }: { format: string }) => {
   );
 };
 
-const SCHEDULED_REPORTS = [
-  { id: "1", name: "Cierre Diario Automatizado", frequency: "Diary", next: "2024-04-16 23:59", recipient: "gerencia@pos.com" },
-  { id: "2", name: "Alerta Stock Crítico", frequency: "Hourly", next: "Sig. Hora", recipient: "compras@pos.com" },
-  { id: "3", name: "Balance PyG Mensual", frequency: "Monthly", next: "2024-05-01 08:00", recipient: "contabilidad@pos.com" },
-];
+const SCHEDULED_REPORTS: any[] = [];
 
 // Tipo para tracking de descargas
 interface DownloadState {
@@ -102,53 +92,92 @@ export default function ReportsPage() {
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [dateRangeOpen, setDateRangeOpen] = useState(false);
-  const [dateFrom, setDateFrom] = useState(`${new Date().toISOString().split('T')[0]}T00:00`);
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date();
+    d.setDate(1);
+    return `${d.toISOString().split('T')[0]}T00:00`;
+  });
   const [dateTo, setDateTo] = useState(`${new Date().toISOString().split('T')[0]}T23:59`);
 
   // Quick Panel State
   const [quickCategory, setQuickCategory] = useState("box-closure");
   const [quickFormat, setQuickFormat] = useState("PDF");
 
+  // Main Content Tab
+  const [mainTab, setMainTab] = useState("archives");
+
   // Estado de carga para descargas de archivos del historial
+  const [archivedReports, setArchivedReports] = useState<any[]>([]);
+  const [isFetchingHistory, setIsFetchingHistory] = useState(true);
   const [downloadingIds, setDownloadingIds] = useState<DownloadState>({});
+  const [stats, setStats] = useState<any>(null);
 
   const { toast } = useToast();
 
+  // Fetch report history and stats
+  const fetchHistory = async () => {
+    setIsFetchingHistory(true);
+    try {
+      const [historyRes, statsRes] = await Promise.all([
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history`, { headers: getHeaders() }),
+        fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/stats`, { headers: getHeaders() })
+      ]);
+
+      if (historyRes.ok) {
+        const data = await historyRes.json();
+        setArchivedReports(data || []);
+      }
+
+      if (statsRes.ok) {
+        const data = await statsRes.json();
+        setStats(data || {});
+      }
+    } catch (error) {
+      console.error("Error fetching report data:", error);
+    } finally {
+      setIsFetchingHistory(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
   // Handler de descarga real para archivos del historial
-  const handleArchiveDownload = async (report: typeof ARCHIVED_REPORTS[0]) => {
+  const handleArchiveDownload = async (report: any) => {
     setDownloadingIds(prev => ({ ...prev, [report.id]: true }));
     try {
-      // Simular delay de descarga (reemplazar con llamada real al backend)
-      await new Promise(resolve => setTimeout(resolve, 800));
-
-      // Crear blob simulado (en producción, esto vendría del backend)
-      const blob = new Blob(['%PDF-1.4\n%...'], { type: 'application/pdf' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.style.display = 'none';
-      a.href = url;
-      a.download = `${report.name.replace(/ /g, '_')}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(() => {
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-      }, 100);
-
+      // En este sistema, los reportes se descargan por el nombre del archivo local o simplemente se genera un aviso
       toast({
         variant: 'success',
-        title: 'DESCARGA COMPLETADA',
-        description: `${BUSINESS_NAMES[report.name] || report.name} listo.`
+        title: 'CONSULTA DE ARCHIVO',
+        description: `El archivo ${report.url} está registrado en el servidor.`
       });
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'ERROR DE DESCARGA',
-        description: 'No se pudo descargar el archivo.'
+        title: 'ERROR',
+        description: 'No se pudo procesar la solicitud.'
       });
     } finally {
       setDownloadingIds(prev => ({ ...prev, [report.id]: false }));
     }
+  };
+
+  const handleDeleteReport = async (id: number) => {
+      if (!confirm("¿Está seguro de eliminar este registro del historial?")) return;
+      try {
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history/${id}`, {
+              method: 'DELETE',
+              headers: getHeaders()
+          });
+          if (res.ok) {
+              setArchivedReports(prev => prev.filter(r => r.id !== id));
+              toast({ title: "ELIMINADO", description: "Registro borrado correctamente" });
+          }
+      } catch (error) {
+          toast({ title: "ERROR", description: "No se pudo eliminar el registro", variant: "destructive" });
+      }
   };
 
   // Event listeners para notificaciones de Telegram desde reportGenerator
@@ -209,7 +238,7 @@ export default function ReportsPage() {
         case 'payments': {
           const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/overview`, { headers: getHeaders() });
           const data = await res.json();
-          const paymentData = Object.entries(data.salesByPayment).map(([method, amount]) => ({
+          const paymentData = Object.entries(data?.salesByPayment || {}).map(([method, amount]) => ({
             method,
             amount: `$${formatCurrency(amount as number)}`
           }));
@@ -277,7 +306,7 @@ export default function ReportsPage() {
             categorySummary[category].value += subValue;
 
             return {
-              name: p.productName || p.product_name || p.name || 'Sin Nombre',
+              name: p?.productName || p?.product_name || p?.name || 'Sin Nombre',
               stock: quantity,
               cost: `$${formatCurrency(purchasePrice)}`,
               price: `$${formatCurrency(salePrice)}`,
@@ -335,13 +364,13 @@ export default function ReportsPage() {
               { header: 'Monto Actual', dataKey: 'amount' }
             ],
             data: [
-              { label: 'INGRESOS TOTALES (Ventas)', amount: `$${formatCurrency(data.totalRevenue)}` },
-              { label: 'COSTO DE MERCANCÍA (COGS)', amount: `$${formatCurrency(data.totalCogs)}` },
-              { label: 'UTILIDAD BRUTA', amount: `$${formatCurrency(data.grossProfit)}` },
-              { label: 'GASTOS OPERATIVOS', amount: `$${formatCurrency(data.totalExpenses)}` },
-              { label: 'UTILIDAD NETA', amount: `$${formatCurrency(data.netProfit)}` }
+              { label: 'INGRESOS TOTALES (Ventas)', amount: `$${formatCurrency(data?.totalRevenue || 0)}` },
+              { label: 'COSTO DE MERCANCÍA (COGS)', amount: `$${formatCurrency(data?.totalCogs || 0)}` },
+              { label: 'UTILIDAD BRUTA', amount: `$${formatCurrency(data?.grossProfit || 0)}` },
+              { label: 'GASTOS OPERATIVOS', amount: `$${formatCurrency(data?.totalExpenses || 0)}` },
+              { label: 'UTILIDAD NETA', amount: `$${formatCurrency(data?.netProfit || 0)}` }
             ],
-            summary: [{ label: 'Margen Neto', value: `${data.marginPercentage.toFixed(2)}%` }],
+            summary: [{ label: 'Margen Neto', value: `${(data?.marginPercentage || 0).toFixed(2)}%` }],
             sendToTelegram: true
           });
           break;
@@ -368,8 +397,8 @@ export default function ReportsPage() {
               savings: `$${formatCurrency(item.potentialSavings || item.potential_savings || 0)}`
             })),
             summary: [
-              { label: 'Total Oportunidades', value: data.length },
-              { label: 'Ahorro Total Potencial', value: data.reduce((sum: number, item: any) => sum + (item.potentialSavings || item.potential_savings || 0), 0) }
+              { label: 'Total Oportunidades', value: (data || []).length },
+              { label: 'Ahorro Total Potencial', value: (data || []).reduce((sum: number, item: any) => sum + (item.potentialSavings || item.potential_savings || 0), 0) }
             ],
             sendToTelegram: true
           });
@@ -490,10 +519,10 @@ export default function ReportsPage() {
 
         {/* DASHBOARD ANALITICO SUPERIOR */}
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-          <MetricCard label="Reportes Generados" value="1,450" trend="+12.5%" subValue="Últimos 30 días" />
-          <MetricCard label="Exportaciones Exitosas" value="98.2%" subValue="Audit Ledger Health" />
-          <MetricCard label="Programaciones" value="24" trend="Activos" subValue="Next run in 2h" />
-          <MetricCard label="Almacenamiento Cloud" value="2.4 GB" subValue="Uso de repositorio" />
+          <MetricCard label="Reportes Generados" value={stats?.totalReports || "0"} trend="+0%" subValue="Historial Total" />
+          <MetricCard label="Exportaciones Exitosas" value="100%" subValue="Audit Ledger Health" />
+          <MetricCard label="Programaciones" value="0" trend="Activos" subValue="Next run: N/A" />
+          <MetricCard label="Almacenamiento Cloud" value={stats?.totalReports ? `${(stats.totalReports * 0.45).toFixed(1)} MB` : "0 MB"} subValue="Uso estimado" />
         </div>
 
         <div className="flex-1 flex flex-col xl:flex-row gap-8 min-h-0 overflow-hidden">
@@ -501,15 +530,51 @@ export default function ReportsPage() {
           <div className="flex-1 space-y-8 min-w-0 overflow-y-auto custom-scrollbar pr-2">
             {/* TABLA HISTORIAL */}
             <Card className="bg-white/70 dark:bg-zinc-900/30 backdrop-blur-2xl border border-gray-200 dark:border-white/5 rounded-[2.5rem] shadow-2xl">
-              <CardHeader className="p-8 pb-0 flex justify-between items-center">
-                <div className="flex items-center gap-3">
-                  <History size={20} className="text-emerald-500" />
-                  <h2 className="text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter">Historial de <span className="text-emerald-500">Archivos</span></h2>
+              <CardHeader className="p-8 pb-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="flex flex-col gap-1">
+                  <div className="flex items-center gap-3">
+                    <History size={20} className="text-emerald-500" />
+                    <h2 className="text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter">Centro de <span className="text-emerald-500">Auditoría</span></h2>
+                  </div>
+                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest italic ml-8">Gestión de archivos y cierres de caja</p>
                 </div>
-                <Button isIconOnly variant="flat" size="sm" className="rounded-xl"><Filter size={16} /></Button>
+                
+                <Tabs 
+                  aria-label="Main Audit Tabs"
+                  selectedKey={mainTab}
+                  onSelectionChange={(k) => setMainTab(String(k))}
+                  color="success"
+                  variant="underlined"
+                  classNames={{
+                    tabList: "gap-6",
+                    cursor: "w-full bg-emerald-500",
+                    tab: "max-w-fit px-0 h-12",
+                    tabContent: "font-black text-[10px] uppercase italic tracking-widest group-data-[selected=true]:text-emerald-500"
+                  }}
+                >
+                  <Tab 
+                    key="archives" 
+                    title={
+                      <div className="flex items-center gap-2">
+                        <FileSearch size={14} />
+                        <span>Historial de Archivos</span>
+                      </div>
+                    } 
+                  />
+                  <Tab 
+                    key="closures" 
+                    title={
+                      <div className="flex items-center gap-2">
+                        <Banknote size={14} />
+                        <span>Cierres de Caja</span>
+                      </div>
+                    } 
+                  />
+                </Tabs>
               </CardHeader>
               <CardBody className="p-4 md:p-8">
-                <div className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-colors">
+                {mainTab === "archives" ? (
+                  <div className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-colors">
                   <div className="max-w-full overflow-x-auto custom-scrollbar">
                     <Table
                       aria-label="Archived Reports"
@@ -530,8 +595,8 @@ export default function ReportsPage() {
                         <TableColumn className="hidden md:table-cell">TAMAÑO</TableColumn>
                         <TableColumn align="end">GESTIÓN</TableColumn>
                       </TableHeader>
-                      <TableBody emptyContent="SIN REPORTES ARCHIVADOS">
-                        {ARCHIVED_REPORTS.map((r) => (
+                      <TableBody emptyContent={isFetchingHistory ? <Spinner /> : "SIN REPORTES ARCHIVADOS"}>
+                        {archivedReports.map((r) => (
                           <TableRow key={r.id}>
                             <TableCell>
                               <div className="flex items-center gap-3 py-1">
@@ -543,19 +608,21 @@ export default function ReportsPage() {
                                     {BUSINESS_NAMES[r.name] || r.name}
                                   </span>
                                   <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-tight">
-                                    {r.name}
+                                    {r.url}
                                   </span>
                                 </div>
                               </div>
                             </TableCell>
                             <TableCell className="hidden sm:table-cell">
-                              <span className="text-[10px] font-bold text-gray-500 uppercase tabular-nums">{r.date}</span>
+                              <span className="text-[10px] font-bold text-gray-500 uppercase tabular-nums">
+                                {new Date(r.created_at).toLocaleDateString()}
+                              </span>
                             </TableCell>
                             <TableCell className="hidden md:table-cell">
-                              <FormatChip format={r.format} />
+                              <FormatChip format={r.type} />
                             </TableCell>
                             <TableCell className="hidden md:table-cell">
-                              <span className="text-[10px] font-bold text-gray-400 tabular-nums">{r.size}</span>
+                              <span className="text-[10px] font-bold text-gray-400 tabular-nums">{r.created_by}</span>
                             </TableCell>
                             <TableCell>
                               <div className="flex items-center justify-end gap-1 px-1">
@@ -573,6 +640,7 @@ export default function ReportsPage() {
                                   isIconOnly
                                   size="sm"
                                   variant="flat"
+                                  onPress={() => handleDeleteReport(r.id)}
                                   className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all shadow-sm"
                                 >
                                   <Trash2 size={14} />
@@ -585,6 +653,9 @@ export default function ReportsPage() {
                     </Table>
                   </div>
                 </div>
+                ) : (
+                  <ClosuresHistory />
+                )}
               </CardBody>
             </Card>
 

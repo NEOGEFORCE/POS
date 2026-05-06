@@ -31,7 +31,7 @@ import {
     Zap
 } from 'lucide-react'
 import { Product } from '@/lib/definitions'
-import { formatCurrency, applyRounding } from "@/lib/utils"
+import { formatCurrency, applyRounding, isProductWeighted } from "@/lib/utils"
 
 interface CartItem extends Product {
     cartQuantity: number;
@@ -228,7 +228,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                             onDoubleClick={() => moveToRight(item.cartItemId)}
                                         >
                                             <TableCell className="text-[8px] font-black uppercase tracking-tight py-1 pl-2 max-w-[120px] truncate">{item.productName}</TableCell>
-                                            <TableCell className="text-[8px] font-black tabular-nums text-center py-1">x{item.cartQuantity.toFixed(item.isWeighted ? 3 : 0)}</TableCell>
+                                            <TableCell className="text-[8px] font-black tabular-nums text-center py-1">x{item.cartQuantity.toFixed(isProductWeighted(item) ? 3 : 0)}</TableCell>
                                             <TableCell className="text-[8px] font-black tabular-nums text-right py-1 pr-2">${formatCurrency(applyRounding(Number(item.salePrice) * item.cartQuantity))}</TableCell>
                                         </TableRow>
                                     ))}
@@ -300,7 +300,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                             onDoubleClick={() => moveToLeft(item.cartItemId)}
                                         >
                                             <TableCell className="text-[8px] font-black uppercase tracking-tight py-1 pl-2 max-w-[120px] truncate">{item.productName}</TableCell>
-                                            <TableCell className="text-[8px] font-black tabular-nums text-center py-1">x{item.cartQuantity.toFixed(item.isWeighted ? 3 : 0)}</TableCell>
+                                            <TableCell className="text-[8px] font-black tabular-nums text-center py-1">x{item.cartQuantity.toFixed(isProductWeighted(item) ? 3 : 0)}</TableCell>
                                             <TableCell className="text-[8px] font-black tabular-nums text-right py-1 pr-2">${formatCurrency(applyRounding(Number(item.salePrice) * item.cartQuantity))}</TableCell>
                                         </TableRow>
                                     ))}

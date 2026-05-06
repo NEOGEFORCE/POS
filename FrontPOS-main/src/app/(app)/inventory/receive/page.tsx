@@ -39,6 +39,7 @@ export interface ReceiveItem {
     icui: number; // Porcentaje (%)
     ibua: number; // Porcentaje (%)
     discount: number; // Porcentaje (%) de descuento del proveedor
+    currentStock: number;
 }
 
 export default function ReceiveInventoryPage() {
@@ -174,7 +175,7 @@ export default function ReceiveInventoryPage() {
             return [{
                 barcode: product.barcode,
                 productName: product.productName,
-                addedQuantity: customQty || 1,
+                addedQuantity: customQty || 0, // Inicia en 0 para que el input se vea vacío (Prompt V8.1)
                 newPurchasePrice: customPrice || Number(product.purchasePrice),
                 newSalePrice: applyRounding(Number(product.salePrice)),
                 marginPercentage: (customPrice || product.purchasePrice) > 0 ? ((product.salePrice / (customPrice || product.purchasePrice)) - 1) * 100 : 30,
@@ -182,7 +183,8 @@ export default function ReceiveInventoryPage() {
                 iva: Number(product.iva || 0),
                 icui: Number(product.icui || 0),
                 ibua: Number(product.ibua || 0),
-                discount: 0
+                discount: 0,
+                currentStock: Number(product.quantity || 0)
             }, ...prev];
         });
         setSearchQuery('');
@@ -577,6 +579,7 @@ export default function ReceiveInventoryPage() {
                                 placeholder="BUSCAR" 
                                 value={searchQuery} 
                                 onValueChange={setSearchQuery} 
+                                onFocus={(e) => e.target.select()}
                                 startContent={<Search size={14} className="text-emerald-500 hidden sm:block" />}
                                 classNames={{ 
                                     inputWrapper: "h-10 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-data-[focus=true]:border-emerald-500 transition-all px-2 sm:px-3", 
@@ -592,7 +595,12 @@ export default function ReceiveInventoryPage() {
                                                 <div className="h-8 w-8 rounded-lg bg-gray-100 dark:bg-zinc-900 flex items-center justify-center group-hover:bg-white/20"><Package size={14} /></div>
                                                 <div>
                                                     <p className="text-[11px] font-black uppercase italic">{p.productName}</p>
-                                                    <p className="text-[9px] font-mono opacity-50">#{p.barcode}</p>
+                                                    <div className="flex items-center gap-2">
+                                                        <p className="text-[9px] font-mono opacity-50">#{p.barcode}</p>
+                                                        <span className={`text-[8px] font-black px-1.5 rounded-full ${p.quantity <= 0 ? 'bg-rose-500/20 text-rose-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
+                                                            STOCK: {p.quantity}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
                                             <div className="text-right">
@@ -632,6 +640,7 @@ export default function ReceiveInventoryPage() {
                                         }}
                                         startContent={<Truck size={14} className="text-emerald-500" />}
                                         inputProps={{
+                                            onFocus: (e: any) => e.target.select(),
                                             classNames: {
                                                 inputWrapper: "h-9 bg-white dark:bg-zinc-900 border-2 border-emerald-500/30 shadow-none rounded-xl data-[focused=true]:border-emerald-500 transition-all px-2 !mask-none",
                                                 input: "text-[10px] font-black uppercase italic text-gray-900 dark:text-white !overflow-visible placeholder:text-gray-400"

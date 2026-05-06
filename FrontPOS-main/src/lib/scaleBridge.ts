@@ -1,5 +1,5 @@
 const WS_URL = process.env.NEXT_PUBLIC_SCALE_WS_URL || 'ws://localhost:9876';
-const RECONNECT_DELAY = 60000; // Intentar reconectar cada minuto para no saturar la consola
+const RECONNECT_DELAY = 1000; // 1 segundo para reconexión ultra-rápida
 
 interface ScaleState {
     weight: number;
@@ -8,6 +8,7 @@ interface ScaleState {
     port: string;
     error: string | null;
     rawData: string;
+    isReloading: boolean;
 }
 
 type Listener = (state: ScaleState) => void;
@@ -23,11 +24,15 @@ class ScaleBridge {
         port: '',
         error: null,
         rawData: '',
+        isReloading: false,
     };
     private listeners: Set<Listener> = new Set();
     private subscriberCount = 0;
     private throttleTimer: any = null;
     private pendingWeight: number | null = null;
+    private lastMessageTime: number = Date.now();
+    private watchdogInterval: any = null;
+    private pingInterval: any = null;
 
     private constructor() {}
 
@@ -65,6 +70,25 @@ class ScaleBridge {
             const ws = new WebSocket(WS_URL);
             this.ws = ws;
 
+            if (!this.watchdogInterval) {
+                this.watchdogInterval = setInterval(() => {
+                    const now = Date.now();
+                    if (this.state.isConnected && (now - this.lastMessageTime > 8000)) {
+                        console.warn("ScaleBridge Watchdog: Inactividad detectada. Reiniciando conexión automáticamente...");
+                        this.ws?.close(); // Forzar cierre para disparar reconexión
+                        this.connect();
+                    }
+                }, 4000);
+            }
+
+            if (!this.pingInterval) {
+                this.pingInterval = setInterval(() => {
+                    if (this.ws?.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({ type: 'ping' }));
+                    }
+                }, 3000);
+            }
+
             ws.onopen = () => {
                 this.updateState({ isConnected: true, error: null });
                 if (this.reconnectTimer) {
@@ -74,21 +98,18 @@ class ScaleBridge {
             };
 
             ws.onmessage = (event) => {
+                this.lastMessageTime = Date.now();
+                if (this.state.isReloading) {
+                    this.updateState({ isReloading: false });
+                }
                 try {
                     const msg = JSON.parse(event.data);
                     switch (msg.type) {
                         case 'weight':
-                            // THROTTLE 200ms para que el flujo de datos no mate al UI
-                            this.pendingWeight = msg.value ?? 0;
-                            if (!this.throttleTimer) {
-                                this.throttleTimer = setTimeout(() => {
-                                    if (this.pendingWeight !== null) {
-                                        this.updateState({ weight: this.pendingWeight });
-                                        this.pendingWeight = null;
-                                    }
-                                    this.throttleTimer = null;
-                                }, 200);
-                            }
+                            const newWeight = msg.value ?? 0;
+                            // Actualización INSTANTÁNEA para latencia cero
+                            this.updateState({ weight: newWeight });
+                            this.pendingWeight = null;
                             break;
                         case 'status':
                             this.updateState({ isScaleOnline: msg.connected ?? false, port: msg.port ?? '' });
@@ -135,6 +156,10 @@ class ScaleBridge {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
         if (this.throttleTimer) {
             clearTimeout(this.throttleTimer);
             this.throttleTimer = null;
@@ -146,8 +171,34 @@ class ScaleBridge {
     }
 
     private updateState(partial: Partial<ScaleState>) {
+        if (partial.isReloading) {
+            partial.weight = 0;
+        }
         this.state = { ...this.state, ...partial };
         this.listeners.forEach(listener => listener(this.state));
+    }
+
+    reload() {
+        // Resetear peso a 0 inmediatamente para no usar el del producto anterior
+        this.updateState({ weight: 0, isReloading: true });
+        
+        if (this.ws?.readyState === WebSocket.OPEN) {
+            try {
+                this.ws.send(JSON.stringify({ type: 'command', value: 'read' }));
+                this.ws.send(JSON.stringify({ type: 'command', value: 'refresh' }));
+            } catch (e) {
+                this.connect();
+            }
+        } else {
+            this.connect();
+        }
+
+        // Quitar estado de recarga después de medio segundo
+        setTimeout(() => {
+            if (this.state.isReloading) {
+                this.updateState({ isReloading: false });
+            }
+        }, 500); 
     }
 
     getState(): ScaleState {

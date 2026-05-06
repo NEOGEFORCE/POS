@@ -11,6 +11,7 @@ import { Expense } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
+import { broadcastRevalidate } from '@/lib/revalidate';
 
 // Dinámicos para optimización de carga y HMR
 const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: false });
@@ -223,6 +224,7 @@ export default function ExpensesPage() {
       setEditDialogOpen(false);
       setEditingExpense(null);
       loadExpenses();
+      broadcastRevalidate('EXPENSE_UPDATE');
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -247,6 +249,7 @@ export default function ExpensesPage() {
       });
       setDeleteDialogOpen(false);
       loadExpenses();
+      broadcastRevalidate('EXPENSE_UPDATE');
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -274,6 +277,7 @@ export default function ExpensesPage() {
         description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentSource}`,
       });
       loadExpenses();
+      broadcastRevalidate('EXPENSE_UPDATE');
     } catch (err: any) {
       toast({
         variant: "destructive",

@@ -62,23 +62,10 @@ func (r *PostgresClientRepository) GetAll() ([]models.Client, error) {
 
 	clients := []models.Client{}
 	
-	query := `
-		SELECT c.*, 
-		       COALESCE(s_agg.total_spent, 0) as "totalSpent", 
-		       s_agg.last_purchase_date as "lastPurchaseDate"
-		FROM clients c
-		LEFT JOIN (
-			SELECT "clientDni", 
-			       SUM("totalAmount") as total_spent, 
-			       MAX("saleDate") as last_purchase_date
-			FROM sales
-			GROUP BY "clientDni"
-		) s_agg ON c.dni = s_agg."clientDni"
-		ORDER BY c.name ASC
-		LIMIT 100
-	`
-	
-	err := r.db.Raw(query).Scan(&clients).Error
+	// ULTRA-OPTIMIZACIÓN: En el punto de venta necesitamos velocidad extrema.
+	// Quitamos joins pesados de estadísticas (totalSpent/lastPurchaseDate) que no se usan en el selector rápido.
+	// También quitamos el LIMIT 100 para permitir buscar en toda la base de datos localmente.
+	err := r.db.Order("name ASC").Find(&clients).Error
 
 	// PERSISTENCIA EN RAM: Guardar si la consulta fue exitosa
 	if err == nil {

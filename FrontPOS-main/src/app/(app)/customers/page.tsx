@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Customer } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
+import { broadcastRevalidate } from '@/lib/revalidate';
 
 // Dinámicos para aligerar HMR y carga inicial
 const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
@@ -188,6 +189,7 @@ export default function CustomersPage() {
       setLastChange(change);
       setShowSuccessScreen(true);
       loadCustomers();
+      broadcastRevalidate('CUSTOMER_UPDATE');
     } catch (err: any) {
       toast({ variant: "destructive", title: "Error al procesar", description: err.message || "ERROR INESPERADO" });
     }
@@ -224,6 +226,7 @@ export default function CustomersPage() {
       }
       toast({ variant: "success", title: "ÉXITO", description: "CLIENTE REGISTRADO EN MAESTRO" }); setAddDialogOpen(false);
       setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 }); loadCustomers();
+      broadcastRevalidate('CUSTOMER_UPDATE');
     } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL CREAR" }); }
   };
 
@@ -240,6 +243,7 @@ export default function CustomersPage() {
         throw new Error(errorMsg);
       }
       toast({ variant: "success", title: "SINCRONIZADO", description: "PERFIL ACTUALIZADO CORRECTAMENTE" }); setEditDialogOpen(false); loadCustomers();
+      broadcastRevalidate('CUSTOMER_UPDATE');
     } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL ACTUALIZAR" }); }
   };
 
@@ -255,6 +259,7 @@ export default function CustomersPage() {
         throw new Error(errorMsg);
       }
       toast({ variant: "success", title: "ELIMINADO", description: "REGISTRO RETIRADO DEL MAESTRO" }); setDeleteDialogOpen(false); setDeletingDni(null); loadCustomers();
+      broadcastRevalidate('CUSTOMER_UPDATE');
     } catch (err: any) { toast({ variant: "destructive", title: "Error al borrar", description: err.message || "FALLO AL ELIMINAR" }); }
   };
 

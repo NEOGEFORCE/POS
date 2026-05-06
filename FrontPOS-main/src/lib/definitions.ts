@@ -54,6 +54,7 @@ export type Product = {
   ibua?: number;
   isActive?: boolean;
   netProfit?: number;
+  alternateCodes?: string;
   
   // Lógica de Empaques
   isPack?: boolean;
@@ -78,6 +79,7 @@ export type Expense = {
   supplierId?: string | number;
   lenderName?: string;
   status?: 'PAID' | 'PENDING';
+  taxAmount?: number;
   creator?: User; // El usuario que registró el gasto
 };
 

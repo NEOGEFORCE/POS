@@ -6,6 +6,7 @@ import {
     Package, Search, AlertTriangle, PlusCircle, RefreshCw, Barcode, Warehouse, ShoppingBag, ShieldCheck
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
+import { broadcastRevalidate } from '@/lib/revalidate';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Product, Category } from '@/lib/definitions';
@@ -35,6 +36,11 @@ export default function ProductsPage() {
         return role === "admin" || role === "superadmin" || role === "administrador";
     }, [user]);
 
+    const canManage = useMemo(() => {
+        const role = user?.role?.toLowerCase() || user?.Role?.toLowerCase() || "";
+        return role === "admin" || role === "superadmin" || role === "administrador" || role === "empleado" || role === "employee";
+    }, [user]);
+
     const { toast } = useToast();
     const [pageSize, setPageSize] = useState(25);
     const [currentPage, setCurrentPage] = useState(1);
@@ -53,9 +59,9 @@ export default function ProductsPage() {
     const { data: productsData, isLoading: productsLoading, mutate: mutateProducts } = useApi<any>(
         `/products/paginated?page=${currentPage}&pageSize=${pageSize}${filter ? `&q=${filter}` : ''}`
     );
-    const { data: categoriesData } = useApi<Category[]>('/categories/all-categories');
+    const { data: categoriesData, mutate: mutateCategories } = useApi<Category[]>('/categories/all-categories');
     const { data: suppliersData, mutate: mutateSuppliers } = useApi<any[]>('/suppliers/all-suppliers');
-    const { data: allProductsData } = useApi<Product[]>('/products/all-products');
+    const { data: allProductsData, mutate: mutateAllProducts } = useApi<Product[]>('/products/all-products');
 
     // --- ESTADOS ---
     const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -63,16 +69,18 @@ export default function ProductsPage() {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [alertsDialogOpen, setAlertsDialogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
+    const [scanMode, setScanMode] = useState<'main' | 'alternate'>('main');
 
     const [newProduct, setNewProduct] = useState<Omit<Product, 'id'>>({
         barcode: '', productName: '', quantity: undefined as any, isWeighted: false,
-        purchasePrice: 0, salePrice: 0, categoryId: 0, marginPercentage: 20,
+        purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20,
         minStock: undefined as any,
         packMultiplier: undefined as any
     });
     const [newMargin, setNewMargin] = useState(20);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
     const [editMargin, setEditMargin] = useState(20);
+    const [originalBarcode, setOriginalBarcode] = useState<string | null>(null);
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
     const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
 
@@ -122,11 +130,11 @@ export default function ProductsPage() {
         const token = Cookies.get('org-pos-token');
         setApiFieldErrors({}); // Limpiar errores previos
         try {
-            // Sanitizar payload: limpiar formato de moneda antes de enviar
             const rawData = {
                 ...newProduct,
                 productName: newProduct.productName.toUpperCase().trim(),
                 barcode: newProduct.barcode.toUpperCase().trim(),
+                alternateCodes: newProduct.alternateCodes,
                 suppliers: (newProduct as any).suppliers || []
             };
             const data = sanitizeProductPayload(rawData);
@@ -136,8 +144,10 @@ export default function ProductsPage() {
             }, token!);
             toast({ variant: 'success', title: 'ÉXITO', description: 'REFERENCIA SINCRONIZADA.' });
             setAddDialogOpen(false);
-            setNewProduct({ barcode: '', productName: '', quantity: undefined as any, isWeighted: false, purchasePrice: 0, salePrice: 0, categoryId: 0, marginPercentage: 20, minStock: undefined as any, packMultiplier: undefined as any });
+            setNewProduct({ barcode: '', productName: '', quantity: undefined as any, isWeighted: false, purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20, minStock: undefined as any, packMultiplier: undefined as any });
             mutateProducts();
+            mutateAllProducts();
+            broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             console.error('ERROR EN CREACIÓN:', err);
 
@@ -167,6 +177,7 @@ export default function ProductsPage() {
                                     toast({ title: 'ÉXITO', description: 'PRODUCTO REACTIVADO' });
                                     setAddDialogOpen(false);
                                     mutateProducts();
+                                    mutateAllProducts();
                                 } catch (e: any) {
                                     toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
                                 }
@@ -206,6 +217,7 @@ export default function ProductsPage() {
                 categoryId: Number(editingProduct.categoryId) || 0,
                 supplierId: Number(editingProduct.supplierId) || 0,
                 imageUrl: editingProduct.imageUrl,
+                alternateCodes: editingProduct.alternateCodes, // Nuevo campo
                 minStock: editingProduct.minStock,
                 iva: editingProduct.iva,
                 icui: editingProduct.icui,
@@ -219,14 +231,17 @@ export default function ProductsPage() {
             // Sanitizar números formateados como moneda
             const payload = sanitizeProductPayload(rawPayload);
 
+            const urlBarcode = originalBarcode || editingProduct.barcode;
 
-
-            await apiFetch(`/products/update-products/${editingProduct.barcode}`, {
+            await apiFetch(`/products/update-products/${urlBarcode}`, {
                 method: 'PUT', body: JSON.stringify(payload), fallbackError: 'FALLO AL ACTUALIZAR'
             }, token!);
             toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ACTUALIZADO' });
+            setOriginalBarcode(null);
             setEditDialogOpen(false);
             mutateProducts();
+            mutateAllProducts();
+            broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             // DEBUG: Ver el error real
             console.error('ERROR REAL ATRAPADO:', err);
@@ -254,6 +269,8 @@ export default function ProductsPage() {
             toast({ variant: 'success', title: 'ÉXITO', description: 'PRODUCTO ELIMINADO' });
             setDeleteDialogOpen(false);
             mutateProducts();
+            mutateAllProducts();
+            broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
         }
@@ -279,16 +296,38 @@ export default function ProductsPage() {
             categoryId: p.categoryId || (productAny.Category?.id ? Number(productAny.Category.id) : 0) || (productAny.category?.id ? Number(productAny.category.id) : 0) || 0,
             supplierId: p.supplierId || (productAny.Supplier?.id ? Number(productAny.Supplier.id) : 0) || (productAny.supplier?.id ? Number(productAny.supplier.id) : 0) || 0,
         };
+        setOriginalBarcode(p.barcode); // Capturar código original para el URL del PUT
         setEditingProduct(normalizedProduct);
         setEditDialogOpen(true);
     }, []);
 
     // Handlers estables para scanner
     const handleScannerResult = useCallback((b: string) => {
-        if (addDialogOpen) setNewProduct(p => ({ ...p, barcode: b }));
-        else if (editDialogOpen) setEditingProduct(p => p ? ({ ...p, barcode: b }) : null);
+        const code = b.toUpperCase().trim();
+        if (scanMode === 'main') {
+            if (addDialogOpen) setNewProduct(p => ({ ...p, barcode: code }));
+            else if (editDialogOpen) setEditingProduct(p => p ? ({ ...p, barcode: code }) : null);
+        } else {
+            // Modo alterno: concatenar con coma
+            if (addDialogOpen) {
+                setNewProduct(p => {
+                    const current = p.alternateCodes || "";
+                    const codes = current.split(',').map(c => c.trim()).filter(Boolean);
+                    if (!codes.includes(code)) codes.push(code);
+                    return { ...p, alternateCodes: codes.join(', ') };
+                });
+            } else if (editDialogOpen) {
+                setEditingProduct(p => {
+                    if (!p) return null;
+                    const current = p.alternateCodes || "";
+                    const codes = current.split(',').map(c => c.trim()).filter(Boolean);
+                    if (!codes.includes(code)) codes.push(code);
+                    return { ...p, alternateCodes: codes.join(', ') };
+                });
+            }
+        }
         setIsScannerOpen(false);
-    }, [addDialogOpen, editDialogOpen]);
+    }, [addDialogOpen, editDialogOpen, scanMode]);
 
     const handleScannerClose = useCallback(() => setIsScannerOpen(false), []);
 
@@ -330,7 +369,7 @@ export default function ProductsPage() {
                         >
                             <RefreshCw size={16} />
                         </Button>
-                        {isAdmin && (
+                        {canManage && (
                             <Button
                                 onPress={() => setAddDialogOpen(true)}
                                 className="h-9 px-3 md:px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
@@ -427,9 +466,11 @@ export default function ProductsPage() {
                 categories={categoriesData || []}
                 suppliers={suppliersData || []}
                 mutateSuppliers={mutateSuppliers}
+                mutateCategories={mutateCategories}
                 allProducts={allProductsData || []}
                 onConfirm={handleModalConfirm}
-                onScan={() => setIsScannerOpen(true)}
+                onScan={() => { setScanMode('main'); setIsScannerOpen(true); }}
+                onScanAlternate={() => { setScanMode('alternate'); setIsScannerOpen(true); }}
                 apiFieldErrors={apiFieldErrors}
             />
 

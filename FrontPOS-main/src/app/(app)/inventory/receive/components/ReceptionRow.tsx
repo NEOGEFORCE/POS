@@ -27,27 +27,31 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         return withTaxes * (1 + marginPct / 100);
     };
 
+    // Helper para formateo inicial (0 -> "")
+    const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
+    const formatInitialPercent = (val: number) => (val === 0 ? '' : String(Math.round(val)));
+
     // Local state
     const costWithDiscount = calculateCostWithDiscount(item.newPurchasePrice, item.discount || 0);
-    const [localTotal, setLocalTotal] = useState(formatCOP(costWithDiscount * item.addedQuantity));
-    const [localCost, setLocalCost] = useState(formatCOP(costWithDiscount)); 
-    const [localSalePrice, setLocalSalePrice] = useState(formatCOP(item.newSalePrice));
-    const [localIva, setLocalIva] = useState(String(item.iva || 0));
-    const [localIcui, setLocalIcui] = useState(String(item.icui || 0));
-    const [localIbua, setLocalIbua] = useState(String(item.ibua || 0));
-    const [localDiscount, setLocalDiscount] = useState(String(Math.round(item.discount || 0)));
-    const [localMargin, setLocalMargin] = useState(String(Math.round(item.marginPercentage || 30)));
+    const [localTotal, setLocalTotal] = useState(formatInitial(costWithDiscount * item.addedQuantity));
+    const [localCost, setLocalCost] = useState(formatInitial(costWithDiscount)); 
+    const [localSalePrice, setLocalSalePrice] = useState(formatInitial(item.newSalePrice));
+    const [localIva, setLocalIva] = useState(formatInitialPercent(item.iva || 0));
+    const [localIcui, setLocalIcui] = useState(formatInitialPercent(item.icui || 0));
+    const [localIbua, setLocalIbua] = useState(formatInitialPercent(item.ibua || 0));
+    const [localDiscount, setLocalDiscount] = useState(formatInitialPercent(item.discount || 0));
+    const [localMargin, setLocalMargin] = useState(formatInitialPercent(item.marginPercentage || 30));
 
     useEffect(() => {
         const costWithDisc = calculateCostWithDiscount(item.newPurchasePrice, item.discount || 0);
-        setLocalTotal(formatCOP(costWithDisc * item.addedQuantity));
-        setLocalCost(formatCOP(costWithDisc)); 
-        setLocalSalePrice(formatCOP(item.newSalePrice));
-        setLocalIva(String(item.iva || 0));
-        setLocalIcui(String(item.icui || 0));
-        setLocalIbua(String(item.ibua || 0));
-        setLocalDiscount(String(item.discount || 0));
-        setLocalMargin(String(Math.round(item.marginPercentage || 30)));
+        setLocalTotal(formatInitial(costWithDisc * item.addedQuantity));
+        setLocalCost(formatInitial(costWithDisc)); 
+        setLocalSalePrice(formatInitial(item.newSalePrice));
+        setLocalIva(formatInitialPercent(item.iva || 0));
+        setLocalIcui(formatInitialPercent(item.icui || 0));
+        setLocalIbua(formatInitialPercent(item.ibua || 0));
+        setLocalDiscount(formatInitialPercent(item.discount || 0));
+        setLocalMargin(formatInitialPercent(item.marginPercentage || 30));
     }, [item.newPurchasePrice, item.addedQuantity, item.newSalePrice, item.iva, item.icui, item.ibua, item.discount, item.marginPercentage]);
 
     const handleTotalChange = (val: string) => {
@@ -110,10 +114,11 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleTaxChange = (type: 'iva' | 'icui' | 'ibua', val: string) => {
-        const value = parseFloat(val) || 0;
         if (type === 'iva') setLocalIva(val);
         if (type === 'icui') setLocalIcui(val);
         if (type === 'ibua') setLocalIbua(val);
+        
+        const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
         const currentIva = type === 'iva' ? value : Number(item.iva);
         const currentIcui = type === 'icui' ? value : Number(item.icui);
         const currentIbua = type === 'ibua' ? value : Number(item.ibua);
@@ -134,8 +139,8 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleMarginChange = (val: string) => {
-        const value = parseFloat(val) || 0;
-        setLocalMargin(String(Math.round(value)));
+        setLocalMargin(val);
+        const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
         const newSale = applyRounding(calculateFinalPrice(item.newPurchasePrice, Number(item.discount || 0), Number(item.iva), Number(item.icui), Number(item.ibua), value));
         setLocalSalePrice(formatCOP(newSale));
         onUpdate(item.barcode, { 
@@ -145,8 +150,9 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleDiscountChange = (val: string) => {
-        const value = parseFloat(val) || 0;
-        setLocalDiscount(String(Math.round(value)));
+        setLocalDiscount(val);
+        const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
+        
         const costWithDiscount = calculateCostWithDiscount(item.newPurchasePrice, value);
         setLocalCost(formatCOP(costWithDiscount));
         const newTotal = costWithDiscount * item.addedQuantity;
@@ -164,6 +170,10 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         });
     };
 
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        e.target.select();
+    };
+
     return (
         <div className="flex flex-col lg:flex-row lg:items-center gap-0 p-1 px-2 md:p-4 bg-white dark:bg-black/40 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors border-b border-gray-100 dark:border-white/5 first:rounded-t-2xl last:rounded-b-2xl shadow-sm overflow-hidden">
             {/* Cabecera compacta: Nombre, Código y Acciones */}
@@ -176,6 +186,12 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         <div className="flex items-baseline gap-1.5 min-w-0">
                             <h3 className="text-[9px] md:text-[11px] font-black text-gray-900 dark:text-white uppercase italic leading-tight truncate">{item.productName}</h3>
                             <span className="text-[7px] font-black text-gray-400 dark:text-zinc-600 font-mono tracking-tighter shrink-0">#{item.barcode}</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 mt-0.5">
+                            <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase italic">Stock en Sistema:</span>
+                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg shadow-sm border ${item.currentStock <= 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>
+                                {item.currentStock} UND
+                            </span>
                         </div>
                     </div>
                 </div>
@@ -222,7 +238,8 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         <input 
                             type="number" 
                             className="bg-transparent w-full text-center text-[9px] font-black text-gray-900 dark:text-white border-none outline-none focus:ring-0 p-0" 
-                            value={item.addedQuantity}
+                            value={item.addedQuantity === 0 ? '' : item.addedQuantity}
+                            onFocus={handleFocus}
                             onChange={(e) => onUpdate(item.barcode, { addedQuantity: Math.max(0, parseFloat(e.target.value) || 0) })} 
                         />
                     </div>
@@ -236,6 +253,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         <input 
                             className={`bg-transparent w-full text-[9px] font-black italic tabular-nums border-none outline-none focus:ring-0 p-0 ${item.entryType === 'gift' ? 'text-gray-400' : 'text-indigo-600 dark:text-indigo-400'}`} 
                             value={localTotal}
+                            onFocus={handleFocus}
                             onChange={(e) => handleTotalChange(e.target.value)}
                             disabled={item.entryType === 'gift'}
                         />
@@ -250,6 +268,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         <input 
                             className="bg-transparent w-full text-[9px] font-black italic tabular-nums text-gray-900 dark:text-white border-none outline-none focus:ring-0 p-0" 
                             value={localCost}
+                            onFocus={handleFocus}
                             onChange={(e) => handleCostChange(e.target.value)}
                             disabled={item.entryType === 'gift'}
                         />
@@ -264,6 +283,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         <input 
                             className="bg-transparent w-full text-[9px] font-black italic tabular-nums text-emerald-600 dark:text-emerald-500 border-none outline-none focus:ring-0 p-0" 
                             value={localSalePrice}
+                            onFocus={handleFocus}
                             onChange={(e) => handleSalePriceChange(e.target.value)}
                         />
                     </div>
@@ -274,27 +294,27 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
             <div className="col-span-2 md:col-span-2 lg:md:col-span-1 flex flex-wrap items-center gap-1 bg-gray-100 dark:bg-white/5 p-1 rounded-lg border border-gray-200 dark:border-white/10 min-w-0 shadow-inner mt-0.5">
                 <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
                     <span className="text-[7px] font-black text-emerald-500 italic">DTO</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localDiscount} onChange={(e) => handleDiscountChange(e.target.value)} disabled={item.entryType === 'gift'} />
+                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localDiscount} onFocus={handleFocus} onChange={(e) => handleDiscountChange(e.target.value)} disabled={item.entryType === 'gift'} />
                     <span className="text-[7px] text-emerald-500 font-black">%</span>
                 </div>
                 <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
                     <span className="text-[7px] font-black text-rose-500 italic">IVA</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIva} onChange={(e) => handleTaxChange('iva', e.target.value)} />
+                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIva} onFocus={handleFocus} onChange={(e) => handleTaxChange('iva', e.target.value)} />
                     <span className="text-[7px] text-rose-500 font-black">%</span>
                 </div>
                 <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
                     <span className="text-[7px] font-black text-amber-500 italic">ICUI</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIcui} onChange={(e) => handleTaxChange('icui', e.target.value)} />
+                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIcui} onFocus={handleFocus} onChange={(e) => handleTaxChange('icui', e.target.value)} />
                     <span className="text-[7px] text-amber-500 font-black">%</span>
                 </div>
                 <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
                     <span className="text-[7px] font-black text-sky-500 italic">IBUA</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIbua} onChange={(e) => handleTaxChange('ibua', e.target.value)} />
+                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIbua} onFocus={handleFocus} onChange={(e) => handleTaxChange('ibua', e.target.value)} />
                     <span className="text-[7px] text-sky-500 font-black">%</span>
                 </div>
                 <div className="flex items-center gap-1 bg-violet-500/10 dark:bg-violet-500/20 px-1 py-0.5 rounded-md border border-violet-500/20">
                     <span className="text-[7px] font-black text-violet-500 italic">GAN</span>
-                    <input className="bg-transparent w-6 text-center text-[9px] font-black border-none outline-none p-0 text-violet-600 dark:text-violet-400" value={localMargin} onChange={(e) => handleMarginChange(String(e.target.value))} />
+                    <input className="bg-transparent w-6 text-center text-[9px] font-black border-none outline-none p-0 text-violet-600 dark:text-violet-400" value={localMargin} onFocus={handleFocus} onChange={(e) => handleMarginChange(String(e.target.value))} />
                     <span className="text-[7px] text-violet-500 font-black">%</span>
                 </div>
             </div>

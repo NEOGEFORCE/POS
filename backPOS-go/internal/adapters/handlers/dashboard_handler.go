@@ -144,7 +144,9 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 
 func (h *DashboardHandler) AdjustInitialBalance(c *gin.Context) {
 	var body struct {
-		RealBalance float64 `json:"realBalance"`
+		Cash      float64 `json:"cash"`
+		Nequi     float64 `json:"nequi"`
+		Daviplata float64 `json:"daviplata"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato inválido", err)
@@ -159,7 +161,7 @@ func (h *DashboardHandler) AdjustInitialBalance(c *gin.Context) {
 	name := "ADMINISTRADOR"
 	if nameVal != nil { name = nameVal.(string) }
 
-	err := h.service.AdjustInitialBalance(body.RealBalance, name, dni)
+	err := h.service.AdjustInitialBalance(body.Cash, body.Nequi, body.Daviplata, name, dni)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al ajustar saldo inicial", err)
 		return
@@ -194,17 +196,26 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		title = "⏳ *REPORTE DE AVANCE (PARCIAL)*"
 	}
 
+	expectedCash := closure.TotalCash - closure.TotalExpenses
+	
 	statusIcon := "✅"
 	statusText := "BALANCE PERFECTO"
-	if closure.Difference < 0 {
-		statusIcon = "🚨"
-		statusText = "FALTANTE"
-	} else if closure.Difference > 0 {
-		statusIcon = "⚠️"
-		statusText = "SOBRANTE"
-	}
 
-	expectedCash := closure.TotalCash - closure.TotalExpenses
+	// Nueva Lógica de Balance (Verde vs Rojo)
+	// Si el saldo esperado es negativo (Egresos > Ventas), es un SOBRANTE/FLUJO POSITIVO
+	if expectedCash < 0 {
+		statusIcon = "💚"
+		statusText = "SOBRANTE / FLUJO POSITIVO"
+	} else {
+		// Si es positivo, comparamos con el físico para ver si hay faltante real
+		if closure.PhysicalCash < expectedCash {
+			statusIcon = "🚨"
+			statusText = "FALTANTE"
+		} else if closure.PhysicalCash > expectedCash {
+			statusIcon = "⚠️"
+			statusText = "SOBRANTE"
+		}
+	}
 
 	// 1. INFO GENERAL
 	header := fmt.Sprintf("%s\n━━━━━━━━━━━━━━━━━━━━\n"+
@@ -225,13 +236,14 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		"────────────────────\n"+
 		"📥 *ESPERADO:*      `$%s`\n"+
 		"💵 *REAL:*          `$%s`\n\n"+
-		"%s *DIFERENCIA:*   `$%s` (%s)\n\n",
+		"%s *ESTADO:*       `%s`\n"+
+		"📊 *DIFERENCIA:*   `$%s`\n\n",
 		formatCOP(closure.TotalSales),
 		formatCOP(closure.TotalCash),
 		formatCOP(closure.TotalExpenses),
 		formatCOP(expectedCash),
 		formatCOP(closure.PhysicalCash),
-		statusIcon, formatCOP(closure.Difference), statusText)
+		statusIcon, statusText, formatCOP(closure.Difference))
 
 	// 3. DESGLOSE FÍSICO
 	physical := fmt.Sprintf("🪙 *DESGLOSE DE EFECTIVO*\n"+
@@ -240,7 +252,7 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		"▫️ Mon. 200:        `$%s`\n"+
 		"▫️ Mon. 100:        `$%s`\n\n",
 		formatCOP(closure.CashBills),
-		formatCOP(closure.Coins500_1000),
+		formatCOP(closure.Coins1000+closure.Coins500),
 		formatCOP(closure.Coins200),
 		formatCOP(closure.Coins100))
 
@@ -328,6 +340,19 @@ func (h *DashboardHandler) GetClosuresHistory(c *gin.Context) {
 	data, err := h.service.GetClosuresHistory()
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener historial de cierres", err)
+		return
+	}
+	if data == nil {
+		data = []models.CashierClosure{}
+	}
+	c.JSON(http.StatusOK, data)
+}
+
+func (h *DashboardHandler) GetDetailedReport(c *gin.Context) {
+	employeeDni := c.Query("employeeDni")
+	data, err := h.service.GetDetailedShiftReport(employeeDni)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte detallado", err)
 		return
 	}
 	c.JSON(http.StatusOK, data)
@@ -426,11 +451,20 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 	pdf.SetFont("Arial", "B", 12)
 	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.PhysicalCash)), "0", 1, "C", false, 0, "")
 
-	// Diferencia
+	// Diferencia / Estado
+	statusText := "BALANCE"
+	if expectedCash < 0 {
+		statusText = "SOBRANTE"
+	} else if closure.Difference < 0 {
+		statusText = "FALTANTE"
+	} else if closure.Difference > 0 {
+		statusText = "SOBRANTE"
+	}
+
 	pdf.Rect(140, boxY, 60, 18, "D")
 	pdf.SetXY(140, boxY + 2)
 	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("DIFERENCIA"), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 5, tr(statusText), "0", 1, "C", false, 0, "")
 	pdf.SetFont("Arial", "B", 12)
 	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.Difference)), "0", 1, "C", false, 0, "")
 	
@@ -478,7 +512,8 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 		[]float64{130, 60}, 
 		[][]string{
 			{"Billetes", fmt.Sprintf("$%s", formatCOP(closure.CashBills))},
-			{"Monedas 500 / 1000", fmt.Sprintf("$%s", formatCOP(closure.Coins500_1000))},
+			{"Monedas 1000", fmt.Sprintf("$%s", formatCOP(closure.Coins1000))},
+			{"Monedas 500", fmt.Sprintf("$%s", formatCOP(closure.Coins500))},
 			{"Monedas 200", fmt.Sprintf("$%s", formatCOP(closure.Coins200))},
 			{"Monedas 100", fmt.Sprintf("$%s", formatCOP(closure.Coins100))},
 		})

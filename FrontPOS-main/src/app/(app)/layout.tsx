@@ -7,6 +7,7 @@ import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AppHeader } from '@/components/app-header';
 import { Spinner } from "@heroui/react"; // Usamos el Spinner premium
+import SyncBackground from '@/components/shared/SyncBackground';
 
 export default function AppLayout({
     children,
@@ -59,6 +60,7 @@ export default function AppLayout({
                     <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-500/5 dark:bg-emerald-500/5 blur-[100px] md:blur-[120px] rounded-full pointer-events-none transition-colors duration-500" />
 
                     <AppHeader />
+                    <SyncBackground />
 
                     <main className="flex-1 relative p-0 min-w-0 min-h-0 z-10 overflow-y-auto scrollbar-hide">
                         {children}

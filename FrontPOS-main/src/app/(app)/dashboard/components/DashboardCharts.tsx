@@ -66,11 +66,13 @@ export default function DashboardCharts({
     })) || [];
 
     const paymentDonutData = salesByPayment
-        ? Object.entries(salesByPayment).map(([method, amount]) => ({
-            name: method,
-            value: amount,
-            color: getPaymentColor(method),
-        }))
+        ? Object.entries(salesByPayment)
+            .filter(([method]) => method !== 'MIXTO' && method !== 'MIXED')
+            .map(([method, amount]) => ({
+                name: method,
+                value: amount,
+                color: getPaymentColor(method),
+            }))
         : [];
 
     const totalPayments = paymentDonutData.reduce((s, d) => s + d.value, 0);

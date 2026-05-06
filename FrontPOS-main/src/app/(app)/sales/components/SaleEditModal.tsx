@@ -56,9 +56,18 @@ export default function SaleEditModal({
         const { cash, transfer, transferSource, credit, totalPaid, change } = data;
         
         try {
+            let paymentMethod = "EFECTIVO";
+            if (methodsCount > 1) {
+                paymentMethod = "MIXTO";
+            } else if (credit > 0) {
+                paymentMethod = "FIADO";
+            } else if (transfer > 0) {
+                paymentMethod = transferSource || "TRANSFERENCIA";
+            }
+
             const payload = {
                 clientDni: sale.client?.dni || '0',
-                paymentMethod: credit > 0 ? "FIADO" : (cash > 0 && transfer > 0 ? "MIXTO" : transfer > 0 ? "TRANSFERENCIA" : "EFECTIVO"),
+                paymentMethod: paymentMethod,
                 cashAmount: cash,
                 transferAmount: transfer,
                 transferSource: transferSource,

@@ -1,11 +1,11 @@
 import React, { memo, useState, useEffect } from 'react';
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Button, Input, Autocomplete, AutocompleteItem, Card, CardBody
+  Button, Input, Autocomplete, AutocompleteItem, Card, CardBody, Switch, cn
 } from "@heroui/react";
 import {
   TrendingDown, Wallet, Zap, Building2, HandCoins, Sparkles,
-  FileText, CreditCard, Layers, UserPlus, Search
+  FileText, CreditCard, Layers, UserPlus, Search, Landmark
 } from 'lucide-react';
 import { Expense, Supplier } from '@/lib/definitions';
 import { useApi } from '@/hooks/use-api';
@@ -19,9 +19,10 @@ import SupplierFormModal from '@/app/(app)/suppliers/components/SupplierFormModa
 
 interface ExpenseFormModalProps {
   isOpen: boolean;
-  onOpenChange: (open: boolean) => void;
+  onOpenChange?: (open: boolean) => void;
+  onClose?: () => void;
   isEdit?: boolean;
-  initialExpense: Partial<Expense> | null;
+  initialExpense?: Partial<Expense> | null;
   onSave: (data: any) => Promise<void>;
 }
 
@@ -38,6 +39,7 @@ interface LocalExpenseState {
   isManualDescription: boolean;
   linkedOrderId?: number;
   creator?: any;
+  taxAmount: number;
 }
 
 interface PurchaseOrder {
@@ -63,8 +65,9 @@ const CATEGORIES = [
 const ExpenseFormModal = memo(({
   isOpen,
   onOpenChange,
+  onClose: customOnClose,
   isEdit = false,
-  initialExpense,
+  initialExpense = null,
   onSave
 }: ExpenseFormModalProps) => {
   const { data: suppliers, mutate: mutateSuppliers } = useApi<Supplier[]>('/suppliers/all-suppliers');
@@ -83,7 +86,8 @@ const ExpenseFormModal = memo(({
     supplierId: null,
     lenderName: '',
     status: 'PAID',
-    isManualDescription: false
+    isManualDescription: false,
+    taxAmount: 0
   });
 
   useEffect(() => {
@@ -97,7 +101,8 @@ const ExpenseFormModal = memo(({
         supplierId: initialExpense.supplierId || null,
         lenderName: initialExpense.lenderName || '',
         status: initialExpense.status || 'PAID',
-        isManualDescription: true
+        isManualDescription: true,
+        taxAmount: initialExpense.taxAmount || 0
       });
     } else if (isOpen) {
       setLocalExpense({
@@ -108,7 +113,8 @@ const ExpenseFormModal = memo(({
         supplierId: null,
         lenderName: '',
         status: 'PAID',
-        isManualDescription: false
+        isManualDescription: false,
+        taxAmount: 0
       });
     }
   }, [isOpen, initialExpense]);
@@ -158,6 +164,17 @@ const ExpenseFormModal = memo(({
       return newState;
     });
   };
+
+  // CÁLCULO AUTOMÁTICO 4x1000 PARA NEQUI
+  useEffect(() => {
+    const amountNum = Number(localExpense.amount) || 0;
+    if (localExpense.paymentSource === 'NEQUI') {
+      const tax = Math.ceil(amountNum * 0.004); // 4x1000
+      setLocalExpense(prev => ({ ...prev, taxAmount: tax }));
+    } else {
+      setLocalExpense(prev => ({ ...prev, taxAmount: 0 }));
+    }
+  }, [localExpense.paymentSource, localExpense.amount]);
 
   const handleSaveSupplier = async (supplierData: Partial<Supplier>) => {
     const token = Cookies.get('org-pos-token');
@@ -217,7 +234,7 @@ const ExpenseFormModal = memo(({
 
   const paymentMethods = [
     { id: 'EFECTIVO', label: 'Caja', icon: Wallet },
-    { id: 'FONDO', label: 'Fondo', icon: Building2 },
+    { id: 'FONDO', label: 'Fondo', icon: Landmark },
     { id: 'NEQUI', label: 'Nequi', icon: Zap },
     { id: 'DAVIPLATA', label: 'Davi', icon: Zap },
     { id: 'PRESTAMO', label: 'Prest.', icon: HandCoins }
@@ -227,7 +244,7 @@ const ExpenseFormModal = memo(({
     <>
       <Modal
         isOpen={isOpen}
-        onOpenChange={onOpenChange}
+        onOpenChange={onOpenChange || customOnClose}
         backdrop="blur"
         size="4xl"
         classNames={{
@@ -322,6 +339,7 @@ const ExpenseFormModal = memo(({
                       <Input
                         placeholder="0"
                         value={localExpense.amount ? formatCurrency(localExpense.amount) : ''}
+                        onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('amount', parseCurrency(v))}
                         startContent={<span className="text-xl font-black text-rose-500">$</span>}
                         classNames={{ inputWrapper: "h-16 bg-rose-50/50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl px-6", input: "font-black text-2xl text-gray-900 dark:text-white tabular-nums" }}
@@ -334,13 +352,18 @@ const ExpenseFormModal = memo(({
                           <button
                             key={method.id}
                             onClick={() => updateField('paymentSource', method.id)}
-                            className={`h-14 rounded-xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${localExpense.paymentSource === method.id
-                                ? `bg-zinc-900 dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-lg`
+                            className={`relative h-14 rounded-xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${localExpense.paymentSource === method.id
+                                ? (method.id === 'FONDO' 
+                                    ? 'bg-cyan-600 border-cyan-600 text-white shadow-lg shadow-cyan-600/20' 
+                                    : 'bg-zinc-900 dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-lg')
                                 : 'bg-white dark:bg-zinc-900/30 border-gray-100 dark:border-white/5 text-gray-400 hover:border-gray-200'
                               }`}
                           >
                             <method.icon size={16} />
                             <span className="text-[8px] font-black uppercase">{method.label}</span>
+                            {method.id === 'FONDO' && (
+                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[5px] font-black bg-cyan-500 text-white px-1 rounded-full whitespace-nowrap">BOVEDA</span>
+                            )}
                           </button>
                         ))}
                       </div>
@@ -355,6 +378,7 @@ const ExpenseFormModal = memo(({
                         <Input
                           placeholder="NOMBRE DEL ACREEDOR..."
                           value={localExpense.lenderName || ''}
+                          onFocus={(e) => e.target.select()}
                           onValueChange={(v) => updateField('lenderName', v.toUpperCase())}
                           size="md"
                           isRequired
@@ -380,6 +404,7 @@ const ExpenseFormModal = memo(({
                       <Input
                         placeholder="DETALLES DEL EGRESO..."
                         value={localExpense.description}
+                        onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('description', v.toUpperCase())}
                         readOnly={localExpense.category === 'Proveedores'}
                         classNames={{
@@ -400,9 +425,18 @@ const ExpenseFormModal = memo(({
                             {localExpense.description || 'REQUERIDO...'}
                           </p>
                         </div>
-                        <div className="pt-3 border-t border-gray-200 dark:border-white/5">
-                          <p className="text-[8px] font-bold text-gray-400 uppercase">Valor:</p>
-                          <p className="text-2xl font-black text-rose-500 tabular-nums">${formatCurrency(localExpense.amount || 0)}</p>
+                        <div className="pt-3 border-t border-gray-200 dark:border-white/5 space-y-2">
+                          {localExpense.taxAmount > 0 && (
+                            <div className="flex justify-between items-center bg-rose-500/5 p-2 rounded-lg">
+                               <div className="flex flex-col">
+                                  <span className="text-[7px] font-black text-rose-500 uppercase tracking-widest">GMF (4x1000 Nequi)</span>
+                                  <span className="text-[10px] font-black text-rose-500 italic">+${formatCurrency(localExpense.taxAmount)}</span>
+                               </div>
+                               <Zap size={12} className="text-rose-500" />
+                            </div>
+                          )}
+                          <p className="text-[8px] font-bold text-gray-400 uppercase">Valor Total a Descontar:</p>
+                          <p className="text-2xl font-black text-rose-500 tabular-nums">${formatCurrency(Number(localExpense.amount || 0) + localExpense.taxAmount)}</p>
                         </div>
                       </CardBody>
                     </Card>

@@ -7,6 +7,7 @@ import {
 import { FileText, Printer, X } from 'lucide-react';
 import { Sale } from '@/lib/definitions';
 import React from 'react';
+import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
 
 interface SaleDetailModalProps {
     isOpen: boolean;
@@ -24,13 +25,6 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
 
     if (!sale) return null;
 
-    const getStatusColor = (method: string) => {
-        const m = method?.toUpperCase() || '';
-        if (m.includes('EFECTIVO')) return "success";
-        if (m.includes('TRANSFER')) return "primary";
-        if (m.includes('FIADO') || m.includes('CREDITO')) return "warning";
-        return "default";
-    };
 
     return (
         <Modal
@@ -79,7 +73,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                                     <div className="p-6 bg-gray-50 dark:bg-zinc-900 rounded-[2rem] border border-gray-100 dark:border-white/5 space-y-4">
                                         <div className="flex justify-between items-center">
                                             <span className="text-[9px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em]">Método</span>
-                                            <Chip size="sm" color={getStatusColor(sale.paymentMethod || '')} variant="flat" className="font-black uppercase text-[8px] tracking-[0.2em]">{sale.paymentMethod || 'Efectivo'}</Chip>
+                                            <Chip size="sm" color={getPaymentColor(sale.paymentMethod)} variant="flat" className="font-black uppercase text-[8px] tracking-[0.2em]">{getPaymentDescription(sale)}</Chip>
                                         </div>
                                         <div className="flex justify-between items-center">
                                             <span className="text-[9px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em]">Fecha</span>

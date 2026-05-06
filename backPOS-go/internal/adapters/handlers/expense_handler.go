@@ -15,10 +15,11 @@ import (
 type ExpenseHandler struct {
 	service      *services.ExpenseService
 	auditService *services.AuditService
+	sseService   *services.SSEService
 }
 
-func NewExpenseHandler(s *services.ExpenseService, a *services.AuditService) *ExpenseHandler {
-	return &ExpenseHandler{service: s, auditService: a}
+func NewExpenseHandler(s *services.ExpenseService, a *services.AuditService, sse *services.SSEService) *ExpenseHandler {
+	return &ExpenseHandler{service: s, auditService: a, sseService: sse}
 }
 
 func (h *ExpenseHandler) Create(c *gin.Context) {
@@ -55,6 +56,8 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 		fmt.Sprintf("Nuevo egreso: %s ($%.2f)", expense.Description, expense.Amount),
 		fmt.Sprintf("Se registró un egreso por %s de $%s", expense.Description, fmt.Sprintf("%.2f", expense.Amount)),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 }
 
 func (h *ExpenseHandler) GetAll(c *gin.Context) {
@@ -82,6 +85,8 @@ func (h *ExpenseHandler) Delete(c *gin.Context) {
 		fmt.Sprintf("Eliminado egreso ID: %d", id),
 		fmt.Sprintf("Se eliminó permanentemente el egreso con ID #%d", id),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 }
 
 func (h *ExpenseHandler) Update(c *gin.Context) {
@@ -96,6 +101,7 @@ func (h *ExpenseHandler) Update(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar gasto", err)
 		return
 	}
+	go h.sseService.BroadcastDashboardUpdate()
 	c.JSON(http.StatusOK, expense)
 }
 
@@ -181,4 +187,6 @@ func (h *ExpenseHandler) Settle(c *gin.Context) {
 		fmt.Sprintf("Deuda saldada ID: %d (%s)", id, expense.Description),
 		fmt.Sprintf("Se pagó la deuda de $%s con %s", fmt.Sprintf("%.2f", expense.Amount), expense.PaymentSource),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 }

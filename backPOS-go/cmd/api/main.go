@@ -11,6 +11,9 @@ import (
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/services"
 
+	"net/http"
+	"path/filepath"
+
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -44,27 +47,30 @@ func main() {
 	auditRepo := repositories.NewAuditRepository(repositories.DB)
 	orderRepo := repositories.NewPostgresPurchaseOrderRepository(repositories.DB)
 	expectedOrderRepo := repositories.NewPostgresExpectedOrderRepository(repositories.DB)
+	reportRepo := repositories.NewPostgresReportRepository(repositories.DB)
 
 	// Initialize Services
 	emailService := services.NewEmailService()
 	printService := services.NewPrintService()
 	auditService := services.NewAuditService(auditRepo)
 	productService := services.NewProductService(productRepo, movementRepo)
-	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo)
+	sseService := services.NewSSEService()
+	sseService.StartHeartbeat()
+
+	telegramService := services.NewTelegramService()
+	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo, sseService, telegramService)
 	authService := services.NewAuthService(adminRepo, emailService, auditService)
 	categoryService := services.NewCategoryService(categoryRepo)
 	supplierService := services.NewSupplierService(supplierRepo)
-	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo, adminRepo)
+	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo, adminRepo, reportRepo)
 	inventoryService := services.NewInventoryService(productRepo, saleRepo)
 	clientService := services.NewClientService(clientRepo, creditRepo)
-	expenseService := services.NewExpenseService(expenseRepo, supplierRepo, orderRepo, productRepo)
+	expenseService := services.NewExpenseService(expenseRepo, supplierRepo, orderRepo, productRepo, sseService)
 	adminService := services.NewAdminService(adminRepo)
-	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo, movementRepo)
-	telegramService := services.NewTelegramService()
+	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo, movementRepo, sseService)
 	orderService := services.NewPurchaseOrderService(orderRepo)
 	expectedOrderService := services.NewExpectedOrderService(expectedOrderRepo)
-	sseService := services.NewSSEService()
-	sseService.StartHeartbeat()
+	reportService := services.NewReportService(reportRepo)
 
 	// Initialize Handlers
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService)
@@ -75,12 +81,13 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService)
 	dashboardReportHandler := handlers.NewDashboardReportHandler(dashboardService, auditService)
 	clientHandler := handlers.NewClientHandler(clientService, auditService)
-	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService)
+	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService, sseService)
 	adminHandler := handlers.NewAdminHandler(adminService, auditService)
-	returnHandler := handlers.NewReturnHandler(returnService, auditService)
+	returnHandler := handlers.NewReturnHandler(returnService, auditService, sseService)
 	orderHandler := handlers.NewOrderHandler(inventoryService, orderService, expectedOrderService, telegramService, auditService)
-	debtHandler := handlers.NewDebtHandler(clientService, saleService, auditService)
+	debtHandler := handlers.NewDebtHandler(clientService, saleService, auditService, sseService)
 	notificationHandler := handlers.NewNotificationHandler(telegramService)
+	reportHandler := handlers.NewReportHandler(reportService)
 	sseHandler := handlers.NewSSEHandler(sseService)
 
 	// Initialize and Start Cron Jobs
@@ -101,32 +108,29 @@ func main() {
 	allowedOrigins := map[string]bool{
 		"http://localhost:3000":     true, // Dev frontend
 		"http://localhost:9002":     true, // Alternative dev port
-		"https://tudominio.com":     true, // Production domain (update as needed)
+		"https://tudominio.com":     true, // Production domain
 		"https://app.tudominio.com": true, // Production app subdomain
-		"http://192.168.1.21:9002":  true, // Specific user IP
-		"http://192.168.1.6:9002":   true, // New local IP
+		"http://192.168.1.21:3000":  true, // Specific user IP
+		"http://192.168.1.6:3000":   true, // Primary local IP
 	}
 
-	// Helper function to check if origin is a local/private IP
 	isLocalIP := func(origin string) bool {
-		// Allow local network IPs with port 9002 or 3000
-		// Patterns: http://192.168.x.x:9002, http://10.x.x.x:9002, etc.
+		if origin == "" {
+			return true
+		}
+		// Permitir localhost y 127.0.0.1 en cualquier puerto
+		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
+			return true
+		}
+		// Permitir rangos de IP privados comunes (192.168.x.x, 10.x.x.x, 172.x.x.x)
 		localPatterns := []string{
 			"http://192.168.",
 			"http://10.",
-			"http://172.16.", "http://172.17.", "http://172.18.", "http://172.19.",
-			"http://172.20.", "http://172.21.", "http://172.22.", "http://172.23.",
-			"http://172.24.", "http://172.25.", "http://172.26.", "http://172.27.",
-			"http://172.28.", "http://172.29.", "http://172.30.", "http://172.31.",
-			"http://127.0.0.1:",
+			"http://172.",
 		}
 		for _, pattern := range localPatterns {
 			if strings.HasPrefix(origin, pattern) {
-				// Also check it ends with allowed ports
-				if strings.Contains(origin, ":9002") || strings.Contains(origin, ":3000") ||
-					strings.HasSuffix(origin, ":8080") || origin == pattern+"/" {
-					return true
-				}
+				return true
 			}
 		}
 		return false
@@ -198,34 +202,9 @@ func main() {
 	// Se asume que el servidor corre desde la raíz (ej: backPOS-go o desde donde se ejecute NSSM)
 	r.Static("/logos", "./out/logos")
 
-	// Middleware de SPA Fallback
-	r.Use(func(c *gin.Context) {
-		// Ignorar rutas de API
-		if strings.HasPrefix(c.Request.URL.Path, "/api") {
-			c.Next()
-			return
-		}
-
-		path := "./out" + c.Request.URL.Path
-		
-		// Si es la ruta raíz o el archivo no existe, sirve index.html
-		if c.Request.URL.Path == "/" {
-			c.File("./out/index.html")
-			c.Abort()
-			return
-		}
-
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			// SPA Fallback a index.html
-			c.File("./out/index.html")
-			c.Abort()
-			return
-		}
-
-		// Si el archivo existe (ej. /_next/static/...), lo sirve
-		c.File(path)
-		c.Abort()
-	})
+	// Configuración de SPA Fallback
+	publicPath := "./out"
+	r.NoRoute(spaFallbackMiddleware(publicPath))
 
 	// Add a simple request logger for visibility in a professional way
 	r.Use(func(c *gin.Context) {
@@ -248,20 +227,32 @@ func main() {
 		protected.Use(middlewares.AuthMiddleware())
 		protected.Use(middlewares.RateLimitMiddleware(100, 10)) // 100 tokens max, 10 tokens/sec refill
 		{
-			// Products Management (Solo Admin)
+			// Products Management (Empleados y Admin)
+			productManage := protected.Group("/")
+			productManage.Use(middlewares.RoleMiddleware("empleado"))
+			{
+				productManage.POST("/products/create-products", productHandler.Create)
+				productManage.PUT("/products/update-products/:barcode", productHandler.Update)
+				productManage.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
+			}
+
+			// Products Administration (Solo Admin)
 			productAdmin := protected.Group("/")
 			productAdmin.Use(middlewares.RoleMiddleware("admin"))
 			{
 				// Expenses con vinculación a órdenes (crea egreso + recibe stock)
 				productAdmin.POST("/expenses/create-linked", expenseHandler.CreateLinked)
 
-				productAdmin.POST("/products/create-products", productHandler.Create)
-				productAdmin.PUT("/products/update-products/:barcode", productHandler.Update)
 				productAdmin.DELETE("/products/delete-products/:barcode", productHandler.Delete)
 				productAdmin.POST("/products/receive-stock", productHandler.ReceiveStock)
 				productAdmin.POST("/products/bulk-receive", productHandler.BulkReceive)
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
-				productAdmin.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
+
+				// Report History
+				productAdmin.GET("/reports/history", reportHandler.GetHistory)
+				productAdmin.POST("/reports/history", reportHandler.RecordReport)
+				productAdmin.DELETE("/reports/history/:id", reportHandler.DeleteReport)
+				productAdmin.GET("/reports/stats", reportHandler.GetStats)
 			}
 
 			// Products Read-Only (Empleados y Admin)
@@ -325,7 +316,7 @@ func main() {
 			protected.GET("/sales/list", saleHandler.GetAll)
 			protected.GET("/sales/history", saleHandler.GetAll)
 			protected.GET("/sales/history/:id", saleHandler.GetByID)
-			protected.DELETE("/sales/delete/:id", saleHandler.Delete)
+			protected.DELETE("/sales/delete/:id", middlewares.RoleMiddleware("admin"), saleHandler.Delete)
 			protected.PUT("/sales/update-payment/:id", saleHandler.UpdatePayment)
 
 			// Devoluciones
@@ -353,12 +344,13 @@ func main() {
 			// Dashboard
 			dashboard := protected.Group("/dashboard")
 			{
-				dashboard.GET("/overview", middlewares.RoleMiddleware("admin"), dashboardHandler.GetOverview)
+				dashboard.GET("/overview", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetOverview)
 				dashboard.POST("/adjust-initial-balance", middlewares.RoleMiddleware("admin"), dashboardHandler.AdjustInitialBalance)
 				dashboard.GET("/cashier-closure", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetCashierClosure)
 				dashboard.POST("/cashier-closure/close", middlewares.RoleMiddleware("empleado"), dashboardHandler.SaveClosure)
 				dashboard.POST("/telegram-report-partial", middlewares.RoleMiddleware("empleado"), dashboardHandler.SendPartialReport)
 				dashboard.GET("/cashier-history", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetClosuresHistory)
+				dashboard.GET("/detailed-report", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetDetailedReport)
 				
 				// Analytical Reports
 				dashboard.GET("/reports/ranking", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetRankingReport)
@@ -434,5 +426,42 @@ func main() {
 	err = r.Run(":" + port)
 	if err != nil {
 		log.Fatalf("🔥 Falla fatal al arrancar el servidor: %v", err)
+	}
+}
+func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		path := c.Request.URL.Path
+
+		// 1. Si la ruta tiene extensión (ej: .js, .css, .png), intentamos servirla
+		if filepath.Ext(path) != "" {
+			fullPath := filepath.Join(publicPath, path)
+			if _, err := os.Stat(fullPath); err == nil {
+				c.File(fullPath)
+				c.Abort()
+				return
+			}
+			c.AbortWithStatus(404)
+			return
+		}
+
+		// 2. Intentar servir el archivo .html (Next.js static export)
+		htmlPath := filepath.Join(publicPath, path+".html")
+		if _, err := os.Stat(htmlPath); err == nil {
+			c.Status(http.StatusOK)
+			c.File(htmlPath)
+			c.Abort()
+			return
+		}
+
+		// 3. Fallback a index.html
+		indexFile := filepath.Join(publicPath, "index.html")
+		if _, err := os.Stat(indexFile); err == nil {
+			c.Status(http.StatusOK)
+			c.File(indexFile)
+			c.Abort()
+			return
+		}
+
+		c.AbortWithStatus(404)
 	}
 }

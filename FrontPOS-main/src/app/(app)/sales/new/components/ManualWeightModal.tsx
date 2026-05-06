@@ -62,8 +62,8 @@ export default function ManualWeightModal({
                         <ModalBody className="p-8 gap-8">
                             <div className="relative w-full">
                                 <Input
-                                    type="number"
-                                    step="0.001"
+                                    type="text"
+                                    inputMode="decimal"
                                     value={manualWeightValue}
                                     onValueChange={setManualWeightValue}
                                     onKeyDown={(e) => e.key === 'Enter' && confirmManualWeight()}

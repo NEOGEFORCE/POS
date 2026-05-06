@@ -17,6 +17,7 @@ type Expense struct {
 	Supplier      *Supplier      `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
 	Status        string         `gorm:"type:varchar(20);default:'PAID';column:status" json:"status"` // PAID, PENDING
 	LenderName    string         `gorm:"column:lenderName" json:"lenderName"` // Socio que presta el dinero
+	TaxAmount     float64        `gorm:"type:decimal(10,2);default:0;column:tax_amount" json:"taxAmount"` // GMF 4x1000
 
 	CreatedByDNI  string         `gorm:"not null;index;column:createdByDni" json:"createdByDni"`
 	Creator       Employee       `gorm:"foreignKey:CreatedByDNI;references:DNI" json:"creator,omitempty"`

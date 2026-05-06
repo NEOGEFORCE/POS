@@ -14,6 +14,8 @@ export interface OfflineSale {
     timestamp: number;
     synced: boolean;
     retryCount: number;
+    status?: 'pending' | 'failed' | 'synced';
+    lastError?: string;
 }
 
 export function openDB(): Promise<IDBDatabase> {
@@ -125,6 +127,18 @@ export async function removeFromOfflineQueue(id: string): Promise<void> {
     const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
     const store = tx.objectStore(STORES.OFFLINE_QUEUE);
     store.delete(id);
+    
+    return new Promise((resolve, reject) => {
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+export async function updateOfflineSale(sale: OfflineSale): Promise<void> {
+    const db = await openDB();
+    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
+    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
+    store.put(sale);
     
     return new Promise((resolve, reject) => {
         tx.oncomplete = () => resolve();

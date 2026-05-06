@@ -20,7 +20,8 @@ import {
     CreditCard,
     Lock,
     ChevronDown,
-    ChevronUp
+    ChevronUp,
+    ReceiptText
 } from 'lucide-react';
 
 import { 
@@ -42,6 +43,7 @@ import { apiFetch } from '@/lib/api-error';
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 import { useAuth } from '@/lib/auth';
+import ExpenseFormModal from '@/app/(app)/expenses/components/ExpenseFormModal';
 
 interface CashierClosure {
     id: string;
@@ -72,7 +74,8 @@ interface CashierClosure {
     closedByDni: string;
     authorizedBy?: string;
     cashBills: number;
-    coins500_1000: number;
+    coins1000: number;
+    coins500: number;
     coins200: number;
     coins100: number;
 }
@@ -94,6 +97,7 @@ export default function CashierClosurePage() {
     const [authError, setAuthError] = useState('');
     const [showAuthModal, setShowAuthModal] = useState(false);
     const [showDetailedAudit, setShowDetailedAudit] = useState(false);
+    const [isRealExpenseModalOpen, setIsRealExpenseModalOpen] = useState(false);
 
 
     const handleAdminVerify = async () => {
@@ -129,15 +133,31 @@ export default function CashierClosurePage() {
     const { toast } = useToast();
 
     // Egresos manuales
-    const [salaryEgresses, setSalaryEgresses] = useState<{ id: string, amount: number, method: 'EFECTIVO' | 'FONDO' | 'NEQUI' | 'DAVIPLATA', description: string }[]>([]);
-    const [operationalEgresses, setOperationalEgresses] = useState<{ id: string, amount: number, method: 'EFECTIVO' | 'FONDO' | 'NEQUI' | 'DAVIPLATA', description: string }[]>([]);
+    // Egresos manuales con persistencia
+    const [salaryEgresses, setSalaryEgresses] = useState<{ id: string, amount: number, method: 'EFECTIVO' | 'FONDO' | 'NEQUI' | 'DAVIPLATA', description: string }[]>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('pos_closure_salary');
+            return saved ? JSON.parse(saved) : [];
+        }
+        return [];
+    });
+    const [operationalEgresses, setOperationalEgresses] = useState<{ id: string, amount: number, method: 'EFECTIVO' | 'FONDO' | 'NEQUI' | 'DAVIPLATA', description: string }[]>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('pos_closure_operational');
+            return saved ? JSON.parse(saved) : [];
+        }
+        return [];
+    });
 
     // Formulario interactivo derecho
     const [actualCashInput, setActualCashInput] = useState(() => {
         if (typeof window !== 'undefined') return localStorage.getItem('pos_closure_actual') || '';
         return '';
     });
-    const [closingNote, setClosingNote] = useState('');
+    const [closingNote, setClosingNote] = useState(() => {
+        if (typeof window !== 'undefined') return localStorage.getItem('pos_closure_note') || '';
+        return '';
+    });
 
     // Estado del calculador de billetes
     const [bills, setBills] = useState<Record<string, string>>(() => {
@@ -149,7 +169,7 @@ export default function CashierClosurePage() {
         return defaultBills;
     });
     const [coins, setCoins] = useState<Record<string, string>>(() => {
-        const defaultCoins = { '500_1000': '', '200': '', '100': '' };
+        const defaultCoins = { '500/1000': '', '200': '', '100': '' };
         if (typeof window !== 'undefined') {
             const saved = localStorage.getItem('pos_closure_coins');
             return saved ? JSON.parse(saved) : defaultCoins;
@@ -158,6 +178,32 @@ export default function CashierClosurePage() {
     });
 
     // Persistence: Save to localStorage on change
+    const [detailedReport, setDetailedReport] = useState<any>(null);
+    const [isFetchingDetailed, setIsFetchingDetailed] = useState(false);
+    const { isOpen: isDetailedOpen, onOpen: onDetailedOpen, onOpenChange: onDetailedOpenChange } = useDisclosure();
+
+    const handleFetchDetailedReport = async () => {
+        setIsFetchingDetailed(true);
+        try {
+            const token = Cookies.get('org-pos-token');
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/detailed-report`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setDetailedReport(data);
+                onDetailedOpen();
+            } else {
+                toast({ variant: "destructive", title: "ERROR", description: "No se pudo obtener el reporte detallado" });
+            }
+        } catch (error) {
+            console.error("Error fetching detailed report:", error);
+            toast({ variant: "destructive", title: "ERROR", description: "Fallo de conexión al servidor" });
+        } finally {
+            setIsFetchingDetailed(false);
+        }
+    };
+
     useEffect(() => {
         localStorage.setItem('pos_closure_bills', JSON.stringify(bills));
     }, [bills]);
@@ -169,6 +215,18 @@ export default function CashierClosurePage() {
     useEffect(() => {
         localStorage.setItem('pos_closure_actual', actualCashInput);
     }, [actualCashInput]);
+
+    useEffect(() => {
+        localStorage.setItem('pos_closure_salary', JSON.stringify(salaryEgresses));
+    }, [salaryEgresses]);
+
+    useEffect(() => {
+        localStorage.setItem('pos_closure_operational', JSON.stringify(operationalEgresses));
+    }, [operationalEgresses]);
+
+    useEffect(() => {
+        localStorage.setItem('pos_closure_note', closingNote);
+    }, [closingNote]);
 
 
 
@@ -276,7 +334,9 @@ export default function CashierClosurePage() {
     const totalEgresosEfectivo = dbCashExpenses + effectiveSalariesPaidList + effectiveOperationalExpenses;
 
     // 4. EFECTIVO ESPERADO (Entradas - Salidas)
-    const expectedCash = efectivoEnCaja - totalEgresosEfectivo;
+    // Si los gastos superan a las ventas, el efectivo físico esperado es $0 (no puede haber dinero negativo en el cajón).
+    const theoreticalBalance = efectivoEnCaja - totalEgresosEfectivo;
+    const expectedCash = Math.max(0, theoreticalBalance);
     
     // Variables de apoyo para la UI
     const totalDevoluciones = currentClosure?.totalReturns ?? 0;
@@ -284,18 +344,11 @@ export default function CashierClosurePage() {
     
     const actualCash = parseFloat(actualCashInput) || 0;
     
-    // Si el esperado es negativo (ej: -100), significa que falt plata para cubrir gastos.
-    // El cajero "debe" esa plata. Por tanto, el objetivo es llegar a 0 o cubrir la deuda.
-    // Si tiene 0, le faltan 100 para estar "balanceado" con los egresos.
-    const difference = expectedCash < 0 
-        ? actualCash + expectedCash // Si actual es 0 y esperado -100, diff es -100 (Falta)
-        : actualCash - expectedCash;
+    // Diferencia real: Dinero en mano - Dinero que debería haber
+    const difference = actualCash - expectedCash;
 
     const getStatus = () => {
-        // Si el esperado es negativo, ya hay un faltante operativo por defecto.
-        // Solo mostramos PENDING si el esperado es positivo y el usuario no ha escrito nada.
-        if (!actualCashInput && expectedCash >= 0) return 'PENDING';
-        
+        if (!actualCashInput && expectedCash > 0) return 'PENDING';
         if (difference === 0) return 'BALANCED';
         if (difference < 0) return 'SHORTAGE';
         return 'SURPLUS';
@@ -321,7 +374,7 @@ export default function CashierClosurePage() {
         const totalSalidasEfectivo = totalEgresosEfectivo;
 
         const totalBills = Object.entries(bills).reduce((acc, [val, qty]) => acc + (parseInt(val) * (parseInt(qty) || 0)), 0);
-        const c500 = parseInt(coins['500_1000'] || '0');
+        const cCombined = parseInt(coins['500/1000'] || '0');
         const c200 = parseInt(coins['200'] || '0');
         const c100 = parseInt(coins['100'] || '0');
 
@@ -335,7 +388,8 @@ export default function CashierClosurePage() {
 
             totalExpenses: totalSalidasEfectivo,
             cashBills: totalBills,
-            coins500_1000: c500,
+            coins1000: cCombined,
+            coins500: 0,
             coins200: c200,
             coins100: c100,
             expenses: [
@@ -379,7 +433,7 @@ export default function CashierClosurePage() {
 
         setIsSendingPartial(true);
         const totalBills = Object.entries(bills).reduce((acc, [val, qty]) => acc + (parseInt(val) * (parseInt(qty) || 0)), 0);
-        const c500 = parseInt(coins['500_1000'] || '0');
+        const cCombined = parseInt(coins['500/1000'] || '0');
         const c200 = parseInt(coins['200'] || '0');
         const c100 = parseInt(coins['100'] || '0');
 
@@ -392,7 +446,8 @@ export default function CashierClosurePage() {
             totalExpenses: totalEgresosEfectivo, // Solo efectivo para el balance en Telegram
             notes: closingNote,
             cashBills: totalBills,
-            coins500_1000: c500,
+            coins1000: cCombined,
+            coins500: 0,
             coins200: c200,
             coins100: c100,
             expenses: [
@@ -437,7 +492,7 @@ export default function CashierClosurePage() {
     };
 
     const coinConfigs = {
-        '500_1000': { label: '500 / 1000', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-500 dark:text-zinc-300' },
+        '500/1000': { label: '500/1000', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-500 dark:text-zinc-300' },
         '200': { label: '200', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-600 dark:text-zinc-400' },
         '100': { label: '100', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-500' },
     };
@@ -448,11 +503,43 @@ export default function CashierClosurePage() {
 
     const confirmReset = () => {
         setBills({ '100000': '', '50000': '', '20000': '', '10000': '', '5000': '', '2000': '' });
-        setCoins({ '500_1000': '', '200': '', '100': '' });
+        setCoins({ '500/1000': '', '200': '', '100': '' });
         setActualCashInput('');
         localStorage.removeItem('pos_closure_bills');
         localStorage.removeItem('pos_closure_coins');
         localStorage.removeItem('pos_closure_actual');
+        localStorage.removeItem('pos_closure_salary');
+        localStorage.removeItem('pos_closure_operational');
+        localStorage.removeItem('pos_closure_note');
+    };
+
+    const handleSaveRealExpense = async (data: any) => {
+        const token = Cookies.get('org-pos-token');
+        if (!token) return;
+
+        try {
+            const payload = {
+                description: data.description.toUpperCase(),
+                amount: Math.abs(parseFloat(String(data.amount)) || 0),
+                date: new Date().toISOString(),
+                paymentSource: data.paymentSource || 'EFECTIVO',
+                category: data.category,
+                status: data.status || 'PAID',
+                supplierId: data.category === 'Proveedores' && data.supplierId ? Number(data.supplierId) : null,
+            };
+
+            await apiFetch('/expenses/create', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                fallbackError: 'FALLO AL REGISTRAR EGRESO'
+            }, token);
+
+            toast({ variant: "success", title: "ÉXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
+            setIsRealExpenseModalOpen(false);
+            fetchCurrent(); // Refrescar auditoría para ver el nuevo gasto
+        } catch (err: any) {
+            toast({ variant: "destructive", title: "ERROR", description: err.message });
+        }
     };
 
 
@@ -510,176 +597,205 @@ export default function CashierClosurePage() {
 
             {/* CONTENEDOR PRINCIPAL */}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-3 md:gap-4 flex-1 lg:min-h-0 lg:overflow-hidden px-1">
-
-                
-                {/* BLOQUE IZQUIERDO: AUDITORÍA FINANCIERA COMPLETA */}
-                {isAdmin ? (
-                <div className="flex-1 flex flex-col lg:min-h-0 bg-white border border-gray-200 dark:bg-zinc-900/40 dark:border-white/5 rounded-3xl overflow-hidden shadow-sm dark:shadow-2xl">
-                    <div className="flex-1 lg:overflow-y-auto p-4 md:p-5 space-y-4 md:space-y-6 scrollbar-hide">
-
-                        
-                        {/* BLOQUE 1: MATEMÁTICA FÍSICA (TICKET PRINCIPAL) */}
-                        <section className="shrink-0 bg-gray-100 dark:bg-emerald-500/5 rounded-3xl border border-gray-200 dark:border-emerald-500/10 p-4 md:p-8 relative overflow-hidden">
-                            <div className="flex items-center gap-4 mb-6 opacity-80">
-                                <h2 className="text-[10px] font-bold uppercase tracking-wider text-gray-800 dark:text-zinc-400">Balance de Caja</h2>
+                {/* BLOQUE IZQUIERDO: AUDITORÍA Y EGRESOS */}
+                <div className="flex-1 flex flex-col lg:min-h-0 gap-4 lg:overflow-y-auto scrollbar-hide">
+                    
+                    {/* 1. BALANCE TICKET (SIEMPRE VISIBLE) */}
+                    <section className="shrink-0 bg-white dark:bg-emerald-500/5 rounded-3xl border border-gray-200 dark:border-emerald-500/10 p-4 md:p-8 shadow-sm">
+                        <div className="flex flex-col items-center justify-center relative z-10">
+                            <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2">
+                                {theoreticalBalance < 0 ? 'Déficit de Operación (Ventas < Gastos)' : 'Efectivo Final Esperado'}
+                            </span>
+                            <span className={`text-5xl md:text-7xl font-black tabular-nums tracking-tighter drop-shadow-sm ${theoreticalBalance < 0 ? 'text-rose-500' : 'text-gray-900 dark:text-white'}`}>
+                                ${formatCurrency(expectedCash)}
+                            </span>
+                        </div>
+                        <div className="flex flex-col gap-1 md:gap-2 mt-6 max-w-md mx-auto">
+                            <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
+                                <span className="text-[9px] font-bold text-gray-600 dark:text-zinc-500 uppercase tracking-widest">Entradas Efectivo</span>
+                                <span className="text-md font-black text-emerald-700 dark:text-emerald-500">+{formatCurrency(efectivoEnCaja)}</span>
                             </div>
-                            <div className="flex flex-col gap-1 md:gap-2 relative z-10">
-                                <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
-                                    <span className="text-[10px] font-bold text-gray-600 dark:text-zinc-500 uppercase tracking-widest">Entradas Efectivo (Ventas+Abonos)</span>
-                                    <span className="text-lg font-black text-emerald-700 dark:text-emerald-500">+{formatCurrency(efectivoEnCaja)}</span>
-                                </div>
-                                <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
-                                    <span className="text-[10px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Efectivo (Gastos+Nomina)</span>
-                                    <span className="text-lg font-black text-rose-700 dark:text-rose-500">-{formatCurrency(totalEgresosEfectivo)}</span>
-                                </div>
+                            <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
+                                <span className="text-[9px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Efectivo</span>
+                                <span className="text-md font-black text-rose-700 dark:text-rose-500">-{formatCurrency(totalEgresosEfectivo)}</span>
                             </div>
-                            <div className="mt-8 flex flex-col items-center justify-center relative z-10">
-                                <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2">Efectivo Final Esperado</span>
-                                <span className="text-5xl md:text-7xl font-black text-gray-900 dark:text-white tabular-nums tracking-tighter drop-shadow-sm">
-                                    ${formatCurrency(expectedCash)}
-                                </span>
-                            </div>
-                        </section>
+                        </div>
+                    </section>
 
-                        {/* BOTÓN VER MÁS PARA MÓVIL */}
-                        <div className="lg:hidden px-2 pb-2">
-                            <Button
-                                fullWidth
-                                variant="flat"
-                                onPress={() => setShowDetailedAudit(!showDetailedAudit)}
-                                className="h-14 rounded-2xl font-black text-[10px] uppercase tracking-[0.2em] border border-white/5 bg-white/[0.03] text-zinc-400"
-                                endContent={showDetailedAudit ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-                            >
-                                {showDetailedAudit ? 'OCULTAR AUDITORÍA' : 'VER AUDITORÍA DETALLADA'}
-                            </Button>
+                    {/* 2. EGRESOS DEL TURNO (SIEMPRE VISIBLE PARA PERMITIR CUADRE) */}
+                    <section className="bg-white dark:bg-zinc-900/40 border border-gray-200 dark:border-white/5 rounded-3xl p-4 md:p-6 shadow-sm">
+                        <div className="flex items-center justify-between border-b border-gray-200 dark:border-white/5 pb-2 mb-4">
+                            <div className="flex items-center gap-2">
+                                <TrendingDown size={14} className="text-rose-700 dark:text-rose-500" />
+                                <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Registrar Egresos de Hoy</h3>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <Button 
+                                    size="sm" 
+                                    variant="flat" 
+                                    onPress={() => handleAddEgress('salary')}
+                                    className="h-8 text-[9px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-600 rounded-xl"
+                                    startContent={<Briefcase size={12} />}
+                                >
+                                    + PAGO NÓMINA
+                                </Button>
+                                <Button 
+                                    size="sm" 
+                                    variant="solid" 
+                                    onPress={() => setIsRealExpenseModalOpen(true)}
+                                    className="h-8 text-[9px] font-black uppercase tracking-widest bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-500/20"
+                                    startContent={<ReceiptText size={14} />}
+                                >
+                                    + REGISTRAR EGRESO GENERAL
+                                </Button>
+                                <Button 
+                                    size="sm" 
+                                    variant="flat" 
+                                    onPress={() => handleAddEgress('operational')}
+                                    className="h-8 text-[9px] font-black uppercase tracking-widest bg-rose-500/10 text-rose-600 rounded-xl"
+                                    startContent={<ArrowRightCircle size={12} />}
+                                >
+                                    + OTRO GASTO
+                                </Button>
+                            </div>
                         </div>
 
-                        {/* BLOQUES COLAPSABLES EN MÓVIL / SIEMPRE VISIBLES EN DESKTOP */}
-                        <div className={`${showDetailedAudit ? 'block' : 'hidden lg:block'} space-y-8 animate-in fade-in slide-in-from-top-4 duration-500`}>
-                            {/* BLOQUE 2: EGRESOS DETALLADOS (TODO EXPUESTO) */}
+                        <div className="space-y-3">
+                            {/* EGRESOS MANUALES (EDITABLES POR EL CAJERO) */}
+                            {[...salaryEgresses, ...operationalEgresses].map((e) => {
+                                const isSalary = salaryEgresses.some(s => s.id === e.id);
+                                const type = isSalary ? 'salary' : 'operational';
+                                return (
+                                    <div key={e.id} className="p-4 rounded-3xl border border-dashed border-rose-500/40 bg-rose-50/30 dark:bg-rose-500/5 animate-in zoom-in-95 duration-300">
+                                        <div className="flex items-center justify-between mb-3">
+                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isSalary ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'} uppercase`}>
+                                                {isSalary ? 'Pago Nómina / Empleado' : 'Gasto Operativo / Otro'}
+                                            </span>
+                                            <Button 
+                                                isIconOnly 
+                                                size="sm" 
+                                                variant="light" 
+                                                onPress={() => handleRemoveEgress(type, e.id)}
+                                                className="text-rose-500 hover:bg-rose-500/10 rounded-full"
+                                            >
+                                                <XCircle size={16} />
+                                            </Button>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-[1fr_150px_120px] gap-3">
+                                            <Input 
+                                                placeholder="Descripción"
+                                                value={e.description}
+                                                onValueChange={(v) => updateEgress(type, e.id, 'description', v.toUpperCase())}
+                                                variant="bordered"
+                                                size="sm"
+                                                classNames={{ input: "text-[11px] font-bold", inputWrapper: "h-10 rounded-xl bg-white dark:bg-zinc-950" }}
+                                            />
+                                            <Input 
+                                                placeholder="Monto"
+                                                value={e.amount === 0 ? '' : e.amount.toString()}
+                                                onValueChange={(v) => updateEgress(type, e.id, 'amount', parseFloat(sanitizeNumber(v).toString()) || 0)}
+                                                variant="bordered"
+                                                size="sm"
+                                                startContent={<span className="text-zinc-400 font-bold">$</span>}
+                                                classNames={{ input: "text-[11px] font-black", inputWrapper: "h-10 rounded-xl bg-white dark:bg-zinc-950" }}
+                                            />
+                                            <select 
+                                                value={e.method}
+                                                onChange={(ev) => updateEgress(type, e.id, 'method', ev.target.value)}
+                                                className="h-10 rounded-xl bg-white dark:bg-zinc-950 border-2 border-zinc-100 dark:border-white/10 text-[9px] font-black uppercase px-2 focus:outline-none focus:border-rose-500/50 transition-all"
+                                            >
+                                                <option value="EFECTIVO">EFECTIVO</option>
+                                                <option value="NEQUI">NEQUI</option>
+                                                <option value="DAVIPLATA">DAVIPLATA</option>
+                                                <option value="FONDO">FONDO</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+
+                            {/* HISTORIAL DE EGRESOS YA GUARDADOS (SOLO ADMIN PUEDE VER EL DESGLOSE) */}
+                            {isAdmin && currentClosure?.expenses?.map((exp, idx) => (
+                                <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
+                                    <div className="flex flex-col">
+                                        <span className="text-[9px] font-black text-gray-400 uppercase">{exp.category}</span>
+                                        <span className="text-xs font-bold text-gray-900 dark:text-white uppercase">{exp.description}</span>
+                                    </div>
+                                    <div className="text-right">
+                                        <span className="text-sm font-black text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
+                                        <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+
+                    {/* 3. AUDITORÍA DETALLADA (SOLO ADMIN) */}
+                    {isAdmin ? (
+                        <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500">
+                            {/* INGRESOS DIGITALES */}
+                            <section className="space-y-2">
+                                <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/5 pb-1">
+                                    <CreditCard size={12} className="text-blue-700 dark:text-blue-500" />
+                                    <h3 className="text-[9px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Digitales</h3>
+                                </div>
+                                <div className="grid grid-cols-3 gap-2">
+                                    <div className="p-4 rounded-3xl bg-blue-50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-500/10 flex flex-col gap-1 items-center text-center">
+                                        <span className="text-[9px] font-black text-blue-700 dark:text-blue-400 uppercase">Nequi</span>
+                                        <span className="text-lg font-black text-blue-800 dark:text-white">${formatCurrency(currentClosure?.totalNequi ?? 0)}</span>
+                                    </div>
+                                    <div className="p-4 rounded-3xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/10 flex flex-col gap-1 items-center text-center">
+                                        <span className="text-[9px] font-black text-purple-700 dark:text-purple-400 uppercase">Daviplata</span>
+                                        <span className="text-lg font-black text-purple-800 dark:text-white">${formatCurrency(currentClosure?.totalDaviplata ?? 0)}</span>
+                                    </div>
+                                    <div className="p-4 rounded-3xl bg-gray-100 dark:bg-zinc-500/5 border border-gray-200 dark:border-zinc-500/10 flex flex-col gap-1 items-center text-center">
+                                        <span className="text-[9px] font-black text-gray-600 dark:text-zinc-500 uppercase">Otros</span>
+                                        <span className="text-lg font-black text-gray-900 dark:text-white">${formatCurrency((currentClosure?.totalBancolombia ?? 0) + (currentClosure?.totalOtherTransfer ?? 0))}</span>
+                                    </div>
+                                </div>
+                            </section>
+
+                            {/* FIADOS Y ABONOS */}
                             <section className="space-y-4">
-
-                            <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/5 pb-2">
-                                <TrendingDown size={14} className="text-rose-700 dark:text-rose-500" />
-                                <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Desglose de Egresos</h3>
-                            </div>
-                            <div className="grid grid-cols-1 gap-2">
-                                {currentClosure?.expenses?.map((exp, idx) => (
-                                    <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] font-black text-rose-700 dark:text-rose-500/60 uppercase">{exp.category}</span>
-                                            <span className="text-xs font-bold text-gray-900 dark:text-white uppercase">{exp.description}</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <span className="text-sm font-black text-gray-900 dark:text-white">${formatCurrency(exp.amount)}</span>
-                                            <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
-                                        </div>
-                                    </div>
-                                ))}
-                                {totalDevoluciones > 0 && (
-                                    <div className="flex items-center justify-between p-3 rounded-2xl bg-rose-50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/10">
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] font-black text-rose-700 dark:text-rose-500/60 uppercase">Devoluciones</span>
-                                            <span className="text-xs font-bold text-gray-900 dark:text-white">{devolucionesCount} Operaciones</span>
-                                        </div>
-                                        <span className="text-sm font-black text-rose-700 dark:text-white">-${formatCurrency(totalDevoluciones)}</span>
-                                    </div>
-                                )}
-                                {[...salaryEgresses, ...operationalEgresses].map((e) => (
-                                    <div key={e.id} className="flex items-center justify-between p-3 rounded-2xl border border-dashed border-rose-500/20 bg-rose-50 dark:bg-rose-500/5">
-                                        <div className="flex flex-col">
-                                            <span className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase">NUEVO EGRESO</span>
-                                            <span className="text-xs font-bold text-zinc-900 dark:text-white uppercase italic">{e.description || 'Sin descripción'}</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <span className="text-sm font-black text-rose-700 dark:text-rose-400">-${formatCurrency(e.amount)}</span>
-                                            <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{e.method}</div>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        </section>
-
-                        {/* BLOQUE 3: INGRESOS DIGITALES (ULTRA-COMPACTO) */}
-                        <section className="space-y-2">
-                            <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/5 pb-1">
-                                <CreditCard size={12} className="text-blue-700 dark:text-blue-500" />
-                                <h3 className="text-[9px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Digitales</h3>
-                            </div>
-                             <div className="grid grid-cols-3 gap-2">
-                                <div className="p-4 rounded-3xl bg-blue-50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-500/10 flex flex-col gap-1 items-center text-center">
-                                    <span className="text-[9px] font-black text-blue-700 dark:text-blue-400 uppercase">Nequi</span>
-                                    <span className="text-lg font-black text-blue-800 dark:text-white">${formatCurrency(currentClosure?.totalNequi ?? 0)}</span>
+                                <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/5 pb-2">
+                                    <Briefcase size={14} className="text-gray-500 dark:text-zinc-500" />
+                                    <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Créditos y Abonos</h3>
                                 </div>
-                                <div className="p-4 rounded-3xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/10 flex flex-col gap-1 items-center text-center">
-                                    <span className="text-[9px] font-black text-purple-700 dark:text-purple-400 uppercase">Daviplata</span>
-                                    <span className="text-lg font-black text-purple-800 dark:text-white">${formatCurrency(currentClosure?.totalDaviplata ?? 0)}</span>
-                                </div>
-                                <div className="p-4 rounded-3xl bg-gray-100 dark:bg-zinc-500/5 border border-gray-200 dark:border-zinc-500/10 flex flex-col gap-1 items-center text-center">
-                                    <span className="text-[9px] font-black text-gray-600 dark:text-zinc-500 uppercase">Otros</span>
-                                    <span className="text-lg font-black text-gray-900 dark:text-white">${formatCurrency((currentClosure?.totalBancolombia ?? 0) + (currentClosure?.totalOtherTransfer ?? 0))}</span>
-                                </div>
-                            </div>
-                        </section>
-
-                        {/* BLOQUE 4: FIADOS Y ABONOS */}
-                        <section className="space-y-4">
-                            <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/5 pb-2">
-                                <Briefcase size={14} className="text-gray-500 dark:text-zinc-500" />
-                                <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Créditos y Abonos</h3>
-                            </div>
-                            <div className="bg-gray-50 dark:bg-zinc-900/40 border border-gray-200 dark:border-white/10 rounded-2xl p-4 md:p-6 shadow-sm dark:shadow-none">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div className="space-y-2">
-                                        <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider">Fiados Emitidos (${formatCurrency(currentClosure?.totalCreditIssued ?? 0)})</span>
-                                        <div className="space-y-1">
-                                            {currentClosure?.creditsIssued?.map((sale, idx) => (
-                                                <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
-                                                    <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{sale.client?.name || 'Cliente'}</span>
-                                                    <span className="text-blue-700 dark:text-blue-400 font-black">${formatCurrency(sale.creditAmount)}</span>
-                                                </div>
-                                            ))}
+                                <div className="bg-white dark:bg-zinc-900/40 border border-gray-200 dark:border-white/10 rounded-2xl p-4 md:p-6">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider">Fiados Emitidos (${formatCurrency(currentClosure?.totalCreditIssued ?? 0)})</span>
+                                            <div className="space-y-1">
+                                                {currentClosure?.creditsIssued?.map((sale, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
+                                                        <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{sale.client?.name || 'Cliente'}</span>
+                                                        <span className="text-blue-700 dark:text-blue-400 font-black">${formatCurrency(sale.creditAmount)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Abonos Recibidos (${formatCurrency(currentClosure?.totalCreditCollected ?? 0)})</span>
-                                        <div className="space-y-1">
-                                            {currentClosure?.creditPayments?.map((p, idx) => (
-                                                <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
-                                                    <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
-                                                    <span className="text-emerald-700 dark:text-emerald-400 font-black">${formatCurrency(p.totalPaid)}</span>
-                                                </div>
-                                            ))}
+                                        <div className="space-y-2">
+                                            <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Abonos Recibidos (${formatCurrency(currentClosure?.totalCreditCollected ?? 0)})</span>
+                                            <div className="space-y-1">
+                                                {currentClosure?.creditPayments?.map((p, idx) => (
+                                                    <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
+                                                        <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
+                                                        <span className="text-emerald-700 dark:text-emerald-400 font-black">${formatCurrency(p.totalPaid)}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
-                            </div>
-                        </section>
-                    </div>
+                            </section>
+                        </div>
+                    ) : (
+                        <div className="p-6 bg-white dark:bg-zinc-900/40 border border-gray-200 dark:border-white/5 rounded-3xl text-center">
+                            <Lock size={20} className="mx-auto text-zinc-400 mb-2" />
+                            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Auditoría de Ventas restringida a Administradores</p>
+                        </div>
+                    )}
                 </div>
-            </div>
-
-                ) : (
-                <div className="flex-1 flex flex-col items-center justify-center bg-white border border-gray-200 dark:bg-zinc-900/40 dark:border-white/5 rounded-3xl shadow-sm dark:shadow-2xl text-center p-8">
-                    <div className="flex flex-col items-center gap-2 mb-12">
-                        <span className="text-sm font-black text-emerald-700 dark:text-emerald-500/80 uppercase tracking-[0.4em]">Efectivo Esperado en Caja</span>
-                        <span className="text-7xl font-black text-gray-900 dark:text-white tracking-tighter drop-shadow-sm">
-                            ${formatCurrency(expectedCash)}
-                        </span>
-                        <p className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mt-2">
-                            Ingresa tu conteo físico para cuadrar
-                        </p>
-                    </div>
-
-                    <div className="h-16 w-16 rounded-full bg-gray-100 dark:bg-zinc-800/50 flex items-center justify-center mb-4">
-                        <Lock size={24} className="text-gray-400 dark:text-zinc-600" />
-                    </div>
-                    <h2 className="text-lg font-black text-gray-900 dark:text-white uppercase tracking-tighter mb-2">Desglose Restringido</h2>
-                    <p className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest max-w-sm">
-                        El detalle de auditoría (ventas, egresos, digitales) es visible únicamente para administradores.
-                    </p>
-                </div>
-                )}
 
                 {/* BLOQUE DERECHO: INTERACCIÓN CAJERO (SCROLLABLE) */}
                 <div className="bg-white border border-gray-200 dark:bg-zinc-900/60 dark:border-white/5 rounded-2xl p-5 md:p-6 flex flex-col gap-4 shadow-sm dark:shadow-2xl relative overflow-hidden">
@@ -765,12 +881,12 @@ export default function CashierClosurePage() {
                     {/* FOOTER DE ACCIÓN */}
                     <div className="shrink-0 pt-2 flex flex-col gap-3 border-t border-black/5 dark:border-white/5">
                         <div className={`flex items-center justify-between p-4 rounded-2xl border transition-all duration-500 ${
-                            status === 'BALANCED' ? 'bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-500/10 dark:border-yellow-500/20 dark:text-yellow-500' :
+                            status === 'BALANCED' ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-500' :
                             status === 'SHORTAGE' ? 'bg-rose-100 border-rose-300 text-rose-800 dark:bg-rose-500/10 dark:border-rose-500/20 dark:text-rose-500' :
-                            'bg-blue-100 border-blue-300 text-blue-800 dark:bg-blue-500/10 dark:border-blue-500/20 dark:text-blue-500'
+                            'bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-500'
                         }`}>
                             <div className="flex flex-col">
-                                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Diferencia</span>
+                                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Situación de Caja</span>
                                 <span className="text-sm font-black uppercase flex items-center gap-2">
                                     {status === 'PENDING' ? 'ESPERANDO CONTEO' : 
                                      status === 'BALANCED' ? 'CAJA CUADRADA' : 
@@ -795,7 +911,16 @@ export default function CashierClosurePage() {
                                 className="h-16 rounded-2xl border-gray-200 dark:border-white/10 font-black text-gray-400 dark:text-zinc-400 uppercase tracking-widest text-[10px] hover:bg-gray-50 dark:hover:bg-white/5"
                             >
                                 <Send size={14} className="mr-1" />
-                                Reporte Parcial
+                                Parcial (SMS)
+                            </Button>
+                            <Button
+                                onPress={handleFetchDetailedReport}
+                                isLoading={isFetchingDetailed}
+                                variant="bordered"
+                                className="h-16 rounded-2xl border-gray-200 dark:border-white/10 font-black text-gray-400 dark:text-zinc-400 uppercase tracking-widest text-[10px] hover:bg-gray-50 dark:hover:bg-white/5"
+                            >
+                                <ReceiptText size={14} className="mr-1" />
+                                Detallado
                             </Button>
                             <Button
                                 onPress={handleCloseRegister}
@@ -893,7 +1018,6 @@ export default function CashierClosurePage() {
                 backdrop="blur"
                 placement="center"
                 hideCloseButton={false}
-
                 classNames={{
                     base: "bg-zinc-900/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl shadow-black/40 max-w-md mx-4",
                     header: "border-none pt-8 px-8",
@@ -935,6 +1059,105 @@ export default function CashierClosurePage() {
                                     className="bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-[0.1em] px-10 h-12 rounded-xl transition-all duration-300 shadow-lg shadow-rose-500/20 active:scale-95"
                                 >
                                     SÍ, BORRAR TODO
+                                </Button>
+                            </ModalFooter>
+                        </>
+                    )}
+                </ModalContent>
+            </Modal>
+
+            <ExpenseFormModal 
+                isOpen={isRealExpenseModalOpen}
+                onClose={() => setIsRealExpenseModalOpen(false)}
+                onSave={handleSaveRealExpense}
+            />
+
+            {/* MODAL REPORTE DETALLADO (TICKET TÉRMICO) */}
+            <Modal 
+                isOpen={isDetailedOpen} 
+                onOpenChange={onDetailedOpenChange}
+                size="md"
+                scrollBehavior="inside"
+                backdrop="blur"
+            >
+                <ModalContent className="bg-white dark:bg-zinc-900">
+                    {(onClose) => (
+                        <>
+                            <ModalHeader className="flex flex-col gap-1">
+                                <span className="text-xl font-black italic uppercase tracking-tighter text-zinc-900 dark:text-white">Reporte Detallado de Turno</span>
+                                <span className="text-[10px] text-zinc-500 uppercase font-black">Control de Auditoría Interna</span>
+                            </ModalHeader>
+                            <ModalBody>
+                                <div className="bg-white p-6 rounded-2xl border-2 border-dashed border-zinc-200 font-mono text-zinc-900">
+                                    <div className="text-center mb-6 space-y-1">
+                                        <h2 className="text-lg font-black uppercase italic">CERBERUS POS</h2>
+                                        <p className="text-[10px] uppercase font-black text-zinc-500">Comprobante de Movimientos</p>
+                                        <div className="h-px bg-zinc-200 my-2" />
+                                        <p className="text-[9px] uppercase">Cajero: {detailedReport?.employee || '---'}</p>
+                                        <p className="text-[9px] uppercase">Inicio: {detailedReport?.startTime ? new Date(detailedReport.startTime).toLocaleString() : '---'}</p>
+                                        <p className="text-[9px] uppercase">Corte: {detailedReport?.endTime ? new Date(detailedReport.endTime).toLocaleString() : '---'}</p>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        <div className="grid grid-cols-4 text-[9px] font-black uppercase border-b border-zinc-200 pb-2">
+                                            <div className="col-span-1">HORA</div>
+                                            <div className="col-span-1">TIPO</div>
+                                            <div className="col-span-1">MÉTODO</div>
+                                            <div className="col-span-1 text-right">TOTAL</div>
+                                        </div>
+
+                                        {(detailedReport?.movements || []).map((m: any, i: number) => (
+                                            <div key={i} className="grid grid-cols-4 text-[10px] leading-tight mb-2">
+                                                <div className="col-span-1 text-zinc-500 font-black italic">
+                                                    {new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                </div>
+                                                <div className="col-span-1 font-black">
+                                                    <span className={m.type === 'VENTA' ? 'text-emerald-600' : m.type === 'GASTO' ? 'text-rose-600' : 'text-blue-600'}>
+                                                        {m.type}
+                                                    </span>
+                                                </div>
+                                                <div className="col-span-1 text-[9px] text-zinc-400 font-black">
+                                                    {m.method}
+                                                </div>
+                                                <div className={`col-span-1 text-right font-black ${m.type === 'GASTO' ? 'text-rose-600' : 'text-zinc-900'}`}>
+                                                    {m.type === 'GASTO' ? '-' : ''}${formatCurrency(m.amount)}
+                                                </div>
+                                                {m.description && (
+                                                    <div className="col-span-4 text-[8px] text-zinc-400 uppercase italic">
+                                                        {m.description}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        ))}
+
+                                        <div className="h-px bg-zinc-200 my-4 border-dashed border-t" />
+                                        
+                                        <div className="space-y-1">
+                                            <p className="text-[10px] font-black uppercase italic text-zinc-400">Balance por Método:</p>
+                                            {Object.entries(detailedReport?.totals || {}).map(([method, total]) => (
+                                                <div key={method} className="flex justify-between text-[11px] font-black uppercase">
+                                                    <span>{method}</span>
+                                                    <span className={(total as number) < 0 ? 'text-rose-600' : ''}>
+                                                        ${formatCurrency(total as number)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="mt-8 text-center border-t border-zinc-200 pt-4 opacity-50">
+                                        <p className="text-[8px] font-black uppercase tracking-widest">--- FIN DEL REPORTE ---</p>
+                                    </div>
+                                </div>
+                            </ModalBody>
+                            <ModalFooter>
+                                <Button variant="flat" onPress={onClose} className="font-black uppercase italic text-[10px]">Cerrar</Button>
+                                <Button 
+                                    color="primary" 
+                                    className="font-black uppercase italic text-[10px]"
+                                    onPress={() => window.print()}
+                                >
+                                    Imprimir Ticket
                                 </Button>
                             </ModalFooter>
                         </>

@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
 	"net/http"
 
@@ -28,6 +29,9 @@ func (h *DashboardReportHandler) GetRankingReport(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de ranking", err)
 		return
 	}
+	if data == nil {
+		data = []ports.ProductRankingItem{}
+	}
 	c.JSON(http.StatusOK, data)
 }
 
@@ -42,6 +46,9 @@ func (h *DashboardReportHandler) GetCategoryReport(c *gin.Context) {
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte por categoría", err)
 		return
+	}
+	if data == nil {
+		data = []services.CategoryReportItem{}
 	}
 	c.JSON(http.StatusOK, data)
 }
@@ -58,6 +65,9 @@ func (h *DashboardReportHandler) GetVIPClientsReport(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de clientes VIP", err)
 		return
 	}
+	if data == nil {
+		data = []services.VIPClientItem{}
+	}
 	c.JSON(http.StatusOK, data)
 }
 
@@ -72,6 +82,9 @@ func (h *DashboardReportHandler) GetVoidsReport(c *gin.Context) {
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de anulaciones", err)
 		return
+	}
+	if data == nil {
+		data = []services.VoidReportItem{}
 	}
 	c.JSON(http.StatusOK, data)
 }
@@ -88,6 +101,9 @@ func (h *DashboardReportHandler) GetPnLReport(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de P&L", err)
 		return
 	}
+	if data == nil {
+		data = &services.PnLReport{}
+	}
 	c.JSON(http.StatusOK, data)
 }
 
@@ -102,6 +118,9 @@ func (h *DashboardReportHandler) GetInventoryMovements(c *gin.Context) {
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de movimientos de inventario", err)
 		return
+	}
+	if data == nil {
+		data = []services.StockMovementReportItem{}
 	}
 	c.JSON(http.StatusOK, data)
 }

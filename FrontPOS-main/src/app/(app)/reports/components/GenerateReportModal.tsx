@@ -37,7 +37,11 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
     const [reportName, setReportName] = useState(`REPORTE_SISTEMA_${new Date().toISOString().split('T')[0]}`);
     const [category, setCategory] = useState('box-closure');
     const [format, setFormat] = useState('PDF');
-    const [dateFrom, setDateFrom] = useState(`${new Date().toISOString().split('T')[0]}`);
+    const [dateFrom, setDateFrom] = useState(() => {
+        const d = new Date();
+        d.setDate(1);
+        return d.toISOString().split('T')[0];
+    });
     const [dateTo, setDateTo] = useState(`${new Date().toISOString().split('T')[0]}`);
     const [dataSources, setDataSources] = useState(["details", "logs"]);
     const [deliveryEmail, setDeliveryEmail] = useState("");

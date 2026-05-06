@@ -9,6 +9,8 @@
  *  - Longitud mínima donde aplique
  */
 
+import { isProductWeighted } from './utils';
+
 export interface FieldError {
   field: string;
   message: string;
@@ -73,7 +75,7 @@ export function validateProduct(data: {
     nonNegative(data.purchasePrice, 'COSTO'),
     nonNegative(data.salePrice, 'PVP'),
     nonNegative(data.marginPercentage, 'MARGEN'),
-    ...(data.isWeighted ? [] : [nonNegative(data.quantity, 'STOCK')]),
+    ...(isProductWeighted(data) ? [] : [nonNegative(data.quantity, 'STOCK')]),
     nonNegative(data.minStock, 'STOCK MÍNIMO'),
     ...(data.isPack ? [
       required(data.baseProductBarcode, 'PRODUCTO BASE (PACK)'),
@@ -164,7 +166,9 @@ export function validateUser(data: {
 }
 
 export function validateManualWeight(value: string | number | undefined): ValidationResult {
-  const num = Number(value);
+  // Soporte para comas decimales (Latinoamérica)
+  const normalizedValue = typeof value === 'string' ? value.replace(',', '.') : value;
+  const num = Number(normalizedValue);
   const errors = collect(
     ...(isNaN(num) ? [{ field: 'PESO', message: 'PESO: VALOR NO NUMÉRICO' }] : []),
     ...(num <= 0 ? [{ field: 'PESO', message: 'PESO: DEBE SER MAYOR A 0 KG' }] : []),

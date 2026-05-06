@@ -227,7 +227,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Product{}).
-		Where("\"isActive\" = ?", true).
+		Where("\"isActive\" = ? AND COALESCE(\"isWeighted\", false) = ?", true, false).
 		Select("COALESCE(SUM(quantity * \"purchasePrice\"), 0)").
 		Scan(&total).Error
 	return total, err
@@ -236,7 +236,7 @@ func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
 func (r *PostgresProductRepository) GetGlobalInventoryRetailValue() (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Product{}).
-		Where("\"isActive\" = ?", true).
+		Where("\"isActive\" = ? AND COALESCE(\"isWeighted\", false) = ?", true, false).
 		Select("COALESCE(SUM(quantity * \"salePrice\"), 0)").
 		Scan(&total).Error
 	return total, err

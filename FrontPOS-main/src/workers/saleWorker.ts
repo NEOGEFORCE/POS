@@ -26,9 +26,10 @@ function filterProducts() {
         if (!query) return true;
 
         const nameMatch = (p.productName || '').toLowerCase().includes(query);
-        const barcodeMatch = (p.barcode || '').includes(query);
+        const barcodeMatch = (p.barcode || '').toLowerCase().includes(query);
+        const altCodesMatch = (p.alternateCodes || '').toLowerCase().includes(query);
         
-        return nameMatch || barcodeMatch;
+        return nameMatch || barcodeMatch || altCodesMatch;
     }).sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
 }
 

@@ -145,8 +145,18 @@ func ConnectDB() {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins100') THEN
 				ALTER TABLE cashier_closures ADD COLUMN coins100 DECIMAL(10,2) DEFAULT 0;
 			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins500_1000') THEN
-				ALTER TABLE cashier_closures ADD COLUMN coins500_1000 DECIMAL(10,2) DEFAULT 0;
+			if NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins500') THEN
+				ALTER TABLE cashier_closures ADD COLUMN coins500 DECIMAL(10,2) DEFAULT 0;
+			END IF;
+			if NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins1000') THEN
+				ALTER TABLE cashier_closures ADD COLUMN coins1000 DECIMAL(10,2) DEFAULT 0;
+			END IF;
+			-- Migración de datos si existe la columna vieja
+			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins500_1000') THEN
+				-- No podemos saber exactamente cuánto era de cada uno, así que lo ponemos en 500 como fallback o dejamos ambos en 0
+				-- pero para no perder el dato global, lo movemos a coins500
+				UPDATE cashier_closures SET coins500 = coins500_1000 WHERE coins500 = 0;
+				ALTER TABLE cashier_closures DROP COLUMN coins500_1000;
 			END IF;
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='closed_by_dni') THEN
 				ALTER TABLE cashier_closures ADD COLUMN closed_by_dni VARCHAR(50) DEFAULT '';
@@ -166,6 +176,62 @@ func ConnectDB() {
 			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='total_card') THEN
 				ALTER TABLE cashier_closures ADD COLUMN total_card DECIMAL(10,2) DEFAULT 0;
 			END IF;
+			-- 9. MIGRACIÓN DE ESTADO EN VENTAS (V8.5)
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sales' AND column_name='status') THEN
+				ALTER TABLE sales ADD COLUMN status VARCHAR(20) DEFAULT 'PAID';
+				UPDATE sales SET status = 'PAID';
+			END IF;
+
+			-- 10. REFORZAR ON UPDATE CASCADE PARA BARCODES (V9.0)
+			-- Esto es CRÍTICO para permitir editar códigos de producto sin romper la base de datos
+			
+			-- Sale Details
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='sale_details' AND constraint_type='FOREIGN KEY') THEN
+				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='sale_details' AND column_name='barcode') LOOP
+					EXECUTE 'ALTER TABLE sale_details DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+				END LOOP;
+			END IF;
+			ALTER TABLE sale_details ADD CONSTRAINT fk_sale_details_product FOREIGN KEY (barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+			-- Return Details
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='return_details' AND constraint_type='FOREIGN KEY') THEN
+				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='return_details' AND column_name='barcode') LOOP
+					EXECUTE 'ALTER TABLE return_details DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+				END LOOP;
+			END IF;
+			ALTER TABLE return_details ADD CONSTRAINT fk_return_details_product FOREIGN KEY (barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE RESTRICT;
+
+			-- Purchase Order Items
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='purchase_order_items' AND constraint_type='FOREIGN KEY') THEN
+				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='purchase_order_items' AND column_name='productBarcode') LOOP
+					EXECUTE 'ALTER TABLE purchase_order_items DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+				END LOOP;
+			END IF;
+			ALTER TABLE purchase_order_items ADD CONSTRAINT fk_purchase_order_items_product FOREIGN KEY ("productBarcode") REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE;
+
+			-- Product Suppliers (Many-to-Many)
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='product_suppliers' AND constraint_type='FOREIGN KEY') THEN
+				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='product_suppliers' AND column_name='product_barcode') LOOP
+					EXECUTE 'ALTER TABLE product_suppliers DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+				END LOOP;
+			END IF;
+			ALTER TABLE product_suppliers ADD CONSTRAINT fk_product_suppliers_product FOREIGN KEY (product_barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE;
+
+			-- Stock Movements
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='stock_movements' AND constraint_type='FOREIGN KEY') THEN
+				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='stock_movements' AND column_name='barcode') LOOP
+					EXECUTE 'ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+				END LOOP;
+			END IF;
+			ALTER TABLE stock_movements ADD CONSTRAINT fk_stock_movements_product FOREIGN KEY (barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE;
+
+			-- Products Self-Reference (Packs)
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='products' AND constraint_type='FOREIGN KEY') THEN
+				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='products' AND column_name='baseProductBarcode') LOOP
+					EXECUTE 'ALTER TABLE products DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
+				END LOOP;
+			END IF;
+			ALTER TABLE products ADD CONSTRAINT fk_products_base_product FOREIGN KEY ("baseProductBarcode") REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE SET NULL;
 		END $$;
 	`)
 
@@ -189,6 +255,7 @@ func ConnectDB() {
 		&models.AuditLog{},
 		&models.MissingItem{},
 		&models.ExpectedOrder{}, // CRITICAL FIX: Tabla de pedidos esperados/preventa
+		&models.ReportHistory{},
 	}
 
 	// Sesión especial para migraciones: sin transacciones y en modo SILENCIOSO para evitar ruido en el terminal
@@ -528,26 +595,35 @@ func createMaterializedViews(db *gorm.DB) error {
 
 	sql := `
 	CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dashboard_stats_monthly AS
-	WITH sale_stats AS (
+	WITH sale_detail_stats AS (
 		SELECT 
 			TO_CHAR(s."saleDate", 'YYYY-MM') as month_year,
-			SUM(s."totalAmount") as total_sales,
-			COUNT(s.*) as transaction_count,
-			SUM(CASE WHEN s."paymentMethod" = 'EFECTIVO' THEN s."totalAmount" ELSE 0 END) as sales_cash,
-			SUM(CASE WHEN s."paymentMethod" = 'TRANSFERENCIA' THEN s."totalAmount" ELSE 0 END) as sales_transfer,
-			SUM(CASE WHEN s."paymentMethod" = 'CREDITO' THEN s."totalAmount" ELSE 0 END) as sales_credit,
+			SUM(sd.subtotal) as total_sales,
+			SUM(sd.quantity * COALESCE(NULLIF(sd."costPrice", 0), p."purchasePrice", 0)) as total_cogs,
 			COALESCE(SUM(sd.quantity), 0) as products_sold
 		FROM sales s
 		LEFT JOIN sale_details sd ON s."saleId" = sd."saleId"
-		WHERE s."deleted_at" IS NULL
+		LEFT JOIN products p ON sd.barcode = p.barcode
+		WHERE s."deleted_at" IS NULL AND (s.status IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
+		GROUP BY 1
+	),
+	sale_payment_stats AS (
+		SELECT 
+			TO_CHAR("saleDate", 'YYYY-MM') as month_year,
+			COUNT(*) as transaction_count,
+			SUM(GREATEST(0, "cashAmount" - "change")) as sales_cash,
+			SUM("transferAmount") as sales_transfer,
+			SUM("creditAmount") as sales_credit
+		FROM sales
+		WHERE "deleted_at" IS NULL AND (status IN ('PAID', 'CREDIT', 'FIADO') OR status IS NULL OR status = '')
 		GROUP BY 1
 	),
 	expense_stats AS (
 		SELECT 
 			TO_CHAR(date, 'YYYY-MM') as month_year,
-			SUM(amount) as total_expenses
+			SUM(amount + tax_amount) as total_expenses
 		FROM expenses
-		WHERE "deleted_at" IS NULL
+		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID'
 		GROUP BY 1
 	),
 	payment_stats AS (
@@ -559,7 +635,7 @@ func createMaterializedViews(db *gorm.DB) error {
 		GROUP BY 1
 	),
 	all_months AS (
-		SELECT month_year FROM sale_stats
+		SELECT month_year FROM sale_detail_stats
 		UNION
 		SELECT month_year FROM expense_stats
 		UNION
@@ -567,16 +643,18 @@ func createMaterializedViews(db *gorm.DB) error {
 	)
 	SELECT 
 		am.month_year,
-		COALESCE(s.total_sales, 0) as total_sales,
-		COALESCE(s.transaction_count, 0) as transaction_count,
-		COALESCE(s.sales_cash, 0) as sales_cash,
-		COALESCE(s.sales_transfer, 0) as sales_transfer,
-		COALESCE(s.sales_credit, 0) as sales_credit,
-		COALESCE(s.products_sold, 0) as products_sold,
+		COALESCE(sds.total_sales, 0) as total_sales,
+		COALESCE(sps.transaction_count, 0) as transaction_count,
+		COALESCE(sps.sales_cash, 0) as sales_cash,
+		COALESCE(sps.sales_transfer, 0) as sales_transfer,
+		COALESCE(sps.sales_credit, 0) as sales_credit,
+		COALESCE(sds.products_sold, 0) as products_sold,
+		COALESCE(sds.total_cogs, 0) as total_cogs,
 		COALESCE(e.total_expenses, 0) as total_expenses,
 		COALESCE(p.total_abonos, 0) as total_abonos
 	FROM all_months am
-	LEFT JOIN sale_stats s ON am.month_year = s.month_year
+	LEFT JOIN sale_detail_stats sds ON am.month_year = sds.month_year
+	LEFT JOIN sale_payment_stats sps ON am.month_year = sps.month_year
 	LEFT JOIN expense_stats e ON am.month_year = e.month_year
 	LEFT JOIN payment_stats p ON am.month_year = p.month_year;
 

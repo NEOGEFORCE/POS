@@ -177,3 +177,30 @@ export const formatStock = (quantity: number, isPack?: boolean, isWeighted?: boo
     // Para productos pesados: mostrar el valor tal cual
     return quantity.toString();
 };
+
+/**
+ * Lógica unificada para determinar si un producto es pesable.
+ * Resuelve inconsistencias de tipos (strings vs booleans) y evalúa unidades de medida.
+ */
+export const isProductWeighted = (product: any): boolean => {
+    if (!product) return false;
+    
+    // 1. Evaluación directa del booleano
+    if (typeof product.isWeighted === 'boolean') return product.isWeighted;
+    
+    // 2. Evaluación de strings (Tolerancia a DB inconsistente)
+    if (typeof product.isWeighted === 'string') {
+        const val = product.isWeighted.toLowerCase().trim();
+        return val === 'true' || val === '1' || val === 'si' || val === 'on';
+    }
+    
+    // 3. Evaluación de números (1 = true, 0 = false)
+    if (typeof product.isWeighted === 'number') return product.isWeighted > 0;
+
+    // 4. Fallback por Unidad de Medida (Sugerido por el usuario)
+    const unit = (product.unit || product.unidad || '').toString().toLowerCase().trim();
+    if (['kg', 'kilogramo', 'lb', 'libra', 'gramos', 'gr', 'kgs'].includes(unit)) return true;
+
+    // 5. Última instancia: Verdad absoluta del campo
+    return !!product.isWeighted;
+};

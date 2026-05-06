@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { Product } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
-import { getCriticalThreshold, formatStock } from '@/lib/utils';
+import { getCriticalThreshold, formatStock, isProductWeighted } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconPackage } from '@tabler/icons-react';
 
@@ -54,6 +54,7 @@ const ProductTable = memo(({
 
     const role = user?.role?.toLowerCase() || user?.Role?.toLowerCase() || "";
     const isAdmin = role === "admin" || role === "administrador" || role === "superadmin";
+    const canEdit = isAdmin || role === "empleado";
 
     useEffect(() => {
         const mql = window.matchMedia("(max-width: 768px)");
@@ -70,8 +71,9 @@ const ProductTable = memo(({
         const quantity = product.quantity;
 
         // Estados: CRÍTICO (rojo) | ADVERTENCIA (ámbar) | ÓPTIMO (verde)
-        const isCritical = !product.isWeighted && quantity <= threshold;
-        const isWarning = !product.isWeighted && quantity <= minStock && quantity > threshold;
+        const weighted = isProductWeighted(product);
+        const isCritical = !weighted && quantity <= threshold;
+        const isWarning = !weighted && quantity <= minStock && quantity > threshold;
         // const isOptimal = !isCritical && !isWarning; // implícito por estilos default
 
         // Determinar clase CSS según estado
@@ -106,7 +108,7 @@ const ProductTable = memo(({
                         <div
                             className={`inline-flex items-center gap-0.5 sm:gap-1 rounded-xl border transition-all ${stockStatusClass}`}
                         >
-                            {isAdmin && (
+                            {canEdit && (
                                 <Button
                                     isIconOnly
                                     size="sm"
@@ -120,9 +122,9 @@ const ProductTable = memo(({
                                 </Button>
                             )}
                             <span className="min-w-[2.75rem] px-1 text-center text-[11px] font-black italic tabular-nums leading-none">
-                                {formatStock(product.quantity, (product as any).isPack, product.isWeighted)}
+                                {formatStock(product.quantity, (product as any).isPack, isProductWeighted(product))}
                             </span>
-                            {isAdmin && (
+                            {canEdit && (
                                 <Button
                                     isIconOnly
                                     size="sm"
@@ -166,15 +168,17 @@ const ProductTable = memo(({
                     </div>
                 );
             case "actions":
-                if (!isAdmin) return <span className="text-[7px] font-black text-gray-400 uppercase italic opacity-30">Lectura</span>;
+                if (!canEdit) return <span className="text-[7px] font-black text-gray-400 uppercase italic opacity-30">Lectura</span>;
                 return (
                     <div className="flex items-center justify-end gap-1 px-1">
                         <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-sm" onPress={() => onEdit(product)}>
                             <Edit size={14} />
                         </Button>
-                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all shadow-sm" onPress={() => onDelete(product.barcode)}>
-                            <Trash2 size={14} />
-                        </Button>
+                        {isAdmin && (
+                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all shadow-sm" onPress={() => onDelete(product.barcode)}>
+                                <Trash2 size={14} />
+                            </Button>
+                        )}
                     </div>
                 );
             default:
@@ -231,8 +235,9 @@ const ProductTable = memo(({
                                 // ... existing product card logic ...
                                 const minStock = p.minStock || 5;
                                 const threshold = getCriticalThreshold(minStock);
-                                const isCritical = !p.isWeighted && p.quantity <= threshold;
-                                const isWarning = !p.isWeighted && p.quantity <= minStock && p.quantity > threshold;
+                                const weightedP = isProductWeighted(p);
+                                const isCritical = !weightedP && p.quantity <= threshold;
+                                const isWarning = !weightedP && p.quantity <= minStock && p.quantity > threshold;
 
                                 const cardBorderClass = isCritical
                                     ? "border-rose-500/40 bg-rose-500/5 shadow-rose-500/5"
@@ -272,7 +277,7 @@ const ProductTable = memo(({
 
                                         <div className="flex items-center justify-between gap-2 mt-1 pt-2 border-t border-gray-100 dark:border-white/5">
                                             <div className="flex-1">
-                                                {isAdmin ? (
+                                                {canEdit ? (
                                                     <div className="flex items-center gap-1.5 w-full">
                                                         <Button
                                                             isIconOnly
@@ -284,8 +289,8 @@ const ProductTable = memo(({
                                                             <Minus size={14} strokeWidth={3} />
                                                         </Button>
                                                         <div className={`flex-1 flex items-center justify-center gap-1 h-8 rounded-lg border ${quantityBoxClass}`}>
-                                                            <span className="text-[12px] font-black italic tabular-nums leading-none">{formatStock(p.quantity, (p as any).isPack, p.isWeighted)}</span>
-                                                            <span className="text-[6px] font-black opacity-70 uppercase tracking-tighter">{p.isWeighted ? 'KG' : 'UN'}</span>
+                                                            <span className="text-[12px] font-black italic tabular-nums leading-none">{formatStock(p.quantity, (p as any).isPack, isProductWeighted(p))}</span>
+                                                            <span className="text-[6px] font-black opacity-70 uppercase tracking-tighter">{isProductWeighted(p) ? 'KG' : 'UN'}</span>
                                                         </div>
                                                         <Button
                                                             isIconOnly
@@ -299,16 +304,18 @@ const ProductTable = memo(({
                                                     </div>
                                                 ) : (
                                                     <div className={`flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border w-full ${quantityBoxClass}`}>
-                                                        <span className="text-[12px] font-black italic tabular-nums">{formatStock(p.quantity, (p as any).isPack, p.isWeighted)}</span>
-                                                        <span className="text-[7px] font-black opacity-60 uppercase tracking-widest">{p.isWeighted ? 'KG' : 'UN'}</span>
+                                                        <span className="text-[12px] font-black italic tabular-nums">{formatStock(p.quantity, (p as any).isPack, isProductWeighted(p))}</span>
+                                                        <span className="text-[7px] font-black opacity-60 uppercase tracking-widest">{isProductWeighted(p) ? 'KG' : 'UN'}</span>
                                                     </div>
                                                 )}
                                             </div>
 
-                                            {isAdmin && (
+                                            {canEdit && (
                                                 <div className="flex gap-1 shrink-0">
                                                     <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg border border-emerald-500/10" onPress={() => onEdit(p)}><Edit size={12} /></Button>
-                                                    <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/10" onPress={() => onDelete(p.barcode)}><Trash2 size={12} /></Button>
+                                                    {isAdmin && (
+                                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/10" onPress={() => onDelete(p.barcode)}><Trash2 size={12} /></Button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>

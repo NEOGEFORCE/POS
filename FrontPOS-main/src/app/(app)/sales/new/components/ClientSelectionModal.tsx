@@ -96,7 +96,7 @@ export default function ClientSelectionModal({
                                 </div>
 
                                 {/* LISTA FILTRADA */}
-                                {filteredCustomers.filter(c => c.dni !== '0').map(c => {
+                                {Array.isArray(filteredCustomers) && filteredCustomers.filter(c => c.dni !== '0').map(c => {
                                     const isActive = selectedClientDni === c.dni;
                                     return (
                                         <div
@@ -129,7 +129,7 @@ export default function ClientSelectionModal({
                                     );
                                 })}
 
-                                {filteredCustomers.length === 0 && (
+                                {(!filteredCustomers || filteredCustomers.length === 0) && (
                                     <div className="py-12 text-center">
                                         <div className="inline-flex items-center justify-center h-16 w-16 rounded-full bg-gray-50 dark:bg-zinc-950/50 mb-4 border border-dashed border-gray-200 dark:border-white/10">
                                             <Search className="h-6 w-6 text-gray-300" />

@@ -30,7 +30,8 @@ type CashierClosure struct {
 	CashBills       float64        `json:"cashBills"`
 	Coins200        float64        `json:"coins200"`
 	Coins100        float64        `json:"coins100"`
-	Coins500_1000   float64        `json:"coins500_1000"`
+	Coins500        float64        `json:"coins500"`
+	Coins1000       float64        `json:"coins1000"`
 	ClosedByDNI     string         `json:"closedByDni"`
 	ClosedByName    string         `json:"closedByName"`
 	PhysicalCash    float64        `gorm:"column:physical_cash" json:"physicalCash"`

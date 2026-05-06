@@ -3,7 +3,6 @@ const ASSETS_TO_CACHE = [
   '/',
   '/login',
   '/sales/new',
-  '/globals.css',
   '/manifest.json'
 ];
 

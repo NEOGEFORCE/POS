@@ -252,6 +252,21 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
           detail: { message: 'Reporte enviado a Telegram exitosamente' }
         }));
       }
+
+      // REGISTRAR EN EL HISTORIAL (DATABASE)
+      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: title,
+          type: 'PDF',
+          category: subtitle || 'General',
+          url: filename
+        })
+      }).catch(err => console.error("Error registrando historial:", err));
     } catch (error: any) {
       console.error('❌ Error enviando PDF a Telegram:', error);
       
@@ -261,6 +276,22 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
         }));
       }
     }
+  } else {
+    // Si no se envía a Telegram, igual registramos en el historial
+    const token = typeof window !== 'undefined' ? (await import('js-cookie')).default.get('org-pos-token') : '';
+    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          name: title,
+          type: 'PDF',
+          category: subtitle || 'General',
+          url: filename
+        })
+      }).catch(err => console.error("Error registrando historial:", err));
   }
 
   // Limpiar el nombre del archivo de caracteres inválidos

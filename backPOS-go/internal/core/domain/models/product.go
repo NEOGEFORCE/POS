@@ -29,12 +29,13 @@ type Product struct {
 	ImageUrl         string     `gorm:"type:text;column:imageUrl" json:"imageUrl"`
 	MinStock         float64    `gorm:"type:decimal(10,2);default:0;column:minStock" json:"minStock"`
 	IsActive         bool       `gorm:"default:true;column:isActive" json:"isActive"`
+	AlternateCodes   string     `gorm:"type:text;column:alternate_codes;default:''" json:"alternateCodes"`
 
 	// Lógica de Empaques (Packs)
 	IsPack             bool     `gorm:"default:false;column:isPack" json:"isPack"`
 	BaseProductBarcode *string  `gorm:"index;column:baseProductBarcode" json:"baseProductBarcode"`
 	PackMultiplier     int      `gorm:"default:1;column:packMultiplier" json:"packMultiplier"`
-	BaseProduct        *Product `gorm:"foreignKey:BaseProductBarcode;references:Barcode" json:"baseProduct,omitempty"`
+	BaseProduct        *Product `gorm:"foreignKey:BaseProductBarcode;references:Barcode;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"baseProduct,omitempty"`
 
 	NetProfit float64        `gorm:"-" json:"netProfit"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`

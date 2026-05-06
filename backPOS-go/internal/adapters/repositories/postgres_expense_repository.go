@@ -2,6 +2,8 @@ package repositories
 
 import (
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/infrastructure/cache"
+	"log"
 	"strings"
 	"gorm.io/gorm"
 )
@@ -14,8 +16,25 @@ func NewPostgresExpenseRepository(db *gorm.DB) *PostgresExpenseRepository {
 	return &PostgresExpenseRepository{db: db}
 }
 
+func (r *PostgresExpenseRepository) invalidateDashboardCache() {
+	// Invalidate RAM cache
+	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+	
+	// Refresh Materialized View in background
+	go func() {
+		if err := r.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats_monthly").Error; err != nil {
+			log.Printf("⚠️ [MV Refresh - Expense] Fallo concurrente: %v", err)
+			r.db.Exec("REFRESH MATERIALIZED VIEW mv_dashboard_stats_monthly")
+		}
+	}()
+}
+
 func (r *PostgresExpenseRepository) Save(expense *models.Expense) error {
-	return r.db.Create(expense).Error
+	err := r.db.Create(expense).Error
+	if err == nil {
+		r.invalidateDashboardCache()
+	}
+	return err
 }
 
 func (r *PostgresExpenseRepository) GetAll() ([]models.Expense, error) {
@@ -54,15 +73,33 @@ func (r *PostgresExpenseRepository) Count() (int64, error) {
 }
 
 func (r *PostgresExpenseRepository) Update(id uint, expense *models.Expense) error {
-	return r.db.Model(&models.Expense{}).Where("id = ?", id).Updates(expense).Error
+	err := r.db.Model(&models.Expense{}).Where("id = ?", id).Updates(expense).Error
+	if err == nil {
+		r.invalidateDashboardCache()
+	}
+	return err
+}
+
+func (r *PostgresExpenseRepository) Settle(id uint, paymentSource string) error {
+	err := r.db.Model(&models.Expense{}).
+		Where("id = ?", id).
+		Updates(map[string]interface{}{
+			"status":        "PAID",
+			"paymentSource": paymentSource,
+		}).Error
+	if err == nil {
+		r.invalidateDashboardCache()
+	}
+	return err
 }
 func (r *PostgresExpenseRepository) GetMonthlyTotals() (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("expenses").
-		Select("TO_CHAR(date, 'YYYY-MM') as month, SUM(amount) as total").
+		Select("TO_CHAR(date, 'YYYY-MM') as month, COALESCE(SUM(amount + tax_amount), 0) as total").
 		Group("month").
 		Rows()
 	if err != nil {
+		log.Printf("❌ [GetMonthlyTotals Expenses] Error: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -84,7 +121,7 @@ func (r *PostgresExpenseRepository) GetPendingDebtsSummary() (float64, int64, er
 	}
 	err := r.db.Model(&models.Expense{}).
 		Where("UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')", "PENDING").
-		Select("COALESCE(SUM(amount), 0) as amount, COUNT(*) as count").
+		Select("COALESCE(SUM(amount + tax_amount), 0) as amount, COUNT(*) as count").
 		Scan(&result).Error
 	return result.Amount, result.Count, err
 }
@@ -105,19 +142,24 @@ func (r *PostgresExpenseRepository) GetGlobalTotalPaidExpenses() (float64, error
 	err := r.db.Model(&models.Expense{}).
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
-		Select("COALESCE(SUM(amount), 0)").Scan(&total).Error
-	return total, err
+		Select("COALESCE(SUM(amount + tax_amount), 0)").Scan(&total).Error
+	if err != nil {
+		log.Printf("❌ [GetGlobalTotalPaidExpenses] Error: %v", err)
+		return 0, nil
+	}
+	return total, nil
 }
 
 func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("expenses").
-		Select("\"paymentSource\", SUM(amount) as total").
+		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
 		Group("\"paymentSource\"").
 		Rows()
 	if err != nil {
+		log.Printf("❌ [GetGlobalPaidExpensesByMethod] Error: %v", err)
 		return nil, err
 	}
 	defer rows.Close()
@@ -140,6 +182,31 @@ func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to string) (float
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
 		Where("date >= ? AND date < ?", from, to).
-		Select("COALESCE(SUM(amount), 0)").Scan(&total).Error
-	return total, err
+		Select("COALESCE(SUM(amount + tax_amount), 0)").Scan(&total).Error
+	if err != nil {
+		log.Printf("❌ [GetPaidAmountByRange] Error: %v", err)
+		return 0, nil // Fallback a 0
+	}
+	return total, nil
+}
+func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, to string) (map[string]float64, error) {
+	results := make(map[string]float64)
+	rows, err := r.db.Table("expenses").
+		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
+		Where("UPPER(status) = 'PAID'").
+		Where("date >= ? AND date <= ?", from, to).
+		Group("\"paymentSource\"").
+		Rows()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var source string
+		var total float64
+		rows.Scan(&source, &total)
+		results[strings.ToUpper(source)] = total
+	}
+	return results, nil
 }

@@ -12,6 +12,9 @@ interface RecentSale {
     client: string;
     payment_method?: string;
     transfer_source?: string;
+    cash_amount?: number;
+    transfer_amount?: number;
+    credit_amount?: number;
 }
 
 interface RecentActivityProps {
@@ -58,11 +61,29 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                             <tbody className="divide-y divide-gray-100 dark:divide-white/5">
                                 {/* 2. Límite a 18 para igualar tu panel de Stock */}
                                 {safeSales.slice(0, 18).map((sale) => {
-                                    const method = sale.transfer_source || sale.payment_method || 'EFECTIVO';
-                                    const chipColor = method === 'EFECTIVO' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400'
-                                        : method === 'NEQUI' ? 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400'
-                                            : method === 'DAVIPLATA' ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400'
-                                                : 'bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-zinc-300';
+                                    const source = sale.transfer_source?.toUpperCase() || "NEQUI";
+                                    const hasTransfer = (sale.transfer_amount || 0) > 0;
+                                    const hasCash = (sale.cash_amount || 0) > 0;
+                                    const hasCredit = (sale.credit_amount || 0) > 0;
+
+                                    // Determinar Label (Sin "Mixto")
+                                    let methodLabel = "EFECTIVO";
+                                    if (hasTransfer && hasCash && hasCredit) methodLabel = `${source}+EFE+FIA`;
+                                    else if (hasTransfer && hasCash) methodLabel = `${source}+EFE`;
+                                    else if (hasTransfer && hasCredit) methodLabel = `${source}+FIA`;
+                                    else if (hasCash && hasCredit) methodLabel = `EFE+FIA`;
+                                    else if (hasTransfer) methodLabel = source;
+                                    else if (hasCredit) methodLabel = "FIADO";
+
+                                    // Determinar Color
+                                    let chipColor = 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400';
+                                    if (hasTransfer) {
+                                        if (source.includes("NEQUI")) chipColor = 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400';
+                                        else if (source.includes("DAVIPLATA")) chipColor = 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400';
+                                        else chipColor = 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400';
+                                    } else if (hasCredit) {
+                                        chipColor = 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400';
+                                    }
 
                                     // 3. Blindaje al formatear la fecha
                                     let displayDate = "Fecha N/A";
@@ -87,7 +108,7 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                                             </td>
                                             <td className="px-4 py-3 text-center truncate">
                                                 <Chip size="sm" variant="flat" className={chipColor} classNames={{ content: "text-[9px] font-black uppercase tracking-widest" }}>
-                                                    {method}
+                                                    {methodLabel}
                                                 </Chip>
                                             </td>
                                             <td className="px-6 py-3 text-right font-black text-gray-900 dark:text-white tabular-nums tracking-tighter text-sm truncate">

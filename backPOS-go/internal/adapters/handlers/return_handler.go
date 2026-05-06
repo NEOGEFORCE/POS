@@ -14,10 +14,11 @@ import (
 type ReturnHandler struct {
 	service      *services.ReturnService
 	auditService *services.AuditService
+	sseService   *services.SSEService
 }
 
-func NewReturnHandler(s *services.ReturnService, a *services.AuditService) *ReturnHandler {
-	return &ReturnHandler{service: s, auditService: a}
+func NewReturnHandler(s *services.ReturnService, a *services.AuditService, sse *services.SSEService) *ReturnHandler {
+	return &ReturnHandler{service: s, auditService: a, sseService: sse}
 }
 
 func (h *ReturnHandler) Create(c *gin.Context) {
@@ -45,11 +46,12 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, ret)
 
-	// Auditoría de Devolución
 	h.auditService.Log(dniStr, nameStr, "CREATE_RETURN", "INVENTORY", 
 		fmt.Sprintf("Devolución venta #%d: $%.2f", ret.SaleID, ret.TotalReturned),
 		fmt.Sprintf("Se registró una devolución para la venta #%d. Total devuelto: $%s. Motivo: %s", ret.SaleID, fmt.Sprintf("%.2f", ret.TotalReturned), ret.Reason),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 }
 
 func (h *ReturnHandler) GetAll(c *gin.Context) {

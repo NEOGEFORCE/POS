@@ -6,6 +6,7 @@ interface CartDB {
     carts: Record<string, any[]>;
     activeKey: string;
     customerDni: string;
+    cartCustomers: Record<string, string>;
     selectedItemId: string | null;
     updatedAt: number;
 }
@@ -26,7 +27,13 @@ function openDB(): Promise<IDBDatabase> {
     });
 }
 
-export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeKey: string, customerDni: string, selectedItemId: string | null): Promise<void> {
+export async function saveCartsToIndexedDB(
+    carts: Record<string, any[]>, 
+    activeKey: string, 
+    customerDni: string, 
+    cartCustomers: Record<string, string>,
+    selectedItemId: string | null
+): Promise<void> {
     try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -36,6 +43,7 @@ export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeK
             carts,
             activeKey,
             customerDni,
+            cartCustomers,
             selectedItemId,
             updatedAt: Date.now(),
         };
@@ -50,12 +58,18 @@ export async function saveCartsToIndexedDB(carts: Record<string, any[]>, activeK
         console.warn('IndexedDB save failed, falling back to localStorage:', err);
         localStorage.setItem('pos-active-carts', JSON.stringify(carts));
         localStorage.setItem('pos-active-cart-key', activeKey);
-        localStorage.setItem('pos-active-customer', customerDni);
+        localStorage.setItem('pos-active-cart-customers', JSON.stringify(cartCustomers));
         localStorage.setItem('pos-active-selected-id', selectedItemId || '');
     }
 }
 
-export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, any[]>; activeKey: string; customerDni: string; selectedItemId: string | null } | null> {
+export async function loadCartsFromIndexedDB(): Promise<{ 
+    carts: Record<string, any[]>; 
+    activeKey: string; 
+    customerDni: string; 
+    cartCustomers: Record<string, string>;
+    selectedItemId: string | null 
+} | null> {
     try {
         const db = await openDB();
         const tx = db.transaction(STORE_NAME, 'readonly');
@@ -70,6 +84,7 @@ export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, 
                         carts: result.carts,
                         activeKey: result.activeKey,
                         customerDni: result.customerDni,
+                        cartCustomers: result.cartCustomers || {},
                         selectedItemId: result.selectedItemId || null,
                     });
                 } else {
@@ -83,6 +98,7 @@ export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, 
         const savedCartsRaw = localStorage.getItem('pos-active-carts');
         const savedActive = localStorage.getItem('pos-active-cart-key');
         const savedCustomer = localStorage.getItem('pos-active-customer');
+        const savedCustomersRaw = localStorage.getItem('pos-active-cart-customers');
         const savedSelectedId = localStorage.getItem('pos-active-selected-id');
         
         if (savedCartsRaw) {
@@ -90,6 +106,7 @@ export async function loadCartsFromIndexedDB(): Promise<{ carts: Record<string, 
                 carts: JSON.parse(savedCartsRaw),
                 activeKey: savedActive || 'Factura 1',
                 customerDni: savedCustomer || '0',
+                cartCustomers: savedCustomersRaw ? JSON.parse(savedCustomersRaw) : {},
                 selectedItemId: savedSelectedId || null,
             };
         }

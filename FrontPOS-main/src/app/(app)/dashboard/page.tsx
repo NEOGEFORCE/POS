@@ -7,6 +7,7 @@ import RankingList from "./components/RankingList";
 import LowStockPanel from "./components/LowStockPanel";
 import RecentActivity from "./components/RecentActivity";
 import QuickActionsPanel from "./components/QuickActionsPanel";
+import CashFlowWidget from "./components/CashFlowWidget";
 import AdvancedAnalyticsChart from "./components/AdvancedAnalyticsChart";
 import IncomingOrdersWidget from "./components/IncomingOrdersWidget";
 import PendingDebtsModal from "./components/PendingDebtsModal";
@@ -84,6 +85,9 @@ interface DashboardData {
     }[];
     todaySalesAmount: number;
     todaySalesCount: number;
+    shiftSalesAmount: number;
+    shiftSalesCount: number;
+    shiftSalesByMethod: Record<string, number>;
     todayExpenses: {
         amount: number;
         count: number;
@@ -113,6 +117,11 @@ interface DashboardData {
     systemBalance: number;
     reportedBalance: number;
     globalDifference: number;
+    todayCashFlow?: {
+        income: Record<string, number>;
+        expense: Record<string, number>;
+        balance: number;
+    };
 }
 
 export default function DashboardPage() {
@@ -158,10 +167,25 @@ export default function DashboardPage() {
         const token = Cookies.get('org-pos-token');
         if (!token) return;
 
-        const sseUrl = `${process.env.NEXT_PUBLIC_API_URL}/sse?token=${token}`;
+        // Construcción dinámica de la URL de SSE para soportar acceso por IP local
+        let apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || '';
+        
+        // Si estamos accediendo por IP (no localhost) y la API apunta a localhost, corregimos dinámicamente
+        if (typeof window !== 'undefined' && apiBase.includes('localhost')) {
+            apiBase = apiBase.replace('localhost', window.location.hostname);
+        }
+
+        let ssePath = '/sse';
+        if (!apiBase.endsWith('/api') && apiBase !== '/api') {
+            ssePath = '/api/sse';
+        }
+
+        const sseUrl = `${apiBase}${ssePath}?token=${token}`;
+        console.log("[SSE] Conectando a:", sseUrl);
+
         const eventSource = new EventSource(sseUrl);
 
-        eventSource.addEventListener('NEW_SALE', (event) => {
+        eventSource.addEventListener('NEW_SALE', () => {
             mutate();
             toast({
                 title: "VENTA EN TIEMPO REAL",
@@ -170,7 +194,11 @@ export default function DashboardPage() {
             });
         });
 
-        eventSource.onerror = (err) => {
+        eventSource.addEventListener('DASHBOARD_UPDATE', () => {
+            mutate();
+        });
+
+        eventSource.onerror = () => {
             eventSource.close();
         };
 
@@ -263,6 +291,7 @@ export default function DashboardPage() {
                                 {/* DERECHA: Acciones, Ranking y Gráficas (Sticky) */}
                                 <div className="lg:col-span-4 flex flex-col gap-6 sticky top-[80px]">
                                     <QuickActionsPanel />
+                                    <CashFlowWidget data={data.todayCashFlow} />
                                     <RankingList products={data.topProducts} />
                                     <DashboardCharts
                                         dailySalesLast7={data.dailySalesLast7}

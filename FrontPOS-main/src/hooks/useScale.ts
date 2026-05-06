@@ -8,6 +8,7 @@ interface ScaleState {
     port: string;
     error: string | null;
     rawData: string;
+    isReloading: boolean;
 }
 
 export function useScale() {
@@ -19,6 +20,7 @@ export function useScale() {
         port: '',
         error: null,
         rawData: '',
+        isReloading: false,
     });
 
     useEffect(() => {
@@ -33,6 +35,10 @@ export function useScale() {
         };
     }, []);
 
+    const reload = useCallback(() => {
+        bridgeRef.current?.reload();
+    }, []);
+
     return {
         weight: state.weight,
         isConnected: state.isConnected,
@@ -40,5 +46,7 @@ export function useScale() {
         port: state.port,
         error: state.error,
         rawData: state.rawData,
+        isReloading: state.isReloading,
+        reload,
     };
 }

@@ -7,6 +7,7 @@ import { useToast } from '@/hooks/use-toast';
 import { extractApiError } from '@/lib/api-error';
 import { Sale, Product, SaleDetail } from '@/lib/definitions';
 import { ScannerOverlay } from '@/components/ScannerOverlay';
+import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
 
 // Importaciones de HeroUI
 import {
@@ -20,6 +21,7 @@ import UniversalPaymentModal from '@/components/shared/UniversalPaymentModal';
 import ReturnsKPIs from './components/ReturnsKPIs';
 
 import { Suspense } from 'react';
+import { isProductWeighted } from "@/lib/utils";
 
 function ReturnsContent() {
     const [searchId, setSearchId] = useState('');
@@ -59,18 +61,9 @@ function ReturnsContent() {
     const [mounted, setMounted] = useState(false);
     const { toast } = useToast();
 
-    // Helper para determinar el método de pago legible
-    const getPaymentBadge = (s: Sale | null) => {
-        if (!s) return null;
-        const hasCash = s.cashAmount > 0 || s.paymentMethod?.toUpperCase().includes('EFECTIVO');
-        const hasTransfer = s.transferAmount > 0 || s.paymentMethod?.toUpperCase().includes('TRANSFER');
-        if (hasCash && hasTransfer) return { label: 'MIXTO', color: 'warning' };
-        if (hasCash) return { label: 'EFECTIVO', color: 'success' };
-        if (hasTransfer) return { label: 'TRANSFERENCIA', color: 'primary' };
-        return { label: 'DESCONOCIDO', color: 'default' };
-    };
 
-    const paymentInfo = getPaymentBadge(sale);
+    const paymentLabel = sale ? getPaymentDescription(sale) : 'EFECTIVO';
+    const paymentColor = sale ? getPaymentColor(sale.paymentMethod) : 'default';
 
     // --- TRADUCCIONES DE ESTADOS ---
     const getReturnTypeLabel = (type: string) => {
@@ -685,8 +678,8 @@ function ReturnsContent() {
                             <div>
                                 <div className="flex items-center gap-3 mb-2">
                                     <span className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
-                                    <Chip size="sm" variant="shadow" color={paymentInfo?.color as any || 'default'} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
-                                        PAGADO EN: {paymentInfo?.label}
+                                    <Chip size="sm" variant="shadow" color={paymentColor as any} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
+                                        PAGADO EN: {paymentLabel}
                                     </Chip>
                                 </div>
                                 <h2 className="text-xl font-black text-gray-900 dark:text-white uppercase leading-tight">
@@ -735,7 +728,7 @@ function ReturnsContent() {
                                                     </TableCell>
                                                     <TableCell>
                                                         <div className="flex items-center justify-center gap-1.5">
-                                                            {item.isWeighted || item.product?.isWeighted ? (
+                                                            {isProductWeighted(item) || isProductWeighted(item.product) ? (
                                                                 <Input
                                                                     type="number"
                                                                     size="sm"
@@ -910,7 +903,7 @@ function ReturnsContent() {
                                                             <TableCell className="text-[10px] font-bold uppercase leading-tight">{item.productName}</TableCell>
                                                             <TableCell>
                                                                 <div className="flex items-center justify-center gap-1.5">
-                                                                    {item.isWeighted || item.product?.isWeighted ? (
+                                                                    {isProductWeighted(item) || isProductWeighted(item.product) ? (
                                                                         <Input
                                                                             type="number"
                                                                             size="sm"

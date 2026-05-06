@@ -3,10 +3,13 @@ import { useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
 import { Product, Customer, Category } from '@/lib/definitions';
-import { applyRounding } from "@/lib/utils";
+import { applyRounding, isProductWeighted } from "@/lib/utils";
+import { ScaleBridge } from '@/lib/scaleBridge';
 import { useScale } from '@/hooks/useScale';
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
 import { extractApiError } from '@/lib/api-error';
+import { useApi } from '@/hooks/use-api';
+import { broadcastRevalidate } from '@/lib/revalidate';
 
 export interface CartItem extends Product {
     cartQuantity: number;
@@ -19,7 +22,14 @@ export function useNewSale() {
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
 
-    // Core Data
+    // Core Data (Auto-refreshing via SWR)
+    const { data: productsData, mutate: mutateProducts, isLoading: productsLoading } = useApi<Product[]>('/products/all-products', { 
+        refreshInterval: 10000,
+        revalidateOnFocus: true 
+    });
+    const { data: customersData, isLoading: customersLoading } = useApi<Customer[]>('/clients/all-clients', { refreshInterval: 60000 });
+    const { data: categoriesData, isLoading: categoriesLoading } = useApi<Category[]>('/categories/all-categories', { refreshInterval: 120000 });
+
     const [products, setProducts] = useState<Product[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
     const [categories, setCategories] = useState<Category[]>([]);
@@ -56,6 +66,8 @@ export function useNewSale() {
     const [isSplitDialogOpen, setIsSplitDialogOpen] = useState(false);
     const [isCartDropdownOpen, setIsCartDropdownOpen] = useState(false);
     const [isMissingItemOpen, setIsMissingItemOpen] = useState(false);
+    const [isDeleteCartConfirmOpen, setIsDeleteCartConfirmOpen] = useState(false);
+    const [cartKeyToDelete, setCartKeyToDelete] = useState<string | null>(null);
 
     // Split Bill State
     const [splitItemsToPay, setSplitItemsToPay] = useState<CartItem[] | null>(null);
@@ -67,6 +79,13 @@ export function useNewSale() {
     const [lastChange, setLastChange] = useState(0);
     const [lastReceipt, setLastReceipt] = useState<any>(null);
     const [scannerBuffer, setScannerBuffer] = useState('');
+
+    // Reset success screen when dialog closes to avoid "lingering" success screen on next sale
+    useEffect(() => {
+        if (!isPaymentDialogOpen && showSuccessScreen) {
+            setShowSuccessScreen(false);
+        }
+    }, [isPaymentDialogOpen, showSuccessScreen]);
 
     const playBeep = useCallback((type: 'success' | 'error' = 'success') => {
         if (typeof window === 'undefined') return;
@@ -98,8 +117,77 @@ export function useNewSale() {
     const [isOffline, setIsOffline] = useState(false);
     const [workerFilteredProducts, setWorkerFilteredProducts] = useState<Product[]>([]);
 
-    const { weight: scaleWeight, isScaleOnline } = useScale();
+    const { weight: scaleWeight, isScaleOnline, isReloading: isScaleReloading, reload: reloadScale } = useScale();
+    const submittingRef = useRef(false);
     const hiddenScannerRef = useRef<HTMLInputElement>(null);
+
+    // --- LÓGICA DE AUTOREFRESCO DE BÁSCULA (HFT) ---
+    const lastWeightRef = useRef(0);
+    
+    // 1. Detectar transición de 0 a Peso (y viceversa) para limpiar estados
+    useEffect(() => {
+        if (!isScaleOnline) return;
+        
+        // Si el peso baja a cero, forzamos una limpieza para evitar "pesos fantasmas"
+        if (lastWeightRef.current > 0.002 && scaleWeight <= 0.001) {
+            reloadScale();
+        }
+        
+        // Si detectamos un nuevo peso tras estar en cero, aseguramos que la UI esté lista
+        if (lastWeightRef.current <= 0.001 && scaleWeight > 0.005) {
+            // Pequeño delay para dejar que la balanza se estabilice antes de permitir añadir
+            // No bloqueamos, pero lastWeight se actualiza al final
+        }
+        
+        lastWeightRef.current = scaleWeight;
+    }, [scaleWeight, isScaleOnline, reloadScale]);
+
+    // 2. Refresco proactivo cada 30 segundos si está en cero
+    useEffect(() => {
+        const interval = setInterval(() => {
+            if (isScaleOnline && scaleWeight <= 0.001 && !isScaleReloading) {
+                reloadScale();
+            }
+        }, 30000);
+        return () => clearInterval(interval);
+    }, [isScaleOnline, scaleWeight, isScaleReloading, reloadScale]);
+
+    // --- PERSISTENCIA DE CARROS (RECUPERACIÓN POR CORTE DE LUZ / CIERRE) ---
+    const isInitialMount = useRef(true);
+    
+    // 1. Cargar al montar
+    useEffect(() => {
+        loadCartsFromIndexedDB().then((data) => {
+            if (data) {
+                // Solo restaurar si hay algo guardado
+                if (Object.keys(data.carts).length > 0) {
+                    setCarts(data.carts);
+                    setCartKeys(Object.keys(data.carts));
+                    setActiveCartKey(data.activeKey);
+                    setCartCustomers(data.cartCustomers || { 'Factura 1': '0' });
+                    setSelectedCustomerDni(data.customerDni);
+                    setSelectedItemId(data.selectedItemId);
+                }
+            }
+            setLoading(false);
+            isInitialMount.current = false;
+        }).catch(err => {
+            console.error("Error cargando persistencia:", err);
+            setLoading(false);
+            isInitialMount.current = false;
+        });
+    }, []);
+
+    // 2. Guardar cambios (Debounced para performance)
+    useEffect(() => {
+        if (isInitialMount.current || loading) return;
+        
+        const timer = setTimeout(() => {
+            saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId);
+        }, 1000);
+        
+        return () => clearTimeout(timer);
+    }, [carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId, loading]);
 
     // Initializing Web Worker
     useEffect(() => {
@@ -127,7 +215,7 @@ export function useNewSale() {
 
     // Sync Master Data to Offline DB & Worker when fetched
     useEffect(() => {
-        if (products.length > 0) {
+        if (Array.isArray(products) && products.length > 0) {
             import('@/lib/offline-db').then(db => {
                 db.cacheMasterData(products, customers, categories);
             });
@@ -138,22 +226,39 @@ export function useNewSale() {
                 payload: { query: searchQuery, category: selectedCategory } 
             });
 
-            // NUEVO: Sincronizar stock de productos en carritos activos
+        }
+    }, [products, customers, categories, searchQuery, selectedCategory]);
+
+    // AUTOMATIZACIÓN: Despertar báscula si se selecciona un producto pesado y está offline
+    useEffect(() => {
+        if (selectedItemId) {
+            const item = (carts[activeCartKey] || []).find(i => i.cartItemId === selectedItemId);
+            if (item && isProductWeighted(item) && !isScaleOnline && !isScaleReloading) {
+                reloadScale();
+            }
+        }
+    }, [selectedItemId, isScaleOnline, isScaleReloading, activeCartKey, carts, reloadScale]);
+
+    // NUEVO: Sincronizar stock de productos en carritos activos
+    useEffect(() => {
+        if (Array.isArray(products) && products.length > 0) {
             setCarts(prev => {
                 const next = { ...prev };
                 Object.keys(next).forEach(key => {
-                    next[key] = next[key].map(item => {
-                        const latest = products.find(p => p.barcode === item.barcode);
-                        if (latest && latest.quantity !== item.quantity) {
-                            return { ...item, quantity: latest.quantity };
-                        }
-                        return item;
-                    });
+                    if (Array.isArray(next[key])) {
+                        next[key] = next[key].map(item => {
+                            const latest = Array.isArray(products) ? products.find(p => p.barcode === item.barcode) : null;
+                            if (latest && latest.quantity !== item.quantity) {
+                                return { ...item, quantity: latest.quantity };
+                            }
+                            return item;
+                        });
+                    }
                 });
                 return next;
             });
         }
-    }, [products, customers, categories]);
+    }, [products]);
 
     // Ultra-Instinto: Offload search to worker whenever inputs change
     useEffect(() => {
@@ -195,7 +300,7 @@ export function useNewSale() {
 
     const total = useMemo(() => {
         const items = splitItemsToPay || currentCart;
-        if (items.length === 0) return 0;
+        if (!Array.isArray(items) || items.length === 0) return 0;
         return items.reduce((sum, item) => {
             const price = Number(item.salePrice) || 0;
             return sum + applyRounding(price * item.cartQuantity);
@@ -217,6 +322,7 @@ export function useNewSale() {
 
     const filteredCustomers = useMemo(() => {
         const query = clientSearch.toLowerCase().trim();
+        if (!Array.isArray(customers)) return [];
         if (!query) return customers;
         return customers.filter(c => 
             (c.name || '').toLowerCase().includes(query) || (c.dni || '').includes(query)
@@ -224,6 +330,7 @@ export function useNewSale() {
     }, [customers, clientSearch]);
 
     const sortedCategories = useMemo(() => {
+        if (!Array.isArray(categories)) return [];
         return [...categories].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
     }, [categories]);
 
@@ -260,19 +367,34 @@ export function useNewSale() {
 
     const deleteCart = (key: string) => {
         if (cartKeys.length <= 1) return;
-        const newKeys = cartKeys.filter(k => k !== key); 
+        const items = carts[key] || [];
+        if (items.length > 0) {
+            setCartKeyToDelete(key);
+            setIsDeleteCartConfirmOpen(true);
+        } else {
+            confirmDeleteCart(key);
+        }
+    };
+
+    const confirmDeleteCart = (key?: string) => {
+        const targetKey = key || cartKeyToDelete;
+        if (!targetKey) return;
+
+        const newKeys = cartKeys.filter(k => k !== targetKey); 
         setCartKeys(newKeys);
         setCarts(prev => {
             const next = { ...prev };
-            delete next[key];
+            delete next[targetKey];
             return next;
         });
         setCartCustomers(prev => {
             const next = { ...prev };
-            delete next[key];
+            delete next[targetKey];
             return next;
         });
-        if (activeCartKey === key) handleCartSwitch(newKeys[newKeys.length - 1]);
+        if (activeCartKey === targetKey) handleCartSwitch(newKeys[newKeys.length - 1]);
+        setIsDeleteCartConfirmOpen(false);
+        setCartKeyToDelete(null);
     };
 
     const updateQuantity = useCallback((cartItemId: string, delta: number) => {
@@ -290,7 +412,7 @@ export function useNewSale() {
                 return { ...prev, [activeCartKey]: filtered };
             }
 
-            if (!item.isWeighted && delta > 0 && newQty > item.quantity) {
+            if (!isProductWeighted(item) && delta > 0 && newQty > item.quantity) {
                 toast({ variant: "destructive", title: "SISTEMA", description: `STOCK INSUFICIENTE: SOLO QUEDAN ${item.quantity} UNIDADES` }); 
                 return prev;
             }
@@ -323,7 +445,7 @@ export function useNewSale() {
                 return { ...prev, [activeCartKey]: filtered };
             }
 
-            if (!item.isWeighted && quantity > item.quantity) {
+            if (!isProductWeighted(item) && quantity > item.quantity) {
                 toast({ variant: "destructive", title: "SISTEMA", description: `STOCK INSUFICIENTE: SOLO QUEDAN ${item.quantity} UNIDADES` }); 
                 return prev;
             }
@@ -334,6 +456,10 @@ export function useNewSale() {
     }, [activeCartKey, selectedItemId, toast]);
 
     const addMiscItem = useCallback((priceStr: string) => {
+        if (scaleWeight < 0) {
+            toast({ variant: "destructive", title: "GRAMERA", description: "⚠️ Ponga la gramera en 0 o positivo" });
+            return;
+        }
         const price = parseFloat(priceStr);
         if (isNaN(price) || price <= 0) return;
         const cartItemId = `0000-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
@@ -363,20 +489,42 @@ export function useNewSale() {
         returnFocusToScanner();
     }, [activeCartKey, toast, returnFocusToScanner, setSearchQuery, setScannerBuffer]);
 
-    const addToCart = useCallback((p: Product) => {
-        if (p.quantity <= 0 && !p.isWeighted) { 
+    const addToCart = useCallback(async (p: Product) => {
+        if (isProductWeighted(p)) {
+            // Forzar un refresco inmediato para asegurar que no capturamos el peso del ítem anterior
+            reloadScale();
+            await new Promise(resolve => setTimeout(resolve, 150)); // Pequeña espera para sincronización de WebSocket
+        }
+
+        if (scaleWeight < -0.0001) {
+            toast({ variant: "destructive", title: "GRAMERA", description: "⚠️ Ponga la gramera en 0 o positivo" });
+            return;
+        }
+
+        if (p.quantity <= 0 && !isProductWeighted(p)) { 
             toast({ variant: "destructive", title: "SISTEMA", description: "SIN STOCK" }); 
             setSearchQuery(''); 
             return; 
         }
 
-        if (p.isWeighted) {
-            if (scaleWeight >= 0.010 && isScaleOnline) {
+        if (isProductWeighted(p)) {
+            if (isScaleReloading) {
+                toast({ variant: "destructive", title: "BÁSCULA RECARGANDO", description: "ESPERE UN MOMENTO PARA CAPTURAR EL NUEVO PESO..." });
+                return;
+            }
+            if (isScaleOnline && scaleWeight < -0.0001) {
+                toast({ variant: "destructive", title: "ERROR DE BÁSCULA", description: "PESO NEGATIVO DETECTADO. AJUSTE LA GRAMERA." });
+                return;
+            }
+            // CAPTURA DIRECTA: No usamos el estado de React aquí porque puede estar stale en una función async
+            const freshWeight = ScaleBridge.getInstance().getState().weight;
+
+            if (freshWeight >= 0.0001 && isScaleOnline) {
                 setCarts(prev => {
                     const current = [...(prev[activeCartKey] || [])];
                     const idx = current.findIndex(item => item.cartItemId === p.barcode);
-                    if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + scaleWeight }; 
-                    else current.push({ ...p, cartQuantity: scaleWeight, cartItemId: p.barcode });
+                    if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + freshWeight }; 
+                    else current.push({ ...p, cartQuantity: freshWeight, cartItemId: p.barcode });
                     return { ...prev, [activeCartKey]: current };
                 }); 
                 setSelectedItemId(p.barcode); 
@@ -390,31 +538,87 @@ export function useNewSale() {
             return;
         }
 
-        const existingItem = (carts[activeCartKey] || []).find(item => item.cartItemId === p.barcode);
-        if (existingItem && existingItem.cartQuantity >= p.quantity) {
-            toast({ variant: "destructive", title: "SISTEMA", description: `MÁXIMO ALCANZADO: ${p.quantity} DISPONIBLES` });
-            return;
-        }
-
         setCarts(prev => {
             const current = [...(prev[activeCartKey] || [])];
             const idx = current.findIndex(item => item.cartItemId === p.barcode);
+            
             if (idx > -1) {
+                // Check stock inside the functional update
+                if (current[idx].cartQuantity >= p.quantity) {
+                    toast({ variant: "destructive", title: "SISTEMA", description: `MÁXIMO ALCANZADO: ${p.quantity} DISPONIBLES` });
+                    return prev;
+                }
                 current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
             } else {
                 current.push({ ...p, cartQuantity: 1, cartItemId: p.barcode });
             }
             return { ...prev, [activeCartKey]: current };
         }); 
+        
         setSelectedItemId(p.barcode); 
         setSearchQuery(''); 
         setScannerBuffer('');
         returnFocusToScanner();
-    }, [activeCartKey, carts, scaleWeight, isScaleOnline, returnFocusToScanner, toast, setSearchQuery, setScannerBuffer]);
+    }, [activeCartKey, scaleWeight, isScaleOnline, returnFocusToScanner, toast, setSearchQuery, setScannerBuffer]);
 
     const handleCodeSubmit = useCallback((code: string) => {
         let finalCode = code.trim();
         let qty = 1;
+
+        // 1. DETECCIÓN DE ETIQUETAS DE BALANZA (EAN-13 Prefijos 20, 21, 22, 23)
+        // Estándar: 20PPPPP VVVVV C (20 + 5 dígitos producto + 5 dígitos valor + 1 check)
+        // 1. DETECCIÓN DE ETIQUETAS DE BALANZA (EAN-13 Prefijos 20, 21, 22, 23)
+        // Estándar: 20PPPPP VVVVV C (20 + 5 dígitos producto + 5 dígitos valor + 1 check)
+        if (finalCode.length === 13 && (finalCode.startsWith('20') || finalCode.startsWith('21') || finalCode.startsWith('22') || finalCode.startsWith('23'))) {
+            const productPart = finalCode.substring(2, 7); // Los 5 dígitos del producto
+            const valuePart = finalCode.substring(7, 12);   // Los 5 dígitos del valor (precio total)
+            
+            // Buscamos un producto que COMIENCE con esos 5 dígitos o coincida exactamente
+            // Muchas veces en la BD el código está como "20001" o simplemente "1"
+            const p = products.find(x => {
+                const isMatch = x.barcode === productPart || 
+                              x.barcode === `20${productPart}` || 
+                              x.barcode === `21${productPart}` ||
+                              x.barcode.endsWith(productPart);
+                
+                if (isMatch) return true;
+
+                // También buscamos en códigos alternativos
+                if (x.alternateCodes) {
+                    const altCodes = x.alternateCodes.split(',').map(c => c.trim().toUpperCase());
+                    return altCodes.some(ac => 
+                        ac === productPart || 
+                        ac === `20${productPart}` || 
+                        ac.endsWith(productPart)
+                    );
+                }
+                return false;
+            });
+
+            if (p && isProductWeighted(p)) {
+                const totalPrice = parseInt(valuePart) / 100; // El estándar suele ser 2 decimales para el precio
+                const unitPrice = Number(p.salePrice);
+                
+                if (unitPrice > 0) {
+                    const calculatedWeight = totalPrice / unitPrice;
+                    setCarts(prev => {
+                        const current = [...(prev[activeCartKey] || [])];
+                        const cartItemId = `${p.barcode}-${Date.now()}`;
+                        current.push({ ...p, cartQuantity: calculatedWeight, cartItemId });
+                        return { ...prev, [activeCartKey]: current };
+                    });
+                    setFeedbackCode(p.barcode);
+                    setIsFeedbackError(false);
+                    setScannerBuffer('');
+                    setSearchQuery('');
+                    toast({ variant: "success", title: "BALANZA", description: `${p.productName}: ${calculatedWeight.toFixed(3)}kg añadidos` });
+                    returnFocusToScanner();
+                    return;
+                }
+            }
+        }
+
+        // 2. LÓGICA DE MULTIPLICADOR (Ej: 5*770)
         if (finalCode.includes('*')) {
             const parts = finalCode.split('*');
             if (parts.length === 2) {
@@ -422,35 +626,56 @@ export function useNewSale() {
                 if (!isNaN(q) && q > 0) { qty = q; finalCode = parts[1].trim(); }
             }
         }
+
         if (!finalCode) return;
-        const p = products.find(x => x.barcode === finalCode);
+
+        // 3. BÚSQUEDA DEL PRODUCTO (Código Principal + Códigos Alternativos)
+        const p = products.find(x => {
+            const isPrimaryMatch = x.barcode.toUpperCase() === finalCode.toUpperCase();
+            if (isPrimaryMatch) return true;
+
+            // Si no coincide el principal, buscamos en la lista de alternativos
+            if (x.alternateCodes) {
+                const altCodes = x.alternateCodes.split(',').map(c => c.trim().toUpperCase());
+                return altCodes.includes(finalCode.toUpperCase());
+            }
+
+            return false;
+        });
+
         if (p) {
-            for (let i = 0; i < qty; i++) addToCart(p);
+            if (isProductWeighted(p) && qty === 1) {
+                // Si es pesado y no trae cantidad manual, abrimos pesaje
+                addToCart(p);
+            } else {
+                for (let i = 0; i < qty; i++) addToCart(p);
+            }
             setFeedbackCode(finalCode); setIsFeedbackError(false); setSearchQuery('');
         } else {
-            const numericValue = parseFloat(finalCode);
-            const isLikelyBarcode = finalCode.length >= 7;
-            if (!isNaN(numericValue) && numericValue > 0 && !isLikelyBarcode) {
-                for (let i = 0; i < qty; i++) addMiscItem(finalCode);
-                setFeedbackCode(finalCode); setIsFeedbackError(false); setSearchQuery('');
-            } else {
-                setFeedbackCode(finalCode); setIsFeedbackError(true); toast({ variant: "destructive", title: "ERROR", description: "NO ENCONTRADO" });
-            }
+            setFeedbackCode(finalCode); 
+            setIsFeedbackError(true); 
+            toast({ variant: "destructive", title: "SISTEMA", description: `CÓDIGO ${finalCode} NO ENCONTRADO` });
         }
-        // Limpieza INMEDIATA del buffer para permitir escaneo ultra-rápido (HFT)
         setScannerBuffer('');
         setSearchQuery('');
-        
-        // El feedback visual ahora es independiente del buffer real
-        // feedbackCode ya se encarga de disparar el sonido y puede usarse en la UI
         returnFocusToScanner();
-    }, [products, addToCart, addMiscItem, toast, returnFocusToScanner, setScannerBuffer]);
+    }, [products, activeCartKey, addToCart, toast, returnFocusToScanner, setScannerBuffer]);
 
     const handleScaleSync = useCallback(() => {
-        if (!isScaleOnline || scaleWeight < 0.005 || !selectedItemId) return;
+        if (!isScaleOnline || isScaleReloading) return;
+        
+        if (!selectedItemId) {
+            reloadScale();
+            toast({ variant: "default", title: "BÁSCULA", description: "RECARGANDO LECTURA..." });
+            return;
+        }
         
         const item = currentCart.find(i => i.barcode === selectedItemId);
-        if (item && item.isWeighted) {
+        if (item && isProductWeighted(item)) {
+            if (scaleWeight < 0.005) {
+                toast({ variant: "destructive", title: "SIN PESO", description: "COLOQUE EL PRODUCTO EN LA GRAMERA" });
+                return;
+            }
             setCarts(prev => {
                 const current = [...(prev[activeCartKey] || [])];
                 const idx = current.findIndex(i => i.barcode === selectedItemId);
@@ -461,7 +686,7 @@ export function useNewSale() {
             });
             toast({ variant: "success", title: "PESO SINCRONIZADO", description: `${item.productName}: ${scaleWeight.toFixed(3)} kg` });
         }
-    }, [isScaleOnline, scaleWeight, selectedItemId, activeCartKey, currentCart, toast]);
+    }, [isScaleOnline, isScaleReloading, scaleWeight, selectedItemId, activeCartKey, currentCart, toast, reloadScale]);
 
     const handleConfirmSale = async (paymentData: {
         cash: number;
@@ -471,36 +696,60 @@ export function useNewSale() {
         totalPaid: number;
         change: number;
     }) => {
+        if (submitting || submittingRef.current) return;
         if (currentCart.length === 0 && !splitItemsToPay) return;
         const itemsToPay = splitItemsToPay || currentCart;
 
+        submittingRef.current = true;
         setSubmitting(true);
         const token = Cookies.get('org-pos-token');
         const { cash, transfer, transferSource, credit, totalPaid, change } = paymentData;
 
+        // --- INTELIGENCIA DE CATEGORIZACIÓN (Sin "MIXTO") ---
+        const paymentMethods: string[] = [];
+        if (cash > 0) paymentMethods.push("EFECTIVO");
+        if (transfer > 0) paymentMethods.push(transferSource?.toUpperCase() || "TRANSFERENCIA");
+        if (credit > 0) paymentMethods.push("FIADO");
+        
+        // Si no hay montos (error?), default a EFECTIVO
+        const paymentMethod = paymentMethods.length > 0 ? paymentMethods.join(" + ") : "EFECTIVO";
+
+        const localTotal = itemsToPay.reduce((acc, item) => acc + applyRounding(Number(item.salePrice) * item.cartQuantity), 0);
+
+        if (localTotal > 100000000 || totalPaid > 100000000) {
+            toast({ variant: "destructive", title: "ERROR DE MONTO", description: "EL VALOR ES DEMASIADO GRANDE" });
+            setSubmitting(false);
+            return;
+        }
+
         const saleData = {
             clientDni: selectedCustomerDni,
             employeeDni: "ADMIN",
-            paymentMethod: credit > 0 ? "FIADO" : (cash > 0 && transfer > 0 ? "MIXTO" : transfer > 0 ? "TRANSFERENCIA" : "EFECTIVO"),
-            total: total,
+            paymentMethod: paymentMethod,
+            total: localTotal,
             amountPaid: totalPaid,
             cashAmount: cash,
             transferAmount: transfer,
             transferSource: transfer > 0 ? transferSource : '',
             creditAmount: credit,
             change: change,
-            details: itemsToPay.map(item => ({
-                barcode: item.barcode, 
-                quantity: item.cartQuantity, 
-                unitPrice: Number(item.salePrice), 
-                costPrice: Number(item.purchasePrice || 0),
-                subtotal: applyRounding(Number(item.salePrice) * item.cartQuantity)
-            }))
+            details: itemsToPay.map(item => {
+                const qty = Number(item.cartQuantity) || 0;
+                const price = Number(item.salePrice) || 0;
+                const cost = Number(item.purchasePrice || 0);
+                return {
+                    barcode: item.barcode, 
+                    quantity: qty, 
+                    unitPrice: price, 
+                    costPrice: cost,
+                    subtotal: applyRounding(price * qty)
+                };
+            })
         };
 
         try {
-            if (credit > 0 && selectedCustomerDni === '0') {
-                toast({ variant: "destructive", title: "ERROR", description: "INVÁLIDO PARA C. FINAL" });
+            if (credit > 0 && (selectedCustomerDni === '0' || !selectedCustomerDni)) {
+                toast({ variant: "destructive", title: "ERROR DE CRÉDITO", description: "DEBE SELECCIONAR UN CLIENTE PARA FIAR" });
                 setSubmitting(false);
                 return;
             }
@@ -512,23 +761,35 @@ export function useNewSale() {
             if (res.ok) {
                 toast({ variant: 'success', title: 'VENTA REGISTRADA', description: 'TRANSACCIÓN COMPLETADA CON ÉXITO' });
                 finalizeLocalSale(itemsToPay, saleData, change);
+                if (reloadScale) reloadScale();
             } else {
+                // ERROR DEL SERVIDOR: No vamos a offline porque es un error de validación (ej: falta cupo)
                 const errorMsg = await extractApiError(res, "ERROR AL REGISTRAR VENTA");
-                throw new Error(errorMsg);
+                toast({ variant: "destructive", title: "ERROR DEL SERVIDOR", description: errorMsg });
+                setSubmitting(false);
+                return;
             }
         } catch (err: any) {
-            // ULTRA-INSTINTO: Si falla por red, guardar en cola offline
-            const { queueOfflineSale } = await import('@/lib/offline-db');
-            await queueOfflineSale(saleData);
+            // ERROR DE RED: Solo aquí activamos el modo offline (Ultra-Instinto)
+            const isNetworkError = err instanceof TypeError || err.name === 'TypeError' || err.message?.includes('fetch');
             
-            toast({ 
-                variant: "default", 
-                title: "MODO OFFLINE", 
-                description: "VENTA GUARDADA LOCALMENTE. SE SINCRONIZARÁ AL VOLVER EL INTERNET." 
-            });
-            
-            finalizeLocalSale(itemsToPay, saleData, change);
-        } finally {
+            if (isNetworkError) {
+                const { queueOfflineSale } = await import('@/lib/offline-db');
+                await queueOfflineSale(saleData);
+                
+                toast({ 
+                    variant: "default", 
+                    title: "MODO OFFLINE", 
+                    description: "FALLO DE RED. VENTA GUARDADA LOCALMENTE PARA SINCRONIZACIÓN POSTERIOR." 
+                });
+                
+                finalizeLocalSale(itemsToPay, saleData, change);
+            } else {
+                toast({ variant: "destructive", title: "ERROR INESPERADO", description: err.message || "CONSULTE AL ADMINISTRADOR" });
+                setSubmitting(false);
+            }
+            } finally {
+            submittingRef.current = false;
             setSubmitting(false);
         }
     };
@@ -536,6 +797,8 @@ export function useNewSale() {
     const finalizeLocalSale = (itemsToPay: any[], saleData: any, change: number) => {
         setLastChange(change);
         setShowSuccessScreen(true);
+        reloadScale(); // RECARGAR BASCULA PARA EVITAR PESO STALE
+        mutateProducts(); // Sincronizar stock inmediatamente tras venta
         if (remainingItemsAfterSplit) {
             setCarts(prev => ({ ...prev, [activeCartKey]: remainingItemsAfterSplit }));
             setRemainingItemsAfterSplit(null); setSplitItemsToPay(null);
@@ -544,7 +807,10 @@ export function useNewSale() {
                 setOriginalCustomerDniBeforeSplit(null);
             }
         } else {
-            setCarts(prev => ({ ...prev, [activeCartKey]: [] })); handleClientSelect('0');
+            setCarts(prev => ({ ...prev, [activeCartKey]: [] })); 
+            handleClientSelect('0');
+            // REGRESO AUTOMÁTICO A F1: Como pidió el usuario, tras vender volvemos a la primera factura
+            handleCartSwitch('Factura 1');
         }
         setLastReceipt({
             date: new Date().toLocaleString('es-CO'),
@@ -558,11 +824,14 @@ export function useNewSale() {
             change: change,
             items: itemsToPay
         });
+        
+        // Notificar a otras pestañas que se hizo una venta (para actualizar stock y dashboard)
+        broadcastRevalidate('SALE_MADE');
     };
 
     const confirmManualWeight = () => {
-        const weight = parseFloat(manualWeightValue);
-        if (isNaN(weight) || weight <= 0) { toast({ variant: "destructive", title: "ERROR", description: "PESO INVÁLIDO" }); return; }
+        const weight = parseFloat(manualWeightValue.replace(',', '.'));
+        if (isNaN(weight) || weight <= 0.0001) { toast({ variant: "destructive", title: "ERROR", description: "PESO INVÁLIDO" }); return; }
         if (manualWeightProduct) {
             setCarts(prev => {
                 const current = [...(prev[activeCartKey] || [])];
@@ -588,67 +857,24 @@ export function useNewSale() {
         }
     }, [feedbackCode, isFeedbackError, playBeep]);
 
+    // Sincronizar datos de SWR a estados locales y Offline DB
     useEffect(() => {
-        const loadData = async () => {
-            const token = Cookies.get('org-pos-token');
-            if (!token) { router.replace('/login'); return; }
-            try {
-                // Primero intentamos red
-                const [pRes, cuRes, caRes] = await Promise.all([
-                    fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json()).catch(() => null),
-                    fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/all-clients`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json()).catch(() => null),
-                    fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/all-categories`, { headers: { 'Authorization': `Bearer ${token}` } }).then(r => r.json()).catch(() => null)
-                ]);
-
-                if (pRes) {
-                    setProducts(pRes); setCustomers(cuRes || []); setCategories(caRes || []);
-                } else {
-                    // Si falla red, cargar de Offline DB (MANDATORIO PARA RESILIENCIA HFT)
-                    const { getCachedMasterData } = await import('@/lib/offline-db');
-                    const cached = await getCachedMasterData();
-                    if (cached) {
-                        setProducts(cached.products);
-                        setCustomers(cached.customers);
-                        setCategories(cached.categories);
-                        toast({ variant: "default", title: "MODO OFFLINE ACTIVO", description: "CARGANDO DATOS LOCALES" });
-                    }
-                }
-
-                const savedData = await loadCartsFromIndexedDB();
-                if (savedData && Object.keys(savedData.carts).length > 0) {
-                    setCarts(savedData.carts); 
-                    setCartKeys(Object.keys(savedData.carts)); 
-                    setActiveCartKey(savedData.activeKey || 'Factura 1'); 
-                    setSelectedCustomerDni(savedData.customerDni || '0');
-                    setSelectedItemId(savedData.selectedItemId || null);
-                }
-            } catch (err: any) {
-                console.error(err);
-                // Fallback a Offline DB en catch global
-                const { getCachedMasterData } = await import('@/lib/offline-db');
-                const cached = await getCachedMasterData();
-                if (cached) {
-                    setProducts(cached.products); setCustomers(cached.customers); setCategories(cached.categories);
-                }
-            } finally {
-                setLoading(false);
-            }
-        };
-        loadData();
-    }, [router, toast]);
-
-    useEffect(() => {
-        if (!loading && currentCart.length > 0) {
-            if (!selectedItemId || !currentCart.find(i => i.cartItemId === selectedItemId)) {
-                // Seleccionar el último agregado o el primero disponible
-                setSelectedItemId(currentCart[currentCart.length - 1].cartItemId);
+        if (Array.isArray(productsData)) setProducts(productsData);
+        
+        if (Array.isArray(customersData)) {
+            // Solo sobreescribimos si trae datos o si el estado actual está vacío.
+            // Esto evita que un error de carga momentáneo limpie la lista de clientes.
+            if (customersData.length > 0) {
+                setCustomers(customersData);
+            } else if (customers.length === 0) {
+                // Si no hay nada, al menos permitimos que el estado sea el array vacío
+                setCustomers([]);
             }
         }
-    }, [currentCart, selectedItemId, loading]);
+        
+        if (Array.isArray(categoriesData)) setCategories(categoriesData);
+    }, [productsData, customersData, categoriesData, customers.length]);
 
-    useEffect(() => {
-        if (!loading) saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni, selectedItemId);
-    }, [carts, activeCartKey, selectedCustomerDni, selectedItemId, loading]);
 
     return {
         // Data
@@ -660,7 +886,8 @@ export function useNewSale() {
         total, filteredProductsGrid, filteredCustomers,
         
         // UI State
-        loading, submitting, searchQuery, setSearchQuery,
+        loading: loading || ((products.length === 0 || categories.length === 0) && (productsLoading || categoriesLoading)), 
+        submitting, searchQuery, setSearchQuery,
         selectedCategory, setSelectedCategory,
         selectedItemId, setSelectedItemId,
         feedbackCode, isFeedbackError,
@@ -677,6 +904,8 @@ export function useNewSale() {
         isSplitDialogOpen, setIsSplitDialogOpen,
         isCartDropdownOpen, setIsCartDropdownOpen,
         isMissingItemOpen, setIsMissingItemOpen,
+        isDeleteCartConfirmOpen, setIsDeleteCartConfirmOpen,
+        cartKeyToDelete,
         
         // Split State
         splitItemsToPay, setSplitItemsToPay,
@@ -690,10 +919,10 @@ export function useNewSale() {
         // Helpers & Refs
         playBeep,
         hiddenScannerRef, returnFocusToScanner,
-        scaleWeight, isScaleOnline,
+        scaleWeight, isScaleOnline, isScaleReloading, reloadScale,
         
         // Handlers
-        handleCartSwitch, handleClientSelect, addNewCart, deleteCart,
+        handleCartSwitch, handleClientSelect, addNewCart, deleteCart, confirmDeleteCart,
         updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity,
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight
     };

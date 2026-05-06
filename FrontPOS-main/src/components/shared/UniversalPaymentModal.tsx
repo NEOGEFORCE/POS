@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Modal, ModalContent, Button, Avatar
 } from "@heroui/react";
@@ -58,11 +58,27 @@ export default function UniversalPaymentModal({
   reason,
   onReasonChange
 }: UniversalPaymentModalProps) {
+  const isProcessingRef = useRef(false);
   const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'credit'>('cash');
   const [isMobileNumpadOpen, setIsMobileNumpadOpen] = useState(false);
   const [dialogAmount, setDialogAmount] = useState('');
   const [cashTendered, setCashTendered] = useState<string>('');
-  const themeColor = flowType === "out" ? "rose" : "emerald";
+  
+  // Clases estáticas para evitar problemas con el purgado de Tailwind y errores de referencia
+  const isOut = flowType === "out";
+  const theme = {
+    bg: isOut ? "bg-rose-500" : "bg-emerald-500",
+    bgLight: isOut ? "bg-rose-500/10" : "bg-emerald-500/10",
+    bgHover: isOut ? "hover:bg-rose-500/10" : "hover:bg-emerald-500/10",
+    text: isOut ? "text-rose-500" : "text-emerald-500",
+    textDark: isOut ? "text-rose-600" : "text-emerald-600",
+    border: isOut ? "border-rose-500" : "border-emerald-500",
+    borderLight: isOut ? "border-rose-500/20" : "border-emerald-500/20",
+    shadow: isOut ? "shadow-rose-500/30" : "shadow-emerald-500/30",
+    ring: isOut ? "ring-rose-500" : "ring-emerald-500"
+  };
+  
+  const themeColor = isOut ? 'rose' : 'emerald';
   
   // Estados internos para pagos acumulados (mixtos)
   const [cashPaid, setCashPaid] = useState<number>(0);
@@ -79,6 +95,7 @@ export default function UniversalPaymentModal({
       setCreditPaid(initialPaidAmounts?.credit || 0);
       setDialogAmount('');
       setCashTendered('');
+      setIsMobileNumpadOpen(false);
       
       // Determinar tab inicial
       if (initialPaidAmounts?.credit && initialPaidAmounts.credit > 0) setActivePaymentTab('credit');
@@ -87,7 +104,95 @@ export default function UniversalPaymentModal({
     }
   }, [isOpen, initialPaidAmounts]);
 
-  // Teclado físico - MOVIDO AQUÍ PARA EVITAR ERROR DE HOOKS CONDICIONALES
+  const currentDialogVal = Number(dialogAmount) || 0;
+  const totalAlreadyPaid = cashPaid + transferPaid + creditPaid;
+  const remainingDebt = Math.max(0, totalToPay - totalAlreadyPaid);
+
+  // Valor a mostrar en el display principal
+  const amountToPayRaw = currentDialogVal > 0 
+    ? currentDialogVal 
+    : (Number(cashTendered) > 0 
+        ? Number(cashTendered) 
+        : (totalAlreadyPaid > 0 ? 0 : remainingDebt));
+        
+  const actualPayment = Math.min(amountToPayRaw, remainingDebt);
+
+  const handleAddPayment = useCallback(() => {
+    const val = currentDialogVal > 0 ? currentDialogVal : remainingDebt;
+    if (val > 0) {
+      if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
+        setTransferPaid(prev => prev + Math.min(val, remainingDebt));
+        setTransferSource(activePaymentTab);
+        setActivePaymentTab('cash');
+      } else if (activePaymentTab === 'credit') {
+        setCreditPaid(prev => prev + Math.min(val, remainingDebt));
+        setActivePaymentTab('cash');
+      } else {
+        if (val >= remainingDebt) setCashTendered(String(val));
+        else setCashPaid(prev => prev + val);
+      }
+      setDialogAmount('');
+    }
+  }, [currentDialogVal, remainingDebt, activePaymentTab]);
+
+    const isCreditInvalid = !!(activePaymentTab === 'credit' && (!client || client.id === "0" || client.name === "CONSUMIDOR FINAL"));
+    const isOverCreditLimit = !!(activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit));
+
+    const processPayment = useCallback(async () => {
+      if (isProcessingRef.current || submittingPayment || isCreditInvalid || isOverCreditLimit) return;
+      isProcessingRef.current = true;
+      
+      let finalCash = cashPaid;
+    let finalTransfer = transferPaid;
+    let finalCredit = creditPaid;
+    let finalSource = transferSource;
+    let finalTendered = Number(cashTendered) || 0;
+
+    // --- INTELIGENCIA DE AUTO-COMPLETADO (Fase 2) ---
+    // Si el usuario da clic en PROCESAR y aún falta dinero por pagar (remainingDebt > 0),
+    // y no ha digitado nada nuevo (currentDialogVal === 0), asumimos que el resto va a la pestaña activa.
+    if (currentDialogVal > 0) {
+      if (activePaymentTab === 'cash') {
+        finalCash += currentDialogVal;
+        finalTendered = currentDialogVal;
+      } else if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
+        finalTransfer += currentDialogVal;
+        finalSource = activePaymentTab;
+      } else if (activePaymentTab === 'credit') {
+        finalCredit += currentDialogVal;
+      }
+    } else if (remainingDebt > 0) {
+      if (activePaymentTab === 'cash') {
+          finalCash += remainingDebt;
+          // Si no hay vuelto digitado, el "recibido" es lo que faltaba
+          if (finalTendered === 0) finalTendered = remainingDebt;
+      } else if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
+          finalTransfer += remainingDebt;
+          finalSource = activePaymentTab;
+      } else if (activePaymentTab === 'credit') {
+          finalCredit += remainingDebt;
+      }
+    }
+
+    const totalPaid = finalCash + finalTransfer + finalCredit;
+    const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
+    const change = Math.max(0, effectiveCash - (totalToPay - finalTransfer - finalCredit));
+
+    try {
+      await onPay({
+        cash: finalCash,
+        transfer: finalTransfer,
+        transferSource: finalSource,
+        credit: finalCredit,
+        totalPaid: finalCash + finalTransfer + finalCredit, // Usar montos reales
+        change: change
+      });
+    } finally {
+      isProcessingRef.current = false;
+    }
+  }, [isCreditInvalid, isOverCreditLimit, cashPaid, transferPaid, creditPaid, transferSource, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, totalToPay, onPay]);
+
+  // Teclado físico
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
@@ -118,90 +223,11 @@ export default function UniversalPaymentModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showSuccessScreen, dialogAmount, activePaymentTab, cashPaid, transferPaid, creditPaid, totalToPay, onOpenChange]);
+  }, [isOpen, showSuccessScreen, dialogAmount, onOpenChange, processPayment, handleAddPayment]);
 
   if (!isOpen) return null;
 
-  const currentDialogVal = Number(dialogAmount) || 0;
-  const totalAlreadyPaid = cashPaid + transferPaid + creditPaid;
-  const remainingDebt = Math.max(0, totalToPay - totalAlreadyPaid);
 
-  // Valor a mostrar en el display principal
-  const amountToPayRaw = currentDialogVal > 0 
-    ? currentDialogVal 
-    : (Number(cashTendered) > 0 
-        ? Number(cashTendered) 
-        : (totalAlreadyPaid > 0 ? 0 : remainingDebt));
-        
-  const actualPayment = Math.min(amountToPayRaw, remainingDebt);
-
-  const handleAddPayment = () => {
-    const val = currentDialogVal > 0 ? currentDialogVal : remainingDebt;
-    if (val > 0) {
-      if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
-        setTransferPaid(prev => prev + Math.min(val, remainingDebt));
-        setTransferSource(activePaymentTab);
-        setActivePaymentTab('cash');
-      } else if (activePaymentTab === 'credit') {
-        setCreditPaid(prev => prev + Math.min(val, remainingDebt));
-        setActivePaymentTab('cash');
-      } else {
-        if (val >= remainingDebt) setCashTendered(String(val));
-        else setCashPaid(prev => prev + val);
-      }
-      setDialogAmount('');
-    }
-  };
-
-    const isCreditInvalid = activePaymentTab === 'credit' && (!client || client.id === "0" || client.name === "CONSUMIDOR FINAL");
-    const isOverCreditLimit = activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit);
-
-    const processPayment = async () => {
-      if (isCreditInvalid || isOverCreditLimit) return;
-      
-      let finalCash = cashPaid;
-    let finalTransfer = transferPaid;
-    let finalCredit = creditPaid;
-    let finalSource = transferSource;
-    let finalTendered = Number(cashTendered) || 0;
-
-    if (currentDialogVal > 0) {
-      if (activePaymentTab === 'cash') {
-        finalCash += currentDialogVal;
-        finalTendered = currentDialogVal;
-      } else if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
-        finalTransfer += currentDialogVal;
-        finalSource = activePaymentTab;
-      } else if (activePaymentTab === 'credit') {
-        finalCredit += currentDialogVal;
-      }
-    } 
-    else if (finalCash === 0 && finalTransfer === 0 && finalCredit === 0 && currentDialogVal === 0) {
-      if (activePaymentTab === 'cash') finalCash = remainingDebt;
-      else if (activePaymentTab === 'NEQUI' || activePaymentTab === 'DAVIPLATA') {
-        finalTransfer = remainingDebt;
-        finalSource = activePaymentTab;
-      } else if (activePaymentTab === 'credit') {
-        finalCredit = remainingDebt;
-      }
-    }
-    else if (finalTendered > 0 && activePaymentTab === 'cash') {
-       if (finalCash === 0) finalCash = Math.min(finalTendered, remainingDebt);
-    }
-
-    const totalPaid = finalCash + finalTransfer + finalCredit;
-    const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
-    const change = Math.max(0, effectiveCash - (totalToPay - finalTransfer - finalCredit));
-
-    await onPay({
-      cash: finalCash,
-      transfer: finalTransfer,
-      transferSource: finalSource,
-      credit: finalCredit,
-      totalPaid: totalPaid,
-      change: change
-    });
-  };
 
   return (
     <Modal 
@@ -224,16 +250,16 @@ export default function UniversalPaymentModal({
             {showSuccessScreen && (
               <div className="absolute inset-0 z-[100] bg-zinc-950/40 backdrop-blur-xl flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
                 <div className="bg-white dark:bg-zinc-900 p-10 rounded-[2.5rem] flex flex-col items-center shadow-2xl border border-white/10 w-full max-w-sm relative overflow-hidden group">
-                  <div className={`h-20 w-20 rounded-[1.5rem] bg-${themeColor}-500 text-white flex items-center justify-center mb-6 shadow-[0_20px_50px_rgba(16,185,129,0.3)] -rotate-3 scale-110 border-4 border-white/20`}>
+                  <div className={`h-20 w-20 rounded-[1.5rem] ${theme.bg} text-white flex items-center justify-center mb-6 shadow-xl -rotate-3 scale-110 border-4 border-white/20`}>
                     <Check size={40} strokeWidth={4} />
                   </div>
                   <h2 className="text-3xl font-black text-gray-900 dark:text-white uppercase mb-2 italic tracking-tighter text-center leading-none">
-                    Operación <span className={`text-${themeColor}-500`}>Exitosa</span>
+                    Operación <span className={theme.text}>Exitosa</span>
                   </h2>
-                  <span className={`text-[8px] font-black text-${themeColor}-600/60 dark:text-${themeColor}-500/40 uppercase tracking-[0.4em] mb-6 italic`}>PROCESADO CON ÉXITO</span>
+                  <span className={`text-[8px] font-black opacity-60 ${theme.text} uppercase tracking-[0.4em] mb-6 italic`}>PROCESADO CON ÉXITO</span>
                   
-                  <div className={`bg-${themeColor}-500/5 dark:bg-${themeColor}-500/10 border-2 border-${themeColor}-500/20 p-8 rounded-[2rem] text-center w-full relative overflow-hidden group-hover:scale-[1.02] transition-transform`}>
-                    <p className={`text-[9px] font-black text-${themeColor}-500 uppercase mb-3 tracking-[0.3em] italic`}>CAMBIO A ENTREGAR</p>
+                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} p-8 rounded-[2rem] text-center w-full relative overflow-hidden group-hover:scale-[1.02] transition-transform`}>
+                    <p className={`text-[9px] font-black ${theme.text} uppercase mb-3 tracking-[0.3em] italic`}>CAMBIO A ENTREGAR</p>
                     <p className="text-5xl font-black text-gray-900 dark:text-white tabular-nums italic tracking-tighter">${formatCurrency(lastChange)}</p>
                   </div>
                   
@@ -251,31 +277,31 @@ export default function UniversalPaymentModal({
             <div className="w-full md:w-[220px] bg-white dark:bg-zinc-900 border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
               <div className="hidden md:flex flex-col mb-8 px-2">
                 <div className="flex items-center gap-2 mb-2">
-                  <div className={`h-2 w-2 rounded-full bg-${themeColor}-500 animate-pulse`} />
+                  <div className={`h-2 w-2 rounded-full ${theme.bg} animate-pulse`} />
                   <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em] leading-none">Cajero Seguro</span>
                 </div>
-                <h3 className={`text-[10px] font-black text-${themeColor}-500 uppercase tracking-[0.2em] italic`}>MÉTODO PAGO</h3>
+                <h3 className={`text-[10px] font-black ${theme.text} uppercase tracking-[0.2em] italic`}>MÉTODO PAGO</h3>
               </div>
               
               <div className="grid grid-cols-2 md:grid-cols-1 gap-1.5 md:gap-3">
                 {[
-                  { id: 'cash', label: 'Efec.', icon: Banknote },
+                  { id: 'cash', label: 'Efec.', icon: <Banknote size={14} className="md:w-5 md:h-5" /> },
                   { id: 'NEQUI', label: 'Nequi', logo: '/logos/nequi.png' },
                   { id: 'DAVIPLATA', label: 'Daviplata', logo: '/logos/daviplata.png' },
-                  { id: 'credit', label: 'Fiado', icon: Users }
+                  { id: 'credit', label: 'Fiado', icon: <Users size={14} className="md:w-5 md:h-5" /> }
                 ].filter(tab => tab.id !== 'credit' || showCreditTab).map(tab => (
                   <button 
                     key={tab.id} 
                     onClick={() => { setActivePaymentTab(tab.id as any); setDialogAmount(''); setCashTendered(''); }} 
                     className={`h-10 md:h-14 px-2 md:px-5 rounded-lg md:rounded-2xl flex items-center justify-center md:justify-start gap-1.5 md:gap-4 border transition-all group ${
                       activePaymentTab === tab.id 
-                        ? 'bg-${themeColor}-500/10 dark:bg-${themeColor}-500/20 border-${themeColor}-500/50 text-${themeColor}-600 dark:text-${themeColor}-400 shadow-[0_0_20px_rgba(16,185,129,0.15)] italic' 
-                        : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 hover:bg-${themeColor}-500/10'
+                        ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white italic` 
+                        : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 ' + theme.bgHover
                     }`}
                   >
-                    <div className={`p-1 md:p-2 rounded-lg transition-colors ${activePaymentTab === tab.id ? 'bg-${themeColor}-500 text-white shadow-lg shadow-${themeColor}-500/30' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:bg-${themeColor}-500/20'}`}>
+                    <div className={`p-1 md:p-2 rounded-lg transition-colors ${activePaymentTab === tab.id ? theme.bg + ' text-white shadow-lg' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:' + theme.bg + ' group-hover:text-white'}`}>
                       {tab.icon ? (
-                        <tab.icon size={14} className="md:w-5 md:h-5" />
+                        tab.icon
                       ) : (
                         <img 
                           src={tab.logo} 
@@ -309,10 +335,10 @@ export default function UniversalPaymentModal({
               <header className="mb-1 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-1 md:gap-4">
                 <div className="flex flex-col min-w-0">
                   <h1 className="text-lg md:text-3xl font-black dark:text-white uppercase italic tracking-tighter leading-none mb-0.5 md:mb-2 text-center md:text-left">
-                    {title.split(' ')[0]} <span className={`text-${themeColor}-500`}>{title.split(' ').slice(1).join(' ')}</span>
+                    {title.split(' ')[0]} <span className={theme.text}>{title.split(' ').slice(1).join(' ')}</span>
                   </h1>
                   <div className="flex items-center justify-center md:justify-start gap-1.5">
-                    <Avatar size="sm" name={client?.name || 'C F'} className={`h-4 w-4 rounded-md bg-${themeColor}-500/10 text-${themeColor}-500 text-[6px]`} />
+                    <Avatar size="sm" name={client?.name || 'C F'} className={`h-4 w-4 rounded-md ${theme.bgLight} ${theme.text} text-[6px]`} />
                     <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">{client?.name || 'CONSUMIDOR FINAL'} {client?.dni ? `/ CC: ${client.dni}` : ''}</p>
                   </div>
                 </div>
@@ -326,9 +352,9 @@ export default function UniversalPaymentModal({
                     </div>
                   )}
                   {cashPaid > 0 && (
-                    <div className={`px-3 py-1 bg-${themeColor}-500/10 border border-${themeColor}-500/20 rounded-full flex items-center gap-2`}>
-                       <Banknote size={12} className={`text-${themeColor}-500`} />
-                       <span className={`text-[9px] font-black text-${themeColor}-500 uppercase tracking-widest`}>${formatCurrency(cashPaid)}</span>
+                    <div className={`px-3 py-1 ${theme.bgLight} border ${theme.borderLight} rounded-full flex items-center gap-2`}>
+                       <Banknote size={12} className={theme.text} />
+                       <span className={`text-[9px] font-black ${theme.text} uppercase tracking-widest`}>${formatCurrency(cashPaid)}</span>
                     </div>
                   )}
                   {creditPaid > 0 && (
@@ -346,8 +372,8 @@ export default function UniversalPaymentModal({
                   <p className="text-sm md:text-2xl font-black text-rose-500 italic tabular-nums leading-none">${formatCurrency(totalToPay)}</p>
                 </div>
                 <div className="bg-white dark:bg-zinc-900 px-2 py-1 rounded-lg border border-gray-100 dark:border-white/5 flex-1 shadow-sm flex flex-col justify-center">
-                  <p className="text-[6px] md:text-[8px] font-black text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><TrendingUp size={6} className={`text-${themeColor}-500`} /> PENDIENTE</p>
-                  <p className={`text-sm md:text-2xl font-black text-${themeColor}-500 italic tabular-nums leading-none`}>${formatCurrency(remainingDebt)}</p>
+                  <p className="text-[6px] md:text-[8px] font-black text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><TrendingUp size={6} className={theme.text} /> PENDIENTE</p>
+                  <p className={`text-sm md:text-2xl font-black ${theme.text} italic tabular-nums leading-none`}>${formatCurrency(remainingDebt)}</p>
                 </div>
               </div>
 
@@ -355,21 +381,21 @@ export default function UniversalPaymentModal({
                 <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                   <div className={`p-2 md:p-4 rounded-lg border-2 flex flex-col justify-center shadow-lg relative overflow-hidden group transition-all duration-500 ${
                     amountToPayRaw > remainingDebt 
-                      ? 'bg-${themeColor}-500/10 border-${themeColor}-500/30' 
-                      : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-${themeColor}-500/20'
+                      ? `${theme.bgLight} ${theme.border} border-opacity-30` 
+                      : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/10'
                   }`}>
-                    <div className={`absolute top-0 right-0 p-2 opacity-5 text-${themeColor}-500 group-hover:scale-125 transition-transform`}>
+                    <div className={`absolute top-0 right-0 p-2 opacity-5 ${theme.text} group-hover:scale-125 transition-transform`}>
                       {amountToPayRaw > remainingDebt ? <Zap size={28} /> : <Banknote size={28} />}
                     </div>
                     
                     <p className={`text-[7px] md:text-[8px] font-black uppercase mb-0 tracking-[0.2em] italic transition-colors ${
-                      amountToPayRaw > remainingDebt ? 'text-${themeColor}-500' : 'text-gray-400'
+                      amountToPayRaw > remainingDebt ? theme.text : 'text-gray-400'
                     }`}>
                       {amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO'}
                     </p>
                     
                     <p className={`text-xl md:text-4xl font-black tabular-nums italic tracking-tighter transition-all ${
-                      amountToPayRaw > remainingDebt ? 'text-${themeColor}-500 animate-pulse' : 'dark:text-white'
+                      amountToPayRaw > remainingDebt ? theme.text + ' animate-pulse' : 'dark:text-white'
                     }`}>
                       ${formatCurrency(amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : amountToPayRaw)}
                     </p>
@@ -407,7 +433,7 @@ export default function UniversalPaymentModal({
                           <span className="text-[7px] font-black uppercase tracking-tighter">TECLADO</span>
                         </Button>
                       </div>
-                      <Button className={`md:hidden h-12 mt-3 bg-${themeColor}-500 text-white font-black uppercase rounded-xl italic tracking-widest shadow-lg text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
+                        <Button className={`md:hidden h-12 mt-3 ${theme.bg} text-white font-black uppercase rounded-xl italic tracking-widest shadow-lg text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
                         PROCESAR PAGO <ShieldCheck size={16} className="ml-1" />
                       </Button>
                     </>
@@ -433,7 +459,7 @@ export default function UniversalPaymentModal({
                         <Button className="flex-1 h-12 bg-zinc-800 text-white font-black uppercase rounded-xl text-[10px] tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2" onPress={() => setIsMobileNumpadOpen(false)}>
                           <Grid3X3 size={14} /> BILLETES
                         </Button>
-                        <Button className={`flex-[2] h-12 bg-${themeColor}-500 text-white font-black uppercase rounded-xl italic tracking-widest shadow-lg text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
+                        <Button className={`flex-[2] h-12 ${theme.bg} text-white font-black uppercase rounded-xl italic tracking-widest shadow-lg text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
                           REALIZAR <ShieldCheck size={14} />
                         </Button>
                       </div>
@@ -457,7 +483,7 @@ export default function UniversalPaymentModal({
                     )}
                     <div className="text-center relative z-10">
                       <p className="text-sm font-black dark:text-white italic uppercase tracking-tighter">{activePaymentTab === 'credit' ? 'CARTERA FIADO' : `TRANSACCIÓN ${activePaymentTab}`}</p>
-                      <p className={`text-[14px] font-black text-${themeColor}-500 tabular-nums`}>${formatCurrency(amountToPayRaw)}</p>
+                      <p className={`text-[14px] font-black ${theme.text} tabular-nums`}>${formatCurrency(amountToPayRaw)}</p>
                     </div>
                   </div>
 
@@ -542,21 +568,22 @@ export default function UniversalPaymentModal({
                   {onReasonChange && (
                     <div className="mt-4 animate-in slide-in-from-top-2 duration-300">
                       <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1 italic flex items-center gap-2">
-                        <div className={`h-1 w-1 rounded-full bg-${themeColor}-500`} /> JUSTIFICACIÓN / NOTA
+                        <div className={`h-1 w-1 rounded-full ${theme.bg}`} /> JUSTIFICACIÓN / NOTA
                       </p>
                       <input 
                         type="text"
                         value={reason || ''}
+                        onFocus={(e) => e.target.select()}
                         onChange={(e) => onReasonChange(e.target.value)}
                         placeholder="MOTIVO..."
-                        className={`w-full h-12 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl px-4 text-[10px] font-black uppercase tracking-widest focus:outline-none focus:border-${themeColor}-500/50 transition-all placeholder:text-gray-300 dark:placeholder:text-zinc-700 shadow-sm`}
+                        className={`w-full h-12 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl px-4 text-[10px] font-black uppercase tracking-widest focus:outline-none focus:border-${theme.ring} transition-all placeholder:text-gray-300 dark:placeholder:text-zinc-700 shadow-sm`}
                       />
                     </div>
                   )}
 
                   <Button 
                     className={`md:hidden h-14 w-full font-black uppercase rounded-2xl mt-4 shadow-xl text-xs tracking-widest active:scale-95 transition-all italic ${
-                        isCreditInvalid || isOverCreditLimit ? 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-50' : `bg-${themeColor}-500 text-white`
+                        isCreditInvalid || isOverCreditLimit ? 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-50' : `${theme.bg} text-white`
                     }`} 
                     onPress={processPayment} 
                     isLoading={submittingPayment}
@@ -571,10 +598,10 @@ export default function UniversalPaymentModal({
             {/* Teclado Pad Derecho Maestro */}
             <div className="hidden md:flex w-[320px] bg-white dark:bg-zinc-900 border-l border-gray-200 dark:border-white/5 p-8 flex-col gap-6 z-20">
               <div className="bg-gray-50 dark:bg-zinc-950 p-8 rounded-[2.5rem] border border-gray-200 dark:border-white/10 text-right shadow-inner relative overflow-hidden group">
-                <div className={`absolute top-0 left-0 p-4 opacity-5 text-${themeColor}-500 scale-150 -ml-4 -mt-4`}><Calculator size={60} /></div>
-                <p className={`text-[10px] font-black text-${themeColor}-600 uppercase tracking-[0.2em] italic flex items-center justify-end gap-2 relative z-10`}><Calculator size={12} /> DIGITANDO MONTO</p>
+                <div className={`absolute top-0 left-0 p-4 opacity-5 ${theme.text} scale-150 -ml-4 -mt-4`}><Calculator size={60} /></div>
+                <p className={`text-[10px] font-black ${theme.text} uppercase tracking-[0.2em] italic flex items-center justify-end gap-2 relative z-10`}><Calculator size={12} /> DIGITANDO MONTO</p>
                 <div className="flex items-center justify-end gap-1 relative z-10">
-                  <span className={`text-${themeColor}-500 font-black italic text-2xl tracking-tighter`}>$</span>
+                  <span className={`${theme.text} font-black italic text-2xl tracking-tighter`}>$</span>
                   <p className="text-4xl font-black dark:text-white h-12 tracking-tighter italic tabular-nums leading-none">{formatCurrency(dialogAmount)}</p>
                 </div>
               </div>
@@ -582,14 +609,15 @@ export default function UniversalPaymentModal({
               {onReasonChange && (
                 <div className="animate-in slide-in-from-top-2 duration-300">
                   <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1 italic flex items-center gap-2">
-                    <div className={`h-1 w-1 rounded-full bg-${themeColor}-500`} /> JUSTIFICACIÓN / NOTA
+                    <div className={`h-1 w-1 rounded-full ${theme.bg}`} /> JUSTIFICACIÓN / NOTA
                   </p>
                   <input 
                     type="text"
                     value={reason || ''}
+                    onFocus={(e) => e.target.select()}
                     onChange={(e) => onReasonChange(e.target.value)}
                     placeholder="ESCRIBIR MOTIVO..."
-                    className={`w-full h-12 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[1.2rem] px-5 text-[10px] font-black uppercase tracking-widest focus:outline-none focus:border-${themeColor}-500/50 transition-all placeholder:text-gray-300 dark:placeholder:text-zinc-700 shadow-inner`}
+                    className={`w-full h-12 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[1.2rem] px-5 text-[10px] font-black uppercase tracking-widest focus:outline-none focus:border-${theme.ring} transition-all placeholder:text-gray-300 dark:placeholder:text-zinc-700 shadow-inner`}
                   />
                 </div>
               )}
@@ -601,8 +629,8 @@ export default function UniversalPaymentModal({
                       n === 'CE' 
                         ? 'text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-50 active:text-white' 
                         : n === '+'
-                        ? 'bg-${themeColor}-500 text-white shadow-xl shadow-${themeColor}-500/20'
-                        : 'bg-gray-50 dark:bg-zinc-800 dark:text-white active:bg-${themeColor}-500 active:text-white border border-transparent'
+                        ? theme.bg + ' text-white shadow-xl'
+                        : 'bg-gray-50 dark:bg-zinc-800 dark:text-white active:bg-gray-200 border border-transparent'
                     }`} 
                     onPress={() => {
                         if (n === 'CE') setDialogAmount('');

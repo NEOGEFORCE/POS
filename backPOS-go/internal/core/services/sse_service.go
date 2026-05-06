@@ -79,6 +79,11 @@ func (s *SSEService) BroadcastNewSale(sale interface{}) {
 	s.Broadcast("NEW_SALE", sale)
 }
 
+// BroadcastDashboardUpdate envía una señal para recargar el dashboard
+func (s *SSEService) BroadcastDashboardUpdate() {
+	s.Broadcast("DASHBOARD_UPDATE", map[string]string{"message": "refresh"})
+}
+
 // FormatSSE formatea el evento para el protocolo SSE
 func FormatSSE(event SSEEvent) (string, error) {
 	data, err := json.Marshal(event)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"time"
+	"backPOS-go/internal/infrastructure/cache"
 )
 
 type ReturnService struct {
@@ -14,16 +15,16 @@ type ReturnService struct {
 	productRepo  ports.ProductRepository
 	saleRepo     ports.SaleRepository
 	movementRepo ports.StockMovementRepository
+	sseService   *SSEService
 }
 
-func NewReturnService(rr ports.ReturnRepository, pr ports.ProductRepository, sr ports.SaleRepository, mr ports.StockMovementRepository) *ReturnService {
-	return &ReturnService{returnRepo: rr, productRepo: pr, saleRepo: sr, movementRepo: mr}
+func NewReturnService(rr ports.ReturnRepository, pr ports.ProductRepository, sr ports.SaleRepository, mr ports.StockMovementRepository, sse *SSEService) *ReturnService {
+	return &ReturnService{returnRepo: rr, productRepo: pr, saleRepo: sr, movementRepo: mr, sseService: sse}
 }
 
 func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, employeeName string) error {
 	// 1. Validar que la venta existe
-	sale, err := s.saleRepo.GetByID(ret.SaleID)
-	if err != nil {
+	if _, err := s.saleRepo.GetByID(ret.SaleID); err != nil {
 		return errors.New("venta no encontrada")
 	}
 
@@ -111,8 +112,10 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 		return err
 	}
 
-	// Log a reference movement for the sale
-	_ = sale // Use sale to avoid unused variable warning
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	if s.sseService != nil {
+		s.sseService.BroadcastDashboardUpdate()
+	}
 
 	return nil
 }

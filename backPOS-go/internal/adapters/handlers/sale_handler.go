@@ -49,6 +49,7 @@ func (h *SaleHandler) Create(c *gin.Context) {
 
 	// ULTRA-INSTINTO: Broadcast SSE para actualización en tiempo real del Dashboard
 	go h.sseService.BroadcastNewSale(sale)
+	go h.sseService.BroadcastDashboardUpdate()
 
 	c.JSON(http.StatusCreated, sale)
 
@@ -110,24 +111,31 @@ func (h *SaleHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.ParseUint(idStr, 10, 32)
 	
-	// Obtener datos de la venta antes de borrar
-	sale, _ := h.service.GetSale(uint(id))
+	var req struct {
+		Reason string `json:"reason" binding:"required"`
+	}
 
-	if err := h.service.DeleteSale(uint(id)); err != nil {
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Debe proporcionar una justificación para anular la venta", err)
+		return
+	}
+
+	dni, _ := c.Get("dni")
+	dniStr := dni.(string)
+
+	if err := h.service.DeleteSale(uint(id), req.Reason, dniStr); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar venta", err)
 		return
 	}
 
 	// Auditoría de Anulación de Venta (MUY CRÍTICO)
-	dni, _ := c.Get("dni")
 	name, _ := c.Get("userName")
-	details := fmt.Sprintf("Venta #%d eliminada/anulada", id)
+	details := fmt.Sprintf("Venta #%d eliminada/anulada. Motivo: %s", id, req.Reason)
 	human := fmt.Sprintf("Se eliminó/anuló permanentemente la venta #%d", id)
-	if sale != nil {
-		human = fmt.Sprintf("Se eliminó/anuló la venta #%d por valor de $%s (Cliente: %s)", id, fmt.Sprintf("%.2f", sale.TotalAmount), sale.ClientDNI)
-	}
 
-	h.auditService.Log(dni.(string), name.(string), "VOID_SALE", "SALES", details, human, "{}", c.ClientIP(), c.Request.UserAgent(), true)
+	h.auditService.Log(dniStr, name.(string), "VOID_SALE", "SALES", details, human, "{}", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 
 	c.JSON(http.StatusOK, gin.H{"message": "Venta eliminada correctamente"})
 }
@@ -152,6 +160,8 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 		fmt.Sprintf("Actualizado pago venta #%d", id),
 		fmt.Sprintf("Se modificó la información de pago para la venta #%d", id),
 		"{}", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go h.sseService.BroadcastDashboardUpdate()
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})
 }

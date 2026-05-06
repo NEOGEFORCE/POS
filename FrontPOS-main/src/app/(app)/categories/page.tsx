@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Category } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
+import { broadcastRevalidate } from '@/lib/revalidate';
 
 // Dinámicos para aligerar HMR y carga inicial
 const CategoryStats = dynamic(() => import('./components/CategoryStats'), { ssr: false });
@@ -126,6 +127,7 @@ export default function CategoriesPage() {
                     toast({ title: 'ÉXITO', description: 'CATEGORÍA REACTIVADA' });
                     setAddDialogOpen(false);
                     loadCategories();
+                    broadcastRevalidate('CATEGORY_UPDATE');
                   } catch (e: any) {
                     toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
                   }
@@ -144,6 +146,7 @@ export default function CategoriesPage() {
       setAddDialogOpen(false);
       setNewCatName('');
       loadCategories();
+      broadcastRevalidate('CATEGORY_UPDATE');
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL CREAR" });
     }
@@ -166,6 +169,7 @@ export default function CategoriesPage() {
       setEditDialogOpen(false);
       setEditingCategory(null);
       loadCategories();
+      broadcastRevalidate('CATEGORY_UPDATE');
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ACTUALIZAR" }); }
   };
 
@@ -185,6 +189,7 @@ export default function CategoriesPage() {
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadCategories();
+      broadcastRevalidate('CATEGORY_UPDATE');
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ELIMINAR" }); }
   };
 

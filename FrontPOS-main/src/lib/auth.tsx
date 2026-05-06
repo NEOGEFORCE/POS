@@ -24,40 +24,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    try {
-      // 1. Limpieza de claves obsoletas/sensibles en localStorage
-      const legacyToken = localStorage.getItem('org-pos-token');
-      const legacyUser = localStorage.getItem('org-pos-user');
+    const recoverSession = async () => {
+      try {
+        // 1. Migración de localStorage a Cookies (Transición segura)
+        const legacyToken = localStorage.getItem('org-pos-token');
+        const legacyUser = localStorage.getItem('org-pos-user');
 
-      // Si existen en localStorage, moverlos a Cookies (solo la primera vez) y eliminar
-      if (legacyToken && !Cookies.get('org-pos-token')) {
-        Cookies.set('org-pos-token', legacyToken, { expires: 1, secure: true, sameSite: 'strict' });
-      }
-      if (legacyUser && !Cookies.get('org-pos-user')) {
-        Cookies.set('org-pos-user', legacyUser, { expires: 1, secure: true, sameSite: 'strict' });
-      }
+        let currentToken = Cookies.get('org-pos-token');
+        let currentUserStr = Cookies.get('org-pos-user');
 
-      // Purga definitiva de localStorage para estas claves
-      localStorage.removeItem('org-pos-token');
-      localStorage.removeItem('org-pos-user');
-      localStorage.removeItem('accessToken');
-      localStorage.removeItem('last-sale');
+        if (legacyToken && !currentToken) {
+          Cookies.set('org-pos-token', legacyToken, { expires: 7, secure: true, sameSite: 'strict' });
+          currentToken = legacyToken;
+        }
+        if (legacyUser && !currentUserStr) {
+          Cookies.set('org-pos-user', legacyUser, { expires: 7, secure: true, sameSite: 'strict' });
+          currentUserStr = legacyUser;
+        }
 
-      // 2. Recuperar sesión desde cookies
-      const storedUser = Cookies.get('org-pos-user');
-      const token = Cookies.get('org-pos-token');
-      
-      if (storedUser && token) {
-        const userData = JSON.parse(storedUser);
-        setUser({ ...userData, token });
+        // Limpieza de localStorage (Post-migración)
+        if (legacyToken || legacyUser) {
+          localStorage.removeItem('org-pos-token');
+          localStorage.removeItem('org-pos-user');
+          localStorage.removeItem('accessToken');
+          localStorage.removeItem('last-sale');
+        }
+
+        // 2. Sincronización de Estado
+        if (currentToken && currentUserStr) {
+          try {
+            const userData = JSON.parse(currentUserStr);
+            setUser({ ...userData, token: currentToken });
+          } catch (e) {
+            console.error("Malformed user data in cookies", e);
+          }
+        }
+      } catch (error) {
+        console.error("Critical Auth recovery failure", error);
+      } finally {
+        // Aseguramos un pequeño respiro para que el estado de React se asiente
+        setLoading(false);
       }
-    } catch (error) {
-      console.error("Failed to recover session from cookies", error);
-      Cookies.remove('org-pos-token');
-      Cookies.remove('org-pos-user');
-    } finally {
-      setLoading(false);
-    }
+    };
+
+    recoverSession();
   }, []);
 
   const login = async (credentials: { username: string, password?: string }) => {

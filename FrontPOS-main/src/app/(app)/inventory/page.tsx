@@ -9,7 +9,7 @@ import {
 import Link from 'next/link';
 import { useApi } from "@/hooks/use-api";
 import { Product } from "@/lib/definitions";
-import { formatCurrency, formatCOP, formatStock } from "@/lib/utils";
+import { formatCurrency, formatCOP, formatStock, isProductWeighted } from "@/lib/utils";
 import Cookies from 'js-cookie';
 import React, { useMemo, useState, useEffect } from "react";
 
@@ -138,7 +138,7 @@ export default function InventoryHub() {
       
       // Skip weighted products (like cheese sold by weight) from ALL calculations
       // They have infinite/placeholder stock that skews valuation
-      if (p.isWeighted) {
+      if (isProductWeighted(p)) {
         healthyCount++;
         return;
       }
@@ -382,7 +382,7 @@ export default function InventoryHub() {
                                             color="danger"
                                             className="font-bold text-[8px] h-5"
                                         >
-                                            {formatStock(item.quantity || 0, item.isPack, item.isWeighted)}
+                                            {formatStock(item.quantity || 0, item.isPack, isProductWeighted(item))}
                                         </Chip>
                                     </div>
                                 </div>

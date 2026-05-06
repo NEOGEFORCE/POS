@@ -94,12 +94,23 @@ export default function SmartRestockPage() {
   const [missingItems, setMissingItems] = useState<MissingItem[]>([]);
   const [loadingMissingItems, setLoadingMissingItems] = useState(false);
 
-  // Client-side pagination for the table
+  // Client-side pagination and filtering for the table
   const displayedItems = useMemo(() => {
-    const all = selectedSupplier === "global" ? items : orderItems;
+    let all = [];
+    if (selectedSupplier === "global") {
+      all = items;
+    } else {
+      // Priorizar orderItems (específicos del proveedor) si ya cargaron
+      // De lo contrario, filtrar la lista global como fallback inmediato
+      if (orderItems.length > 0) {
+        all = orderItems;
+      } else {
+        all = items.filter(item => String(item.supplierId) === selectedSupplier);
+      }
+    }
+    
     const start = (page - 1) * pageSize;
-    const end = start + pageSize;
-    return all.slice(start, end);
+    return all.slice(start, start + pageSize);
   }, [selectedSupplier, items, orderItems, page, pageSize]);
 
   const fetchSuppliers = useCallback(async () => {
@@ -150,14 +161,14 @@ export default function SmartRestockPage() {
         bestSupplierId: Number(item.bestSupplierId) || 0,
         bestSupplierName: item.bestSupplierName || '',
         lowestPrice: Number(item.lowestPrice) || 0,
-        minStock: Number(item.minStock) || 0,
-        supplierId: Number(item.supplierId) || 0,
+        minStock: Number(item.minStock) || Number(item.min_stock) || 0,
+        supplierId: Number(item.supplierId) || Number(item.supplier_id) || 0,
         isHighRotation: !!item.isHighRotation,
-        avgDailySales: Number(item.avgDailySales) || 0,
+        avgDailySales: Number(item.avgDailySales) || Number(item.avg_daily_sales) || 0,
         isPack: !!item.isPack,
-        packMultiplier: Number(item.packMultiplier) || 0,
-        projectedSales: Number(item.projectedSales) || 0,
-        recentSales: Number(item.recentSales) || 0,
+        packMultiplier: Number(item.packMultiplier) || Number(item.pack_multiplier) || 0,
+        projectedSales: Number(item.projectedSales) || Number(item.projected_sales) || 0,
+        recentSales: Number(item.recentSales) || Number(item.recent_sales) || 0,
         threshold: Number(item.threshold) || 0
       }));
       setItems(mapped);
@@ -187,14 +198,15 @@ export default function SmartRestockPage() {
         quantity: Number(item.suggested) || Number(item.total_ideal) || 0,
         bestSupplierId: Number(item.bestSupplierId) || 0,
         bestSupplierName: item.bestSupplierName || '',
-        minStock: Number(item.minStock) || 0,
+        minStock: Number(item.minStock) || Number(item.min_stock) || 0,
         supplierId: Number(supplierId),
+        lowestPrice: Number(item.lowestPrice) || Number(item.lowest_price) || 0,
         isHighRotation: !!item.isHighRotation,
-        avgDailySales: Number(item.avgDailySales) || 0,
+        avgDailySales: Number(item.avgDailySales) || Number(item.avg_daily_sales) || 0,
         isPack: !!item.isPack,
-        packMultiplier: Number(item.packMultiplier) || 0,
-        projectedSales: Number(item.projectedSales) || 0,
-        recentSales: Number(item.recentSales) || 0,
+        packMultiplier: Number(item.packMultiplier) || Number(item.pack_multiplier) || 0,
+        projectedSales: Number(item.projectedSales) || Number(item.projected_sales) || 0,
+        recentSales: Number(item.recentSales) || Number(item.recent_sales) || 0,
         threshold: Number(item.threshold) || 0
       }));
       setOrderItems(mapped);
@@ -260,8 +272,15 @@ export default function SmartRestockPage() {
   useEffect(() => {
     fetchSuppliers();
     fetchMissingItems();
-    loadGlobalSuggestions();
-  }, [page, pageSize]);
+  }, []);
+
+  useEffect(() => {
+    if (selectedSupplier === "global") {
+      loadGlobalSuggestions();
+    } else {
+      loadSuggestions(selectedSupplier);
+    }
+  }, [selectedSupplier, loadGlobalSuggestions, loadSuggestions]);
 
   const handleResolveMissingItem = async (id: number) => {
     try {

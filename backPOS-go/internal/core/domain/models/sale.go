@@ -20,6 +20,9 @@ type Sale struct {
 	CreditAmount   float64        `gorm:"type:decimal(10,2);column:creditAmount" json:"creditAmount"`
 	DebtPending    float64        `gorm:"type:decimal(10,2);column:debtPending" json:"debtPending"`
 	Change         float64        `gorm:"type:decimal(10,2);column:change" json:"change"`
+	Status         string         `gorm:"type:varchar(20);default:'PAID';column:status" json:"status"`
+	DeletedReason  string         `gorm:"column:deletedReason" json:"deletedReason,omitempty"`
+	DeletedByDNI   string         `gorm:"column:deletedByDni" json:"deletedByDni,omitempty"`
 	Client         Client         `gorm:"foreignKey:ClientDNI;references:DNI" json:"client,omitempty"`
 	Employee       Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`
 	SaleDetails    []SaleDetail   `gorm:"foreignKey:SaleID" json:"details,omitempty"`
@@ -39,7 +42,7 @@ type SaleDetail struct {
 	CostPrice float64        `gorm:"type:decimal(10,2);default:0;not null;column:costPrice" json:"costPrice"`
 	Subtotal    float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`
 	ReturnedQty float64        `gorm:"-" json:"returnedQty"`
-	Product     Product        `gorm:"foreignKey:Barcode;references:Barcode" json:"product,omitempty"`
+	Product     Product        `gorm:"foreignKey:Barcode;references:Barcode;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"product,omitempty"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

@@ -2,23 +2,34 @@
 
 import { 
     ShoppingCart, Wallet, CreditCard, ArrowDownRight, HandCoins, ChevronRight, TrendingUp, DollarSign,
-    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package
+    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
-import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+
 import { Chip } from "@heroui/react";
 import React from 'react';
+import AuditModal from "./AuditModal";
+import Cookies from 'js-cookie';
 
-const dummyData = [
-    { pv: 4200 }, { pv: 7398 }, { pv: 2800 }, { pv: 5908 }, { pv: 1800 }, { pv: 6800 }, { pv: 3300 },
-];
 
-const formatCurrencyWithColor = (value: number) => {
-    const formatted = formatCurrency(Math.abs(value));
+
+const formatCurrencyWithColor = (value: number, label?: string) => {
+    const formatted = formatCurrency(value);
     const isNegative = value < 0;
+    
+    // Nueva lógica: si el valor es negativo en balance, es un FALTANTE/EGRESO (rojo o neutro)
+    // Pero aquí solo formateamos.
+    if (isNegative) {
+        return (
+            <span className="text-rose-500 font-bold">
+                -${formatCurrency(Math.abs(value))}
+            </span>
+        );
+    }
+    
     return (
-        <span className={isNegative ? "text-rose-500 font-bold" : ""}>
-            {isNegative ? "-" : ""}${formatted}
+        <span className="text-emerald-500 font-bold">
+            ${formatted}
         </span>
     );
 };
@@ -35,23 +46,7 @@ function KpiCard({
             onClick={onClick}
             className={`relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden transition-all hover:scale-[1.01] ${onClick ? 'cursor-pointer active:scale-95' : ''} ${isAudit ? 'md:col-span-2' : ''}`}
         >
-            {/* Background Sparkline - Hidden if audit or low opacity */}
-            {chartData && !isAudit && (
-                <div className="absolute inset-x-0 bottom-0 h-10 opacity-10 pointer-events-none">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={chartData}>
-                            <Area 
-                                type="monotone" 
-                                dataKey="pv" 
-                                stroke={color} 
-                                fillOpacity={0.1} 
-                                fill={color} 
-                                strokeWidth={2}
-                            />
-                        </AreaChart>
-                    </ResponsiveContainer>
-                </div>
-            )}
+
 
             <div className={`relative z-10 h-full flex flex-col ${isAudit ? 'p-0' : 'p-5'}`}>
                 {/* Header Section */}
@@ -113,46 +108,54 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full">
             {/* FILA 1 */}
             <KpiCard
-                label="Ventas del Día"
-                value={data.todaySalesAmount || 0}
-                sub={`${data.todaySalesCount || 0} transacciones`}
+                label="Ventas del Último Cierre"
+                value={data.shiftSalesAmount || 0}
+                sub={
+                    <div className="flex flex-col gap-1 mt-1">
+                        <span className="text-[10px] text-gray-500 dark:text-zinc-400">{data.shiftSalesCount || 0} transacciones</span>
+                        <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1">
+                            <div className="flex items-center gap-1">
+                                <Coins size={10} className="text-emerald-500" />
+                                <span className="text-[8.5px] font-black uppercase text-zinc-400">EFE: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.EFECTIVO || 0)}</span></span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <Smartphone size={10} className="text-purple-500" />
+                                <span className="text-[8.5px] font-black uppercase text-zinc-400">NEQUI: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.NEQUI || 0)}</span></span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <Smartphone size={10} className="text-rose-500" />
+                                <span className="text-[8.5px] font-black uppercase text-zinc-400">DAVI: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.DAVIPLATA || 0)}</span></span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <Wallet size={10} className="text-blue-500" />
+                                <span className="text-[8.5px] font-black uppercase text-zinc-400">FIADOS: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.FIADO || 0)}</span></span>
+                            </div>
+                        </div>
+                    </div>
+                }
                 icon={TrendingUp}
                 color="#10b981"
                 isCurrency={true}
-                chartData={dummyData}
+
             />
 
             {/* Specialized Audit Card (Dinero Real) */}
             {(() => {
-                const globalExpenses = data.totalExpensesPaid ?? data.total_expenses_paid ?? 0;
-                const netReportedBalance = (data.reportedBalance || 0) - globalExpenses;
+                const netReportedBalance = (data.reportedBalance || 0);
+                const [isAuditModalOpen, setIsAuditModalOpen] = React.useState(false);
 
-                const handleAdjustBalance = async () => {
-                    const realBalanceStr = window.prompt("Introduce el SALDO REAL ACTUAL (Efectivo + Bancos) para resetear la auditoría a $0:");
-                    if (realBalanceStr === null) return;
-                    
-                    const realBalance = parseFloat(realBalanceStr);
-                    if (isNaN(realBalance)) {
-                        alert("Por favor, introduce un número válido.");
-                        return;
-                    }
-
-                    if (!window.confirm(`¿Estás seguro de que quieres ajustar el saldo inicial a $${formatCurrency(realBalance)}? Esto reseteará la diferencia a $0 hoy.`)) {
-                        return;
-                    }
-
+                const handleAdjustBalance = async (balances: any) => {
                     try {
                         const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/adjust-initial-balance`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${localStorage.getItem('token')}`
+                                'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
                             },
-                            body: JSON.stringify({ realBalance })
+                            body: JSON.stringify(balances)
                         });
 
                         if (response.ok) {
-                            alert("✅ Saldo inicial ajustado con éxito. El dashboard se actualizará.");
                             window.location.reload();
                         } else {
                             const err = await response.json();
@@ -164,85 +167,112 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 };
 
                 return (
-                    <KpiCard
-                        variant="audit"
-                        label="DINERO REAL EN MANO (CIERRES)"
-                        value={netReportedBalance}
-                        isCurrency={true}
-                        sub={
-                            <div className="flex flex-row justify-between items-center gap-6">
-                                <div className="flex items-center gap-2">
-                                    <Smartphone size={14} className={data.realCashFlow?.nequi < 0 ? "text-rose-500 animate-pulse" : "text-purple-500"} />
+                    <>
+                        <KpiCard
+                            variant="audit"
+                            hideHeader={true}
+                            label="AUDITORIA DE CAJA"
+                            value={0}
+                            sub={
+                                <div className="flex flex-col gap-0 w-full">
+                                    {/* CABECERA DINÁMICA DE 2 COLUMNAS */}
+                                    <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent grid grid-cols-2 gap-8 items-start">
+                                        <div className="flex flex-col items-start border-r border-white/5 pr-4">
+                                            <span className="font-black uppercase tracking-widest leading-none mb-3 italic text-[11px] text-zinc-500">
+                                                EFECTIVO REAL EN MANO (ACUMULADO)
+                                            </span>
+                                            <div className="flex items-center gap-3">
+                                                <span className="font-black italic leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-white">
+                                                    {formatCurrencyWithColor(Math.round(data.globalHistoricalReal || 0))}
+                                                </span>
+                                            </div>
+                                            <span className="text-[9px] text-zinc-600 font-bold italic mt-2 uppercase tracking-tight">Suma de cierres - Egresos de Fondo</span>
+                                        </div>
+
+                                        <div className="flex flex-col items-end pl-4">
+                                            <span className="font-black uppercase tracking-widest leading-none mb-3 italic text-[11px] text-zinc-500 text-right">
+                                                SALDO ESPERADO TOTAL (SISTEMA)
+                                            </span>
+                                            <div className="flex items-center gap-3 justify-end">
+                                                <span className="font-black italic leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-white">
+                                                    {formatCurrencyWithColor(Math.round(data.globalHistoricalExpected || 0))}
+                                                </span>
+                                            </div>
+                                            <span className="text-[9px] text-zinc-600 font-bold italic mt-2 uppercase tracking-tight text-right">Cálculo teórico histórico total</span>
+                                        </div>
+                                    </div>
+
+                                    {/* SECCIÓN INFERIOR DE DETALLES DEL TURNO */}
+                                    <div className="px-6 py-6 border-t border-white/5 bg-zinc-900/20">
+                                        <div className="flex flex-col">
+                                            <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Diferencia Global</span>
+                                            <span className={`text-sm font-black italic ${(data.globalDifference >= 0) ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                ${formatCurrency(Math.abs(Math.round(data.globalDifference || 0)))} 
+                                                {(data.globalDifference >= 0) ? ' (SOBRANTE)' : ' (FALTANTE)'}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                            icon={LineChart}
+                            color="#3b82f6"
+                            footer={
+                                <>
                                     <div className="flex flex-col">
-                                        <span className="text-[8px] text-zinc-500 font-bold">NEQUI</span>
-                                        <span className={`text-[12px] font-black tabular-nums ${data.realCashFlow?.nequi < 0 ? "text-rose-500" : "text-purple-400"}`}>
-                                            {formatCurrencyWithColor(data.realCashFlow?.nequi || 0)}
+                                        <span className="text-[9px] text-zinc-500 font-black italic uppercase tracking-widest leading-none">
+                                            Billeteras Digitales (Total)
                                         </span>
+                                            <div className="flex items-center gap-3 mt-1.5">
+                                                <div className="flex items-center gap-1.5 bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">
+                                                    <Smartphone size={10} className="text-purple-500" />
+                                                    <span className="text-[10px] font-black text-white">NEQUI: ${formatCurrency(data.realCashFlow?.nequi || 0)}</span>
+                                                </div>
+                                                <div className="flex items-center gap-1.5 bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/20">
+                                                    <Smartphone size={10} className="text-rose-500" />
+                                                    <span className="text-[10px] font-black text-white">DAVIPLATA: ${formatCurrency(data.realCashFlow?.daviplata || 0)}</span>
+                                                </div>
+                                            </div>
                                     </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                    <Smartphone size={14} className={data.realCashFlow?.daviplata < 0 ? "text-rose-500 animate-pulse" : "text-rose-500"} />
-                                    <div className="flex flex-col">
-                                        <span className="text-[8px] text-zinc-500 font-bold">DAVIPLATA</span>
-                                        <span className={`text-[12px] font-black tabular-nums ${data.realCashFlow?.daviplata < 0 ? "text-rose-500" : "text-rose-400"}`}>
-                                            {formatCurrencyWithColor(data.realCashFlow?.daviplata || 0)}
-                                        </span>
+                                    <div className="flex flex-col items-end gap-1.5">
+                                        <button 
+                                            onClick={() => setIsAuditModalOpen(true)}
+                                            className="h-8 px-3 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded-lg font-black uppercase text-[8px] italic tracking-widest flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-500/10"
+                                        >
+                                            <PlusCircle size={10} /> Ajustar Fondo
+                                        </button>
+                                        <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest">Protocolo de Auditoría Maestro</span>
                                     </div>
-                                </div>
-                            </div>
-                        }
-                        icon={Wallet}
-                        color="#10b981"
-                        footer={
-                            <>
-                                <div className="flex flex-col">
-                                    <span className="text-[9px] text-zinc-500 font-black italic">SALDO ESPERADO (SISTEMA)</span>
-                                    <span className="text-lg font-black text-white italic tracking-tighter">
-                                        ${formatCurrency(Math.round(data.systemBalance || 0))}
-                                    </span>
-                                    <button 
-                                        onClick={handleAdjustBalance}
-                                        className="text-[7.5px] xs:text-[8px] sm:text-[9px] text-emerald-500 hover:text-emerald-400 font-black uppercase mt-1 text-left flex items-center gap-1 transition-colors whitespace-nowrap"
-                                    >
-                                        <PlusCircle size={8} className="shrink-0" /> Ajustar Saldo Inicial
-                                    </button>
-                                </div>
-                                {(data.globalDifference || 0) !== 0 && (
-                                    <div className={`
-                                        relative flex items-center gap-2 px-4 py-2 rounded-xl border-2 font-black italic text-xs uppercase
-                                        ${data.globalDifference > 0 
-                                            ? 'border-emerald-500/50 bg-emerald-500/10 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)]' 
-                                            : 'border-rose-500/50 bg-rose-500/10 text-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.3)]'}
-                                    `}>
-                                        {data.globalDifference > 0 ? <PlusCircle size={14} /> : <MinusCircle size={14} />}
-                                        {data.globalDifference > 0 ? 'Sobrante' : 'Faltante'}: ${formatCurrency(Math.abs(Math.round(data.globalDifference || 0)))}
-                                    </div>
-                                )}
-                            </>
-                        }
-                    />
+                                </>
+                            }
+                        />
+                        <AuditModal 
+                            isOpen={isAuditModalOpen} 
+                            onOpenChange={setIsAuditModalOpen} 
+                            onConfirm={handleAdjustBalance} 
+                        />
+                    </>
                 );
             })()}
 
             <KpiCard
-                label="GANANCIAS (ESTE MES)"
+                label="UTILIDAD DEL MES"
                 value={data.estimatedNetProfit || 0}
-                sub="Utilidad real (Ventas - Costos - Gastos)"
+                sub="Ganancia real del mes (Ventas - Costos - Gastos)"
                 icon={LineChart}
                 color="#8b5cf6"
                 isCurrency={true}
-                chartData={dummyData}
+
             />
 
             {/* FILA 2 */}
             <KpiCard
-                label="Egresos de Hoy"
+                label="Egresos del Último Cierre"
                 value={typeof data.todayExpenses === 'object' ? (data.todayExpenses?.amount || 0) : (data.todayExpenses || 0)}
                 sub={`${typeof data.todayExpenses === 'object' ? (data.todayExpenses?.count || 0) : 0} salidas pagadas`}
                 icon={DollarSign}
                 color="#f43f5e"
                 isCurrency={true}
-                chartData={dummyData}
+
             />
 
             {/* Doble Inventario Card */}
@@ -274,6 +304,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 }
             />
 
+
             <KpiCard
                 label="Cuentas por Pagar"
                 value={data.pendingDebts?.amount ?? 0}
@@ -281,9 +312,19 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 icon={HandCoins}
                 color="#f59e0b"
                 isCurrency={true}
-                chartData={(data.pendingDebts?.amount ?? 0) > 0 ? dummyData : undefined}
                 onClick={onOpenDebts}
             />
+
+            {/* Tarjeta de relleno para completar 4 cols o informativa */}
+            <div className="hidden md:flex flex-col justify-center p-6 bg-emerald-500/5 rounded-2xl border border-emerald-500/10 border-dashed">
+                <div className="flex items-center gap-2 mb-2">
+                    <TrendingUp size={16} className="text-emerald-500" />
+                    <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic">Análisis de Turno</span>
+                </div>
+                <p className="text-[11px] text-zinc-500 leading-relaxed font-bold italic">
+                    "El éxito no es solo vender, es saber cuánto dinero tienes realmente en la mano."
+                </p>
+            </div>
         </div>
     );
 }

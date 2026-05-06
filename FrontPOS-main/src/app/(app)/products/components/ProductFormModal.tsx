@@ -6,13 +6,14 @@ import {
 } from "@heroui/react";
 import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
-import { applyRounding, formatCurrency, parseCurrency } from '@/lib/utils';
+import { formatCurrency, applyRounding, parseCurrency, isProductWeighted } from '@/lib/utils';
 import { validateProduct, FieldError } from '@/lib/formValidation';
 import ValidationErrors from '@/components/ValidationErrors';
 import { useState, useCallback, useMemo, memo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { PlusCircle } from 'lucide-react';
 import SupplierFormModal from '../../suppliers/components/SupplierFormModal';
+import CategoryFormModal from '../../categories/components/CategoryFormModal';
 import { apiFetch } from '@/lib/api-error';
 import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
@@ -44,8 +45,10 @@ interface ProductFormModalProps {
   suppliers: any[];
   onConfirm: () => void;
   onScan: () => void;
+  onScanAlternate: () => void;
   allProducts: Product[];
   mutateSuppliers?: () => void;
+  mutateCategories?: () => void;
   apiFieldErrors?: Record<string, string>;
 }
 
@@ -55,18 +58,28 @@ const ProductFormModal = memo(function ProductFormModal({
   editingProduct, setEditingProduct,
   newMargin, setNewMargin,
   editMargin, setEditMargin,
-  categories, suppliers, onConfirm, onScan, allProducts, mutateSuppliers,
+  categories, suppliers, onConfirm, onScan, onScanAlternate, allProducts, mutateSuppliers, mutateCategories,
   apiFieldErrors = {}
 }: ProductFormModalProps) {
   const { toast } = useToast();
   // Estado de errores de validación
   const [validationErrors, setValidationErrors] = useState<FieldError[]>([]);
   const [quickSupplierOpen, setQuickSupplierOpen] = useState(false);
+  const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
   const [supplierPrices, setSupplierPrices] = useState<ProductSupplierPrice[]>([]);
   const [isLoadingPrices, setIsLoadingPrices] = useState(false);
+  const [duplicateFound, setDuplicateFound] = useState<Product | null>(null);
   
   // Estado para búsqueda de producto base en modo pack
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Limpiar estado de duplicados al abrir/cerrar
+  useEffect(() => {
+    if (!isOpen) {
+      setDuplicateFound(null);
+    }
+  }, [isOpen]);
 
   // Combinar errores de validación local y errores de API
   const getFieldError = useCallback((fieldName: string): string | undefined => {
@@ -108,6 +121,45 @@ const ProductFormModal = memo(function ProductFormModal({
       p.barcode.toLowerCase().includes(term)
     );
   }, [baseProducts, searchTerm]);
+
+  // Lógica reactiva para detección de duplicados
+  useEffect(() => {
+    if (!addDialogOpen || !isOpen) {
+      setDuplicateFound(null);
+      return;
+    }
+
+    const currentBarcode = newProduct.barcode.toUpperCase().trim();
+    const currentName = newProduct.productName.toUpperCase().trim();
+
+    if (currentBarcode.length >= 3) {
+      const existing = (allProducts || []).find(p => {
+        if (p.barcode.toUpperCase().trim() === currentBarcode) return true;
+        if (p.alternateCodes) {
+          const alts = p.alternateCodes.split(',').map(c => c.trim().toUpperCase());
+          return alts.includes(currentBarcode);
+        }
+        return false;
+      });
+
+      if (existing) {
+        setDuplicateFound(existing);
+        return;
+      }
+    }
+
+    if (currentName.length >= 4) {
+      const existing = (allProducts || []).find(p => 
+        p.productName.toUpperCase().trim() === currentName
+      );
+      if (existing) {
+        setDuplicateFound(existing);
+        return;
+      }
+    }
+
+    setDuplicateFound(null);
+  }, [newProduct.barcode, newProduct.productName, addDialogOpen, isOpen, allProducts]);
 
   // Fix aria-hidden: forzar blur del elemento activo cuando se cierra el popover
   const handlePopoverClose = useCallback(() => {
@@ -228,12 +280,17 @@ const ProductFormModal = memo(function ProductFormModal({
   }, []);
 
   useEffect(() => {
-    if (editingProduct?.barcode) {
-      fetchSupplierPrices(editingProduct.barcode);
-    } else {
-      setSupplierPrices([]);
-    }
-  }, [editingProduct, fetchSupplierPrices]);
+    // Debounce para evitar ráfaga de peticiones mientras el usuario escribe en otros campos
+    const handler = setTimeout(() => {
+      if (editingProduct?.barcode && editingProduct.barcode.length >= 3) {
+        fetchSupplierPrices(editingProduct.barcode);
+      } else if (!editingProduct?.barcode) {
+        setSupplierPrices([]);
+      }
+    }, 1000); // 1 segundo de calma
+    
+    return () => clearTimeout(handler);
+  }, [editingProduct?.barcode, fetchSupplierPrices]);
 
   // Handler para guardar un proveedor rápido sin salir del flujo de productos
   const handleQuickSupplierSave = async (supplier: any) => {
@@ -270,6 +327,31 @@ const ProductFormModal = memo(function ProductFormModal({
     }
   };
 
+  const handleQuickCategorySave = async () => {
+    const token = Cookies.get('org-pos-token');
+    try {
+      const created = await apiFetch<Category>('/categories/create', {
+        method: 'POST',
+        body: JSON.stringify({ name: newCategoryName.toUpperCase() }),
+      }, token!);
+      
+      toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA CREADA' });
+      
+      if (mutateCategories) mutateCategories();
+      
+      if (addDialogOpen) {
+        setNewProduct((p: any) => ({ ...p, categoryId: created.id }));
+      } else {
+        setEditingProduct((p: any) => p ? { ...p, categoryId: created.id } : null);
+      }
+      
+      setQuickCategoryOpen(false);
+      setNewCategoryName("");
+    } catch (err: any) {
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+    }
+  };
+
 
   // CLASES COMPARTIDAS PARA INPUTS (Optimizado para móvil)
   const itemInputClass = {
@@ -286,7 +368,8 @@ const ProductFormModal = memo(function ProductFormModal({
   };
 
   return (
-    <Modal
+    <>
+      <Modal
       isOpen={isOpen}
       onOpenChange={onOpenChange}
       placement="center"
@@ -301,8 +384,6 @@ const ProductFormModal = memo(function ProductFormModal({
       }}
     >
       <ModalContent>
-        {() => (
-          <>
             <ModalHeader className="px-6 md:px-10 py-3 md:py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-900/50 backdrop-blur-md rounded-t-[2.5rem]">
               <div className="flex items-center gap-3">
                 <div className="h-9 w-9 bg-emerald-500/10 text-emerald-500 flex items-center justify-center rounded-xl border border-emerald-500/20 rotate-3">
@@ -357,34 +438,17 @@ const ProductFormModal = memo(function ProductFormModal({
                 </div>
 
                 <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="flex flex-col justify-center gap-0.5">
+                  <div className="flex flex-col justify-center gap-0.5">
                     <label className={`${itemInputClass.label} flex items-center gap-1`}><Barcode size={10} className="text-emerald-500" /> CÓDIGO</label>
                     <div className="relative">
                       <Input
                         value={addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '')}
                         onValueChange={(v) => {
                           const val = v.toUpperCase().trim();
-                          
-                          // Lógica de detección automática para evitar duplicados
-                          if (addDialogOpen && val.length >= 3) {
-                            const existing = allProducts.find(p => p.barcode === val);
-                            if (existing) {
-                              toast({
-                                title: "PRODUCTO DETECTADO",
-                                description: `CARGANDO DATOS DE: ${existing.productName}`,
-                                variant: "success"
-                              });
-                              setEditingProduct(existing);
-                              // El padre (page.tsx) detectará que editingProduct no es null 
-                              // pero necesitamos avisarle que cambie el modo visual si es posible
-                              // Por ahora, cargamos los datos en el estado de edición.
-                            }
-                          }
-
                           if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: val }));
                           else setEditingProduct((p: any) => p ? { ...p, barcode: val } : null);
                         }}
-                        classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} pr-14` }}
+                        classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} pr-14 ${duplicateFound ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : ''}` }}
                       />
                       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 transform scale-90">
                         <Button isIconOnly size="sm" onPress={onScan} className="h-7 w-7 bg-emerald-500/10 text-emerald-500 rounded-lg">
@@ -398,11 +462,75 @@ const ProductFormModal = memo(function ProductFormModal({
                     <Input
                       value={addDialogOpen ? newProduct.productName : (editingProduct?.productName || '')}
                       onValueChange={(v) => {
-                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, productName: v.toUpperCase() }));
-                        else setEditingProduct((p: any) => p ? { ...p, productName: v.toUpperCase() } : null);
+                        const val = v.toUpperCase();
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, productName: val }));
+                        else setEditingProduct((p: any) => p ? { ...p, productName: val } : null);
                       }}
-                      classNames={itemInputClass}
+                      classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} ${duplicateFound && duplicateFound.productName.toUpperCase().trim() === (addDialogOpen ? newProduct.productName.toUpperCase().trim() : '') ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : ''}` }}
                     />
+                  </div>
+                </div>
+              </div>
+
+                {/* BANNER DE PRODUCTO DUPLICADO */}
+                <AnimatePresence>
+                  {addDialogOpen && duplicateFound && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-500/10 border-2 border-amber-500/50 rounded-2xl flex flex-col sm:flex-row items-center gap-4 animate-in fade-in zoom-in duration-300">
+                        <div className="h-10 w-10 rounded-full bg-amber-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-amber-500/20">
+                          <Info size={20} />
+                        </div>
+                        <div className="flex-1 text-center sm:text-left">
+                          <p className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest italic">Producto ya registrado</p>
+                          <h4 className="text-sm font-black text-gray-900 dark:text-white uppercase italic leading-tight">{duplicateFound.productName}</h4>
+                          <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-400 mt-0.5">El código ingresado ya está asignado a este producto.</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          onPress={() => {
+                            setEditingProduct(duplicateFound);
+                            setDuplicateFound(null);
+                          }}
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-black uppercase text-[10px] h-9 px-6 rounded-xl shadow-lg shadow-amber-500/20"
+                        >
+                          Cargar para Editar
+                        </Button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+
+
+              {/* 1.1 CÓDIGOS ALTERNOS */}
+              <div className="bg-gray-50/50 dark:bg-black/20 p-2 rounded-xl border border-gray-100/50 dark:border-white/5">
+                <div className="flex flex-col gap-0.5">
+                  <label className={`${itemInputClass.label} flex items-center justify-center gap-1`}>
+                    <Barcode size={10} className="text-emerald-500" /> CÓDIGOS ALTERNOS (Separados por coma)
+                  </label>
+                  <div className="relative">
+                    <Input
+                      placeholder="EJ: 7701234567890, 7700987654321"
+                      value={addDialogOpen ? newProduct.alternateCodes : (editingProduct?.alternateCodes || '')}
+                      onValueChange={(v) => {
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, alternateCodes: v }));
+                        else setEditingProduct((p: any) => p ? { ...p, alternateCodes: v } : null);
+                      }}
+                      classNames={{
+                        ...itemInputClass,
+                        inputWrapper: `${itemInputClass.inputWrapper} pr-10`,
+                        input: "font-mono text-[10px] tracking-tight text-emerald-500 dark:text-emerald-400"
+                      }}
+                    />
+                    <div className="absolute right-1 top-1/2 -translate-y-1/2 transform scale-90">
+                      <Button isIconOnly size="sm" onPress={onScanAlternate} className="h-7 w-7 bg-emerald-500/10 text-emerald-500 rounded-lg">
+                        <Camera size={12} />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -439,10 +567,17 @@ const ProductFormModal = memo(function ProductFormModal({
                 <div className="flex flex-col gap-0.5">
                   <label className="text-xs font-black text-sky-500 uppercase tracking-widest italic text-center w-full mb-0.5">MARGEN %</label>
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={String(addDialogOpen ? newMargin : editMargin)}
+                    onFocus={(e) => e.target.select()}
                     onValueChange={(v) => {
-                      const val = parseFloat(v) || 0;
+                      if (v === "") {
+                        if (addDialogOpen) setNewMargin(0);
+                        else setEditMargin(0);
+                        return;
+                      }
+                      const val = parseFloat(v.replace(",", ".")) || 0;
                       if (addDialogOpen) {
                         setNewMargin(val);
                         setNewProduct((p: any) => ({ ...p, marginPercentage: val, salePrice: applyRounding(p.purchasePrice * (1 + val / 100)) }));
@@ -452,7 +587,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       }
                     }}
                     classNames={{
-                      inputWrapper: "h-9 bg-sky-500/5 border border-sky-500/10 rounded-lg py-1.5",
+                      inputWrapper: "h-9 bg-sky-500/5 border border-sky-500/10 rounded-lg py-1.5 focus-within:border-sky-500",
                       input: "font-black text-sm tabular-nums text-sky-500 italic text-left py-0"
                     }}
                   />
@@ -604,7 +739,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         isIconOnly
                         variant="flat"
                         className="h-8 w-8 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-lg active:scale-95"
-                        onPress={() => {}}
+                        onPress={() => setQuickCategoryOpen(true)}
                       >
                         <PlusCircle size={14} />
                       </Button>
@@ -731,14 +866,14 @@ const ProductFormModal = memo(function ProductFormModal({
               <div className="flex gap-2">
                 <div className="flex-1 flex items-center justify-between px-3 h-10 bg-gray-50/50 dark:bg-black/20 rounded-xl border border-gray-100 dark:border-white/5">
                   <div className="flex items-center gap-2">
-                    <div className={`h-6 w-6 rounded-lg flex items-center justify-center transition-all duration-500 ${(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
+                    <div className={`h-6 w-6 rounded-lg flex items-center justify-center transition-all duration-500 ${isProductWeighted(addDialogOpen ? newProduct : editingProduct) ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
                       <Info size={12} />
                     </div>
                     <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest italic">Pesable</span>
                   </div>
                   <Switch
                     size="sm"
-                    isSelected={addDialogOpen ? newProduct.isWeighted : (editingProduct?.isWeighted || false)}
+                    isSelected={isProductWeighted(addDialogOpen ? newProduct : editingProduct)}
                     onValueChange={(v) => {
                       const qty = v ? 999999 : 0;
                       if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isWeighted: v, quantity: qty }));
@@ -843,8 +978,18 @@ const ProductFormModal = memo(function ProductFormModal({
                   descartar
                 </Button>
                 <Button
-                  className="flex-[2] h-10 bg-emerald-500 text-white font-black uppercase tracking-widest rounded-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-600 transition-all active:scale-[0.98] italic text-[10px]"
+                  className={`flex-[2] h-10 font-black uppercase tracking-widest rounded-xl shadow-lg transition-all active:scale-[0.98] italic text-[10px] ${
+                    duplicateFound 
+                      ? "bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-600" 
+                      : "bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600"
+                  }`}
                   onPress={() => {
+                    if (addDialogOpen && duplicateFound) {
+                      setEditingProduct(duplicateFound);
+                      setDuplicateFound(null);
+                      return;
+                    }
+
                     const current = addDialogOpen ? newProduct : editingProduct;
                     const result = validateProduct({
                       barcode: current?.barcode,
@@ -868,8 +1013,17 @@ const ProductFormModal = memo(function ProductFormModal({
                     onConfirm();
                   }}
                 >
-                  <Check size={14} className="mr-2" />
-                  {addDialogOpen ? "GUARDAR" : "ACTUALIZAR"}
+                  {duplicateFound ? (
+                    <>
+                      <Info size={14} className="mr-2" />
+                      CARGAR PARA EDITAR
+                    </>
+                  ) : (
+                    <>
+                      <Check size={14} className="mr-2" />
+                      {addDialogOpen ? "GUARDAR" : "ACTUALIZAR"}
+                    </>
+                  )}
                 </Button>
                 <AnimatePresence>
                   {validationErrors.length > 0 && (
@@ -885,18 +1039,28 @@ const ProductFormModal = memo(function ProductFormModal({
                 </AnimatePresence>
               </div>
             </ModalFooter>
-            {/* SUB-MODAL: CREACIÓN RÁPIDA DE PROVEEDOR */}
-            <SupplierFormModal
-              isOpen={quickSupplierOpen}
-              onOpenChange={setQuickSupplierOpen}
-              onSave={handleQuickSupplierSave}
-              isEdit={false}
-              supplier={null}
-            />
-          </>
-        )}
       </ModalContent>
     </Modal>
+
+    {/* SUB-MODAL: CREACIÓN RÁPIDA DE PROVEEDOR (FUERA DEL MODAL PADRE PARA EVITAR CONFLICTOS DE OVERLAY) */}
+    <SupplierFormModal
+      isOpen={quickSupplierOpen}
+      onOpenChange={setQuickSupplierOpen}
+      onSave={handleQuickSupplierSave}
+      isEdit={false}
+      supplier={null}
+    />
+
+    {/* SUB-MODAL: CREACIÓN RÁPIDA DE CATEGORÍA (FUERA DEL MODAL PADRE PARA EVITAR CONFLICTOS DE OVERLAY) */}
+    <CategoryFormModal
+      isOpen={quickCategoryOpen}
+      onOpenChange={setQuickCategoryOpen}
+      isEdit={false}
+      categoryName={newCategoryName}
+      setCategoryName={setNewCategoryName}
+      onSave={handleQuickCategorySave}
+    />
+  </>
   );
 });
 
