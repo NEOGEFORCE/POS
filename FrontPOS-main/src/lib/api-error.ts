@@ -183,7 +183,36 @@ export async function apiFetch<T = any>(
   
   if (!res.ok) {
     const errorData = await res.json().catch(() => null);
-    const errorMsg = await extractApiError(res, fallbackError);
+    
+    // Extraer el mensaje real del error (compatible con ambos formatos del backend)
+    let errorMsg = fallbackError;
+    if (errorData) {
+      // Formato diagnóstico: { error: "UPDATE_FAILED", message: "...", detail: "..." }
+      if (errorData.message && typeof errorData.message === 'string') {
+        errorMsg = errorData.message.toUpperCase();
+      }
+      // Formato estructurado: { error: { code, message, details } }
+      else if (errorData.error && typeof errorData.error === 'object' && errorData.error.message) {
+        errorMsg = errorData.error.message.toUpperCase();
+      }
+      // Formato simple: { error: "string" }
+      else if (errorData.error && typeof errorData.error === 'string') {
+        const translated = errorData.error.toUpperCase();
+        errorMsg = translated;
+      }
+    }
+    
+    // Fallback por código HTTP si no pudimos extraer nada útil
+    if (errorMsg === fallbackError) {
+      const httpMessages: Record<number, string> = {
+        400: 'SOLICITUD INVÁLIDA: Verifica los datos ingresados',
+        401: 'SESIÓN EXPIRADA: Cierra sesión e ingresa nuevamente',
+        404: 'NO ENCONTRADO: El recurso solicitado no existe',
+        500: 'ERROR INTERNO DEL SERVIDOR: Contacta al administrador',
+      };
+      errorMsg = httpMessages[res.status] || fallbackError;
+    }
+    
     throw new ApiError(errorMsg, res.status, errorData);
   }
   

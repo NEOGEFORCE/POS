@@ -5,6 +5,7 @@ import (
 	"backPOS-go/internal/core/ports"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -61,6 +62,16 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		return err
 	}
 
+	// Si el código de barras ha cambiado, verificar que el nuevo no esté ocupado por OTRO producto
+	// IMPORTANTE: Solo verificar el barcode principal, NO códigos alternos
+	if updatedProduct.Barcode != "" && updatedProduct.Barcode != barcode {
+		collision, err := s.repo.GetByBarcode(updatedProduct.Barcode)
+		if err == nil && collision != nil && collision.Barcode == updatedProduct.Barcode {
+			// Solo es colisión si otro producto tiene ese barcode como código PRINCIPAL
+			return fmt.Errorf("el código de barras '%s' ya está en uso por el producto: %s", updatedProduct.Barcode, collision.ProductName)
+		}
+	}
+
 	// 1. Obtener el costo máximo de sus proveedores para mantener integridad
 	supplierPrices, err := s.repo.GetSupplierPrices(barcode)
 	if err == nil && len(supplierPrices) > 0 {
@@ -78,14 +89,18 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 	}
 
 	// 2. Actualizar campos básicos
+	existing.Barcode = updatedProduct.Barcode // Permitir cambio de código principal
 	existing.ProductName = updatedProduct.ProductName
 	existing.IsWeighted = updatedProduct.IsWeighted
 	existing.CategoryID = updatedProduct.CategoryID
+	existing.AlternateCodes = updatedProduct.AlternateCodes // Nuevos códigos alternos
 	// Limpiar asociaciones para que GORM no sobreescriba foreign keys con objetos preloaded
 	existing.Category = models.Category{}
 	existing.Supplier = models.Supplier{}
 	existing.UpdatedBy = models.Employee{}
 	existing.CreatedBy = models.Employee{}
+	existing.BaseProduct = nil
+	existing.Suppliers = []models.Supplier{}
 	existing.Iva = updatedProduct.Iva
 	existing.Icui = updatedProduct.Icui
 	existing.Ibua = updatedProduct.Ibua
@@ -104,7 +119,7 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 	}
 
 	if updatedProduct.CategoryID == 0 {
-		existing.CategoryID = 0 // Wait, CategoryID is uint, not pointer?
+		existing.CategoryID = 0
 	}
 
 	// Lógica de Empaques (Sincronización con Producto Base)
@@ -136,7 +151,7 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 			}
 		}
 	} else {
-		existing.BaseProductBarcode = nil // Aseguramos NULL en la DB
+		existing.BaseProductBarcode = nil // Aseguramos NULL en la DB si viene vacío o nulo
 	}
 	existing.Quantity = updatedProduct.Quantity
 	// 3. Lógica de Precios:
@@ -150,7 +165,18 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		}
 	}
 
-	// 4. Sincronizar Proveedores (Many-to-Many)
+	// 4. (Verificación de duplicados ya se hizo arriba, no repetir)
+
+	// 5. Ejecutar Update principal (incluye cambio de barcode si aplica)
+	if err := s.repo.Update(barcode, existing); err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "23505") || strings.Contains(errStr, "duplicate key") {
+			return fmt.Errorf("error: el código de barras %s ya está en uso por otro producto", existing.Barcode)
+		}
+		return fmt.Errorf("error al persistir producto: %w", err)
+	}
+
+	// 5. Sincronizar Proveedores (Many-to-Many) - DESPUÉS del update para usar el nuevo barcode si cambió
 	if len(updatedProduct.Suppliers) > 0 {
 		var ids []uint
 		for _, s := range updatedProduct.Suppliers {
@@ -159,12 +185,12 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 			}
 		}
 		if len(ids) > 0 {
-			_ = s.repo.SyncSuppliers(barcode, ids)
+			// Usamos existing.Barcode porque ya fue actualizado en la DB
+			_ = s.repo.SyncSuppliers(existing.Barcode, ids)
 		}
 	}
 
-	// Usamos Save en lugar de Update para asegurar que GORM maneje correctamente el objeto completo
-	return s.repo.Save(existing)
+	return nil
 }
 
 func (s *ProductService) UpdateProductSuppliers(barcode string, suppliers []models.Supplier) error {

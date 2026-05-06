@@ -44,7 +44,10 @@ func (r *PostgresProductRepository) Save(product *models.Product) error {
 
 func (r *PostgresProductRepository) GetByBarcode(barcode string) (*models.Product, error) {
 	var product models.Product
-	err := r.db.Preload("Category").Preload("Suppliers").Where("barcode = ?", barcode).First(&product).Error
+	// Búsqueda en código principal o en el array de códigos alternos
+	err := r.db.Preload("Category").Preload("Suppliers").
+		Where("barcode = ? OR ? = ANY(string_to_array(\"alternate_codes\", ','))", barcode, barcode).
+		First(&product).Error
 	return &product, err
 }
 
@@ -60,7 +63,7 @@ func (r *PostgresProductRepository) GetByBarcodeWithPreloads(barcode string, pre
 	for _, p := range preloads {
 		query = query.Preload(p)
 	}
-	err := query.Where("barcode = ?", barcode).First(&product).Error
+	err := query.Where("barcode = ? OR ? = ANY(string_to_array(\"alternate_codes\", ','))", barcode, barcode).First(&product).Error
 	return &product, err
 }
 
@@ -95,7 +98,7 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Joins("LEFT JOIN categories ON categories.id = products.\"categoryId\"").
-			Where("products.barcode ILIKE ? OR products.\"productName\" ILIKE ? OR categories.name ILIKE ?", searchTerm, searchTerm, searchTerm)
+			Where("products.barcode ILIKE ? OR products.\"productName\" ILIKE ? OR products.\"alternate_codes\" ILIKE ? OR categories.name ILIKE ?", searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -115,26 +118,103 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 }
 
 func (r *PostgresProductRepository) Update(barcode string, product *models.Product) error {
-	suppliers := product.Suppliers
-	product.Suppliers = nil
+	// === PREPARACIÓN DE VALORES SEGUROS ===
 
-	if err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).
-		Omit("Suppliers").Updates(product).Error; err != nil {
-		return fmt.Errorf("error actualizando producto: %w", err)
+	catID := int64(product.CategoryID)
+	if catID == 0 {
+		var currentCatID int64
+		r.db.Raw(`SELECT "categoryId" FROM products WHERE barcode = ?`, barcode).Scan(&currentCatID)
+		if currentCatID > 0 {
+			catID = currentCatID
+		}
 	}
 
-	if len(suppliers) > 0 {
-		var existing models.Product
-		if err := r.db.Where("barcode = ?", barcode).First(&existing).Error; err != nil {
-			return fmt.Errorf("error obteniendo producto para asociar: %w", err)
-		}
-		if err := r.db.Model(&existing).Association("Suppliers").Replace(suppliers); err != nil {
-			return fmt.Errorf("error actualizando proveedores: %w", err)
-		}
-		product.Suppliers = suppliers
+	var suppID interface{}
+	if product.SupplierID != nil && *product.SupplierID > 0 {
+		suppID = int64(*product.SupplierID)
+	} else {
+		var currentSuppID *int64
+		r.db.Raw(`SELECT "supplierId" FROM products WHERE barcode = ?`, barcode).Scan(&currentSuppID)
+		suppID = currentSuppID
 	}
 
-	// INVALIDACIÓN L1: Reflejar cambios en el catálogo maestro
+	var baseBc interface{}
+	if product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" {
+		baseBc = *product.BaseProductBarcode
+	} else {
+		baseBc = nil
+	}
+
+	barcodeChanged := product.Barcode != barcode
+
+	if barcodeChanged {
+		// === ESTRATEGIA: DELETE + UPDATE + RE-INSERT ===
+		// Paso 1: Guardar los IDs de proveedores asociados
+		var supplierIDs []int64
+		r.db.Raw(`SELECT supplier_id FROM product_suppliers WHERE product_barcode = $1`, barcode).Scan(&supplierIDs)
+
+		// Paso 2: Borrar las asociaciones viejas (esto libera la FK)
+		r.db.Exec(`DELETE FROM product_suppliers WHERE product_barcode = $1`, barcode)
+
+		// Paso 3: Actualizar auto-referencia de packs ANTES de cambiar el barcode
+		r.db.Exec(`UPDATE products SET "baseProductBarcode" = $1 WHERE "baseProductBarcode" = $2 AND barcode != $3`,
+			product.Barcode, barcode, barcode)
+
+		// Paso 4: UPDATE del producto (incluye cambio de barcode)
+		query := `UPDATE products SET 
+			barcode = $1, "productName" = $2, quantity = $3, "isWeighted" = $4, 
+			"purchasePrice" = $5, "salePrice" = $6, "categoryId" = $7, "supplierId" = $8, 
+			iva = $9, icui = $10, ibua = $11, "marginPercentage" = $12, "imageUrl" = $13, 
+			"minStock" = $14, "isActive" = $15, "isPack" = $16, "packMultiplier" = $17, 
+			"baseProductBarcode" = $18, alternate_codes = $19, "alternateCodes" = $20, 
+			"updatedByDni" = $21, "updatedByName" = $22
+			WHERE barcode = $23`
+
+		result := r.db.Exec(query,
+			product.Barcode, product.ProductName, product.Quantity, product.IsWeighted,
+			product.PurchasePrice, product.SalePrice, catID, suppID,
+			product.Iva, product.Icui, product.Ibua, product.MarginPercentage, product.ImageUrl,
+			product.MinStock, product.IsActive, product.IsPack, product.PackMultiplier,
+			baseBc, product.AlternateCodes, product.AlternateCodes,
+			product.UpdatedByDNI, product.UpdatedByName,
+			barcode,
+		)
+		if result.Error != nil {
+			return fmt.Errorf("error actualizando producto: %w", result.Error)
+		}
+
+		// Paso 5: Re-insertar las asociaciones con el nuevo barcode
+		for _, sid := range supplierIDs {
+			r.db.Exec(`INSERT INTO product_suppliers (product_barcode, supplier_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				product.Barcode, sid)
+		}
+
+	} else {
+		// === SIN CAMBIO DE BARCODE: Update directo y simple ===
+		query := `UPDATE products SET 
+			"productName" = $1, quantity = $2, "isWeighted" = $3, 
+			"purchasePrice" = $4, "salePrice" = $5, "categoryId" = $6, "supplierId" = $7, 
+			iva = $8, icui = $9, ibua = $10, "marginPercentage" = $11, "imageUrl" = $12, 
+			"minStock" = $13, "isActive" = $14, "isPack" = $15, "packMultiplier" = $16, 
+			"baseProductBarcode" = $17, alternate_codes = $18, "alternateCodes" = $19, 
+			"updatedByDni" = $20, "updatedByName" = $21
+			WHERE barcode = $22`
+
+		result := r.db.Exec(query,
+			product.ProductName, product.Quantity, product.IsWeighted,
+			product.PurchasePrice, product.SalePrice, catID, suppID,
+			product.Iva, product.Icui, product.Ibua, product.MarginPercentage, product.ImageUrl,
+			product.MinStock, product.IsActive, product.IsPack, product.PackMultiplier,
+			baseBc, product.AlternateCodes, product.AlternateCodes,
+			product.UpdatedByDNI, product.UpdatedByName,
+			barcode,
+		)
+		if result.Error != nil {
+			return fmt.Errorf("error actualizando producto: %w", result.Error)
+		}
+	}
+
+	// INVALIDACIÓN L1
 	cache.InvalidateCache(cache.CacheKeyProducts)
 	cache.InvalidateCache(cache.CacheKeyProductCount)
 
@@ -189,7 +269,7 @@ func (r *PostgresProductRepository) UpdateSupplierPrice(barcode string, supplier
 
 func (r *PostgresProductRepository) GetSupplierPrices(barcode string) ([]models.ProductSupplier, error) {
 	var prices []models.ProductSupplier
-	err := r.db.Where("\"productBarcode\" = ?", barcode).Find(&prices).Error
+	err := r.db.Where("product_barcode = ?", barcode).Find(&prices).Error
 	return prices, err
 }
 
@@ -197,7 +277,7 @@ func (r *PostgresProductRepository) GetBySupplier(supplierID uint) ([]models.Pro
 	var products []models.Product
 	err := r.db.Where(
 		`products.barcode IN (
-			SELECT "productBarcode" FROM product_suppliers WHERE "supplierId" = ?
+			SELECT product_barcode FROM product_suppliers WHERE supplier_id = ?
 			UNION
 			SELECT barcode FROM products WHERE "supplierId" = ?
 		)`,

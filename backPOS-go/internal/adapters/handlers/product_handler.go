@@ -225,21 +225,36 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	existing, _ := h.service.GetProduct(barcode)
 
 	if err := h.service.UpdateProduct(barcode, &product); err != nil {
-		fmt.Printf("[ERROR] UpdateProduct failed: %v\n", err)
+		fmt.Printf("[ERROR] UpdateProduct failed for barcode %s: %v\n", barcode, err)
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "not found") {
 			SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
 			return
 		}
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar producto", err)
+		// TEMPORAL: Devolver error REAL al frontend para diagnóstico
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":   "UPDATE_FAILED",
+			"message": err.Error(),
+			"detail":  fmt.Sprintf("Barcode: %s | Error: %v", barcode, err),
+		})
 		return
 	}
 
 	// Auditoría de Cambio de Precio (CRÍTICO)
 	if existing != nil && existing.SalePrice != product.SalePrice {
-		dni, _ := c.Get("dni")
-		name, _ := c.Get("userName")
-		h.auditService.Log(dni.(string), name.(string), "PRICE_CHANGE", "INVENTORY", 
+		dniVal, _ := c.Get("dni")
+		nameVal, _ := c.Get("userName")
+		dniStr, _ := dniVal.(string)
+		nameStr, _ := nameVal.(string)
+
+		if dniStr == "" {
+			dniStr = "SISTEMA"
+		}
+		if nameStr == "" {
+			nameStr = "SISTEMA"
+		}
+
+		h.auditService.Log(dniStr, nameStr, "PRICE_CHANGE", "INVENTORY",
 			fmt.Sprintf("Cambio precio %s: %f -> %f", barcode, existing.SalePrice, product.SalePrice),
 			fmt.Sprintf("Se modificó el precio de venta de %s de $%s a $%s", existing.ProductName, fmt.Sprintf("%.2f", existing.SalePrice), fmt.Sprintf("%.2f", product.SalePrice)),
 			fmt.Sprintf(`{"before": {"price": %f}, "after": {"price": %f}}`, existing.SalePrice, product.SalePrice),
