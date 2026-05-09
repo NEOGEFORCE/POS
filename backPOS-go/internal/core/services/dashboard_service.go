@@ -321,6 +321,7 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	var shiftExpensesCount int64
 	var shiftExpensesAmount float64
 	var todayExpenses float64
+	var todayReturns, globalReturns float64
 	var globalSalesByMethod, globalCollectedByMethod, globalPaidByMethod map[string]float64
 	var dayExpensesRaw []models.Expense
 	var dayPaymentsRaw []models.CreditPayment
@@ -532,6 +533,18 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		var err error
 		todayExpenses, err = s.expenseRepo.GetPaidAmountByRange(shiftStartStr, nowStr)
 		if err != nil { log.Printf("❌ [Dashboard] Error TodayExpenses (Shift): %v", err) }
+		return nil
+	})
+	g.Go(func() error {
+		var err error
+		todayReturns, err = s.returnRepo.GetTotalReturnedByRange(shiftStartStr, nowStr)
+		if err != nil { log.Printf("❌ [Dashboard] Error TodayReturns (Shift): %v", err) }
+		return nil
+	})
+	g.Go(func() error {
+		var err error
+		globalReturns, err = s.returnRepo.GetTotalReturnedByRange("", "")
+		if err != nil { log.Printf("❌ [Dashboard] Error GlobalReturns: %v", err) }
 		return nil
 	})
 	var shiftFundExpenses float64
@@ -747,7 +760,7 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		MissingItems:          missingItems,
 		SavingsOpportunities:  savingsOpportunities,
 		RealCashFlow: CashFlowSummary{
-			Cash:      globalSalesByMethod["EFECTIVO"] + globalCollectedByMethod["EFECTIVO"] - globalPaidByMethod["EFECTIVO"],
+			Cash:      globalSalesByMethod["EFECTIVO"] + globalCollectedByMethod["EFECTIVO"] - globalPaidByMethod["EFECTIVO"] - globalReturns,
 			Nequi:     globalSalesByMethod["NEQUI"] + globalCollectedByMethod["NEQUI"] - globalPaidByMethod["NEQUI"],
 			Daviplata: globalSalesByMethod["DAVIPLATA"] + globalCollectedByMethod["DAVIPLATA"] - globalPaidByMethod["DAVIPLATA"],
 		},
@@ -761,7 +774,7 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 			Count:  int(shiftExpensesCount),
 		},
 		TodayCashFlow: CashFlowSummary{
-			Cash:      normalizedSales["EFECTIVO"] + dayCollectedByMethod["EFECTIVO"] - dayExpensesByMethod["EFECTIVO"],
+			Cash:      normalizedSales["EFECTIVO"] + dayCollectedByMethod["EFECTIVO"] - dayExpensesByMethod["EFECTIVO"] - todayReturns,
 			Nequi:     normalizedSales["NEQUI"] + dayCollectedByMethod["NEQUI"] - dayExpensesByMethod["NEQUI"],
 			Daviplata: normalizedSales["DAVIPLATA"] + dayCollectedByMethod["DAVIPLATA"] - dayExpensesByMethod["DAVIPLATA"],
 		},
@@ -965,27 +978,40 @@ type CashierClosure struct {
 
 func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	activeShift, _ := s.shiftRepo.GetActive()
-	lastClosure, _ := s.closureRepo.GetLast()
+	
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	nowLocal := time.Now().In(loc)
+	
 	var startDate time.Time
+	var lastClosure *models.CashierClosure
 
-	if activeShift != nil {
+	// 1. SIEMPRE buscar el último cierre como base de tiempo
+	lastClosure, _ = s.closureRepo.GetLast()
+	
+	if lastClosure != nil {
+		// La continuidad es sagrada: empezamos donde terminó el anterior
+		startDate = lastClosure.EndDate
+	} else if activeShift != nil {
+		// Si no hay cierres pero hay un turno abierto
 		startDate = activeShift.StartTime
 	} else {
-		startDate = time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 0, 0, 0, 0, time.UTC)
-		if lastClosure != nil {
-			startDate = lastClosure.EndDate
-		}
+		// Fallback: 24 horas atrás
+		startDate = nowLocal.Add(-24 * time.Hour)
 	}
 
+	// 2. Determinar el Saldo Inicial
 	openingCash := 0.0
 	if activeShift != nil {
+		// Si el cajero abrió turno manualmente, respetamos el fondo que declaró
 		openingCash = activeShift.OpeningCash
 	} else if lastClosure != nil {
+		// Si no hay turno abierto, asumimos que el fondo es lo que quedó en el último cierre
 		openingCash = lastClosure.TotalCashReal
 	}
 
+	// 3. Preparar rangos para la base de datos (Usamos el timezone local de la BD)
 	startStr := startDate.Format("2006-01-02 15:04:05")
-	endStr := time.Now().AddDate(0, 0, 1).Format("2006-01-02 15:04:05")
+	endStr := time.Now().In(loc).Format("2006-01-02 15:04:05")
 
 	g, _ := errgroup.WithContext(context.Background())
 
@@ -1020,7 +1046,8 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	}
 
 	var closure CashierClosure
-	closure.Date = time.Now()
+	loc = time.FixedZone("America/Bogota", -5*60*60)
+	closure.Date = time.Now().In(loc)
 	closure.StartDate = startDate
 	closure.EndDate = time.Now()
 	closure.OpeningCash = openingCash
@@ -1030,7 +1057,7 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	creditsIssuedMap := make(map[string]models.Sale)
 	for _, sale := range sales {
 		status := strings.ToUpper(sale.Status)
-		if (status == "PAID" || status == "CREDIT") && !sale.SaleDate.Before(startDate) {
+		if (status == "PAID" || status == "CREDIT") {
 			closure.SalesCount++
 			netCashInSale := sale.CashAmount - sale.Change
 			if netCashInSale < 0 { netCashInSale = 0 }
@@ -1111,35 +1138,36 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	}
 
 	for _, ret := range returns {
-		if !ret.Date.Before(startDate) {
-			closure.TotalReturns += ret.TotalReturned
-			for _, detail := range ret.Details {
-				closure.ReturnsCount += detail.Quantity
-			}
+		closure.TotalReturns += ret.TotalReturned
+		for _, detail := range ret.Details {
+			closure.ReturnsCount += detail.Quantity
 		}
 	}
 
 	for _, expense := range expenses {
-		if !expense.Date.Before(startDate) {
-			if strings.ToUpper(expense.Status) != "PENDING" {
-				closure.TotalExpenses += (expense.Amount + expense.TaxAmount)
-			}
-			closure.Expenses = append(closure.Expenses, expense)
+		if strings.ToUpper(expense.Status) != "PENDING" {
+			closure.TotalExpenses += (expense.Amount + expense.TaxAmount)
 		}
+		closure.Expenses = append(closure.Expenses, expense)
 	}
 
 	closure.NetBalance = (closure.TotalSales - closure.TotalCreditIssued) + closure.TotalCreditCollected - closure.TotalReturns - closure.TotalExpenses
 	
-	// Saldo esperado en caja física = OpeningCash + Ingresos en efectivo - Egresos en efectivo
-	// Nota: closure.TotalCash ya incluye ventas y recaudos en efectivo.
-	// closure.TotalExpenses aquí suma TODO, pero para el arqueo físico solo restamos los pagados por EFECTIVO
 	var cashExpenses float64
 	for _, e := range expenses {
 		if strings.ToUpper(e.PaymentSource) == "EFECTIVO" && strings.ToUpper(e.Status) != "PENDING" {
 			cashExpenses += (e.Amount + e.TaxAmount)
 		}
 	}
-	closure.ExpectedCash = closure.OpeningCash + closure.TotalCash - cashExpenses
+
+	var cashReturns float64
+	for _, ret := range returns {
+		if strings.ToUpper(ret.ReturnType) == "REFUND" {
+			cashReturns += ret.TotalReturned
+		}
+	}
+
+	closure.ExpectedCash = closure.OpeningCash + closure.TotalCash - cashExpenses - cashReturns
 
 	return &closure, nil
 }
@@ -1185,6 +1213,26 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 
 func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error) {
 	return s.closureRepo.GetAll()
+}
+
+func (s *DashboardService) DeleteClosure(id uint) error {
+	// Validar que el cierre existe
+	_, err := s.closureRepo.GetByID(id)
+	if err != nil {
+		return fmt.Errorf("cierre con ID %d no encontrado", id)
+	}
+
+	// Eliminar permanentemente
+	err = s.closureRepo.Delete(id)
+	if err != nil {
+		return fmt.Errorf("error al eliminar cierre ID %d: %v", id, err)
+	}
+
+	// Invalidar caché del dashboard para que los totales se recalculen
+	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+
+	log.Printf("🗑️ [DeleteClosure] Cierre ID #%d eliminado permanentemente del sistema", id)
+	return nil
 }
 
 func (s *DashboardService) GetRankingReport(from, to string) ([]ports.ProductRankingItem, error) {

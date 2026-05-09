@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,7 +197,11 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		title = "⏳ *REPORTE DE AVANCE (PARCIAL)*"
 	}
 
-	expectedCash := closure.TotalCash - closure.TotalExpenses
+	expectedCash := closure.ExpectedCash
+	if expectedCash == 0 {
+		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses
+	}
+
 	
 	statusIcon := "✅"
 	statusText := "BALANCE PERFECTO"
@@ -348,6 +353,41 @@ func (h *DashboardHandler) GetClosuresHistory(c *gin.Context) {
 	c.JSON(http.StatusOK, data)
 }
 
+func (h *DashboardHandler) DeleteClosure(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de cierre inválido", err)
+		return
+	}
+
+	err = h.service.DeleteClosure(uint(id))
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar cierre de caja", err)
+		return
+	}
+
+	// Auditoría Forense: Eliminación de cierre es SIEMPRE crítica
+	dni, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	dniStr := "ADMIN"
+	if dni != nil { dniStr = dni.(string) }
+	nameStr := "ADMINISTRADOR"
+	if name != nil { nameStr = name.(string) }
+
+	details := fmt.Sprintf("Cierre de caja ID #%d ELIMINADO permanentemente por %s", id, nameStr)
+	human := fmt.Sprintf("El administrador %s eliminó el cierre de caja #%d del sistema. Este registro fue borrado permanentemente.", nameStr, id)
+	changes := fmt.Sprintf(`{"deletedClosureId": %d, "deletedBy": "%s"}`, id, nameStr)
+
+	h.auditService.Log(dniStr, nameStr, "CLOSURE_DELETE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), true)
+
+	log.Printf("🗑️ [DeleteClosure] Admin %s (%s) eliminó cierre ID #%d", nameStr, dniStr, id)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Cierre #%d eliminado correctamente", id),
+	})
+}
+
 func (h *DashboardHandler) GetDetailedReport(c *gin.Context) {
 	employeeDni := c.Query("employeeDni")
 	data, err := h.service.GetDetailedShiftReport(employeeDni)
@@ -429,7 +469,11 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 	pdf.Ln(8)
 
 	// --- BLOQUES DE RESUMEN (AUDIT BOXES) ---
-	expectedCash := closure.TotalCash - closure.TotalExpenses
+	expectedCash := closure.ExpectedCash
+	if expectedCash == 0 {
+		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses
+	}
+
 	boxY := pdf.GetY()
 	
 	// Caja Esperada
