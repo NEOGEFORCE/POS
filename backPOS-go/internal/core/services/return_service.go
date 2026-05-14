@@ -8,6 +8,7 @@ import (
 	"math"
 	"time"
 	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/sse"
 )
 
 type ReturnService struct {
@@ -15,11 +16,10 @@ type ReturnService struct {
 	productRepo  ports.ProductRepository
 	saleRepo     ports.SaleRepository
 	movementRepo ports.StockMovementRepository
-	sseService   *SSEService
 }
 
-func NewReturnService(rr ports.ReturnRepository, pr ports.ProductRepository, sr ports.SaleRepository, mr ports.StockMovementRepository, sse *SSEService) *ReturnService {
-	return &ReturnService{returnRepo: rr, productRepo: pr, saleRepo: sr, movementRepo: mr, sseService: sse}
+func NewReturnService(rr ports.ReturnRepository, pr ports.ProductRepository, sr ports.SaleRepository, mr ports.StockMovementRepository) *ReturnService {
+	return &ReturnService{returnRepo: rr, productRepo: pr, saleRepo: sr, movementRepo: mr}
 }
 
 func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, employeeName string) error {
@@ -28,7 +28,8 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 		return errors.New("venta no encontrada")
 	}
 
-	// 2. Procesar detalles y actualizar stock
+	// 2. Procesar detalles y calcular ajustes de stock
+	stockAdjustments := make(map[string]float64)
 	for _, detail := range ret.Details {
 		// Preload product with BaseProduct to handle Pack logic
 		product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "BaseProduct")
@@ -51,29 +52,21 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 
 		// Lógica de Packs
 		if product.IsPack && product.BaseProduct != nil && product.PackMultiplier > 0 {
-			baseProduct := product.BaseProduct
+			targetBarcode := *product.BaseProductBarcode
 			baseAdjustQty := adjustQty * float64(product.PackMultiplier)
 			
-			// Validar stock si es salida
-			if detail.IsExchange && baseProduct.Quantity < -baseAdjustQty && !product.IsWeighted {
+			// Validar stock si es salida (aproximado, la DB lo validará mejor si ponemos constraints)
+			if detail.IsExchange && product.BaseProduct.Quantity < -baseAdjustQty && !product.IsWeighted {
 				return errors.New("insuficiente stock base para cambio: " + product.ProductName)
 			}
 
-			baseProduct.Quantity += baseAdjustQty
-			if baseProduct.Quantity < 0 {
-				baseProduct.Quantity = 0
-			}
-			_ = s.productRepo.UpdateQuantity(baseProduct.Barcode, baseProduct.Quantity)
+			stockAdjustments[targetBarcode] -= baseAdjustQty
 			
-			// Sincronizar el stock del pack
-			product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
-			_ = s.productRepo.UpdateQuantity(product.Barcode, product.Quantity)
-
 			// Log en el base
 			baseMovement := &models.StockMovement{
 				Date:         time.Now(),
-				Barcode:      baseProduct.Barcode,
-				Quantity:     baseAdjustQty,
+				Barcode:      targetBarcode,
+				Quantity:     math.Abs(baseAdjustQty),
 				Type:         movementType,
 				Reason:       "PACK_" + reason,
 				ReferenceID:  fmt.Sprintf("RET-%d-%s", ret.SaleID, time.Now().Format("20060102")),
@@ -86,11 +79,7 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 			if detail.IsExchange && product.Quantity < detail.Quantity && !product.IsWeighted {
 				return errors.New("insuficiente stock para cambio: " + product.ProductName)
 			}
-			product.Quantity += adjustQty
-			if product.Quantity < 0 {
-				product.Quantity = 0
-			}
-			_ = s.productRepo.UpdateQuantity(product.Barcode, product.Quantity)
+			stockAdjustments[detail.Barcode] -= adjustQty
 		}
 
 		// Log the movement for Kárdex (del producto original)
@@ -107,15 +96,19 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 		_ = s.movementRepo.Save(movement)
 	}
 
+	if len(stockAdjustments) > 0 {
+		if err := s.productRepo.BatchAdjustQuantities(stockAdjustments); err != nil {
+			fmt.Printf("ERROR ACTUALIZANDO STOCK EN DEVOLUCIÓN: %v\n", err)
+		}
+	}
+
 	// 3. Guardar devolución
 	if err := s.returnRepo.Create(ret); err != nil {
 		return err
 	}
 
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
-	if s.sseService != nil {
-		s.sseService.BroadcastDashboardUpdate()
-	}
+	sse.GetSSEService().BroadcastDashboardUpdate()
 
 	return nil
 }

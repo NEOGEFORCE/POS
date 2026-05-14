@@ -8,6 +8,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/cache"
+	"strings"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -18,6 +19,7 @@ func (r *PostgresProductRepository) UpdateQuantity(barcode string, newQuantity f
 	err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQuantity).Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
+		r.invalidateDashboardCache()
 	}
 	return err
 }
@@ -43,8 +45,56 @@ func (r *PostgresProductRepository) BatchUpdateQuantities(updates map[string]flo
 	err := tx.Commit().Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
+		r.invalidateDashboardCache()
 	}
 	return err
+}
+
+// BatchAdjustQuantities realiza ajustes relativos de stock de forma atómica (quantity = quantity + delta)
+func (r *PostgresProductRepository) BatchAdjustQuantities(adjustments map[string]float64) error {
+	return r.BatchAdjustQuantitiesWithTx(r.db, adjustments)
+}
+
+func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, adjustments map[string]float64) error {
+	if len(adjustments) == 0 {
+		return nil
+	}
+
+	gormDB, ok := tx.(*gorm.DB)
+	if !ok {
+		gormDB = r.db.Begin()
+		if gormDB.Error != nil {
+			return gormDB.Error
+		}
+		defer func() {
+			if r := recover(); r != nil {
+				gormDB.Rollback()
+			}
+		}()
+	}
+
+	for barcode, delta := range adjustments {
+		if err := gormDB.Model(&models.Product{}).Where("barcode = ?", barcode).
+			Update("quantity", gorm.Expr("quantity - ?", delta)).Error; err != nil {
+			if !ok {
+				gormDB.Rollback()
+			}
+			return err
+		}
+	}
+
+	if !ok {
+		err := gormDB.Commit().Error
+		if err == nil {
+			cache.InvalidateCache(cache.CacheKeyProducts)
+			r.invalidateDashboardCache()
+		}
+		return err
+	}
+
+	// Si es parte de una transacción externa, no invalidamos caché aquí para no hacerlo N veces
+	// El llamador debe encargarse o podemos hacerlo al final
+	return nil
 }
 
 // SyncSuppliers sincroniza la lista de proveedores autorizados para un producto
@@ -112,17 +162,15 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 
 			totalEntryCost := entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount
-
+			
 			if totalEntryCost > 0 {
-				if currentStock+entry.AddedQuantity > 0 {
-					product.PurchasePrice = ((currentStock * product.PurchasePrice) + (entry.AddedQuantity * totalEntryCost)) / (currentStock + entry.AddedQuantity)
-				} else {
-					product.PurchasePrice = totalEntryCost
-				}
+				// MODO PLAZA/DIRECTO: Si se especifica un costo nuevo, este manda sobre el promedio
+				// para productos de alta volatilidad de precio.
+				product.PurchasePrice = totalEntryCost
 
-				product.Iva = entry.Iva
-				product.Icui = entry.Icui
-				product.Ibua = entry.Ibua
+				product.Iva = entry.IvaPct
+				product.Icui = entry.IcuiPct
+				product.Ibua = entry.IbuaPct
 
 				if entry.SupplierID != nil {
 					ps := models.ProductSupplier{
@@ -140,8 +188,17 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 
 			// 3. Actualización de Precios de Venta (PROTEGIDA)
+			// 3. Actualización de Precios de Venta (CON REDONDEO POS)
 			if entry.NewSalePrice > 0 {
-				product.SalePrice = entry.NewSalePrice
+				// Aplicar la misma lógica de redondeo que en el update individual
+				base := float64(int64(entry.NewSalePrice) / 100 * 100)
+				remainder := float64(int64(entry.NewSalePrice) % 100)
+				if remainder >= 25 {
+					product.SalePrice = base + 100
+				} else {
+					product.SalePrice = base
+				}
+
 				if product.PurchasePrice > 0 {
 					product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 				}
@@ -194,14 +251,20 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 			}
 			
+			status := "PAID"
+			if paymentSource == "PRESTAMO" || paymentSource == "PREST." {
+				status = "PENDING"
+			}
+			
 			expense := models.Expense{
 				Description:   description,
 				Amount:        totalAmount,
 				Date:          time.Now(),
 				PaymentSource: paymentSource,
+				Status:        status,
 				Category:      "Proveedores",
 				SupplierID:    mainSupplierID,
-				CreatedByDNI:  employeeDNI,
+				CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
 			}
 			if err := tx.Create(&expense).Error; err != nil {
 				return fmt.Errorf("error creando egreso: %w", err)
@@ -220,6 +283,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		cache.InvalidateCache(cache.CacheKeyProductCount + "_active")
+		r.invalidateDashboardCache()
 	}
 	return err
 }
