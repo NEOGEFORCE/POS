@@ -24,7 +24,10 @@ func (h *DashboardReportHandler) GetRankingReport(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	data, err := h.service.GetRankingReport(from, to)
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetRankingReport(fromDate, toDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de ranking", err)
 		return
@@ -42,7 +45,10 @@ func (h *DashboardReportHandler) GetCategoryReport(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	data, err := h.service.GetCategoryReport(from, to)
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetCategoryReport(fromDate, toDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte por categoría", err)
 		return
@@ -60,7 +66,10 @@ func (h *DashboardReportHandler) GetVIPClientsReport(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	data, err := h.service.GetVIPClientsReport(from, to)
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetVIPClientsReport(fromDate, toDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de clientes VIP", err)
 		return
@@ -78,7 +87,10 @@ func (h *DashboardReportHandler) GetVoidsReport(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	data, err := h.service.GetVoidsReport(from, to)
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetVoidsReport(fromDate, toDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de anulaciones", err)
 		return
@@ -96,7 +108,10 @@ func (h *DashboardReportHandler) GetPnLReport(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	data, err := h.service.GetPnLReport(from, to)
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetPnLReport(fromDate, toDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de P&L", err)
 		return
@@ -114,7 +129,10 @@ func (h *DashboardReportHandler) GetInventoryMovements(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	data, err := h.service.GetInventoryMovementsReport(from, to)
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetInventoryMovementsReport(fromDate, toDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de movimientos de inventario", err)
 		return

@@ -10,8 +10,8 @@ import { formatCOP, formatInputCOP, parseCOP, applyRounding } from "@/lib/utils"
 
 interface ReceptionRowProps {
     item: ReceiveItem;
-    onUpdate: (barcode: string, updates: Partial<ReceiveItem>) => void;
-    onDelete: (barcode: string) => void;
+    onUpdate: (lineId: string, updates: Partial<ReceiveItem>) => void;
+    onDelete: (lineId: string) => void;
 }
 
 const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
@@ -70,7 +70,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         setLocalCost(formatCOP(costWithDiscount));
         setLocalMargin(String(Math.round(newMargin)));
         
-        onUpdate(item.barcode, {
+        onUpdate(item.lineId, {
             newPurchasePrice: costBaseSinDiscount,
             marginPercentage: newMargin
         });
@@ -91,7 +91,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
         
         setLocalMargin(String(Math.round(newMargin)));
-        onUpdate(item.barcode, {
+        onUpdate(item.lineId, {
             newPurchasePrice: costBaseSinDiscount,
             marginPercentage: newMargin
         });
@@ -107,7 +107,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const totalCost = costWithDiscount * taxMultiplier;
         const margin = totalCost > 0 ? ((sale / totalCost) - 1) * 100 : item.marginPercentage;
         setLocalMargin(String(Math.round(margin)));
-        onUpdate(item.barcode, { 
+        onUpdate(item.lineId, { 
             newSalePrice: sale, 
             marginPercentage: margin 
         });
@@ -132,7 +132,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
         
         setLocalMargin(String(Math.round(newMargin)));
-        onUpdate(item.barcode, { 
+        onUpdate(item.lineId, { 
             [type]: value,
             marginPercentage: newMargin
         });
@@ -143,7 +143,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
         const newSale = applyRounding(calculateFinalPrice(item.newPurchasePrice, Number(item.discount || 0), Number(item.iva), Number(item.icui), Number(item.ibua), value));
         setLocalSalePrice(formatCOP(newSale));
-        onUpdate(item.barcode, { 
+        onUpdate(item.lineId, { 
             marginPercentage: value,
             newSalePrice: newSale
         });
@@ -164,7 +164,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
         
         setLocalMargin(String(Math.round(newMargin)));
-        onUpdate(item.barcode, { 
+        onUpdate(item.lineId, { 
             discount: value,
             marginPercentage: newMargin
         });
@@ -205,7 +205,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         ].map(btn => (
                             <button
                                 key={btn.id}
-                                onClick={() => onUpdate(item.barcode, { entryType: btn.id as any })}
+                                onClick={() => onUpdate(item.lineId, { entryType: btn.id as any })}
                                 className={`flex items-center justify-center w-7 h-6 rounded-md transition-all ${
                                     item.entryType === btn.id 
                                     ? `bg-${btn.color === 'emerald' ? 'emerald' : btn.color === 'pink' ? 'pink' : 'rose'}-500 text-white shadow-sm` 
@@ -221,7 +221,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         isIconOnly 
                         variant="flat" 
                         size="sm" 
-                        onClick={() => onDelete(item.barcode)} 
+                        onClick={() => onDelete(item.lineId)} 
                         className="h-7 w-7 min-w-7 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/10 shadow-sm"
                     >
                         <Trash2 size={13} />
@@ -240,7 +240,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                             className="bg-transparent w-full text-center text-[9px] font-black text-gray-900 dark:text-white border-none outline-none focus:ring-0 p-0" 
                             value={item.addedQuantity === 0 ? '' : item.addedQuantity}
                             onFocus={handleFocus}
-                            onChange={(e) => onUpdate(item.barcode, { addedQuantity: Math.max(0, parseFloat(e.target.value) || 0) })} 
+                            onChange={(e) => onUpdate(item.lineId, { addedQuantity: Math.max(0, parseFloat(e.target.value) || 0) })} 
                         />
                     </div>
                 </div>

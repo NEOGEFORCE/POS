@@ -10,8 +10,9 @@ import {
 import dynamic from 'next/dynamic';
 import { useToast } from '@/hooks/use-toast';
 import { Sale } from '@/lib/definitions';
-import { useApiWithPagination } from '@/hooks/use-api';
+import { useApiWithPagination, useApi } from '@/hooks/use-api';
 import Cookies from 'js-cookie';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 // COMPONENTES MODULARIADOS
 const SalesKPIs = dynamic(() => import('./components/SalesKPIs'), { ssr: false });
@@ -21,7 +22,7 @@ const ClientSelectorModal = dynamic(() => import('./components/ClientSelectorMod
 const SalesTable = dynamic(() => import('./components/SalesTable'), { ssr: false });
 const SaleDeleteModal = dynamic(() => import('./components/SaleDeleteModal'), { ssr: false });
 
-import { useApi } from '@/hooks/use-api';
+
 import { Customer } from '@/lib/definitions';
 
 export default function SalesHistoryPage() {
@@ -64,6 +65,16 @@ export default function SalesHistoryPage() {
         pageSize,
         { keepPreviousData: true }
     );
+
+    // SINCRONIZACIÓN ZERO-F5
+    useEffect(() => {
+        const cleanup = setupSyncListener((event) => {
+            if (event === 'SALE_MADE' || event === 'DASHBOARD_UPDATE') {
+                mutate();
+            }
+        });
+        return cleanup;
+    }, [mutate]);
 
     const sales = data?.items || [];
     const totalItems = data?.total || 0;
@@ -174,7 +185,12 @@ export default function SalesHistoryPage() {
                 isOpen={isDeleteOpen}
                 onOpenChange={setIsDeleteOpen}
                 sale={selectedSale}
-                onSuccess={() => { mutate(); setIsDeleteOpen(false); }}
+                onSuccess={() => { 
+                    mutate(); 
+                    setIsDeleteOpen(false); 
+                    broadcastRevalidate('SALE_MADE');
+                    broadcastRevalidate('DASHBOARD_UPDATE');
+                }}
             />
             <ClientSelectorModal
                 isOpen={isClientDialogOpen}

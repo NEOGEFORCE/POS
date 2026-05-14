@@ -15,6 +15,56 @@ func NewClientService(repo ports.ClientRepository, cr ports.CreditPaymentReposit
 	return &ClientService{repo: repo, creditRepo: cr}
 }
 
+type ClientStatement struct {
+	Client   *models.Client          `json:"client"`
+	Pending  []models.Sale           `json:"pending"`
+	Payments []models.CreditPayment `json:"payments"`
+}
+
+func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleRepository) (*ClientStatement, error) {
+	client, err := s.repo.GetByDNI(dni)
+	if err != nil {
+		return nil, err
+	}
+
+	pending, err := saleRepo.GetPendingByClient(dni)
+	if err != nil {
+		pending = []models.Sale{}
+	}
+
+	// LÓGICA DE CICLO: Si no hay deudas, el estado de cuenta está limpio
+	if len(pending) == 0 {
+		return &ClientStatement{
+			Client:   client,
+			Pending:  []models.Sale{},
+			Payments: []models.CreditPayment{},
+		}, nil
+	}
+
+	// Encontrar la fecha de la venta pendiente más antigua para definir el inicio del ciclo
+	// Como ahora el repo devuelve en ASC, la más antigua es la primera [0]
+	oldestDate := pending[0].SaleDate
+
+	// Traer todos los abonos realizados desde esa fecha
+	allPayments, err := s.creditRepo.GetByClient(dni)
+	if err != nil {
+		allPayments = []models.CreditPayment{}
+	}
+
+	var cyclePayments []models.CreditPayment
+	for _, p := range allPayments {
+		if p.PaymentDate.After(oldestDate) || p.PaymentDate.Equal(oldestDate) {
+			cyclePayments = append(cyclePayments, p)
+		}
+	}
+
+	return &ClientStatement{
+		Client:   client,
+		Pending:  pending,
+		Payments: cyclePayments,
+	}, nil
+}
+
 func (s *ClientService) PayCredit(payment *models.CreditPayment) (*models.Client, error) {
 	client, err := s.repo.GetByDNI(payment.ClientDNI)
 	if err != nil {

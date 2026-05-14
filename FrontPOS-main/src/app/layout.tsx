@@ -1,12 +1,14 @@
 import type { Metadata, Viewport } from 'next';
 import { AuthProvider } from '@/lib/auth';
-import { Toaster } from '@/components/ui/toaster';
+import { Toaster } from 'sileo';
 import { Lato, Raleway } from 'next/font/google';
 
 // IMPORTANTE: Importamos el archivo puente que acabamos de crear
 import { Providers } from './providers';
 import './globals.css';
 import SWRegister from './sw-register';
+import { GlobalSyncProvider } from "@/components/shared/GlobalSyncProvider";
+import { NetworkMonitor } from "@/components/shared/NetworkMonitor";
 
 const lato = Lato({
   subsets: ['latin'],
@@ -46,12 +48,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es" className={`${lato.variable} ${raleway.variable}`} suppressHydrationWarning>
-      <body className="font-body antialiased min-h-screen bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white transition-colors duration-300">
+      <body suppressHydrationWarning className="font-body antialiased min-h-screen bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white transition-colors duration-300">
 
         {/* Envolvemos toda la app en nuestro Provider de Cliente */}
         <Providers>
           <SWRegister />
           <AuthProvider>
+            <GlobalSyncProvider />
+            <NetworkMonitor />
             {children}
             <Toaster />
           </AuthProvider>

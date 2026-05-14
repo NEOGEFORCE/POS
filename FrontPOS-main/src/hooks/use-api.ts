@@ -1,5 +1,6 @@
 import useSWR, { SWRConfiguration } from 'swr';
 import Cookies from 'js-cookie';
+import { extractApiError } from '@/lib/api-error';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
@@ -10,6 +11,7 @@ const fetcher = async (url: string) => {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
     },
+    cache: 'no-store',
   });
 
   if (res.status === 401) {
@@ -21,7 +23,8 @@ const fetcher = async (url: string) => {
   }
 
   if (!res.ok) {
-    const error = new Error('Error al cargar datos');
+    const errorMsg = await extractApiError(res, 'Error al cargar datos');
+    const error = new Error(errorMsg);
     (error as any).status = res.status;
     throw error;
   }
@@ -37,9 +40,10 @@ export function useApi<T = any>(
     endpoint,
     fetcher,
     {
-      revalidateOnFocus: false,
+      revalidateOnFocus: true,
+      revalidateOnMount: true,
       revalidateOnReconnect: true,
-      dedupingInterval: 30000,
+      dedupingInterval: 0,
       ...options,
     }
   );
@@ -67,9 +71,10 @@ export function useApiWithPagination<T = any>(
     key,
     fetcher,
     {
-      revalidateOnFocus: false,
+      revalidateOnFocus: true,
+      revalidateOnMount: true,
       revalidateOnReconnect: true,
-      dedupingInterval: 30000,
+      dedupingInterval: 0,
       ...options,
     }
   );

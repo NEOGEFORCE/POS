@@ -11,6 +11,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
@@ -102,6 +103,9 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, order)
+
+	// AVISO GLOBAL: Nueva orden de compra
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 
 	// Auditoría de Pedido
 	dniEmployee, _ := c.Get("dni")
@@ -305,6 +309,9 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 		"order":   order,
 	})
 
+	// AVISO GLOBAL: Nueva preventa/pedido esperado
+	go sse.GetSSEService().BroadcastDashboardUpdate()
+
 	// Auditoría de Preventa
 	h.auditService.Log(dni, name, "CREATE_EXPECTED_ORDER", "LOGISTICS", 
 		fmt.Sprintf("Preventa registrada: %s ($%.2f)", req.SupplierName, req.TotalEstimated),
@@ -313,13 +320,23 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 }
 
 // GetExpectedOrdersToday - GET /orders/expected-today
-// Obtiene los pedidos esperados para el día actual
+// Obtiene los pedidos esperados para el día actual o una fecha específica (?date=YYYY-MM-DD)
 // BLINDAJE DEFENSIVO: Nunca retorna 500, siempre 200 OK (array vacío si hay error)
 func (h *OrderHandler) GetExpectedOrdersToday(c *gin.Context) {
-	orders, err := h.expectedOrderService.GetExpectedOrdersToday()
+	dateStr := c.Query("date")
+	
+	var orders []models.ExpectedOrder
+	var err error
+
+	if dateStr != "" {
+		orders, err = h.expectedOrderService.GetExpectedOrdersByDate(dateStr)
+	} else {
+		orders, err = h.expectedOrderService.GetExpectedOrdersToday()
+	}
+
 	if err != nil {
 		// BLINDAJE DEFENSIVO: Loggear error pero retornar 200 OK con array vacío
-		fmt.Println("🔥 ERROR CRÍTICO EN DB (expected-today):", err)
+		fmt.Printf("🔥 ERROR CRÍTICO EN DB (expected orders for %s): %v\n", dateStr, err)
 		log.Printf("[GetExpectedOrdersToday] Error detallado (pero retornando 200 OK vacío): %v", err)
 		// NUNCA retornar 500 - siempre devolver array vacío para que el frontend no colapse
 		c.JSON(http.StatusOK, []models.ExpectedOrder{})

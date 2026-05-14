@@ -21,7 +21,7 @@ import UniversalPaymentModal from '@/components/shared/UniversalPaymentModal';
 import ReturnsKPIs from './components/ReturnsKPIs';
 
 import { Suspense } from 'react';
-import { isProductWeighted } from "@/lib/utils";
+import { isProductWeighted, formatShortDateTime, formatDateTime } from "@/lib/utils";
 
 function ReturnsContent() {
     const [searchId, setSearchId] = useState('');
@@ -1049,7 +1049,7 @@ function ReturnsContent() {
                                                     <TableCell>
                                                         <div className="flex flex-col">
                                                             <span className="font-black text-[10px] dark:text-white">#{r.id}</span>
-                                                            <span className="text-[7px] font-bold text-gray-400 uppercase">{new Date(r.date || r.createdAt).toLocaleDateString('es-CO')}</span>
+                                                            <span className="text-[7px] font-bold text-gray-400 uppercase leading-none">{formatShortDateTime(r.date || r.createdAt)}</span>
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
@@ -1172,10 +1172,10 @@ function ReturnsContent() {
                                                     <TableRow key={s.id} onClick={() => loadSale(s)}>
                                                         <TableCell className="font-black text-sm text-gray-400 dark:text-zinc-500 group-hover:text-emerald-500 transition-colors">#{s.id}</TableCell>
                                                         <TableCell>
-                                                            <div className="font-bold text-sm text-gray-900 dark:text-white uppercase">{s.client?.name || 'Consumidor Final'}</div>
-                                                            <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-widest mt-1">
-                                                                {new Date(s.date).toLocaleDateString()} · {new Date(s.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                                            </div>
+                                                             <div className="font-bold text-sm text-gray-900 dark:text-white uppercase leading-none mb-1">{s.client?.name || 'Consumidor Final'}</div>
+                                                             <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-widest leading-none">
+                                                                {formatShortDateTime(s.date)}
+                                                             </div>
                                                         </TableCell>
                                                         <TableCell className="font-black text-base text-gray-900 dark:text-white tabular-nums">${s.total.toLocaleString()}</TableCell>
                                                         <TableCell>

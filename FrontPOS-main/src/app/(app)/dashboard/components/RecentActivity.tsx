@@ -2,7 +2,7 @@
 
 import { Card, CardHeader, CardBody, Chip } from "@heroui/react";
 import { Clock, ReceiptText } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatTime } from "@/lib/utils";
 import React from 'react';
 
 interface RecentSale {
@@ -92,7 +92,7 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                                         if (sale.date) {
                                             const d = new Date(sale.date);
                                             displayDate = d.toLocaleDateString();
-                                            displayTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                            displayTime = formatTime(d);
                                         }
                                     } catch (e) { }
 

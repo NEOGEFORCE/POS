@@ -1,8 +1,10 @@
-"use client" // Dashboard V5.0 - Premium SaaS Expansion
+"use client";
+
+// Dashboard V5.0 - Premium SaaS Expansion
 
 import { useState, useEffect } from "react";
 import Cookies from "js-cookie";
-import dynamic from "next/dynamic";
+import nextDynamic from "next/dynamic";
 import RankingList from "./components/RankingList";
 import LowStockPanel from "./components/LowStockPanel";
 import RecentActivity from "./components/RecentActivity";
@@ -18,19 +20,20 @@ import { useToast } from "@/hooks/use-toast"
 import { useApi } from "@/hooks/use-api"
 import { formatCurrency } from "@/lib/utils"
 import { Sparkles, RefreshCw, AlertTriangle } from "lucide-react"
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate'
 import { Button, Skeleton, Chip } from "@heroui/react"
 
 // Componentes estables que pueden seguir siendo dinámicos
-const DashboardKPIs = dynamic(() => import("./components/DashboardKPIs"), {
+const DashboardKPIs = nextDynamic(() => import("./components/DashboardKPIs"), {
     loading: () => <Skeleton className="h-[160px] w-full rounded-[2rem]" />
 });
-const DashboardCharts = dynamic(() => import("./components/DashboardCharts"), {
+const DashboardCharts = nextDynamic(() => import("./components/DashboardCharts"), {
     loading: () => <Skeleton className="h-[420px] w-full rounded-2xl" />
 });
-const ReportButtons = dynamic(() => import("./components/ReportButtons"), {
+const ReportButtons = nextDynamic(() => import("./components/ReportButtons"), {
     loading: () => <Skeleton className="h-[96px] w-full rounded-3xl" />
 });
-const DateRangeModal = dynamic(() => import("./components/DateRangeModal"));
+const DateRangeModal = nextDynamic(() => import("./components/DateRangeModal"));
 
 type StockStatus = 'CRITICAL' | 'WARNING' | 'OPTIMAL';
 
@@ -108,7 +111,17 @@ interface DashboardData {
         cash: number;
         nequi: number;
         daviplata: number;
+        bills?: number;
+        coins1000?: number;
+        coins200?: number;
+        coins100?: number;
     };
+    globalHistoricalReal: number;
+    globalHistoricalExpected: number;
+    globalHistoricalBills?: number;
+    globalHistoricalCoins1000?: number;
+    globalHistoricalCoins200?: number;
+    globalHistoricalCoins100?: number;
     pendingDebts: {
         amount: number;
         count: number;
@@ -126,8 +139,8 @@ interface DashboardData {
 
 export default function DashboardPage() {
     const { data, isLoading, error, mutate } = useApi<DashboardData>('/dashboard/overview', {
-        refreshInterval: 300000,
-        revalidateOnFocus: false
+        refreshInterval: 60000, // 1 minuto (Ahora que tenemos refresco eficiente en el backend)
+        revalidateOnFocus: true
     });
     const { toast } = useToast();
 
@@ -154,6 +167,9 @@ export default function DashboardPage() {
                 description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentSource}`,
             });
             mutate(); // Actualizar datos del dashboard
+            const { broadcastRevalidate } = await import('@/lib/revalidate');
+            broadcastRevalidate('SALE_MADE'); // Disparamos SALE_MADE para refrescar reportes y caja ya que el egreso afecta el flujo
+
         } catch (err: any) {
             toast({
                 variant: "destructive",
@@ -164,46 +180,27 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
-        const token = Cookies.get('org-pos-token');
-        if (!token) return;
-
-        // Construcción dinámica de la URL de SSE para soportar acceso por IP local
-        let apiBase = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || '';
-        
-        // Si estamos accediendo por IP (no localhost) y la API apunta a localhost, corregimos dinámicamente
-        if (typeof window !== 'undefined' && apiBase.includes('localhost')) {
-            apiBase = apiBase.replace('localhost', window.location.hostname);
-        }
-
-        let ssePath = '/sse';
-        if (!apiBase.endsWith('/api') && apiBase !== '/api') {
-            ssePath = '/api/sse';
-        }
-
-        const sseUrl = `${apiBase}${ssePath}?token=${token}`;
-        console.log("[SSE] Conectando a:", sseUrl);
-
-        const eventSource = new EventSource(sseUrl);
-
-        eventSource.addEventListener('NEW_SALE', () => {
-            mutate();
-            toast({
-                title: "VENTA EN TIEMPO REAL",
-                description: "DASHBOARD ACTUALIZADO",
-                variant: "success"
-            });
+        // Sincronización Local (Entre pestañas y GlobalSyncProvider)
+        const cleanupSync = setupSyncListener((event) => {
+            const dashboardEvents = [
+                'SALE_MADE', 
+                'EXPENSE_UPDATE', 
+                'PRODUCT_UPDATE', 
+                'CATEGORY_UPDATE', 
+                'SUPPLIER_UPDATE', 
+                'CUSTOMER_UPDATE', 
+                'CASH_REGISTER_UPDATE', 
+                'DASHBOARD_UPDATE', 
+                'CLOSURE_MADE'
+            ];
+            
+            if (dashboardEvents.includes(event)) {
+                mutate();
+            }
         });
-
-        eventSource.addEventListener('DASHBOARD_UPDATE', () => {
-            mutate();
-        });
-
-        eventSource.onerror = () => {
-            eventSource.close();
-        };
 
         return () => {
-            eventSource.close();
+            cleanupSync();
         };
     }, [mutate, toast]);
 

@@ -8,17 +8,17 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
 type ReturnHandler struct {
 	service      *services.ReturnService
 	auditService *services.AuditService
-	sseService   *services.SSEService
 }
 
-func NewReturnHandler(s *services.ReturnService, a *services.AuditService, sse *services.SSEService) *ReturnHandler {
-	return &ReturnHandler{service: s, auditService: a, sseService: sse}
+func NewReturnHandler(s *services.ReturnService, a *services.AuditService) *ReturnHandler {
+	return &ReturnHandler{service: s, auditService: a}
 }
 
 func (h *ReturnHandler) Create(c *gin.Context) {
@@ -51,7 +51,11 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 		fmt.Sprintf("Se registró una devolución para la venta #%d. Total devuelto: $%s. Motivo: %s", ret.SaleID, fmt.Sprintf("%.2f", ret.TotalReturned), ret.Reason),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go func() {
+		sse.GetSSEService().BroadcastDashboardUpdate()
+		sse.GetSSEService().BroadcastInventoryUpdate(nil)
+		sse.GetSSEService().BroadcastProductUpdate(nil)
+	}()
 }
 
 func (h *ReturnHandler) GetAll(c *gin.Context) {

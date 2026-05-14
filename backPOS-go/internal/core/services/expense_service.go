@@ -8,6 +8,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/sse"
 )
 
 type ExpenseService struct {
@@ -15,16 +16,16 @@ type ExpenseService struct {
 	supplierRepo *repositories.PostgresSupplierRepository
 	orderRepo    *repositories.PostgresPurchaseOrderRepository
 	productRepo  ports.ProductRepository
-	sseService   *SSEService
+	expected     *ExpectedOrderService
 }
 
-func NewExpenseService(repo ports.ExpenseRepository, supplierRepo *repositories.PostgresSupplierRepository, orderRepo *repositories.PostgresPurchaseOrderRepository, productRepo ports.ProductRepository, sse *SSEService) *ExpenseService {
+func NewExpenseService(repo ports.ExpenseRepository, supplierRepo *repositories.PostgresSupplierRepository, orderRepo *repositories.PostgresPurchaseOrderRepository, productRepo ports.ProductRepository, expected *ExpectedOrderService) *ExpenseService {
 	return &ExpenseService{
 		repo:         repo,
 		supplierRepo: supplierRepo,
 		orderRepo:    orderRepo,
 		productRepo:  productRepo,
-		sseService:   sse,
+		expected:     expected,
 	}
 }
 
@@ -53,10 +54,13 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 
 	err := s.repo.Save(expense)
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
-		if s.sseService != nil {
-			s.sseService.BroadcastDashboardUpdate()
+		// Automatización: Si es un pago a proveedor, marcar pedido esperado como recibido
+		if expense.SupplierID != nil {
+			_ = s.expected.MarkAsReceivedBySupplier(*expense.SupplierID)
 		}
+
+		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
 }
@@ -69,9 +73,7 @@ func (s *ExpenseService) DeleteExpense(id uint) error {
 	err := s.repo.Delete(id)
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
-		if s.sseService != nil {
-			s.sseService.BroadcastDashboardUpdate()
-		}
+		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
 }
@@ -80,9 +82,7 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 	err := s.repo.Update(id, expense)
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
-		if s.sseService != nil {
-			s.sseService.BroadcastDashboardUpdate()
-		}
+		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
 }
@@ -112,9 +112,7 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 	}
 
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
-	if s.sseService != nil {
-		s.sseService.BroadcastDashboardUpdate()
-	}
+	sse.GetSSEService().BroadcastDashboardUpdate()
 
 	return expense, nil
 }
@@ -153,6 +151,11 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 		return nil, err
 	}
 
+	// Automatización: Marcar pedido esperado como recibido
+	if expense.SupplierID != nil {
+		_ = s.expected.MarkAsReceivedBySupplier(*expense.SupplierID)
+	}
+
 	// Preparar entradas de recepción basadas en los items de la orden
 	var receiveEntries []ports.ReceiveEntry
 	for _, item := range order.OrderItems {
@@ -171,10 +174,12 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 	// Actualizar stock usando BulkReceive (que también marca la orden como recibida)
 	// BypassExpense = true porque el egreso se acaba de crear arriba manualmente
 	if err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI); err != nil {
-		// No retornamos error aquí para no bloquear el egreso
-		// El stock puede actualizarse manualmente después
-		// TODO: Loggear el error para auditoría
+		// Loggear error si falla el stock, pero el egreso ya es exitoso
 	}
+
+	// SINCRONIZACIÓN INMEDIATA
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	sse.GetSSEService().BroadcastDashboardUpdate()
 
 	return expense, nil
 }

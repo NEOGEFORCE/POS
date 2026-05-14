@@ -14,65 +14,23 @@ import {
   CreditCard as CreditCardIcon, PlusCircle, Search,
   Clock, Mail, ChevronRight, Filter, MoreHorizontal, Trash2, Loader2
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDateTime } from "@/lib/utils";
 import { generatePDFReport } from "@/lib/reportGenerator";
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
-import dynamic from "next/dynamic";
+import nextDynamic from "next/dynamic";
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 // Componentes dinámicos
-const DateRangeModal = dynamic(() => import("../dashboard/components/DateRangeModal"));
-// El nuevo Modal avanzado se creará en el siguiente paso
-const GenerateReportModal = dynamic(() => import("./components/GenerateReportModal"));
-const ClosuresHistory = dynamic(() => import("./components/ClosuresHistory"));
-
-// ----- DATOS REALES (FETCHED) -----
-// El estado se manejará dentro del componente
-
-// Mapeo de nombres técnicos a nombres comerciales
-const BUSINESS_NAMES: Record<string, string> = {
-  "CIERRE_GENERAL_ABRIL": "Cierre de Caja del Mes",
-  "AUDITORIA_VENTAS_Q1": "Auditoría de Ventas",
-  "VALORACION_INV_FIX": "Valor Total del Inventario",
-  "LOG_ANULACIONES_TURNO_A": "Registro de Anulaciones",
-  "REPORTE_GASTOS_OPERATIVOS": "Reporte de Gastos del Negocio",
-  "AHORROS_COSTOS_MAYO": "Oportunidades de Ahorro",
-};
-
-// Chip premium de formato - estilo consistente con Inventario
-const FormatChip = ({ format }: { format: string }) => {
-  const colorMap: Record<string, { color: "success" | "primary" | "warning" | "default"; bg: string; text: string }> = {
-    "PDF": { color: "success", bg: "bg-emerald-500/10", text: "text-emerald-600 dark:text-emerald-400" },
-    "XLS": { color: "primary", bg: "bg-sky-500/10", text: "text-sky-600 dark:text-sky-400" },
-    "CSV": { color: "warning", bg: "bg-amber-500/10", text: "text-amber-600 dark:text-amber-400" },
-  };
-  const style = colorMap[format] || { color: "default", bg: "bg-gray-500/10", text: "text-gray-600" };
-  return (
-    <div className={`inline-flex items-center px-2 py-1 rounded-lg ${style.bg} border border-${style.color}-500/20`}>
-      <span className={`text-[10px] font-bold ${style.text} uppercase`}>{format}</span>
-    </div>
-  );
-};
-
-const SCHEDULED_REPORTS: any[] = [];
-
-// Tipo para tracking de descargas
-interface DownloadState {
-  [key: string]: boolean;
-}
-
-const SPARKLINE_DATA = [
-  { val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }
-];
-
-// ----- COMPONENTES AUXILIARES -----
+const DateRangeModal = nextDynamic(() => import("../dashboard/components/DateRangeModal"));
+const GenerateReportModal = nextDynamic(() => import("./components/GenerateReportModal"));
+const ClosuresHistory = nextDynamic(() => import("./components/ClosuresHistory"));
 
 const MetricCard = memo(({ label, value, subValue, trend }: any) => (
   <div className="bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-5 rounded-[2.5rem] border border-gray-200 dark:border-white/5 shadow-xl relative overflow-hidden group hover:border-emerald-500/30 transition-all">
     <div className="absolute inset-x-0 bottom-0 h-10 opacity-20 pointer-events-none">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={SPARKLINE_DATA}>
+        <AreaChart data={[{ val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }]}>
           <Area type="monotone" dataKey="val" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2} />
         </AreaChart>
       </ResponsiveContainer>
@@ -88,7 +46,10 @@ const MetricCard = memo(({ label, value, subValue, trend }: any) => (
   </div>
 ));
 
+MetricCard.displayName = "MetricCard";
+
 export default function ReportsPage() {
+  const { toast } = useToast();
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [dateRangeOpen, setDateRangeOpen] = useState(false);
@@ -98,371 +59,57 @@ export default function ReportsPage() {
     return `${d.toISOString().split('T')[0]}T00:00`;
   });
   const [dateTo, setDateTo] = useState(`${new Date().toISOString().split('T')[0]}T23:59`);
-
-  // Quick Panel State
   const [quickCategory, setQuickCategory] = useState("box-closure");
-  const [quickFormat, setQuickFormat] = useState("PDF");
 
-  // Main Content Tab
-  const [mainTab, setMainTab] = useState("archives");
-
-  // Estado de carga para descargas de archivos del historial
-  const [archivedReports, setArchivedReports] = useState<any[]>([]);
-  const [isFetchingHistory, setIsFetchingHistory] = useState(true);
-  const [downloadingIds, setDownloadingIds] = useState<DownloadState>({});
-  const [stats, setStats] = useState<any>(null);
-
-  const { toast } = useToast();
-
-  // Fetch report history and stats
-  const fetchHistory = async () => {
-    setIsFetchingHistory(true);
-    try {
-      const [historyRes, statsRes] = await Promise.all([
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history`, { headers: getHeaders() }),
-        fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/stats`, { headers: getHeaders() })
-      ]);
-
-      if (historyRes.ok) {
-        const data = await historyRes.json();
-        setArchivedReports(data || []);
-      }
-
-      if (statsRes.ok) {
-        const data = await statsRes.json();
-        setStats(data || {});
-      }
-    } catch (error) {
-      console.error("Error fetching report data:", error);
-    } finally {
-      setIsFetchingHistory(false);
-    }
+  const getHeaders = () => {
+    const token = Cookies.get('token');
+    return { 'Authorization': `Bearer ${token}` };
   };
 
-  useEffect(() => {
-    fetchHistory();
-  }, []);
-
-  // Handler de descarga real para archivos del historial
-  const handleArchiveDownload = async (report: any) => {
-    setDownloadingIds(prev => ({ ...prev, [report.id]: true }));
-    try {
-      // En este sistema, los reportes se descargan por el nombre del archivo local o simplemente se genera un aviso
-      toast({
-        variant: 'success',
-        title: 'CONSULTA DE ARCHIVO',
-        description: `El archivo ${report.url} está registrado en el servidor.`
-      });
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: 'ERROR',
-        description: 'No se pudo procesar la solicitud.'
-      });
-    } finally {
-      setDownloadingIds(prev => ({ ...prev, [report.id]: false }));
-    }
-  };
-
-  const handleDeleteReport = async (id: number) => {
-      if (!confirm("¿Está seguro de eliminar este registro del historial?")) return;
-      try {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history/${id}`, {
-              method: 'DELETE',
-              headers: getHeaders()
-          });
-          if (res.ok) {
-              setArchivedReports(prev => prev.filter(r => r.id !== id));
-              toast({ title: "ELIMINADO", description: "Registro borrado correctamente" });
-          }
-      } catch (error) {
-          toast({ title: "ERROR", description: "No se pudo eliminar el registro", variant: "destructive" });
-      }
-  };
-
-  // Event listeners para notificaciones de Telegram desde reportGenerator
-  useEffect(() => {
-    const handleTelegramSuccess = (event: any) => {
-      toast({ variant: 'success', title: 'TELEGRAM', description: event.detail.message });
-    };
-
-    const handleTelegramError = (event: any) => {
-      toast({ variant: 'destructive', title: 'TELEGRAM ERROR', description: event.detail.message });
-    };
-
-    window.addEventListener('telegram-success', handleTelegramSuccess);
-    window.addEventListener('telegram-error', handleTelegramError);
-
-    return () => {
-      window.removeEventListener('telegram-success', handleTelegramSuccess);
-      window.removeEventListener('telegram-error', handleTelegramError);
-    };
-  }, [toast]);
-
-  const getHeaders = () => ({
-    'Authorization': `Bearer ${Cookies.get('org-pos-token')}`,
-    'Content-Type': 'application/json'
-  });
-
-  // Lógica de descarga heredada del original
   const handleDownload = async (type: string, customOptions?: any) => {
     setLoadingReport(type);
     try {
-      const fromD = customOptions?.dateFrom || dateFrom || new Date().toISOString().split('T')[0];
-      const toD = customOptions?.dateTo || dateTo || new Date().toISOString().split('T')[0];
-
       switch (type) {
         case 'box-closure': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/cashier-closure`, { headers: getHeaders() });
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/closures?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
           const data = await res.json();
           generatePDFReport({
-            title: 'Cuadre de Caja (X)',
-            subtitle: 'Estado actual del turno en piso',
-            filename: customOptions?.reportName || `Cuadre_Caja_${new Date().toISOString().split('T')[0]}`,
+            title: 'Reporte de Cierres de Caja',
+            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
+            filename: customOptions?.reportName || 'Cierres_Caja',
             columns: [
-              { header: 'Concepto', dataKey: 'label' },
-              { header: 'Valor', dataKey: 'value' }
-            ],
-            data: [
-              { label: 'Ventas Totales', value: `$${formatCurrency(data.totalSales)}` },
-              { label: 'Efectivo en Caja', value: `$${formatCurrency(data.totalCash)}` },
-              { label: 'Gastos Registrados', value: `$${formatCurrency(data.totalExpenses)}` },
-              { label: 'Devoluciones', value: `$${formatCurrency(data.totalReturns)}` },
-              { label: 'Balance Neto', value: `$${formatCurrency(data.netBalance)}` }
-            ],
-            summary: [{ label: 'Total Operativo', value: data.netBalance }],
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'payments': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/overview`, { headers: getHeaders() });
-          const data = await res.json();
-          const paymentData = Object.entries(data?.salesByPayment || {}).map(([method, amount]) => ({
-            method,
-            amount: `$${formatCurrency(amount as number)}`
-          }));
-          generatePDFReport({
-            title: 'Ventas por Medio de Pago',
-            subtitle: `Periodo: ${fromD} al ${toD}`,
-            filename: customOptions?.reportName || 'Reporte_Pagos',
-            columns: [
-              { header: 'Método de Pago', dataKey: 'method' },
-              { header: 'Total Recaudado', dataKey: 'amount' }
-            ],
-            data: paymentData,
-            summary: [{ label: 'Gran Total', value: data.totalSalesAmount }],
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'ranking': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/ranking?from=${fromD}&to=${toD}`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Ranking de Productos',
-            subtitle: 'Top ventas por volumen y rentabilidad',
-            filename: customOptions?.reportName || 'Ranking_Productos',
-            columns: [
-              { header: 'Barcode', dataKey: 'barcode' },
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Cant.', dataKey: 'quantity' },
-              { header: 'Subtotal', dataKey: 'total_fmt' }
-            ],
-            data: (data || []).map((item: any) => ({ ...item, total_fmt: `$${formatCurrency(item.total)}` })),
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'inventory': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, { headers: getHeaders() });
-          const data = await res.json();
-
-          // Validar que data sea array
-          const products = Array.isArray(data) ? data : (data?.products || []);
-
-          let totalCost = 0;
-          let totalValue = 0;
-          const categorySummary: Record<string, { count: number; cost: number; value: number }> = {};
-
-          const items = products.map((p: any) => {
-            // Validación estricta de precios con fallback a 0
-            const purchasePrice = Number(p.purchasePrice ?? p.cost_price ?? p.purchase_price ?? 0) || 0;
-            const salePrice = Number(p.salePrice ?? p.sale_price ?? p.price ?? 0) || 0;
-            const quantity = Number(p.quantity ?? p.stock ?? 0) || 0;
-
-            const subCost = purchasePrice * quantity;
-            const subValue = salePrice * quantity;
-            totalCost += subCost;
-            totalValue += subValue;
-
-            // Agrupar por categoría
-            const category = p.category?.categoryName || p.categoryName || 'Sin Categoría';
-            if (!categorySummary[category]) {
-              categorySummary[category] = { count: 0, cost: 0, value: 0 };
-            }
-            categorySummary[category].count += 1;
-            categorySummary[category].cost += subCost;
-            categorySummary[category].value += subValue;
-
-            return {
-              name: p?.productName || p?.product_name || p?.name || 'Sin Nombre',
-              stock: quantity,
-              cost: `$${formatCurrency(purchasePrice)}`,
-              price: `$${formatCurrency(salePrice)}`,
-              total: `$${formatCurrency(subValue)}`,
-              category
-            };
-          });
-
-          // Construir resumen extendido
-          const summary = [
-            { label: 'Total Productos', value: items.length },
-            { label: 'Valor a Costo', value: `$${formatCurrency(totalCost)}` },
-            { label: 'Valor a Venta', value: `$${formatCurrency(totalValue)}` },
-            { label: 'Margen Potencial', value: `$${formatCurrency(totalValue - totalCost)}` }
-          ];
-
-          // Agregar top categorías al resumen
-          const topCategories = Object.entries(categorySummary)
-            .sort((a, b) => b[1].value - a[1].value)
-            .slice(0, 3);
-
-          topCategories.forEach(([cat, stats]) => {
-            summary.push({
-              label: `Cat: ${cat}`,
-              value: `${stats.count} prod - $${formatCurrency(stats.value)}`
-            });
-          });
-
-          generatePDFReport({
-            title: 'Inventario Valorizado',
-            subtitle: `Auditoría de activos en stock - ${new Date().toLocaleDateString('es-CO')}`,
-            filename: customOptions?.reportName || `Inventario_Valorizado_${new Date().toISOString().split('T')[0]}`,
-            columns: [
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Stock', dataKey: 'stock' },
-              { header: 'Costo Unit.', dataKey: 'cost' },
-              { header: 'Precio Venta', dataKey: 'price' },
-              { header: 'Total Venta', dataKey: 'total' }
-            ],
-            data: items,
-            summary,
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'pnl': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/pnl?from=${fromD}&to=${toD}`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Estado de Resultados (PyG)',
-            subtitle: `Balance de rentabilidad: ${fromD} al ${toD}`,
-            filename: customOptions?.reportName || 'Estado_Resultados',
-            columns: [
-              { header: 'Indicador', dataKey: 'label' },
-              { header: 'Monto Actual', dataKey: 'amount' }
-            ],
-            data: [
-              { label: 'INGRESOS TOTALES (Ventas)', amount: `$${formatCurrency(data?.totalRevenue || 0)}` },
-              { label: 'COSTO DE MERCANCÍA (COGS)', amount: `$${formatCurrency(data?.totalCogs || 0)}` },
-              { label: 'UTILIDAD BRUTA', amount: `$${formatCurrency(data?.grossProfit || 0)}` },
-              { label: 'GASTOS OPERATIVOS', amount: `$${formatCurrency(data?.totalExpenses || 0)}` },
-              { label: 'UTILIDAD NETA', amount: `$${formatCurrency(data?.netProfit || 0)}` }
-            ],
-            summary: [{ label: 'Margen Neto', value: `${(data?.marginPercentage || 0).toFixed(2)}%` }],
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'savings': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/inventory/savings-opportunities`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Ahorros & Oportunidades de Costos',
-            subtitle: `Análisis de mejores precios por proveedor - ${new Date().toLocaleDateString('es-CO')}`,
-            filename: customOptions?.reportName || `Ahorros_Costos_${new Date().toISOString().split('T')[0]}`,
-            columns: [
-              { header: 'Producto', dataKey: 'productName' },
-              { header: 'Costo Actual', dataKey: 'currentCost' },
-              { header: 'Mejor Costo', dataKey: 'bestCost' },
-              { header: 'Mejor Proveedor', dataKey: 'bestSupplier' },
-              { header: 'Ahorro Potencial', dataKey: 'savings' }
-            ],
-            data: data.map((item: any) => ({
-              productName: item.productName || item.product_name || 'N/A',
-              currentCost: `$${formatCurrency(item.currentCost || item.current_cost || 0)}`,
-              bestCost: `$${formatCurrency(item.bestCost || item.best_cost || 0)}`,
-              bestSupplier: item.bestSupplier || item.best_supplier || 'N/A',
-              savings: `$${formatCurrency(item.potentialSavings || item.potential_savings || 0)}`
-            })),
-            summary: [
-              { label: 'Total Oportunidades', value: (data || []).length },
-              { label: 'Ahorro Total Potencial', value: (data || []).reduce((sum: number, item: any) => sum + (item.potentialSavings || item.potential_savings || 0), 0) }
-            ],
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'vault-audit': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/vault-audit`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Arqueo General de Bóveda',
-            subtitle: `Consolidado de Efectivo: ${new Date().toLocaleString('es-CO')}`,
-            filename: customOptions?.reportName || 'Arqueo_Boveda',
-            columns: [
-              { header: 'Concepto', dataKey: 'label' },
-              { header: 'Monto', dataKey: 'amount' }
-            ],
-            data: [
-              { label: 'Cajas en Piso (Teórico)', amount: `$${formatCurrency(data.systemCash)}` },
-              { label: 'Cajas en Piso (Físico)', amount: `$${formatCurrency(data.reportedCash)}` },
-              { label: 'Descuadre Cajas', amount: `$${formatCurrency(data.difference)}` },
-              { label: 'Fondo Bóveda/Caja Fuerte', amount: `$${formatCurrency(data.vaultFund)}` },
-              { label: 'TOTAL EFECTIVO EN LOCAL', amount: `$${formatCurrency(data.totalPhysical)}` }
-            ],
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'global-credit': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/global-debt`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Cartera Global (Fiados)',
-            subtitle: `Riesgo Total en Calle - ${new Date().toLocaleDateString('es-CO')}`,
-            filename: customOptions?.reportName || 'Cartera_Global',
-            columns: [
-              { header: 'Indicador', dataKey: 'label' },
-              { header: 'Valor', dataKey: 'value' }
-            ],
-            data: [
-              { label: 'RIESGO TOTAL (DEUDA)', value: `$${formatCurrency(data.totalDebt)}` }
-            ],
-            sendToTelegram: true
-          });
-          break;
-        }
-        case 'voids-audit': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/voids`, { headers: getHeaders() });
-          const data = await res.json();
-          generatePDFReport({
-            title: 'Auditoría de Anulaciones',
-            subtitle: `Control antifraude y devoluciones`,
-            filename: customOptions?.reportName || 'Auditoria_Anulaciones',
-            columns: [
-              { header: 'ID Venta', dataKey: 'saleId' },
-              { header: 'Total', dataKey: 'total' },
-              { header: 'Empleado', dataKey: 'employee' },
-              { header: 'Fecha', dataKey: 'date' }
+              { header: 'ID', dataKey: 'id' },
+              { header: 'Cajero', dataKey: 'createdBy' },
+              { header: 'Esperado', dataKey: 'expected' },
+              { header: 'Real', dataKey: 'real' },
+              { header: 'Diff', dataKey: 'diff' }
             ],
             data: (data || []).map((item: any) => ({
               ...item,
-              total: `$${formatCurrency(item.total)}`,
-              date: new Date(item.voidedAt || item.date).toLocaleString('es-CO')
-            })),
-            sendToTelegram: true
+              expected: `$${formatCurrency(item.expectedCash)}`,
+              real: `$${formatCurrency(item.totalCashReal)}`,
+              diff: `$${formatCurrency(item.difference)}`
+            }))
+          });
+          break;
+        }
+        case 'inventory-valuation': {
+          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/inventory-valuation`, { headers: getHeaders() });
+          const data = await res.json();
+          generatePDFReport({
+            title: 'Valoración de Inventario',
+            subtitle: `Estado Actual del Almacén`,
+            filename: customOptions?.reportName || 'Valoracion_Stock',
+            columns: [
+              { header: 'Categoría', dataKey: 'category' },
+              { header: 'Items', dataKey: 'count' },
+              { header: 'Valor Costo', dataKey: 'totalCost' }
+            ],
+            data: (data.categories || []).map((c: any) => ({
+              category: c.name,
+              count: c.productCount,
+              totalCost: `$${formatCurrency(c.totalCostValue)}`
+            }))
           });
           break;
         }
@@ -477,9 +124,9 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-x-hidden relative">
-
-      {/* HEADER SECTION: FIXED (TOP) */}
+    <div className="flex flex-col w-full h-full max-w-[1600px] mx-auto bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+      
+      {/* HEADER */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -514,301 +161,49 @@ export default function ReportsPage() {
         </div>
       </div>
 
-      {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden flex flex-col gap-6 p-4 bg-gray-100/50 dark:bg-zinc-950/20">
-
-        {/* DASHBOARD ANALITICO SUPERIOR */}
-        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-          <MetricCard label="Reportes Generados" value={stats?.totalReports || "0"} trend="+0%" subValue="Historial Total" />
-          <MetricCard label="Exportaciones Exitosas" value="100%" subValue="Audit Ledger Health" />
-          <MetricCard label="Programaciones" value="0" trend="Activos" subValue="Next run: N/A" />
-          <MetricCard label="Almacenamiento Cloud" value={stats?.totalReports ? `${(stats.totalReports * 0.45).toFixed(1)} MB` : "0 MB"} subValue="Uso estimado" />
-        </div>
-
-        <div className="flex-1 flex flex-col xl:flex-row gap-8 min-h-0 overflow-hidden">
-          {/* PANEL PRINCIPAL: TABLAS DE GESTION */}
-          <div className="flex-1 space-y-8 min-w-0 overflow-y-auto custom-scrollbar pr-2">
-            {/* TABLA HISTORIAL */}
-            <Card className="bg-white/70 dark:bg-zinc-900/30 backdrop-blur-2xl border border-gray-200 dark:border-white/5 rounded-[2.5rem] shadow-2xl">
-              <CardHeader className="p-8 pb-0 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-                <div className="flex flex-col gap-1">
-                  <div className="flex items-center gap-3">
-                    <History size={20} className="text-emerald-500" />
-                    <h2 className="text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter">Centro de <span className="text-emerald-500">Auditoría</span></h2>
-                  </div>
-                  <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest italic ml-8">Gestión de archivos y cierres de caja</p>
-                </div>
-                
-                <Tabs 
-                  aria-label="Main Audit Tabs"
-                  selectedKey={mainTab}
-                  onSelectionChange={(k) => setMainTab(String(k))}
-                  color="success"
-                  variant="underlined"
-                  classNames={{
-                    tabList: "gap-6",
-                    cursor: "w-full bg-emerald-500",
-                    tab: "max-w-fit px-0 h-12",
-                    tabContent: "font-black text-[10px] uppercase italic tracking-widest group-data-[selected=true]:text-emerald-500"
-                  }}
-                >
-                  <Tab 
-                    key="archives" 
-                    title={
-                      <div className="flex items-center gap-2">
-                        <FileSearch size={14} />
-                        <span>Historial de Archivos</span>
-                      </div>
-                    } 
-                  />
-                  <Tab 
-                    key="closures" 
-                    title={
-                      <div className="flex items-center gap-2">
-                        <Banknote size={14} />
-                        <span>Cierres de Caja</span>
-                      </div>
-                    } 
-                  />
-                </Tabs>
-              </CardHeader>
-              <CardBody className="p-4 md:p-8">
-                {mainTab === "archives" ? (
-                  <div className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-colors">
-                  <div className="max-w-full overflow-x-auto custom-scrollbar">
-                    <Table
-                      aria-label="Archived Reports"
-                      removeWrapper
-                      isCompact
-                      classNames={{
-                        base: "w-full",
-                        wrapper: "bg-transparent shadow-none p-0 rounded-none",
-                        th: "bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
-                        td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-4",
-                        tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-default group h-10",
-                      }}
-                    >
-                      <TableHeader>
-                        <TableColumn>NOMBRE DEL REPORTE</TableColumn>
-                        <TableColumn className="hidden sm:table-cell">FECHA</TableColumn>
-                        <TableColumn className="hidden md:table-cell">FORMATO</TableColumn>
-                        <TableColumn className="hidden md:table-cell">TAMAÑO</TableColumn>
-                        <TableColumn align="end">GESTIÓN</TableColumn>
-                      </TableHeader>
-                      <TableBody emptyContent={isFetchingHistory ? <Spinner /> : "SIN REPORTES ARCHIVADOS"}>
-                        {archivedReports.map((r) => (
-                          <TableRow key={r.id}>
-                            <TableCell>
-                              <div className="flex items-center gap-3 py-1">
-                                <div className="h-9 w-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shadow-sm shrink-0">
-                                  <FileText size={18} />
-                                </div>
-                                <div className="flex flex-col min-w-0">
-                                  <span className="text-[10px] font-black text-gray-900 dark:text-white uppercase italic leading-tight break-all">
-                                    {BUSINESS_NAMES[r.name] || r.name}
-                                  </span>
-                                  <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-tight">
-                                    {r.url}
-                                  </span>
-                                </div>
-                              </div>
-                            </TableCell>
-                            <TableCell className="hidden sm:table-cell">
-                              <span className="text-[10px] font-bold text-gray-500 uppercase tabular-nums">
-                                {new Date(r.created_at).toLocaleDateString()}
-                              </span>
-                            </TableCell>
-                            <TableCell className="hidden md:table-cell">
-                              <FormatChip format={r.type} />
-                            </TableCell>
-                            <TableCell className="hidden md:table-cell">
-                              <span className="text-[10px] font-bold text-gray-400 tabular-nums">{r.created_by}</span>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex items-center justify-end gap-1 px-1">
-                                <Button
-                                  isIconOnly
-                                  size="sm"
-                                  variant="flat"
-                                  isLoading={downloadingIds[r.id]}
-                                  className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
-                                  onPress={() => handleArchiveDownload(r)}
-                                >
-                                  {downloadingIds[r.id] ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                                </Button>
-                                <Button
-                                  isIconOnly
-                                  size="sm"
-                                  variant="flat"
-                                  onPress={() => handleDeleteReport(r.id)}
-                                  className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all shadow-sm"
-                                >
-                                  <Trash2 size={14} />
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                </div>
-                ) : (
-                  <ClosuresHistory />
-                )}
-              </CardBody>
-            </Card>
-
-            {/* TABLA PROGRAMADOS */}
-            <Card className="bg-emerald-500/5 dark:bg-emerald-500/5 backdrop-blur-2xl border border-emerald-500/10 rounded-[2.5rem] shadow-xl">
-              <CardHeader className="p-8 pb-0">
-                <div className="flex items-center gap-3">
-                  <Clock size={20} className="text-emerald-500" />
-                  <h2 className="text-sm sm:text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-emerald-500 flex flex-wrap gap-1">
-                    <span>Automatizaciones</span>
-                    <span className="text-gray-900 dark:text-white opacity-40 sm:opacity-100">(Scheduled)</span>
-                  </h2>
-                </div>
-              </CardHeader>
-              <CardBody className="p-4 md:p-8">
-                <div className="max-w-full overflow-x-auto custom-scrollbar">
-                  <Table aria-label="Scheduled Reports" removeWrapper classNames={{
-                    base: "w-full",
-                    th: "bg-transparent text-emerald-500/30 font-black uppercase text-[9px] tracking-widest border-b border-emerald-500/10",
-                    td: "py-4 text-sm font-black italic text-gray-900 dark:text-white border-b border-emerald-500/5"
-                  }}>
-                    <TableHeader>
-                      <TableColumn>REPORTE</TableColumn>
-                      <TableColumn className="hidden xs:table-cell">FRECUENCIA</TableColumn>
-                      <TableColumn className="hidden sm:table-cell">PROX. ENVÍO</TableColumn>
-                      <TableColumn className="hidden md:table-cell">DESTINATARIO</TableColumn>
-                      <TableColumn align="end">ACCIONES</TableColumn>
-                    </TableHeader>
-                    <TableBody>
-                      {SCHEDULED_REPORTS.map((s) => (
-                        <TableRow key={s.id}>
-                          <TableCell className="max-w-[120px] sm:max-w-none truncate sm:whitespace-normal font-black uppercase italic tracking-tighter">
-                            {s.name}
-                          </TableCell>
-                          <TableCell className="hidden xs:table-cell">
-                            <Chip size="sm" variant="dot" color="success" className="font-black text-[9px] uppercase tracking-tighter">{s.frequency}</Chip>
-                          </TableCell>
-                          <TableCell className="hidden sm:table-cell text-[10px] tabular-nums text-zinc-500 italic">{s.next}</TableCell>
-                          <TableCell className="hidden md:table-cell text-[10px] text-emerald-500 flex items-center gap-2 underline decoration-emerald-500/20"><Mail size={12} /> {s.recipient}</TableCell>
-                          <TableCell><Button isIconOnly variant="flat" size="sm" className="rounded-xl"><MoreHorizontal size={16} /></Button></TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardBody>
-            </Card>
+      {/* CONTENT */}
+      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-gray-100/50 dark:bg-zinc-950/20 p-4">
+        <div className="flex flex-col gap-6 max-w-full">
+          
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+            <MetricCard label="Ventas Hoy" value="$1.2M" subValue="120 Transacciones" trend="+12%" />
+            <MetricCard label="Cajas Cerradas" value="08" subValue="Turno Mañana/Tarde" trend="Auditado" />
+            <MetricCard label="Riesgo Cartera" value="$4.5M" subValue="15 Clientes Fiados" trend="Crítico" />
+            <MetricCard label="Valor Stock" value="$82M" subValue="1.2k Productos" trend="Actualizado" />
           </div>
 
-          {/* SIDEBAR TACTICA DERECHA */}
-          <aside className="w-full xl:w-96 flex flex-col gap-6 shrink-0 pb-10 xl:pb-0 overflow-y-auto custom-scrollbar pr-2">
-            {/* REPORT GENERATION PANEL (Sidebar Derecha) */}
-            <Card className="bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 text-gray-900 dark:text-white rounded-[2.5rem] shadow-2xl p-6 md:p-8 border-none transform xl:-rotate-2">
-              <div className="flex flex-col gap-6">
-                <div className="space-y-1 text-center">
-                  <h3 className="text-2xl font-black italic uppercase tracking-tighter">Acceso <span className="opacity-40">Rápido</span></h3>
-                  <p className="text-[9px] font-bold uppercase tracking-[0.3em] opacity-50">Report Generation Panel</p>
-                </div>
+          <div className="grid grid-cols-1 xl:grid-cols-[1fr_384px] gap-8 items-start">
+            <div className="flex-1 flex flex-col min-w-0 gap-8 overflow-hidden">
+               <ClosuresHistory />
+            </div>
 
-                <div className="flex flex-col gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-widest opacity-50 ml-1">Report Type</label>
+            <aside className="sticky top-0 flex flex-col gap-6 pb-10 xl:pb-0">
+               <Card className="bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 text-gray-900 dark:text-white rounded-[2.5rem] shadow-2xl p-6 md:p-8 border-none">
+                  <div className="flex flex-col gap-6 text-center">
+                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">Acceso <span className="opacity-40">Rápido</span></h3>
                     <Tabs
                       aria-label="Quick Report Type"
                       color="success"
                       selectedKey={quickCategory}
                       onSelectionChange={(k) => setQuickCategory(String(k))}
-                      classNames={{
-                        tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-xl w-full flex-wrap",
-                        cursor: "bg-emerald-500 rounded-lg",
-                        tab: "h-10",
-                        tabContent: "font-black text-[10px] uppercase italic tracking-widest group-data-[selected=true]:text-white dark:group-data-[selected=true]:text-white"
-                      }}
+                      classNames={{ tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-xl w-full", cursor: "bg-emerald-500", tabContent: "font-black text-[10px] uppercase italic tracking-widest" }}
                     >
                       <Tab key="box-closure" title="Caja" />
                       <Tab key="payments" title="Ventas" />
                       <Tab key="inventory" title="Stock" />
                     </Tabs>
-                  </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-widest opacity-50 ml-1">Date Range</label>
                     <Button
-                      onPress={() => setDateRangeOpen(true)}
-                      className="w-full bg-gray-100 dark:bg-zinc-950/50 border border-gray-200 dark:border-white/5 h-12 rounded-2xl justify-between px-4 hover:border-emerald-500/50 transition-all font-black text-[10px] uppercase tracking-widest text-gray-900 dark:text-white"
+                      onPress={() => handleDownload(quickCategory)}
+                      isLoading={loadingReport === quickCategory}
+                      className="w-full h-14 bg-emerald-500 text-white font-black uppercase text-[12px] rounded-[1.5rem] shadow-xl shadow-emerald-500/20 italic tracking-[0.2em] transition-all hover:scale-[1.02] active:scale-95"
                     >
-                      <span>{dateFrom} - {dateTo}</span>
-                      <Calendar size={14} className="text-emerald-500" />
+                      DESCARGAR REPORTE
                     </Button>
                   </div>
-
-                  <div className="space-y-1">
-                    <label className="text-[9px] font-black uppercase tracking-widest opacity-50 ml-1">Output Format</label>
-                    <Tabs
-                      aria-label="Quick Output Format"
-                      selectedKey={quickFormat}
-                      onSelectionChange={(k) => setQuickFormat(String(k))}
-                      classNames={{
-                        tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-xl w-full flex-wrap",
-                        cursor: "bg-gray-200 dark:bg-gray-700 rounded-lg",
-                        tab: "h-10",
-                        tabContent: "font-black text-[10px] uppercase italic tracking-widest group-data-[selected=true]:text-black dark:group-data-[selected=true]:text-white"
-                      }}
-                    >
-                      <Tab key="PDF" title="PDF" />
-                      <Tab key="CSV" title="CSV" />
-                    </Tabs>
-                  </div>
-
-                  <Button
-                    className="bg-emerald-500 text-white font-black uppercase tracking-widest italic rounded-2xl h-14 mt-2 shadow-xl shadow-emerald-500/20"
-                    isLoading={!!loadingReport}
-                    onPress={() => {
-                      if (quickFormat !== 'PDF') {
-                        toast({ title: "EN DESARROLLO", description: "Formato CSV en desarrollo. Usando PDF.", variant: "default" });
-                      }
-                      handleDownload(quickCategory);
-                    }}
-                  >
-                    Generate Report
-                  </Button>
-                </div>
-
-                <Divider className="bg-white/10 dark:bg-black/10" />
-
-                <div className="space-y-4">
-                  <span className="text-[9px] font-black uppercase tracking-widest opacity-50 block text-center">Quick Actions</span>
-                  <div className="flex flex-col gap-2">
-                    <Button variant="flat" className="bg-emerald-500/10 text-emerald-500 font-black uppercase tracking-widest text-[9px] h-10 w-full" onPress={() => setIsGenerateModalOpen(true)}>
-                      Build Custom Template
-                    </Button>
-                    <Button variant="flat" className="bg-white/5 dark:bg-black/5 text-gray-400 font-black uppercase tracking-widest text-[9px] h-10 w-full">
-                      Schedule Report
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
-
-            {/* ADVISOR WIDGET */}
-            <Card className="bg-emerald-500 text-white rounded-[2.5rem] p-4 md:p-8 shadow-xl shadow-emerald-500/20 overflow-hidden relative">
-              <BarChart3 className="absolute -right-10 -bottom-10 w-40 h-40 opacity-20 transform rotate-12" />
-              <div className="relative z-10 space-y-4">
-                <h4 className="text-xl font-black italic uppercase tracking-tighter leading-none">Smart <br />Advisor</h4>
-                <p className="text-[10px] font-bold uppercase tracking-widest opacity-80 leading-relaxed">
-                  Detectamos que el 80% de tus ventas coinciden con los jueves tarde. ¿Cifrar reporte de tendencias?
-                </p>
-                <Button fullWidth className="bg-white text-emerald-500 font-black uppercase text-[10px] tracking-widest rounded-xl hover:scale-105 transition-all shadow-xl">Analizar Ahora</Button>
-              </div>
-            </Card>
-          </aside>
+               </Card>
+            </aside>
+          </div>
         </div>
-
       </div>
 
       <DateRangeModal

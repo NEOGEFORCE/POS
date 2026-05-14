@@ -12,6 +12,7 @@ import { Sale } from '@/lib/definitions';
 import { useToast } from '@/hooks/use-toast';
 import { extractApiError } from '@/lib/api-error';
 import UniversalPaymentModal from '@/components/shared/UniversalPaymentModal';
+import { broadcastRevalidate } from '@/lib/revalidate';
 import dynamic from 'next/dynamic';
 
 interface SaleEditModalProps {
@@ -36,12 +37,8 @@ export default function SaleEditModal({
     const [showSuccessScreen, setShowSuccessScreen] = useState(false);
     const [lastChange, setLastChange] = useState(0);
 
-    const initialPaidAmounts = sale ? {
-        cash: sale.cashAmount || 0,
-        transfer: sale.transferAmount || 0,
-        transferSource: sale.transferSource || 'NEQUI',
-        credit: sale.creditAmount || 0
-    } : undefined;
+    // TAREA 3: El estado DEBE resetearse a cero en correcciones (Cero Absoluto)
+    const initialPaidAmounts = undefined;
 
     const handleSaveEdit = async (data: {
         cash: number;
@@ -56,6 +53,8 @@ export default function SaleEditModal({
         const { cash, transfer, transferSource, credit, totalPaid, change } = data;
         
         try {
+            const methodsCount = (cash > 0 ? 1 : 0) + (transfer > 0 ? 1 : 0) + (credit > 0 ? 1 : 0);
+            
             let paymentMethod = "EFECTIVO";
             if (methodsCount > 1) {
                 paymentMethod = "MIXTO";
@@ -92,6 +91,7 @@ export default function SaleEditModal({
             
             setLastChange(change);
             setShowSuccessScreen(true);
+            broadcastRevalidate('SALE_MADE');
             toast({ title: "✓ Actualizado", description: "El método de pago ha sido corregido." });
             onSuccess(change);
         } catch (err: any) {
@@ -110,7 +110,7 @@ export default function SaleEditModal({
             isOpen={isOpen}
             onOpenChange={onOpenChange}
             title="Corregir Pago"
-            client={sale.client}
+            client={sale.client || null}
             totalToPay={sale.total}
             initialPaidAmounts={initialPaidAmounts}
             showSuccessScreen={showSuccessScreen}

@@ -3,8 +3,10 @@ package repositories
 import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/infrastructure/cache"
-	"log"
+	"backPOS-go/internal/infrastructure/refresher"
+	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
+	"time"
 )
 
 type GormReturnRepository struct {
@@ -19,13 +21,11 @@ func (r *GormReturnRepository) invalidateDashboardCache() {
 	// Invalidate RAM cache
 	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
 	
-	// Refresh Materialized View in background
-	go func() {
-		if err := r.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats_monthly").Error; err != nil {
-			log.Printf("⚠️ [MV Refresh - Return] Fallo concurrente: %v", err)
-			r.db.Exec("REFRESH MATERIALIZED VIEW mv_dashboard_stats_monthly")
-		}
-	}()
+	// Solicitar refresco asíncrono y debounced
+	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
+
+	// Notificar sincronización global
+	sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (r *GormReturnRepository) Create(ret *models.Return) error {
@@ -48,15 +48,28 @@ func (r *GormReturnRepository) GetAll() ([]models.Return, error) {
 	return returns, err
 }
 
-func (r *GormReturnRepository) GetByDateRange(from, to string) ([]models.Return, error) {
+func (r *GormReturnRepository) GetByDateRange(from, to time.Time) ([]models.Return, error) {
 	var returns []models.Return
 	query := r.db.Preload("Details").Model(&models.Return{})
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("date >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("date <= ?", to)
 	}
 	err := query.Order("date desc").Find(&returns).Error
 	return returns, err
+}
+
+func (r *GormReturnRepository) GetTotalReturnedByRange(from, to time.Time) (float64, error) {
+	var total float64
+	query := r.db.Model(&models.Return{})
+	if !from.IsZero() {
+		query = query.Where("date >= ?", from)
+	}
+	if !to.IsZero() {
+		query = query.Where("date <= ?", to)
+	}
+	err := query.Select("COALESCE(SUM(\"totalReturned\"), 0)").Scan(&total).Error
+	return total, err
 }

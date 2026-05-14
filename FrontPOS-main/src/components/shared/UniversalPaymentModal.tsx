@@ -86,6 +86,8 @@ export default function UniversalPaymentModal({
   const [transferSource, setTransferSource] = useState<string>('NEQUI');
   const [creditPaid, setCreditPaid] = useState<number>(0);
 
+  const [isReady, setIsReady] = useState(false);
+  
   // Inicializar estados cuando se abre el modal
   useEffect(() => {
     if (isOpen) {
@@ -96,11 +98,16 @@ export default function UniversalPaymentModal({
       setDialogAmount('');
       setCashTendered('');
       setIsMobileNumpadOpen(false);
+      setIsReady(false); // No está listo inmediatamente
       
       // Determinar tab inicial
       if (initialPaidAmounts?.credit && initialPaidAmounts.credit > 0) setActivePaymentTab('credit');
       else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0) setActivePaymentTab(initialPaidAmounts.transferSource as any);
       else setActivePaymentTab('cash');
+
+      // Pequeño retardo de seguridad (300ms) para evitar capturar el Enter que abrió el modal
+      const timer = setTimeout(() => setIsReady(true), 300);
+      return () => clearTimeout(timer);
     }
   }, [isOpen, initialPaidAmounts]);
 
@@ -195,16 +202,25 @@ export default function UniversalPaymentModal({
   // Teclado físico
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!isOpen) return;
-      // PANTALLA DE ÉXITO: Enter o Escape cierran y preparan nueva venta
       if (showSuccessScreen) {
-        if (e.key === 'Enter' || e.key === 'Escape' || e.key === ' ') {
-          e.preventDefault();
-          e.stopPropagation();
+        if (e.key === 'Enter' || e.key === 'Escape') {
+          onCloseComplete?.();
           onOpenChange(false);
         }
         return;
       }
+      
+      // BLINDAJE: Si el foco está en un input o textarea (notas, búsqueda, etc), no interceptamos
+      const target = e.target as HTMLElement;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
+        return;
+      }
+
+      if (isProcessingRef.current && e.key === 'Enter') {
+          e.preventDefault();
+          return;
+      }
+
       if (/^[0-9]$/.test(e.key)) {
         e.preventDefault();
         setDialogAmount(prev => prev + e.key);
@@ -213,7 +229,7 @@ export default function UniversalPaymentModal({
         setDialogAmount(prev => prev.slice(0, -1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        processPayment();
+        if (isReady) processPayment();
       } else if (e.key === '+' || e.key === 'Add') {
         e.preventDefault();
         handleAddPayment();
@@ -223,7 +239,7 @@ export default function UniversalPaymentModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showSuccessScreen, dialogAmount, onOpenChange, processPayment, handleAddPayment]);
+  }, [isOpen, showSuccessScreen, dialogAmount, onOpenChange, processPayment, handleAddPayment, isReady]);
 
   if (!isOpen) return null;
 
@@ -366,14 +382,18 @@ export default function UniversalPaymentModal({
                 </div>
               </header>
 
-              <div className="flex flex-row gap-1.5 mb-1.5">
-                <div className="bg-white dark:bg-zinc-900 px-2 py-1 rounded-lg border border-gray-100 dark:border-white/5 flex-1 shadow-sm flex flex-col justify-center">
+              <div className="grid grid-cols-3 gap-1.5 mb-1.5">
+                <div className="bg-white dark:bg-zinc-900 px-2 py-1 rounded-lg border border-gray-100 dark:border-white/5 shadow-sm flex flex-col justify-center">
                   <p className="text-[6px] md:text-[8px] font-black text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Wallet size={6} className="text-rose-500" /> TOTAL</p>
                   <p className="text-sm md:text-2xl font-black text-rose-500 italic tabular-nums leading-none">${formatCurrency(totalToPay)}</p>
                 </div>
-                <div className="bg-white dark:bg-zinc-900 px-2 py-1 rounded-lg border border-gray-100 dark:border-white/5 flex-1 shadow-sm flex flex-col justify-center">
-                  <p className="text-[6px] md:text-[8px] font-black text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><TrendingUp size={6} className={theme.text} /> PENDIENTE</p>
-                  <p className={`text-sm md:text-2xl font-black ${theme.text} italic tabular-nums leading-none`}>${formatCurrency(remainingDebt)}</p>
+                <div className="bg-white dark:bg-zinc-900 px-2 py-1 rounded-lg border border-gray-100 dark:border-white/5 shadow-sm flex flex-col justify-center">
+                  <p className="text-[6px] md:text-[8px] font-black text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Check size={6} className={theme.text} /> ABONANDO</p>
+                  <p className={`text-sm md:text-2xl font-black ${theme.text} italic tabular-nums leading-none`}>${formatCurrency(totalAlreadyPaid + actualPayment)}</p>
+                </div>
+                <div className="bg-white dark:bg-zinc-900 px-2 py-1 rounded-lg border border-gray-100 dark:border-white/5 shadow-sm flex flex-col justify-center border-emerald-500/30">
+                  <p className="text-[6px] md:text-[8px] font-black text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><TrendingUp size={6} className="text-sky-500" /> RESTANTE</p>
+                  <p className="text-sm md:text-2xl font-black text-sky-500 italic tabular-nums leading-none">${formatCurrency(Math.max(0, totalToPay - (totalAlreadyPaid + actualPayment)))}</p>
                 </div>
               </div>
 
@@ -470,20 +490,22 @@ export default function UniversalPaymentModal({
                 <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1">
                   <div className={`bg-white dark:bg-zinc-900 p-4 rounded-xl border-2 border-${themeColor}-500/20 shadow-lg flex flex-col items-center justify-center gap-2 mb-3 relative overflow-hidden group`}>
                     <div className={`absolute inset-0 bg-${themeColor}-500/5 group-hover:bg-${themeColor}-500/10 transition-colors`} />
-                    {activePaymentTab === 'credit' ? (
-                       <div className="h-12 w-12 rounded-full bg-rose-500/10 flex items-center justify-center text-rose-500 relative z-10 animate-in zoom-in duration-500">
-                          <Users size={24} />
-                       </div>
-                    ) : (
-                      <img 
-                        src={activePaymentTab === 'NEQUI' ? '/logos/nequi.png' : '/logos/daviplata.png'} 
-                        className="h-12 w-12 object-contain relative z-10 animate-in zoom-in duration-500" 
-                        alt={activePaymentTab}
-                      />
-                    )}
-                    <div className="text-center relative z-10">
-                      <p className="text-sm font-black dark:text-white italic uppercase tracking-tighter">{activePaymentTab === 'credit' ? 'CARTERA FIADO' : `TRANSACCIÓN ${activePaymentTab}`}</p>
-                      <p className={`text-[14px] font-black ${theme.text} tabular-nums`}>${formatCurrency(amountToPayRaw)}</p>
+                    <div className="text-center relative z-10 w-full">
+                      <p className="text-sm font-black dark:text-white italic uppercase tracking-tighter mb-1">{activePaymentTab === 'credit' ? 'CARTERA FIADO' : `TRANSACCIÓN ${activePaymentTab}`}</p>
+                      <div className="flex items-center justify-center gap-1">
+                        <span className={`${theme.text} font-black italic text-2xl md:text-4xl tracking-tighter`}>$</span>
+                        <input 
+                          type="text"
+                          inputMode="numeric"
+                          value={(activePaymentTab === 'credit' && !dialogAmount) ? '' : (dialogAmount ? formatCurrency(dialogAmount) : formatCurrency(amountToPayRaw))}
+                          onFocus={(e) => e.target.select()}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            setDialogAmount(val);
+                          }}
+                          className={`w-full max-w-[280px] font-black text-3xl md:text-5xl italic ${theme.text} bg-transparent tabular-nums text-center focus:outline-none tracking-tighter leading-none`}
+                        />
+                      </div>
                     </div>
                   </div>
 
@@ -601,8 +623,18 @@ export default function UniversalPaymentModal({
                 <div className={`absolute top-0 left-0 p-4 opacity-5 ${theme.text} scale-150 -ml-4 -mt-4`}><Calculator size={60} /></div>
                 <p className={`text-[10px] font-black ${theme.text} uppercase tracking-[0.2em] italic flex items-center justify-end gap-2 relative z-10`}><Calculator size={12} /> DIGITANDO MONTO</p>
                 <div className="flex items-center justify-end gap-1 relative z-10">
-                  <span className={`${theme.text} font-black italic text-2xl tracking-tighter`}>$</span>
-                  <p className="text-4xl font-black dark:text-white h-12 tracking-tighter italic tabular-nums leading-none">{formatCurrency(dialogAmount)}</p>
+                  <span className={`${theme.text} font-black italic text-2xl md:text-4xl tracking-tighter`}>$</span>
+                  <input 
+                    type="text"
+                    inputMode="numeric"
+                    value={dialogAmount ? formatCurrency(dialogAmount) : formatCurrency(amountToPayRaw)}
+                    onFocus={(e) => e.target.select()}
+                    onChange={(e) => {
+                      const val = e.target.value.replace(/\D/g, '');
+                      setDialogAmount(val);
+                    }}
+                    className={`w-full font-black text-3xl md:text-5xl italic ${theme.text} bg-transparent border-none text-right focus:outline-none tracking-tighter tabular-nums leading-none`}
+                  />
                 </div>
               </div>
 
@@ -657,7 +689,29 @@ export default function UniversalPaymentModal({
             </div>
           </div>
         )}
-      </ModalContent>
-    </Modal>
+        </ModalContent>
+        
+        {/* OVERLAY DE SEGURIDAD ANTIDUPLICADO */}
+        {(submittingPayment || isProcessingRef.current) && (
+          <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-black/60 backdrop-blur-md animate-in fade-in duration-300">
+            <div className="bg-white dark:bg-zinc-900 p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 border border-white/10 scale-110">
+              <div className="relative">
+                <div className={`h-20 w-20 rounded-full border-4 ${theme.border} border-t-transparent animate-spin`} />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <ShieldCheck className={`h-8 w-8 ${theme.text} animate-pulse`} />
+                </div>
+              </div>
+              <div className="flex flex-col items-center text-center">
+                <h3 className="text-xl font-black text-gray-900 dark:text-white uppercase italic tracking-tighter">
+                  Procesando <span className={theme.text}>Pago</span>
+                </h3>
+                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
+                  Protegiendo integridad financiera...
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
   );
 }

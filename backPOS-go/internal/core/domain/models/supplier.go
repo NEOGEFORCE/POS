@@ -59,8 +59,9 @@ type Supplier struct {
 	// Nuevos campos multi-días (formato JSONB en BD)
 	VisitDays     StringArray `gorm:"type:jsonb;column:visit_days" json:"visitDays"`
 	DeliveryDays  StringArray `gorm:"type:jsonb;column:delivery_days" json:"deliveryDays"`
-	RestockMethod string      `gorm:"column:restock_method" json:"restockMethod"`
-	IsActive      bool        `gorm:"default:true;column:is_active" json:"isActive"`
+	RestockMethod      string      `gorm:"column:restock_method" json:"restockMethod"`
+	VisitFrequencyDays int         `gorm:"default:7;column:visit_frequency_days" json:"visitFrequencyDays"`
+	IsActive           bool        `gorm:"default:true;column:is_active" json:"isActive"`
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 	// Relaciones

@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { Product } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
-import { getCriticalThreshold, formatStock, isProductWeighted } from '@/lib/utils';
+import { getStockStatus, formatStock, isProductWeighted } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconPackage } from '@tabler/icons-react';
 
@@ -23,6 +23,8 @@ interface TableProps {
     onEdit: (product: Product) => void;
     onDelete: (barcode: string) => void;
     onQuickUpdate: (barcode: string, amount: number) => void;
+    onOpenBulk?: (product: Product) => void;
+    loadingBarcodes?: Set<string>;
     onPageChange: (page: number) => void;
     onPageSizeChange: (size: number) => void;
     formatCOP: (val: number | string) => string;
@@ -45,6 +47,8 @@ const ProductTable = memo(({
     onEdit,
     onDelete,
     onQuickUpdate,
+    onOpenBulk,
+    loadingBarcodes = new Set(),
     onPageChange,
     onPageSizeChange,
     formatCOP
@@ -65,22 +69,17 @@ const ProductTable = memo(({
     }, []);
 
     const renderCell = useCallback((product: Product, columnKey: React.Key) => {
-        // Semáforo dinámico por tramos de stock mínimo
-        const minStock = product.minStock || 5;
-        const threshold = getCriticalThreshold(minStock);
+        // Semáforo dinámico v2.0
+        const minStock = product.minStock || 0;
         const quantity = product.quantity;
-
-        // Estados: CRÍTICO (rojo) | ADVERTENCIA (ámbar) | ÓPTIMO (verde)
         const weighted = isProductWeighted(product);
-        const isCritical = !weighted && quantity <= threshold;
-        const isWarning = !weighted && quantity <= minStock && quantity > threshold;
-        // const isOptimal = !isCritical && !isWarning; // implícito por estilos default
+        const status = getStockStatus(quantity, minStock);
 
         // Determinar clase CSS según estado
-        const stockStatusClass = isCritical
-            ? 'bg-rose-500/10 border-rose-500/40 text-rose-500'
-            : isWarning
-                ? 'bg-amber-500/10 border-amber-500/40 text-amber-500'
+        const stockStatusClass = !weighted && status === 'CRITICAL'
+            ? 'bg-rose-500/10 border-rose-500/40 text-rose-500 animate-pulse'
+            : !weighted && status === 'REORDER'
+                ? 'bg-amber-500/10 border-amber-500/40 text-amber-500 font-black'
                 : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500';
 
         switch (String(columnKey)) {
@@ -108,7 +107,7 @@ const ProductTable = memo(({
                         <div
                             className={`inline-flex items-center gap-0.5 sm:gap-1 rounded-xl border transition-all ${stockStatusClass}`}
                         >
-                            {canEdit && (
+                            {isAdmin && (
                                 <Button
                                     isIconOnly
                                     size="sm"
@@ -124,7 +123,7 @@ const ProductTable = memo(({
                             <span className="min-w-[2.75rem] px-1 text-center text-[11px] font-black italic tabular-nums leading-none">
                                 {formatStock(product.quantity, (product as any).isPack, isProductWeighted(product))}
                             </span>
-                            {canEdit && (
+                            {isAdmin && (
                                 <Button
                                     isIconOnly
                                     size="sm"
@@ -143,17 +142,20 @@ const ProductTable = memo(({
             case "price":
                 return (
                     <div className="flex flex-col leading-tight">
-                        <div className="flex items-center gap-1.5">
-                            <span className="text-[7px] font-black text-gray-400 uppercase italic">COSTO</span>
-                            <span className="text-[9px] font-black text-gray-500 italic tabular-nums">${formatCOP(product.purchasePrice)}</span>
-                        </div>
+                        {isAdmin && (
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[7px] font-black text-gray-400 uppercase italic">COSTO</span>
+                                <span className="text-[9px] font-black text-gray-500 italic tabular-nums">${formatCOP(product.purchasePrice)}</span>
+                            </div>
+                        )}
                         <div className="flex items-center gap-1.5 mt-0.5">
                             <span className="text-[7px] font-black text-emerald-500 uppercase italic">VENTA</span>
-                            <span className="text-[11px] font-black text-emerald-600 dark:text-emerald-400 italic tabular-nums">${formatCOP(product.salePrice)}</span>
+                            <span className="text-[10px] font-black text-emerald-600 italic tabular-nums">${formatCOP(product.salePrice)}</span>
                         </div>
                     </div>
                 );
             case "margin":
+                if (!isAdmin) return <div className="text-[10px] font-black text-gray-300 italic">---</div>;
                 const isHighMargin = product.marginPercentage > 35;
                 return (
                     <div className="flex flex-col items-center gap-1">
@@ -171,6 +173,11 @@ const ProductTable = memo(({
                 if (!canEdit) return <span className="text-[7px] font-black text-gray-400 uppercase italic opacity-30">Lectura</span>;
                 return (
                     <div className="flex items-center justify-end gap-1 px-1">
+                        {onOpenBulk && (
+                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-amber-500/5 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white transition-all shadow-sm" onPress={() => onOpenBulk(product)}>
+                                <Package size={14} />
+                            </Button>
+                        )}
                         <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-sm" onPress={() => onEdit(product)}>
                             <Edit size={14} />
                         </Button>
@@ -233,11 +240,12 @@ const ProductTable = memo(({
                         {products.length > 0 ? (
                             products.map((p) => {
                                 // ... existing product card logic ...
-                                const minStock = p.minStock || 5;
-                                const threshold = getCriticalThreshold(minStock);
+                                const minStock = p.minStock || 0;
                                 const weightedP = isProductWeighted(p);
-                                const isCritical = !weightedP && p.quantity <= threshold;
-                                const isWarning = !weightedP && p.quantity <= minStock && p.quantity > threshold;
+                                const status = getStockStatus(p.quantity, minStock);
+                                
+                                const isCritical = !weightedP && status === 'CRITICAL';
+                                const isWarning = !weightedP && status === 'REORDER';
 
                                 const cardBorderClass = isCritical
                                     ? "border-rose-500/40 bg-rose-500/5 shadow-rose-500/5"
@@ -246,7 +254,7 @@ const ProductTable = memo(({
                                         : "hover:border-emerald-500/30 shadow-emerald-500/5";
 
                                 const indicatorClass = isCritical
-                                    ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.4)]'
+                                    ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.4)] animate-pulse'
                                     : isWarning
                                         ? 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.4)]'
                                         : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]';
@@ -312,6 +320,9 @@ const ProductTable = memo(({
 
                                             {canEdit && (
                                                 <div className="flex gap-1 shrink-0">
+                                                    {onOpenBulk && (
+                                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-amber-500/10 text-amber-500 rounded-lg border border-amber-500/10" onPress={() => onOpenBulk(p)}><Package size={12} /></Button>
+                                                    )}
                                                     <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg border border-emerald-500/10" onPress={() => onEdit(p)}><Edit size={12} /></Button>
                                                     {isAdmin && (
                                                         <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/10" onPress={() => onDelete(p.barcode)}><Trash2 size={12} /></Button>

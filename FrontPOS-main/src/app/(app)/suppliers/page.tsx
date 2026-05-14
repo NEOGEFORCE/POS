@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Supplier } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 // Dinámicos para optimización de carga
 const SupplierStats = dynamic(() => import('./components/SupplierStats'), { ssr: false });
@@ -112,7 +113,17 @@ export default function SuppliersPage() {
     }
   }, [toast]);
 
-  useEffect(() => { loadSuppliers(); }, [loadSuppliers]);
+  useEffect(() => { 
+    loadSuppliers(); 
+    
+    // Escuchar actualizaciones de proveedores (Zero F5)
+    const cleanup = setupSyncListener((event) => {
+      if (event === 'SUPPLIER_UPDATE') {
+        loadSuppliers();
+      }
+    });
+    return cleanup;
+  }, [loadSuppliers]);
 
   const filteredSuppliers = useMemo(() => {
     const query = filter.toLowerCase();
@@ -149,6 +160,7 @@ export default function SuppliersPage() {
       }, token!);
       // Recargar datos ANTES de cerrar modal para mostrar cambios inmediatamente
       await loadSuppliers();
+      broadcastRevalidate('SUPPLIER_UPDATE');
       toast({
         variant: "success",
         title: "ÉXITO",
@@ -173,6 +185,7 @@ export default function SuppliersPage() {
       }, token!);
       // Recargar datos ANTES de cerrar modal para mostrar cambios inmediatamente
       await loadSuppliers();
+      broadcastRevalidate('SUPPLIER_UPDATE');
       toast({
         title: "ÉXITO",
         description: "REGISTRO ACTUALIZADO",
@@ -196,6 +209,7 @@ export default function SuppliersPage() {
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadSuppliers();
+      broadcastRevalidate('SUPPLIER_UPDATE');
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ELIMINAR PROVEEDOR' });
     }

@@ -5,6 +5,7 @@ import { PackageSearch, Clock, CheckCircle2, User } from "lucide-react";
 import { Button, Tooltip, Chip } from "@heroui/react";
 import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/api-error";
+import { formatTime } from "@/lib/utils";
 import Cookies from "js-cookie";
 
 interface MissingItem {
@@ -98,7 +99,7 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                                         </div>
                                         <div className="flex items-center gap-1.5 text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase">
                                             <Clock size={10} className="text-rose-500" />
-                                            {new Date(item.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            {formatTime(item.created_at)}
                                         </div>
                                     </div>
                                     {item.note && (

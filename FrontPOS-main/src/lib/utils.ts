@@ -1,5 +1,7 @@
 import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -95,13 +97,31 @@ export const parseCOP = (val: string): number => {
 };
 
 /**
- * Calcula el umbral crítico de stock basado en el minStock configurado
- * Tramos: minStock >= 12 → 3, minStock >= 4 → 2, minStock <= 3 → 1
+ * Lógica de Stock Inteligente Cerberus v2.0
+ * Define el estado visual basado en la meta (minStock) y el inventario actual.
  */
-export const getCriticalThreshold = (minStock: number): number => {
-    if (minStock >= 12) return 3;
-    if (minStock >= 4) return 2;
-    return 1; // Para minStock <= 3, el crítico es 1
+export const getStockStatus = (stock: number, minStock: number): 'STABLE' | 'REORDER' | 'CRITICAL' => {
+    const s = Number(stock) || 0;
+    const m = Number(minStock) || 0;
+
+    // Si no hay meta, todo es estable a menos que sea cero
+    if (m <= 0) return s > 0 ? 'STABLE' : 'CRITICAL';
+
+    // 1. ZONA ROJA (CRÍTICO): Menos del 20% de la meta
+    // Para metas pequeñas, aseguramos que al menos el 0 siempre sea rojo
+    // y que para una meta de 3, el 1 (33%) caiga en rojo si es necesario, 
+    // pero según tu regla de "1 o 0 rojo para meta 3", el umbral es < 2 unidades.
+    const redThreshold = m <= 3 ? 1 : Math.floor(m * 0.2);
+    if (s <= redThreshold) return 'CRITICAL';
+
+    // 2. ZONA AMARILLA (REORDER): Entre el 20% y el 50%
+    // Para una meta de 3, el 2 (66%) técnicamente es > 50%, pero pediste que sea amarillo.
+    // Ajustamos: si m=3, amarillo es 2. Si m > 3, seguimos el 50%.
+    const yellowThreshold = m <= 3 ? 2 : Math.floor(m * 0.5);
+    if (s <= yellowThreshold) return 'REORDER';
+
+    // 3. ZONA VERDE (ESTABLE): Más del 50%
+    return 'STABLE';
 };
 
 /**
@@ -178,10 +198,6 @@ export const formatStock = (quantity: number, isPack?: boolean, isWeighted?: boo
     return quantity.toString();
 };
 
-/**
- * Lógica unificada para determinar si un producto es pesable.
- * Resuelve inconsistencias de tipos (strings vs booleans) y evalúa unidades de medida.
- */
 export const isProductWeighted = (product: any): boolean => {
     if (!product) return false;
     
@@ -203,4 +219,69 @@ export const isProductWeighted = (product: any): boolean => {
 
     // 5. Última instancia: Verdad absoluta del campo
     return !!product.isWeighted;
+};
+
+/**
+ * Formatea una fecha/hora en formato de 12 horas (AM/PM)
+ * Solo hora y minutos: "2:30 PM"
+ */
+export const formatTime = (date: string | Date): string => {
+    if (!date) return '---';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '---';
+    return format(d, 'hh:mm:ss aa', { locale: es });
+};
+
+/**
+ * Formatea fecha + hora completa en 12 horas
+ * "8/05/2026, 2:30 PM"
+ */
+export const formatDateTime = (date: string | Date): string => {
+    if (!date) return '---';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '---';
+    return format(d, 'dd/MM/yyyy, hh:mm:ss aa', { locale: es });
+};
+
+/**
+ * Formatea fecha + hora compacta para displays pequeños
+ * "08/05 2:30 PM"
+ */
+export const formatShortDateTime = (date: string | Date): string => {
+    if (!date) return '---';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '---';
+    return format(d, 'dd/MM hh:mm aa', { locale: es });
+};
+
+/**
+ * Formatea hora con segundos en 12 horas
+ * "2:30:45 PM"
+ */
+export const formatTimeWithSeconds = (date: string | Date): string => {
+    if (!date) return '---';
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return '---';
+    return format(d, 'hh:mm:ss aa', { locale: es });
+};
+
+/**
+ * Formatea una fecha local (YYYY-MM-DD) sin desfases de zona horaria.
+ * Evita que el navegador reste horas al interpretar la fecha como UTC.
+ */
+export const formatLocalDate = (dateStr: string): string => {
+    if (!dateStr) return '---';
+    // Dividir la cadena para evitar que el constructor de Date la trate como UTC
+    const [year, month, day] = dateStr.split('-').map(Number);
+    if (!year || !month || !day) return dateStr;
+    
+    // Crear objeto Date usando componentes locales
+    const date = new Date(year, month - 1, day);
+    
+    return date.toLocaleDateString('es-CO', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric'
+    }).toUpperCase();
 };

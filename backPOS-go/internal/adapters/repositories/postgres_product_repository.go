@@ -6,6 +6,8 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/refresher"
+	"backPOS-go/internal/infrastructure/sse"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -17,6 +19,15 @@ type PostgresProductRepository struct {
 
 func NewPostgresProductRepository(db *gorm.DB) *PostgresProductRepository {
 	return &PostgresProductRepository{db: db}
+}
+
+func (r *PostgresProductRepository) invalidateDashboardCache() {
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	// Solicitar refresco asíncrono y debounced al servicio centralizado
+	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
+	
+	// Notificar sincronización global
+	sse.GetSSEService().BroadcastProductUpdate(nil)
 }
 
 // Save persiste un producto y sus asociaciones de forma separada
@@ -31,6 +42,7 @@ func (r *PostgresProductRepository) Save(product *models.Product) error {
 	// INVALIDACIÓN L1: El catálogo maestro ha cambiado
 	cache.InvalidateCache(cache.CacheKeyProducts)
 	cache.InvalidateCache(cache.CacheKeyProductCount)
+	r.invalidateDashboardCache()
 
 	if len(suppliers) > 0 {
 		if err := r.db.Model(product).Association("Suppliers").Replace(suppliers); err != nil {
@@ -49,6 +61,14 @@ func (r *PostgresProductRepository) GetByBarcode(barcode string) (*models.Produc
 		Where("barcode = ? OR ? = ANY(string_to_array(\"alternate_codes\", ','))", barcode, barcode).
 		First(&product).Error
 	return &product, err
+}
+
+func (r *PostgresProductRepository) GetByBarcodes(barcodes []string) ([]models.Product, error) {
+	var products []models.Product
+	err := r.db.Preload("Category").
+		Where("barcode IN ?", barcodes).
+		Find(&products).Error
+	return products, err
 }
 
 func (r *PostgresProductRepository) GetByName(name string) (*models.Product, error) {
@@ -98,7 +118,8 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Joins("LEFT JOIN categories ON categories.id = products.\"categoryId\"").
-			Where("products.barcode ILIKE ? OR products.\"productName\" ILIKE ? OR products.\"alternate_codes\" ILIKE ? OR categories.name ILIKE ?", searchTerm, searchTerm, searchTerm, searchTerm)
+			Where("products.barcode ILIKE ? OR unaccent(products.\"productName\") ILIKE unaccent(?) OR products.\"alternate_codes\" ILIKE ? OR unaccent(categories.name) ILIKE unaccent(?)", 
+				searchTerm, searchTerm, searchTerm, searchTerm)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -217,6 +238,7 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 	// INVALIDACIÓN L1
 	cache.InvalidateCache(cache.CacheKeyProducts)
 	cache.InvalidateCache(cache.CacheKeyProductCount)
+	r.invalidateDashboardCache()
 
 	return nil
 }
@@ -226,6 +248,7 @@ func (r *PostgresProductRepository) Delete(barcode string) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		cache.InvalidateCache(cache.CacheKeyProductCount)
+		r.invalidateDashboardCache()
 	}
 	return err
 }

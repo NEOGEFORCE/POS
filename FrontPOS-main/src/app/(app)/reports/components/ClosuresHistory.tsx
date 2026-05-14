@@ -4,16 +4,17 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Spinner, Button, Chip, Tooltip, Card, CardBody,
-  Modal, ModalContent, ModalHeader, ModalBody, useDisclosure,
+  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
   Divider
 } from "@heroui/react";
 import { 
   Eye, FileText, Calendar, User, TrendingUp, TrendingDown, 
   AlertCircle, CheckCircle2, ChevronDown, ChevronRight,
-  Wallet, CreditCard, Banknote, Landmark, History
+  Wallet, CreditCard, Banknote, Landmark, History, Trash2, ShieldAlert, Zap
 } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatTime, formatDateTime, formatShortDateTime, formatLocalDate } from "@/lib/utils";
 import Cookies from 'js-cookie';
+import { useAuth } from '@/lib/auth';
 
 interface CashierClosure {
   id: number;
@@ -36,6 +37,7 @@ interface CashierClosure {
   totalNequiReal: number;
   totalDaviplataReal: number;
   difference: number;
+  expectedCash?: number;
   closedByName: string;
   authorizedBy?: string;
   expensesDetail?: string;
@@ -47,11 +49,16 @@ interface CashierClosure {
 }
 
 export default function ClosuresHistory() {
+  const { user } = useAuth();
+  const isAdmin = user?.role?.toUpperCase() === 'ADMIN' || user?.role?.toUpperCase() === 'SUPERADMIN';
   const [closures, setClosures] = useState<CashierClosure[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [globalStats, setGlobalStats] = useState<{expected: number, real: number} | null>(null);
   const { isOpen, onOpen, onOpenChange } = useDisclosure();
   const [selectedClosure, setSelectedClosure] = useState<CashierClosure | null>(null);
+  const [closureToDelete, setClosureToDelete] = useState<CashierClosure | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const { isOpen: isDeleteOpen, onOpen: onDeleteOpen, onOpenChange: onDeleteOpenChange } = useDisclosure();
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -93,14 +100,45 @@ export default function ClosuresHistory() {
     onOpen();
   };
 
+  const handleDeleteClick = (closure: CashierClosure) => {
+    setClosureToDelete(closure);
+    onDeleteOpen();
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!closureToDelete) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/cashier-history/${closureToDelete.id}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${Cookies.get('org-pos-token')}` }
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.userMessage || 'Error al eliminar el cierre');
+      }
+      // Refrescar lista
+      await fetchData();
+      onDeleteOpenChange();
+      setClosureToDelete(null);
+    } catch (error: any) {
+      console.error('Error deleting closure:', error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // Agrupar cierres por día
   const groupedClosures = useMemo(() => {
     const groups: Record<string, CashierClosure[]> = {};
     (closures || []).forEach(c => {
       if (!c?.date) return;
-      const date = new Date(c.date).toISOString().split('T')[0];
-      if (!groups[date]) groups[date] = [];
-      groups[date].push(c);
+      // Usar componentes locales para agrupar por el día real del usuario
+      const d = new Date(c.date);
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!groups[dateKey]) groups[dateKey] = [];
+      groups[dateKey].push(c);
     });
     return groups;
   }, [closures]);
@@ -154,46 +192,59 @@ export default function ClosuresHistory() {
                </div>
                <div className="mt-4 pt-4 border-t border-white/5 flex justify-between items-center">
                   <span className="text-[9px] font-black text-zinc-600 uppercase italic">Responsable: {closures?.[0]?.closedByName || '---'}</span>
-                  <span className="text-[9px] font-black text-zinc-600 uppercase tabular-nums">{closures?.[0] ? new Date(closures[0].date).toLocaleString() : '---'}</span>
+                  <span className="text-[9px] font-black text-zinc-600 uppercase tabular-nums">{closures?.[0] ? formatDateTime(closures[0].date) : '---'}</span>
                </div>
             </CardBody>
          </Card>
 
-         {/* CARD 2: ACUMULADO GENERAL */}
-         <Card className="bg-gradient-to-br from-emerald-600 to-emerald-800 border border-emerald-500/20 rounded-[2rem] shadow-xl overflow-hidden relative group">
+          {/* CARD 2: TURNO ACTIVO (EN VIVO) */}
+          <Card className="bg-gradient-to-br from-blue-600 to-indigo-800 border border-blue-500/20 rounded-[2rem] shadow-xl overflow-hidden relative group">
             <div className="absolute -right-4 -top-4 bg-white/10 h-32 w-32 rounded-full blur-2xl" />
             <CardBody className="p-6">
-               <div className="flex justify-between items-start mb-6">
-                  <div className="flex items-center gap-3">
-                     <div className="h-10 w-10 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center text-white">
-                        <TrendingUp size={20} />
-                     </div>
-                     <div>
-                        <h4 className="text-[11px] font-black text-white uppercase tracking-tighter italic">Acumulado Histórico</h4>
-                        <p className="text-[8px] font-bold text-emerald-200/50 uppercase tracking-widest italic">Consolidado global de cierres</p>
-                     </div>
+              <div className="flex justify-between items-start mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="h-10 w-10 bg-white/10 backdrop-blur-md rounded-xl flex items-center justify-center text-white">
+                    <Zap size={20} className="animate-pulse" />
                   </div>
-                  <Chip size="sm" variant="flat" className="font-black text-[9px] uppercase italic bg-white/10 text-white border-none">CONSOLIDADO</Chip>
-               </div>
-               <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                     <span className="text-[9px] font-black text-emerald-200/70 uppercase tracking-widest block">Fondo Total Real</span>
-                     <span className="text-xl font-black text-white tabular-nums italic">${formatCurrency(globalStats?.real || 0)}</span>
+                  <div>
+                    <h4 className="text-[11px] font-black text-white uppercase tracking-tighter italic">Arqueo en Vivo (Ahora)</h4>
+                    <p className="text-[8px] font-bold text-blue-100/50 uppercase tracking-widest italic">Turno abierto — Sin cerrar caja</p>
                   </div>
-                  <div className="space-y-1 text-right">
-                     <span className="text-[9px] font-black text-emerald-200/70 uppercase tracking-widest block">Diferencia Global</span>
-                     <span className={`text-xl font-black tabular-nums italic ${(globalStats?.real || 0) - (globalStats?.expected || 0) >= 0 ? 'text-white' : 'text-rose-300'}`}>
-                        ${formatCurrency((globalStats?.real || 0) - (globalStats?.expected || 0))}
-                     </span>
-                  </div>
-               </div>
-               <div className="mt-4 pt-4 border-t border-white/10 flex justify-between items-center">
-                  <span className="text-[9px] font-black text-emerald-100/50 uppercase italic">Auditoría Total en Sistema</span>
-                  <span className="text-[9px] font-black text-emerald-100/50 uppercase tabular-nums">{closures.length} Cierres Registrados</span>
-               </div>
+                </div>
+                <Chip size="sm" variant="flat" className="font-black text-[9px] uppercase italic bg-white/10 text-white border-none animate-pulse">LIVE</Chip>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <span className="text-[9px] font-black text-blue-100/70 uppercase tracking-widest block">Esperado en Caja</span>
+                  <span className="text-xl font-black text-white tabular-nums italic">
+                    ${formatCurrency(closures[0]?.openingCash ? (closures[0].physicalCash || 0) : 0)} {/* Fallback logic */}
+                  </span>
+                </div>
+                <div className="space-y-1 text-right">
+                  <span className="text-[9px] font-black text-blue-100/70 uppercase tracking-widest block">Estado del Turno</span>
+                  <Button size="sm" variant="flat" className="h-6 bg-white/10 text-white font-black text-[9px] uppercase" onPress={() => {
+                    // Abrir modal de cierre si el usuario lo desea
+                    window.location.href = '/dashboard';
+                  }}>
+                    GESTIONAR CAJA
+                  </Button>
+                </div>
+              </div>
+              <div className="mt-4 pt-4 border-t border-white/10 flex justify-between items-center">
+                <span className="text-[9px] font-black text-blue-100/50 uppercase italic">Ventas desde el último cierre</span>
+                <span className="text-[9px] font-black text-blue-100/50 uppercase tabular-nums">Monitorización 24/7</span>
+              </div>
             </CardBody>
-         </Card>
-      </div>
+          </Card>
+        </div>
+
+        {/* INFO ADICIONAL: SALDO INICIAL */}
+        <div className="bg-amber-500/5 border border-amber-500/10 p-4 rounded-2xl flex items-center gap-4">
+           <AlertCircle className="text-amber-500" size={20} />
+           <p className="text-[10px] font-bold text-amber-500/80 uppercase tracking-widest">
+             <span className="font-black">NOTA DE AUDITORÍA:</span> El sistema toma el <span className="underline">Efectivo Real</span> del cierre anterior como el <span className="underline">Saldo Inicial</span> del siguiente turno. Asegúrese de que el cajero cuente bien el fondo de caja al iniciar.
+           </p>
+        </div>
 
       {sortedDates.length === 0 ? (
         <div className="p-20 text-center bg-zinc-950/20 rounded-[2rem] border border-dashed border-white/5">
@@ -207,18 +258,28 @@ export default function ClosuresHistory() {
               <div className="flex items-center gap-4 ml-4">
                 <div className="h-2 w-2 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
                 <h3 className="text-xs font-black text-zinc-400 uppercase tracking-[0.3em] italic">
-                  {new Date(date).toLocaleDateString('es-CO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+                  {formatLocalDate(date)}
                 </h3>
                 <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
               </div>
 
               <div className="grid grid-cols-1 gap-3">
+                {groupedClosures[date].length > 1 && (
+                  <div className="flex items-center gap-2 ml-6 animate-pulse">
+                    <ShieldAlert size={14} className="text-amber-500" />
+                    <span className="text-[9px] font-black text-amber-500 uppercase tracking-widest">
+                      ⚠️ {groupedClosures[date].length} cierres detectados este día — Verificar posibles duplicados
+                    </span>
+                  </div>
+                )}
                 {groupedClosures[date].map(closure => (
                   <Card 
                     key={closure.id} 
                     isPressable 
                     onPress={() => handleViewDetail(closure)}
-                    className="bg-white/5 hover:bg-white/10 border border-white/5 hover:border-emerald-500/30 transition-all rounded-2xl group overflow-hidden"
+                    className={`bg-white/5 hover:bg-white/10 border hover:border-emerald-500/30 transition-all rounded-2xl group overflow-hidden ${
+                      groupedClosures[date].length > 1 ? 'border-amber-500/30' : 'border-white/5'
+                    }`}
                   >
                     <CardBody className="p-4 md:p-6">
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -230,8 +291,11 @@ export default function ClosuresHistory() {
                           <div className="flex flex-col">
                             <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest leading-none mb-1">Cierre #{closure.id}</span>
                             <div className="flex items-center gap-2">
-                               <span className="text-lg font-black text-white italic tracking-tight">{closure?.date ? new Date(closure.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '---'}</span>
+                               <span className="text-lg font-black text-white italic tracking-tight">{closure?.date ? formatTime(closure.date) : '---'}</span>
                                <Chip size="sm" variant="flat" color="default" className="h-5 text-[9px] font-black uppercase italic">{closure?.closedByName || '---'}</Chip>
+                               {groupedClosures[date].length > 1 && (
+                                 <Chip size="sm" variant="flat" className="h-5 text-[8px] font-black uppercase bg-amber-500/10 text-amber-500 border-none">POSIBLE DUPLICADO</Chip>
+                               )}
                             </div>
                           </div>
                         </div>
@@ -258,8 +322,22 @@ export default function ClosuresHistory() {
                           </div>
                         </div>
 
-                        {/* Botón Acción */}
-                        <div className="flex items-center justify-end">
+                        {/* Botones de Acción */}
+                        <div className="flex items-center gap-1 justify-end">
+                           {isAdmin && (
+                             <div onClick={(e) => e.stopPropagation()}>
+                             <Tooltip content="Eliminar este cierre" color="danger">
+                               <Button 
+                                 isIconOnly 
+                                 variant="light" 
+                                 className="text-zinc-600 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                 onPress={() => handleDeleteClick(closure)}
+                               >
+                                 <Trash2 size={18} />
+                               </Button>
+                             </Tooltip>
+                             </div>
+                           )}
                            <Button 
                              isIconOnly 
                              variant="light" 
@@ -282,13 +360,14 @@ export default function ClosuresHistory() {
       <Modal 
         isOpen={isOpen} 
         onOpenChange={onOpenChange}
-        size="2xl"
+        size="4xl"
         classNames={{
-          base: "bg-zinc-950 border border-white/10 rounded-[2.5rem]",
-          header: "border-b border-white/5 p-8",
-          body: "p-8",
+          base: "bg-zinc-950 border border-white/10 rounded-[2.5rem] max-h-[90vh]",
+          header: "border-b border-white/5 p-8 pb-4",
+          body: "p-8 pt-6",
         }}
         scrollBehavior="inside"
+        backdrop="blur"
       >
         <ModalContent>
           {(onClose) => (
@@ -302,7 +381,7 @@ export default function ClosuresHistory() {
                       <h3 className="text-xl font-black text-white italic uppercase tracking-tighter leading-none">
                         Detalle de <span className="text-emerald-500">Auditoría</span>
                       </h3>
-                      <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em] mt-1 italic">Cierre #{selectedClosure?.id} - Ref: {new Date(selectedClosure?.date || '').toLocaleDateString()}</p>
+                      <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em] mt-1 italic">Cierre #{selectedClosure?.id} - Ref: {selectedClosure?.date ? formatShortDateTime(selectedClosure.date) : '---'}</p>
                    </div>
                 </div>
               </ModalHeader>
@@ -310,14 +389,18 @@ export default function ClosuresHistory() {
                 {selectedClosure && (
                   <div className="space-y-8">
                     {/* Resumen de Arqueo */}
-                    <div className="grid grid-cols-2 gap-4">
-                       <div className="bg-white/5 p-6 rounded-3xl border border-white/5 flex flex-col items-center text-center">
-                          <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 italic">Saldo Esperado (Sistema)</span>
-                          <span className="text-3xl font-black text-blue-400 tabular-nums italic">${formatCurrency(selectedClosure.totalCash - selectedClosure.totalExpenses)}</span>
+                    <div className="grid grid-cols-3 gap-4">
+                       <div className="bg-white/5 p-4 rounded-3xl border border-white/5 flex flex-col items-center text-center">
+                          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1 italic">Saldo Inicial</span>
+                          <span className="text-xl font-black text-amber-500 tabular-nums italic">${formatCurrency(selectedClosure.openingCash)}</span>
                        </div>
-                       <div className="bg-white/5 p-6 rounded-3xl border border-white/5 flex flex-col items-center text-center">
-                          <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-2 italic">Arqueo Físico (Cajero)</span>
-                          <span className="text-3xl font-black text-emerald-400 tabular-nums italic">${formatCurrency(selectedClosure.physicalCash)}</span>
+                       <div className="bg-white/5 p-4 rounded-3xl border border-white/5 flex flex-col items-center text-center border-l-4 border-l-blue-500/50">
+                          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1 italic">Saldo Esperado</span>
+                          <span className="text-xl font-black text-blue-400 tabular-nums italic">${formatCurrency(selectedClosure.expectedCash || (selectedClosure.openingCash + selectedClosure.totalCash - selectedClosure.totalExpenses))}</span>
+                       </div>
+                       <div className="bg-white/5 p-4 rounded-3xl border border-white/5 flex flex-col items-center text-center border-l-4 border-l-emerald-500/50">
+                          <span className="text-[9px] font-black text-zinc-500 uppercase tracking-widest mb-1 italic">Arqueo Físico</span>
+                          <span className="text-xl font-black text-emerald-400 tabular-nums italic">${formatCurrency(selectedClosure.physicalCash)}</span>
                        </div>
                     </div>
 
@@ -454,7 +537,7 @@ export default function ClosuresHistory() {
                              <span className="text-[10px] font-black text-zinc-400 uppercase tracking-widest italic">Periodo de Turno</span>
                           </div>
                           <span className="text-[10px] font-black text-white tabular-nums italic">
-                            {new Date(selectedClosure.startDate).toLocaleString()} - {new Date(selectedClosure.endDate).toLocaleString()}
+                            {formatDateTime(selectedClosure.startDate)} - {formatDateTime(selectedClosure.endDate)}
                           </span>
                        </div>
                        {selectedClosure.authorizedBy && (
@@ -470,6 +553,99 @@ export default function ClosuresHistory() {
                   </div>
                 )}
               </ModalBody>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {/* Modal Confirmar Eliminación */}
+      <Modal 
+        isOpen={isDeleteOpen} 
+        onOpenChange={onDeleteOpenChange}
+        size="lg"
+        classNames={{
+          base: "bg-zinc-950 border border-rose-500/20 rounded-[2.5rem]",
+          header: "border-b border-rose-500/10 p-8",
+          body: "p-8",
+          footer: "border-t border-white/5 p-6",
+        }}
+      >
+        <ModalContent>
+          {(onClose) => (
+            <>
+              <ModalHeader className="flex flex-col gap-1">
+                <div className="flex items-center gap-3">
+                   <div className="h-10 w-10 bg-rose-500 rounded-xl flex items-center justify-center text-white shadow-lg shadow-rose-500/30">
+                      <Trash2 size={20} />
+                   </div>
+                   <div className="flex flex-col">
+                      <h3 className="text-xl font-black text-white italic uppercase tracking-tighter leading-none">
+                        Eliminar <span className="text-rose-500">Cierre de Caja</span>
+                      </h3>
+                      <p className="text-[9px] font-black text-zinc-500 uppercase tracking-[0.3em] mt-1 italic">Acción irreversible — Solo administradores</p>
+                   </div>
+                </div>
+              </ModalHeader>
+              <ModalBody>
+                {closureToDelete && (
+                  <div className="space-y-6">
+                    <div className="bg-rose-500/10 border border-rose-500/20 rounded-2xl p-4 flex items-start gap-3">
+                      <AlertCircle size={20} className="text-rose-500 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="text-xs font-black text-rose-400 uppercase mb-1">Advertencia</p>
+                        <p className="text-[11px] text-rose-300/80 font-bold">Este cierre será eliminado permanentemente del sistema. Los totales acumulados se recalcularán automáticamente. Esta acción no se puede deshacer.</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white/5 rounded-2xl border border-white/5 p-5 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">ID del Cierre</span>
+                        <span className="text-sm font-black text-white">#{closureToDelete.id}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Fecha</span>
+                        <span className="text-sm font-black text-white tabular-nums">{formatDateTime(closureToDelete.date)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Responsable</span>
+                        <span className="text-sm font-black text-white">{closureToDelete.closedByName}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Ventas Totales</span>
+                        <span className="text-sm font-black text-emerald-400 tabular-nums">${formatCurrency(closureToDelete.totalSales)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Efectivo Físico</span>
+                        <span className="text-sm font-black text-white tabular-nums">${formatCurrency(closureToDelete.physicalCash)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest">Diferencia</span>
+                        <span className={`text-sm font-black tabular-nums ${closureToDelete.difference === 0 ? 'text-emerald-500' : closureToDelete.difference < 0 ? 'text-rose-500' : 'text-amber-500'}`}>
+                          {closureToDelete.difference > 0 ? '+' : ''}${formatCurrency(closureToDelete.difference)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </ModalBody>
+              <ModalFooter>
+                <Button 
+                  variant="flat" 
+                  onPress={onClose}
+                  className="font-black text-[10px] uppercase tracking-widest bg-white/5 text-zinc-400 rounded-xl"
+                >
+                  Cancelar
+                </Button>
+                <Button 
+                  color="danger"
+                  onPress={handleConfirmDelete}
+                  isLoading={isDeleting}
+                  className="font-black text-[10px] uppercase tracking-widest rounded-xl shadow-lg shadow-rose-500/20"
+                  startContent={!isDeleting ? <Trash2 size={14} /> : undefined}
+                >
+                  {isDeleting ? 'Eliminando...' : 'Eliminar Permanentemente'}
+                </Button>
+              </ModalFooter>
             </>
           )}
         </ModalContent>

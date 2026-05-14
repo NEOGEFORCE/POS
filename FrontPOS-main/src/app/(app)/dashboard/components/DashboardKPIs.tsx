@@ -2,14 +2,15 @@
 
 import { 
     ShoppingCart, Wallet, CreditCard, ArrowDownRight, HandCoins, ChevronRight, TrendingUp, DollarSign,
-    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark
+    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark, Banknote, RotateCcw, Trash2
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
-import { Chip } from "@heroui/react";
+import { Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from "@heroui/react";
 import React from 'react';
 import AuditModal from "./AuditModal";
 import Cookies from 'js-cookie';
+import { useToast } from "@/hooks/use-toast";
 
 
 
@@ -35,9 +36,10 @@ const formatCurrencyWithColor = (value: number, label?: string) => {
 };
 
 function KpiCard({ 
-    label, value, sub, icon: Icon, color, onClick, isCurrency = false, chartData, subColor, badge, variant = "default", footer, hideHeader = false
+    label, value, sub, icon: Icon, color, onClick, isCurrency = false, chartData, subColor, badge, variant = "default", footer, hideHeader = false, topAction
 }: {
     label: string; value: string | number | React.ReactNode; sub: React.ReactNode; icon: any; color: string; onClick?: () => void; isCurrency?: boolean; chartData?: any[]; subColor?: string; badge?: React.ReactNode; variant?: "default" | "audit"; footer?: React.ReactNode; hideHeader?: boolean;
+    topAction?: React.ReactNode;
 }) {
     const isAudit = variant === "audit";
 
@@ -59,9 +61,12 @@ function KpiCard({
                         )}
                         
                         <div className={`flex flex-col ${isAudit ? 'items-start w-full' : 'items-end overflow-hidden'}`}>
-                            <span className={`font-black uppercase tracking-widest leading-none mb-2 italic ${isAudit ? 'text-[11px] text-zinc-500' : 'text-[10px] text-gray-500 dark:text-zinc-400 truncate w-full'}`}>
-                                {label}
-                            </span>
+                            <div className="flex items-center justify-between w-full gap-2">
+                                <span className={`font-black uppercase tracking-widest leading-none mb-2 italic ${isAudit ? 'text-[11px] text-zinc-500' : 'text-[10px] text-gray-500 dark:text-zinc-400 truncate flex-1'}`}>
+                                    {label}
+                                </span>
+                                {topAction && <div className="mb-2">{topAction}</div>}
+                            </div>
                             
                             <div className={`flex items-center gap-3 ${isAudit ? 'w-full justify-between' : ''}`}>
                                 <span className={`font-black italic leading-none tracking-tighter tabular-nums truncate pr-1 ${isAudit ? 'text-2xl sm:text-3xl lg:text-4xl text-white' : 'text-lg sm:text-xl lg:text-2xl text-gray-900 dark:text-white'}`}>
@@ -103,6 +108,90 @@ interface DashboardKPIsProps {
 
 export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps) {
     if (!data) return null;
+    const { toast } = useToast();
+
+    // ESTADOS GLOBALES DE CONTROL
+    const [isAuditModalOpen, setIsAuditModalOpen] = React.useState(false);
+    const [isResetProfitModalOpen, setIsResetProfitModalOpen] = React.useState(false);
+    const [isResetExpectedModalOpen, setIsResetExpectedModalOpen] = React.useState(false);
+    const [isResetting, setIsResetting] = React.useState(false);
+    const [isResettingExpected, setIsResettingExpected] = React.useState(false);
+
+    // MANEJADORES DE REINICIO Y AJUSTE
+    const handleResetProfit = async () => {
+        setIsResetting(true);
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/reset-profit`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
+                }
+            });
+
+            if (response.ok) {
+                toast({ variant: 'success', title: 'ÉXITO', description: 'UTILIDAD REINICIADA CORRECTAMENTE.' });
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                const err = await response.json();
+                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL REINICIAR UTILIDAD' });
+            }
+        } catch (error) {
+            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'NO HAY COMUNICACIÓN CON EL SERVIDOR.' });
+        } finally {
+            setIsResetting(false);
+            setIsResetProfitModalOpen(false);
+        }
+    };
+
+    const handleResetExpectedBalance = async () => {
+        setIsResettingExpected(true);
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/reset-expected-balance`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
+                }
+            });
+
+            if (response.ok) {
+                toast({ variant: 'success', title: 'ÉXITO', description: 'SALDO ESPERADO REINICIADO.' });
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                const err = await response.json();
+                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL REINICIAR SALDO' });
+            }
+        } catch (error) {
+            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'SIN CONEXIÓN AL SERVIDOR.' });
+        } finally {
+            setIsResettingExpected(false);
+            setIsResetExpectedModalOpen(false);
+        }
+    };
+
+    const handleAdjustBalance = async (balances: any) => {
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/adjust-initial-balance`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
+                },
+                body: JSON.stringify(balances)
+            });
+
+            if (response.ok) {
+                toast({ variant: 'success', title: 'ÉXITO', description: 'FONDO DE CAJA AJUSTADO.' });
+                setTimeout(() => window.location.reload(), 1000);
+            } else {
+                const err = await response.json();
+                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL AJUSTAR FONDO' });
+            }
+        } catch (error) {
+            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'FALLO EN LA COMUNICACIÓN.' });
+        }
+    };
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full">
@@ -140,40 +229,12 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
             />
 
             {/* Specialized Audit Card (Dinero Real) */}
-            {(() => {
-                const netReportedBalance = (data.reportedBalance || 0);
-                const [isAuditModalOpen, setIsAuditModalOpen] = React.useState(false);
-
-                const handleAdjustBalance = async (balances: any) => {
-                    try {
-                        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/adjust-initial-balance`, {
-                            method: 'POST',
-                            headers: {
-                                'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${Cookies.get('org-pos-token')}`
-                            },
-                            body: JSON.stringify(balances)
-                        });
-
-                        if (response.ok) {
-                            window.location.reload();
-                        } else {
-                            const err = await response.json();
-                            alert("❌ Error al ajustar saldo: " + (err.message || "Error desconocido"));
-                        }
-                    } catch (error) {
-                        alert("❌ Error de conexión al servidor.");
-                    }
-                };
-
-                return (
-                    <>
-                        <KpiCard
-                            variant="audit"
-                            hideHeader={true}
-                            label="AUDITORIA DE CAJA"
-                            value={0}
-                            sub={
+            <KpiCard
+                variant="audit"
+                hideHeader={true}
+                label="AUDITORIA DE CAJA"
+                value={0}
+                sub={
                                 <div className="flex flex-col gap-0 w-full">
                                     {/* CABECERA DINÁMICA DE 2 COLUMNAS */}
                                     <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent grid grid-cols-2 gap-8 items-start">
@@ -186,13 +247,24 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                                     {formatCurrencyWithColor(Math.round(data.globalHistoricalReal || 0))}
                                                 </span>
                                             </div>
-                                            <span className="text-[9px] text-zinc-600 font-bold italic mt-2 uppercase tracking-tight">Suma de cierres - Egresos de Fondo</span>
+
+
+                                            <span className="text-[9px] text-zinc-600 font-bold italic mt-3 uppercase tracking-tight">Suma de cierres - Egresos de Fondo</span>
                                         </div>
 
                                         <div className="flex flex-col items-end pl-4">
-                                            <span className="font-black uppercase tracking-widest leading-none mb-3 italic text-[11px] text-zinc-500 text-right">
-                                                SALDO ESPERADO TOTAL (SISTEMA)
-                                            </span>
+                                            <div className="flex items-center gap-2 mb-3">
+                                                <button 
+                                                    onClick={(e) => { e.stopPropagation(); setIsResetExpectedModalOpen(true); }}
+                                                    className="p-1 hover:bg-white/10 rounded-md text-zinc-600 hover:text-rose-500 transition-all active:scale-90"
+                                                    title="Reiniciar Saldo Esperado"
+                                                >
+                                                    <RotateCcw size={10} />
+                                                </button>
+                                                <span className="font-black uppercase tracking-widest leading-none italic text-[11px] text-zinc-500 text-right">
+                                                    SALDO ESPERADO TOTAL (SISTEMA)
+                                                </span>
+                                            </div>
                                             <div className="flex items-center gap-3 justify-end">
                                                 <span className="font-black italic leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-white">
                                                     {formatCurrencyWithColor(Math.round(data.globalHistoricalExpected || 0))}
@@ -245,14 +317,57 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                 </>
                             }
                         />
-                        <AuditModal 
-                            isOpen={isAuditModalOpen} 
-                            onOpenChange={setIsAuditModalOpen} 
-                            onConfirm={handleAdjustBalance} 
-                        />
-                    </>
-                );
-            })()}
+                        {/* MODAL DE REINICIO DE SALDO ESPERADO */}
+                        <Modal 
+                            isOpen={isResetExpectedModalOpen} 
+                            onOpenChange={setIsResetExpectedModalOpen}
+                            backdrop="blur"
+                            classNames={{
+                                base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-[2.5rem]",
+                            }}
+                        >
+                            <ModalContent>
+                                {(onClose) => (
+                                    <>
+                                        <ModalHeader className="flex flex-col gap-1 p-8 pb-4">
+                                            <div className="flex items-center gap-4">
+                                                <div className="h-12 w-12 bg-amber-500/10 text-amber-500 rounded-2xl flex items-center justify-center border border-amber-500/20">
+                                                    <RotateCcw size={24} />
+                                                </div>
+                                                <div className="flex flex-col">
+                                                    <h3 className="font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-xl">Reiniciar <span className="text-amber-500">Saldo Sistema</span></h3>
+                                                    <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Punto de Partida Teórico</p>
+                                                </div>
+                                            </div>
+                                        </ModalHeader>
+                                        <ModalBody className="p-8 pt-2">
+                                            <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 italic leading-relaxed">
+                                                ¿Estás seguro de que deseas reiniciar el saldo esperado del sistema? Esto ignorará todos los registros teóricos previos y comenzará a calcular la diferencia desde cero basándose en las nuevas operaciones.
+                                                <br /><br />
+                                                <span className="text-amber-600 dark:text-amber-500 font-black uppercase text-[10px] tracking-widest">⚠️ Ideal para cuando terminas el montaje inicial de productos.</span>
+                                            </p>
+                                        </ModalBody>
+                                        <ModalFooter className="p-6 bg-gray-50/50 dark:bg-white/[0.02] border-t border-gray-100 dark:border-white/5">
+                                            <Button variant="light" onPress={onClose} className="font-black uppercase text-[10px] tracking-widest">Cancelar</Button>
+                                            <Button 
+                                                color="warning" 
+                                                onPress={handleResetExpectedBalance} 
+                                                isLoading={isResettingExpected}
+                                                className="bg-amber-500 text-white font-black uppercase text-[10px] tracking-widest px-8 rounded-xl"
+                                            >
+                                                Confirmar Reinicio
+                                            </Button>
+                                        </ModalFooter>
+                                    </>
+                                )}
+                            </ModalContent>
+                        </Modal>
+
+            <AuditModal 
+                isOpen={isAuditModalOpen} 
+                onOpenChange={setIsAuditModalOpen} 
+                onConfirm={handleAdjustBalance} 
+            />
 
             <KpiCard
                 label="UTILIDAD DEL MES"
@@ -261,8 +376,62 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 icon={LineChart}
                 color="#8b5cf6"
                 isCurrency={true}
-
+                topAction={
+                    <button 
+                        onClick={(e) => { e.stopPropagation(); setIsResetProfitModalOpen(true); }}
+                        className="p-1.5 hover:bg-rose-500/10 rounded-lg text-zinc-500 hover:text-rose-500 transition-all active:scale-90 group/btn"
+                        title="Reiniciar Conteo de Utilidad"
+                    >
+                        <RotateCcw size={14} className="group-hover/btn:rotate-[-45deg] transition-transform" />
+                    </button>
+                }
             />
+
+            {/* MODAL DE REINICIO DE UTILIDAD */}
+            <Modal 
+                isOpen={isResetProfitModalOpen} 
+                onOpenChange={setIsResetProfitModalOpen}
+                backdrop="blur"
+                classNames={{
+                    base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-[2.5rem]",
+                }}
+            >
+                <ModalContent>
+                    {(onClose) => (
+                        <>
+                            <ModalHeader className="flex flex-col gap-1 p-8 pb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className="h-12 w-12 bg-rose-500/10 text-rose-500 rounded-2xl flex items-center justify-center border border-rose-500/20">
+                                        <RotateCcw size={24} />
+                                    </div>
+                                    <div className="flex flex-col">
+                                        <h3 className="font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-xl">Reiniciar <span className="text-rose-500">Utilidad</span></h3>
+                                        <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Punto de Partida Maestro</p>
+                                    </div>
+                                </div>
+                            </ModalHeader>
+                            <ModalBody className="p-8 pt-2">
+                                <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 italic leading-relaxed">
+                                    ¿Estás seguro de que deseas reiniciar el conteo de utilidad? Esta acción establecerá la fecha actual como el nuevo punto de inicio para el cálculo de ganancias, ignorando datos previos.
+                                    <br /><br />
+                                    <span className="text-rose-500 font-black uppercase text-[10px] tracking-widest">⚠️ Esta acción no se puede deshacer.</span>
+                                </p>
+                            </ModalBody>
+                            <ModalFooter className="p-6 bg-gray-50/50 dark:bg-white/[0.02] border-t border-gray-100 dark:border-white/5">
+                                <Button variant="light" onPress={onClose} className="font-black uppercase text-[10px] tracking-widest">Cancelar</Button>
+                                <Button 
+                                    color="danger" 
+                                    onPress={handleResetProfit} 
+                                    isLoading={isResetting}
+                                    className="bg-rose-500 text-white font-black uppercase text-[10px] tracking-widest px-8 rounded-xl"
+                                >
+                                    Confirmar Reinicio
+                                </Button>
+                            </ModalFooter>
+                        </>
+                    )}
+                </ModalContent>
+            </Modal>
 
             {/* FILA 2 */}
             <KpiCard
@@ -315,16 +484,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 onClick={onOpenDebts}
             />
 
-            {/* Tarjeta de relleno para completar 4 cols o informativa */}
-            <div className="hidden md:flex flex-col justify-center p-6 bg-emerald-500/5 rounded-2xl border border-emerald-500/10 border-dashed">
-                <div className="flex items-center gap-2 mb-2">
-                    <TrendingUp size={16} className="text-emerald-500" />
-                    <span className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic">Análisis de Turno</span>
-                </div>
-                <p className="text-[11px] text-zinc-500 leading-relaxed font-bold italic">
-                    "El éxito no es solo vender, es saber cuánto dinero tienes realmente en la mano."
-                </p>
-            </div>
+
         </div>
     );
 }

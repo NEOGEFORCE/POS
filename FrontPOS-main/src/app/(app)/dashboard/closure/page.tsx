@@ -1,13 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
     DollarSign, 
     Calculator, 
-    ArrowRightCircle, 
     AlertTriangle, 
     CheckCircle2, 
-    XCircle, 
     ShieldAlert, 
     Send,
     RefreshCw,
@@ -21,7 +19,8 @@ import {
     Lock,
     ChevronDown,
     ChevronUp,
-    ReceiptText
+    ReceiptText,
+    Trash2
 } from 'lucide-react';
 
 import { 
@@ -38,12 +37,13 @@ import {
     ModalFooter,
     useDisclosure
 } from "@heroui/react";
-import { formatCurrency, parseCOP, sanitizeNumber } from '@/lib/utils';
+import { formatCurrency, parseCOP, sanitizeNumber, formatTime, formatShortDateTime, formatDateTime } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-error';
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 import { useAuth } from '@/lib/auth';
 import ExpenseFormModal from '@/app/(app)/expenses/components/ExpenseFormModal';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 interface CashierClosure {
     id: string;
@@ -82,7 +82,10 @@ interface CashierClosure {
 
 export default function CashierClosurePage() {
     const { user, logout } = useAuth();
-    const isAdmin = user?.role?.toUpperCase() === 'ADMIN' || user?.role?.toUpperCase() === 'SUPERADMIN';
+    const isAdmin = useMemo(() => {
+        const role = (user?.role || user?.Role || '').toLowerCase();
+        return ['admin', 'administrador', 'superadmin'].includes(role);
+    }, [user]);
     const [currentClosure, setCurrentClosure] = useState<CashierClosure | null>(null);
     const [loading, setLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -131,23 +134,6 @@ export default function CashierClosurePage() {
     };
 
     const { toast } = useToast();
-
-    // Egresos manuales
-    // Egresos manuales con persistencia
-    const [salaryEgresses, setSalaryEgresses] = useState<{ id: string, amount: number, method: 'EFECTIVO' | 'FONDO' | 'NEQUI' | 'DAVIPLATA', description: string }[]>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('pos_closure_salary');
-            return saved ? JSON.parse(saved) : [];
-        }
-        return [];
-    });
-    const [operationalEgresses, setOperationalEgresses] = useState<{ id: string, amount: number, method: 'EFECTIVO' | 'FONDO' | 'NEQUI' | 'DAVIPLATA', description: string }[]>(() => {
-        if (typeof window !== 'undefined') {
-            const saved = localStorage.getItem('pos_closure_operational');
-            return saved ? JSON.parse(saved) : [];
-        }
-        return [];
-    });
 
     // Formulario interactivo derecho
     const [actualCashInput, setActualCashInput] = useState(() => {
@@ -217,14 +203,6 @@ export default function CashierClosurePage() {
     }, [actualCashInput]);
 
     useEffect(() => {
-        localStorage.setItem('pos_closure_salary', JSON.stringify(salaryEgresses));
-    }, [salaryEgresses]);
-
-    useEffect(() => {
-        localStorage.setItem('pos_closure_operational', JSON.stringify(operationalEgresses));
-    }, [operationalEgresses]);
-
-    useEffect(() => {
         localStorage.setItem('pos_closure_note', closingNote);
     }, [closingNote]);
 
@@ -238,8 +216,14 @@ export default function CashierClosurePage() {
         try {
             const data = await apiFetch('/dashboard/cashier-closure', { method: 'GET' }, token);
             setCurrentClosure(data);
-        } catch (error: any) {
-            toast({ title: "Error", description: error.message, variant: "destructive" });
+        } catch (err: any) {
+            console.error("Error al cargar cierre:", err);
+            toast({ 
+                variant: "destructive", 
+                title: "Error de Auditoría", 
+                description: err.message || "No se pudieron cargar los datos de la caja." 
+            });
+            setLoading(false);
         } finally {
             setLoading(false);
         }
@@ -247,6 +231,12 @@ export default function CashierClosurePage() {
 
     useEffect(() => {
         fetchCurrent();
+        const cleanup = setupSyncListener((event) => {
+            if (event === 'CLOSURE_MADE' || event === 'EXPENSE_UPDATE' || event === 'DASHBOARD_UPDATE') {
+                fetchCurrent();
+            }
+        });
+        return cleanup;
     }, []);
 
     // Actualizar actualCashInput cuando el calculador cambie
@@ -272,69 +262,19 @@ export default function CashierClosurePage() {
         }
     }, [bills, coins]);
 
-    const handleAddEgress = (type: 'salary' | 'operational') => {
-        const newEgress = { id: crypto.randomUUID(), amount: 0, method: 'EFECTIVO' as any, description: '' };
-        if (type === 'salary') setSalaryEgresses([...salaryEgresses, newEgress]);
-        else setOperationalEgresses([...operationalEgresses, newEgress]);
-    };
+    // Cálculos dinámicos basados en la base de datos
+    const efectivoEnCaja = (currentClosure?.totalCash ?? 0) + 
+                          (currentClosure?.totalCreditCollected ?? 0) + 
+                          (currentClosure?.openingCash ?? 0);
 
-    const handleRemoveEgress = (type: 'salary' | 'operational', id: string) => {
-        if (type === 'salary') setSalaryEgresses(salaryEgresses.filter(e => e.id !== id));
-        else setOperationalEgresses(operationalEgresses.filter(e => e.id !== id));
-    };
+    const dbCashExpenses = (currentClosure?.expenses || [])
+        .filter((e: any) => e.paymentSource === 'EFECTIVO')
+        .reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
 
-    const updateEgress = (type: 'salary' | 'operational', id: string, field: string, value: any) => {
-        if (type === 'salary') {
-            setSalaryEgresses(salaryEgresses.map(e => e.id === id ? { ...e, [field]: value } : e));
-        } else {
-            setOperationalEgresses(operationalEgresses.map(e => e.id === id ? { ...e, [field]: value } : e));
-        }
-    };
-
-    // Cálculos del sistema
-    const effectiveSalariesPaidList = salaryEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0);
-    const effectiveOperationalExpenses = operationalEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0);
-
-    // Salidas registradas en BD (Solo Efectivo para el cálculo del descuadre)
-    const dbCashExpenses = currentClosure?.expenses?.filter(e => !e.paymentSource || e.paymentSource === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0) ?? 0;
-    
-    // Otros egresos registrados en BD (Transferencias, etc - Informativo)
-    const dbNonCashExpenses = (currentClosure?.totalExpenses ?? 0) - dbCashExpenses;
-    
-    // Total de salidas que afectan el EFECTIVO (Gastos de BD + Gastos Manuales)
-    // NOTA: No restamos Devoluciones aquí porque el backend ya las descuenta de currentClosure.totalCash
-    const salidasTotalesEfectivo = dbCashExpenses + effectiveSalariesPaidList + effectiveOperationalExpenses;
-
-    const totalCashIn = currentClosure?.totalCash ?? 0;
-
-    const expensesByChannel = {
-        EFECTIVO: (currentClosure?.expenses?.filter(e => e.paymentSource === 'EFECTIVO' || !e.paymentSource).reduce((acc, e) => acc + e.amount, 0) ?? 0) + 
-                  salaryEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0) +
-                  operationalEgresses.filter(e => e.method === 'EFECTIVO').reduce((acc, e) => acc + e.amount, 0),
-        NEQUI: (currentClosure?.expenses?.filter(e => e.paymentSource === 'NEQUI').reduce((acc, e) => acc + e.amount, 0) ?? 0) +
-               salaryEgresses.filter(e => e.method === 'NEQUI').reduce((acc, e) => acc + e.amount, 0) +
-               operationalEgresses.filter(e => e.method === 'NEQUI').reduce((acc, e) => acc + e.amount, 0),
-        DAVIPLATA: (currentClosure?.expenses?.filter(e => e.paymentSource === 'DAVIPLATA').reduce((acc, e) => acc + e.amount, 0) ?? 0) +
-                   salaryEgresses.filter(e => e.method === 'DAVIPLATA').reduce((acc, e) => acc + e.amount, 0) +
-                   operationalEgresses.filter(e => e.method === 'DAVIPLATA').reduce((acc, e) => acc + e.amount, 0),
-        FONDO: (currentClosure?.expenses?.filter(e => e.paymentSource === 'FONDO').reduce((acc, e) => acc + e.amount, 0) ?? 0) +
-               salaryEgresses.filter(e => e.method === 'FONDO').reduce((acc, e) => acc + e.amount, 0) +
-               operationalEgresses.filter(e => e.method === 'FONDO').reduce((acc, e) => acc + e.amount, 0),
-    };
-    
-    // 1. VENTAS BRUTO (Total del turno)
-    const totalVentasBruto = currentClosure?.totalSales ?? 0;
-
-    // 2. EFECTIVO EN CAJA (Entradas Brutas)
-    const abonosEfectivo = currentClosure?.creditPayments?.reduce((acc, p) => acc + (p.amountCash || 0), 0) ?? 0;
-    const ventasEfectivo = (currentClosure?.totalCash ?? 0) - abonosEfectivo;
-    const efectivoEnCaja = (currentClosure?.totalCash ?? 0); 
-
-    // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja fsica)
-    const totalEgresosEfectivo = dbCashExpenses + effectiveSalariesPaidList + effectiveOperationalExpenses;
+    // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja física)
+    const totalEgresosEfectivo = dbCashExpenses;
 
     // 4. EFECTIVO ESPERADO (Entradas - Salidas)
-    // Si los gastos superan a las ventas, el efectivo físico esperado es $0 (no puede haber dinero negativo en el cajón).
     const theoreticalBalance = efectivoEnCaja - totalEgresosEfectivo;
     const expectedCash = Math.max(0, theoreticalBalance);
     
@@ -393,18 +333,6 @@ export default function CashierClosurePage() {
             coins200: c200,
             coins100: c100,
             expenses: [
-                ...salaryEgresses.map(e => ({
-                    description: e.description || 'PAGO NÓMINA',
-                    category: 'Nómina',
-                    amount: e.amount,
-                    paymentSource: e.method
-                })),
-                ...operationalEgresses.map(e => ({
-                    description: e.description || 'GASTO OPERATIVO',
-                    category: 'Operativo',
-                    amount: e.amount,
-                    paymentSource: e.method
-                })),
                 ...(currentClosure?.expenses || [])
             ]
         };
@@ -416,10 +344,15 @@ export default function CashierClosurePage() {
                 fallbackError: 'Error al procesar el cierre'
             }, token);
 
-            toast({ title: "Caja Cerrada", description: "El cierre de caja se ha procesado correctamente.", variant: "default" });
-            setShowAuthModal(false);
-            fetchCurrent();
-            resetCalculator();
+            toast({ title: "Caja Cerrada", description: "El cierre de caja ha sido exitoso. Sesión finalizada para cambio de turno.", variant: "default" });
+            
+            // LIMPIEZA AUTOMÁTICA TRAS ÉXITO
+            confirmReset(); 
+
+            // MEGA-SPRINT: Expulsión forzosa tras cierre de caja
+            setTimeout(() => {
+                logout();
+            }, 2000); // Dar 2 segundos para leer el mensaje de éxito
         } catch (error: any) {
             toast({ title: "FALLO DE CIERRE", description: error.message, variant: "destructive" });
         } finally {
@@ -451,18 +384,6 @@ export default function CashierClosurePage() {
             coins200: c200,
             coins100: c100,
             expenses: [
-                ...salaryEgresses.map(e => ({
-                    description: e.description || 'PAGO NÓMINA',
-                    category: 'Nómina',
-                    amount: e.amount,
-                    paymentSource: e.method
-                })),
-                ...operationalEgresses.map(e => ({
-                    description: e.description || 'GASTO OPERATIVO',
-                    category: 'Operativo',
-                    amount: e.amount,
-                    paymentSource: e.method
-                })),
                 ...(currentClosure?.expenses || [])
             ]
         };
@@ -535,12 +456,34 @@ export default function CashierClosurePage() {
             }, token);
 
             toast({ variant: "success", title: "ÉXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
+            const { broadcastRevalidate } = await import('@/lib/revalidate');
+            broadcastRevalidate('EXPENSE_UPDATE');
             setIsRealExpenseModalOpen(false);
             fetchCurrent(); // Refrescar auditoría para ver el nuevo gasto
         } catch (err: any) {
             toast({ variant: "destructive", title: "ERROR", description: err.message });
         }
     };
+
+    const handleDeleteDBExpense = async (id: number) => {
+        if (!window.confirm('¿ESTÁS SEGURO DE ELIMINAR ESTE EGRESO DE LA BASE DE DATOS?')) return;
+        const token = Cookies.get('org-pos-token');
+        if (!token) return;
+
+        try {
+            await apiFetch(`/expenses/delete/${id}`, {
+                method: 'DELETE',
+                fallbackError: 'FALLO AL ELIMINAR EGRESO'
+            }, token);
+
+            toast({ variant: "success", title: "EGRESO ELIMINADO", description: "SE HA REMOVIDO EL REGISTRO DE LA BASE DE DATOS" });
+            broadcastRevalidate('EXPENSE_UPDATE');
+            fetchCurrent();
+        } catch (err: any) {
+            toast({ variant: "destructive", title: "ERROR", description: err.message });
+        }
+    };
+
 
 
 
@@ -570,11 +513,11 @@ export default function CashierClosurePage() {
                             {currentClosure ? (
                                 <>
                                     <span className="text-emerald-700 dark:text-emerald-500 flex items-center gap-1">
-                                        <TrendingUp size={10} /> INICIO: {new Date(currentClosure.startDate).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        <TrendingUp size={10} /> INICIO: {formatShortDateTime(currentClosure.startDate)}
                                     </span>
                                     <span className="text-gray-300 dark:text-zinc-700">|</span>
                                     <span className="text-rose-700 dark:text-rose-500 flex items-center gap-1">
-                                        <TrendingDown size={10} /> CIERRE: {new Date(currentClosure.endDate).toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                                        <TrendingDown size={10} /> CIERRE: {formatShortDateTime(currentClosure.endDate)}
                                     </span>
                                 </>
                             ) : 'Auditoría en Tiempo Real'}
@@ -632,98 +575,40 @@ export default function CashierClosurePage() {
                             <div className="flex flex-wrap gap-2">
                                 <Button 
                                     size="sm" 
-                                    variant="flat" 
-                                    onPress={() => handleAddEgress('salary')}
-                                    className="h-8 text-[9px] font-black uppercase tracking-widest bg-emerald-500/10 text-emerald-600 rounded-xl"
-                                    startContent={<Briefcase size={12} />}
-                                >
-                                    + PAGO NÓMINA
-                                </Button>
-                                <Button 
-                                    size="sm" 
                                     variant="solid" 
                                     onPress={() => setIsRealExpenseModalOpen(true)}
-                                    className="h-8 text-[9px] font-black uppercase tracking-widest bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-500/20"
-                                    startContent={<ReceiptText size={14} />}
+                                    className="h-10 text-[10px] font-black uppercase tracking-widest bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-500/20 px-6 transition-all active:scale-95"
+                                    startContent={<ReceiptText size={16} />}
                                 >
-                                    + REGISTRAR EGRESO GENERAL
-                                </Button>
-                                <Button 
-                                    size="sm" 
-                                    variant="flat" 
-                                    onPress={() => handleAddEgress('operational')}
-                                    className="h-8 text-[9px] font-black uppercase tracking-widest bg-rose-500/10 text-rose-600 rounded-xl"
-                                    startContent={<ArrowRightCircle size={12} />}
-                                >
-                                    + OTRO GASTO
+                                    REGISTRAR EGRESO GENERAL
                                 </Button>
                             </div>
                         </div>
 
                         <div className="space-y-3">
-                            {/* EGRESOS MANUALES (EDITABLES POR EL CAJERO) */}
-                            {[...salaryEgresses, ...operationalEgresses].map((e) => {
-                                const isSalary = salaryEgresses.some(s => s.id === e.id);
-                                const type = isSalary ? 'salary' : 'operational';
-                                return (
-                                    <div key={e.id} className="p-4 rounded-3xl border border-dashed border-rose-500/40 bg-rose-50/30 dark:bg-rose-500/5 animate-in zoom-in-95 duration-300">
-                                        <div className="flex items-center justify-between mb-3">
-                                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full ${isSalary ? 'bg-emerald-500/10 text-emerald-600' : 'bg-rose-500/10 text-rose-600'} uppercase`}>
-                                                {isSalary ? 'Pago Nómina / Empleado' : 'Gasto Operativo / Otro'}
-                                            </span>
-                                            <Button 
-                                                isIconOnly 
-                                                size="sm" 
-                                                variant="light" 
-                                                onPress={() => handleRemoveEgress(type, e.id)}
-                                                className="text-rose-500 hover:bg-rose-500/10 rounded-full"
-                                            >
-                                                <XCircle size={16} />
-                                            </Button>
-                                        </div>
-                                        <div className="grid grid-cols-1 md:grid-cols-[1fr_150px_120px] gap-3">
-                                            <Input 
-                                                placeholder="Descripción"
-                                                value={e.description}
-                                                onValueChange={(v) => updateEgress(type, e.id, 'description', v.toUpperCase())}
-                                                variant="bordered"
-                                                size="sm"
-                                                classNames={{ input: "text-[11px] font-bold", inputWrapper: "h-10 rounded-xl bg-white dark:bg-zinc-950" }}
-                                            />
-                                            <Input 
-                                                placeholder="Monto"
-                                                value={e.amount === 0 ? '' : e.amount.toString()}
-                                                onValueChange={(v) => updateEgress(type, e.id, 'amount', parseFloat(sanitizeNumber(v).toString()) || 0)}
-                                                variant="bordered"
-                                                size="sm"
-                                                startContent={<span className="text-zinc-400 font-bold">$</span>}
-                                                classNames={{ input: "text-[11px] font-black", inputWrapper: "h-10 rounded-xl bg-white dark:bg-zinc-950" }}
-                                            />
-                                            <select 
-                                                value={e.method}
-                                                onChange={(ev) => updateEgress(type, e.id, 'method', ev.target.value)}
-                                                className="h-10 rounded-xl bg-white dark:bg-zinc-950 border-2 border-zinc-100 dark:border-white/10 text-[9px] font-black uppercase px-2 focus:outline-none focus:border-rose-500/50 transition-all"
-                                            >
-                                                <option value="EFECTIVO">EFECTIVO</option>
-                                                <option value="NEQUI">NEQUI</option>
-                                                <option value="DAVIPLATA">DAVIPLATA</option>
-                                                <option value="FONDO">FONDO</option>
-                                            </select>
-                                        </div>
-                                    </div>
-                                );
-                            })}
-
-                            {/* HISTORIAL DE EGRESOS YA GUARDADOS (SOLO ADMIN PUEDE VER EL DESGLOSE) */}
-                            {isAdmin && currentClosure?.expenses?.map((exp, idx) => (
+                            {/* HISTORIAL DE EGRESOS YA GUARDADOS */}
+                            {currentClosure?.expenses?.map((exp, idx) => (
                                 <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
                                     <div className="flex flex-col">
                                         <span className="text-[9px] font-black text-gray-400 uppercase">{exp.category}</span>
                                         <span className="text-xs font-bold text-gray-900 dark:text-white uppercase">{exp.description}</span>
                                     </div>
-                                    <div className="text-right">
-                                        <span className="text-sm font-black text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
-                                        <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
+                                    <div className="flex items-center gap-3">
+                                        <div className="text-right">
+                                            <span className="text-sm font-black text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
+                                            <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
+                                        </div>
+                                        {isAdmin && (
+                                            <Button 
+                                                isIconOnly 
+                                                size="sm" 
+                                                variant="light" 
+                                                onPress={() => handleDeleteDBExpense(exp.id)}
+                                                className="text-rose-500 hover:bg-rose-500/10 rounded-full"
+                                            >
+                                                <Trash2 size={14} />
+                                            </Button>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -1094,8 +979,8 @@ export default function CashierClosurePage() {
                                         <p className="text-[10px] uppercase font-black text-zinc-500">Comprobante de Movimientos</p>
                                         <div className="h-px bg-zinc-200 my-2" />
                                         <p className="text-[9px] uppercase">Cajero: {detailedReport?.employee || '---'}</p>
-                                        <p className="text-[9px] uppercase">Inicio: {detailedReport?.startTime ? new Date(detailedReport.startTime).toLocaleString() : '---'}</p>
-                                        <p className="text-[9px] uppercase">Corte: {detailedReport?.endTime ? new Date(detailedReport.endTime).toLocaleString() : '---'}</p>
+                                        <p className="text-[9px] uppercase">Inicio: {detailedReport?.startTime ? formatDateTime(detailedReport.startTime) : '---'}</p>
+                                        <p className="text-[9px] uppercase">Corte: {detailedReport?.endTime ? formatDateTime(detailedReport.endTime) : '---'}</p>
                                     </div>
 
                                     <div className="space-y-3">
@@ -1109,7 +994,7 @@ export default function CashierClosurePage() {
                                         {(detailedReport?.movements || []).map((m: any, i: number) => (
                                             <div key={i} className="grid grid-cols-4 text-[10px] leading-tight mb-2">
                                                 <div className="col-span-1 text-zinc-500 font-black italic">
-                                                    {new Date(m.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                    {formatTime(m.time)}
                                                 </div>
                                                 <div className="col-span-1 font-black">
                                                     <span className={m.type === 'VENTA' ? 'text-emerald-600' : m.type === 'GASTO' ? 'text-rose-600' : 'text-blue-600'}>

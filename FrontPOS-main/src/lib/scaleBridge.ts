@@ -73,24 +73,37 @@ class ScaleBridge {
             if (!this.watchdogInterval) {
                 this.watchdogInterval = setInterval(() => {
                     const now = Date.now();
-                    if (this.state.isConnected && (now - this.lastMessageTime > 8000)) {
-                        console.warn("ScaleBridge Watchdog: Inactividad detectada. Reiniciando conexión automáticamente...");
-                        this.ws?.close(); // Forzar cierre para disparar reconexión
+                    // Watchdog: 5 segundos de silencio total = reconectar
+                    // Aumentamos a 5s para dar margen a micro-cortes sin ser tan agresivos que causemos loops
+                    if (this.state.isConnected && (now - this.lastMessageTime > 5000)) {
+                        console.warn("ScaleBridge Watchdog: Inactividad detectada. Reiniciando...");
+                        if (this.ws) {
+                            this.ws.onclose = null; // Evitar disparar onclose del socket viejo
+                            this.ws.close();
+                            this.ws = null;
+                        }
+                        this.updateState({ isConnected: false });
                         this.connect();
                     }
-                }, 4000);
+                }, 2000);
             }
 
             if (!this.pingInterval) {
                 this.pingInterval = setInterval(() => {
                     if (this.ws?.readyState === WebSocket.OPEN) {
-                        this.ws.send(JSON.stringify({ type: 'ping' }));
+                        try {
+                            this.ws.send(JSON.stringify({ type: 'ping' }));
+                        } catch (e) {
+                            console.error("ScaleBridge: Error enviando ping", e);
+                        }
                     }
                 }, 3000);
             }
 
             ws.onopen = () => {
+                if (this.ws !== ws) return;
                 this.updateState({ isConnected: true, error: null });
+                this.lastMessageTime = Date.now();
                 if (this.reconnectTimer) {
                     clearTimeout(this.reconnectTimer);
                     this.reconnectTimer = null;
@@ -98,6 +111,7 @@ class ScaleBridge {
             };
 
             ws.onmessage = (event) => {
+                if (this.ws !== ws) return;
                 this.lastMessageTime = Date.now();
                 if (this.state.isReloading) {
                     this.updateState({ isReloading: false });
@@ -107,9 +121,7 @@ class ScaleBridge {
                     switch (msg.type) {
                         case 'weight':
                             const newWeight = msg.value ?? 0;
-                            // Actualización INSTANTÁNEA para latencia cero
-                            this.updateState({ weight: newWeight });
-                            this.pendingWeight = null;
+                            this.throttleUpdate(newWeight);
                             break;
                         case 'status':
                             this.updateState({ isScaleOnline: msg.connected ?? false, port: msg.port ?? '' });
@@ -120,6 +132,9 @@ class ScaleBridge {
                         case 'raw':
                             this.updateState({ rawData: msg.data ?? '' });
                             break;
+                        case 'pong':
+                            // El pong mantiene viva la conexión y actualiza lastMessageTime
+                            break;
                     }
                 } catch {
                     // Ignore invalid JSON
@@ -127,20 +142,24 @@ class ScaleBridge {
             };
 
             ws.onerror = () => {
+                if (this.ws !== ws) return;
                 this.updateState({ isConnected: false, error: 'Error de conexión con el bridge de balanza' });
             };
 
             ws.onclose = () => {
-                this.ws = null;
-                this.updateState({ isConnected: false, isScaleOnline: false, weight: 0 });
-                if (!this.reconnectTimer) {
-                    this.reconnectTimer = setTimeout(() => {
-                        this.reconnectTimer = null;
-                        if (this.subscriberCount > 0) this.connect();
-                    }, RECONNECT_DELAY);
+                if (this.ws === ws) {
+                    this.ws = null;
+                    this.updateState({ isConnected: false, isScaleOnline: false, weight: 0 });
+                    if (!this.reconnectTimer) {
+                        this.reconnectTimer = setTimeout(() => {
+                            this.reconnectTimer = null;
+                            if (this.subscriberCount > 0) this.connect();
+                        }, RECONNECT_DELAY);
+                    }
                 }
             };
-        } catch {
+        } catch (e) {
+            console.error("ScaleBridge: Fallo crítico al conectar", e);
             this.updateState({ isConnected: false, error: 'No se pudo conectar al bridge' });
             if (!this.reconnectTimer) {
                 this.reconnectTimer = setTimeout(() => {
@@ -148,6 +167,21 @@ class ScaleBridge {
                     if (this.subscriberCount > 0) this.connect();
                 }, RECONNECT_DELAY);
             }
+        }
+    }
+
+    private throttleUpdate(weight: number) {
+        this.pendingWeight = weight;
+        if (!this.throttleTimer) {
+            // Limitar a 10 actualizaciones por segundo (100ms)
+            // Esto reduce la carga del CPU en el navegador y evita lag en el UI
+            this.throttleTimer = setTimeout(() => {
+                if (this.pendingWeight !== null) {
+                    this.updateState({ weight: this.pendingWeight });
+                    this.pendingWeight = null;
+                }
+                this.throttleTimer = null;
+            }, 100);
         }
     }
 
@@ -160,14 +194,20 @@ class ScaleBridge {
             clearInterval(this.pingInterval);
             this.pingInterval = null;
         }
+        if (this.watchdogInterval) {
+            clearInterval(this.watchdogInterval);
+            this.watchdogInterval = null;
+        }
         if (this.throttleTimer) {
             clearTimeout(this.throttleTimer);
             this.throttleTimer = null;
         }
         if (this.ws) {
+            this.ws.onclose = null;
             this.ws.close();
             this.ws = null;
         }
+        this.updateState({ isConnected: false, isScaleOnline: false, weight: 0 });
     }
 
     private updateState(partial: Partial<ScaleState>) {

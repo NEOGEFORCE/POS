@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"github.com/gin-gonic/gin"
+	"time"
 )
 
 // APIError define el formato estándar de errores para el frontend
@@ -50,3 +51,16 @@ const (
 	ErrConflict       = "ERR_CONFLICT"
 	ErrInternalServer = "ERR_INTERNAL_ERROR"
 )
+
+func parseDate(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+	// Try full format first
+	t, err := time.Parse("2006-01-02 15:04:05", s)
+	if err == nil {
+		return t, nil
+	}
+	// Try date only
+	return time.Parse("2006-01-02", s)
+}

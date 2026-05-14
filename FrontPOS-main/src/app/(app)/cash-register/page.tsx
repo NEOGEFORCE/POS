@@ -10,6 +10,7 @@ import { useApi } from "@/hooks/use-api";
 import { formatCurrency } from "@/lib/utils";
 import React, { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 interface CashClosure {
   id: number;
@@ -17,6 +18,8 @@ interface CashClosure {
   totalCash: number;
   totalCard: number;
   totalTransfer: number;
+  totalNequi?: number;
+  totalDaviplata?: number;
   totalExpenses: number;
   totalReturns: number;
   expectedCash: number;
@@ -25,18 +28,31 @@ interface CashClosure {
   status: 'BALANCED' | 'SHORTAGE' | 'SURPLUS';
   date: string;
   createdBy: string;
+  expenses?: any[];
 }
 
 export default function CashRegisterPage() {
-  const { data: closure, isLoading } = useApi<CashClosure>("/dashboard/cashier-closure", {
+  const { data: closure, isLoading, mutate } = useApi<CashClosure>("/dashboard/cashier-closure", {
     revalidateOnFocus: true,
   });
   const { toast } = useToast();
+
+  // SINCRONIZACIÓN ZERO-F5: Caja reacciona a ventas y gastos
+  useEffect(() => {
+    const cleanup = setupSyncListener((event) => {
+        if (event === 'SALE_MADE' || event === 'EXPENSE_UPDATE') {
+            mutate();
+        }
+    });
+    return cleanup;
+  }, [mutate]);
 
   const [actualCashInput, setActualCashInput] = useState('');
   const [actualNequiInput, setActualNequiInput] = useState('');
   const [actualDaviplataInput, setActualDaviplataInput] = useState('');
   const [closingNote, setClosingNote] = useState('');
+  const [withdrawalAmount, setWithdrawalAmount] = useState('');
+  const [withdrawalNote, setWithdrawalNote] = useState('RETIRO DE CIERRE');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Calculadora de denominaciones
@@ -93,23 +109,34 @@ export default function CashRegisterPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          ...closure,
           totalCashReal: actualCash,
           totalNequiReal: parseFloat(actualNequiInput) || 0,
           totalDaviplataReal: parseFloat(actualDaviplataInput) || 0,
-          physicalCash: actualCash, // Mantenemos por compatibilidad con auditoría actual
-          note: closingNote
+          physicalCash: actualCash,
+          note: closingNote,
+          expenses: [
+            ...(closure?.expenses || []),
+            ...(parseFloat(withdrawalAmount) > 0 ? [{
+              id: 0,
+              amount: parseFloat(withdrawalAmount),
+              description: withdrawalNote || 'RETIRO DE CIERRE',
+              paymentSource: 'EFECTIVO',
+              category: 'RETIRO',
+              status: 'PAID',
+              date: new Date().toISOString()
+            }] : [])
+          ]
         })
       });
 
       if (!res.ok) throw new Error("Error al cerrar caja");
 
-      toast({
-        variant: 'success',
-        title: 'CAJA CERRADA EXITOSAMENTE',
-        description: 'El turno ha finalizado.',
-      });
-
-      window.location.reload();
+      toast({ variant: 'success', title: 'CAJA CERRADA', description: 'EL CIERRE SE HA REGISTRADO EXITOSAMENTE' });
+      const { broadcastRevalidate } = await import('@/lib/revalidate');
+      broadcastRevalidate('CLOSURE_MADE');
+      broadcastRevalidate('SALE_MADE'); // Refrescar stats globales
+      window.location.reload(); // En cierres de caja el reload es seguro para limpiar sesión/estado local si es necesario
     } catch (err: any) {
       toast({
         variant: 'destructive',
@@ -260,6 +287,30 @@ export default function CashRegisterPage() {
                    startContent={<span className="text-xs font-bold">$</span>}
                  />
               </div>
+            </div>
+
+            {/* SECCIÓN DE RETIRO DE CIERRE */}
+            <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-4 mt-2 flex flex-col gap-3">
+              <label className="text-[10px] font-black uppercase tracking-widest text-rose-500 flex items-center gap-2">
+                <TrendingDown size={14} /> Retiro de Caja (Dinero que sale para otro turno/gerencia)
+              </label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <Input 
+                  type="number"
+                  placeholder="0"
+                  value={withdrawalAmount}
+                  onChange={(e) => setWithdrawalAmount(e.target.value)}
+                  classNames={{ inputWrapper: "bg-zinc-950 border-rose-500/20", input: "font-black text-white" }}
+                  startContent={<span className="text-xs font-bold text-rose-500">$</span>}
+                />
+                <Input 
+                  placeholder="Motivo del retiro..."
+                  value={withdrawalNote}
+                  onChange={(e) => setWithdrawalNote(e.target.value)}
+                  classNames={{ inputWrapper: "bg-zinc-950 border-rose-500/20", input: "font-bold text-zinc-400 text-xs" }}
+                />
+              </div>
+              <p className="text-[9px] text-zinc-500 italic">Este monto se registrará como un gasto del turno actual y se restará del saldo esperado.</p>
             </div>
           </div>
 

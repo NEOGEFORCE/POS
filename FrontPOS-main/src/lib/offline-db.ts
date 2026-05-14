@@ -1,147 +1,114 @@
-import { Product, Customer, Category } from './definitions';
+import { openDB, DBSchema, IDBPDatabase } from 'idb';
+import { Product } from '@/lib/definitions';
 
-const DB_NAME = 'pos-ultra-db';
-const DB_VERSION = 2; // Incrementado para incluir master_data y offline_queue
-const STORES = {
-    CARTS: 'carts',
-    MASTER_DATA: 'master_data',
-    OFFLINE_QUEUE: 'offline_queue'
+interface POSSurvivalDB extends DBSchema {
+  catalog: {
+    key: string;
+    value: Product;
+    indexes: { 'by-name': string };
+  };
+  sync_queue: {
+    key: string; // uuid local
+    value: {
+      id: string;
+      type: 'SALE' | 'EXPENSE';
+      payload: any;
+      timestamp: number;
+    };
+    indexes: { 'by-timestamp': number };
+  };
+}
+
+let dbPromise: Promise<IDBPDatabase<POSSurvivalDB>> | null = null;
+
+export const initDB = () => {
+  if (typeof window === 'undefined') return null;
+
+  if (!dbPromise) {
+    dbPromise = openDB<POSSurvivalDB>('pos-survival-db', 1, {
+      upgrade(db) {
+        // Almacén de catálogo (para buscar productos offline)
+        if (!db.objectStoreNames.contains('catalog')) {
+          const catalogStore = db.createObjectStore('catalog', { keyPath: 'barcode' });
+          catalogStore.createIndex('by-name', 'name');
+        }
+
+        // Almacén de ventas/gastos pendientes de enviar al servidor
+        if (!db.objectStoreNames.contains('sync_queue')) {
+          const queueStore = db.createObjectStore('sync_queue', { keyPath: 'id' });
+          queueStore.createIndex('by-timestamp', 'timestamp');
+        }
+      },
+    });
+  }
+  return dbPromise;
 };
 
-export interface OfflineSale {
-    id: string;
-    saleData: any;
-    timestamp: number;
-    synced: boolean;
-    retryCount: number;
-    status?: 'pending' | 'failed' | 'synced';
-    lastError?: string;
-}
+// --- CATALOG MANAGEMENT --- //
 
-export function openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        
-        request.onupgradeneeded = (event) => {
-            const db = (event.target as IDBOpenDBRequest).result;
-            
-            // Carritos activos
-            if (!db.objectStoreNames.contains(STORES.CARTS)) {
-                db.createObjectStore(STORES.CARTS, { keyPath: 'id' });
-            }
-            
-            // Datos maestros (Productos, Clientes, Categorías)
-            if (!db.objectStoreNames.contains(STORES.MASTER_DATA)) {
-                db.createObjectStore(STORES.MASTER_DATA, { keyPath: 'type' });
-            }
-            
-            // Cola de ventas offline
-            if (!db.objectStoreNames.contains(STORES.OFFLINE_QUEUE)) {
-                db.createObjectStore(STORES.OFFLINE_QUEUE, { keyPath: 'id' });
-            }
-        };
-    });
-}
+export const saveProductsToCache = async (products: Product[]) => {
+  const db = await initDB();
+  if (!db) return;
 
-// --- MASTER DATA MANAGEMENT ---
-export async function cacheMasterData(products: Product[], customers: Customer[], categories: Category[]): Promise<void> {
-    const db = await openDB();
-    const tx = db.transaction(STORES.MASTER_DATA, 'readwrite');
-    const store = tx.objectStore(STORES.MASTER_DATA);
-    
-    store.put({ type: 'products', data: products, updatedAt: Date.now() });
-    store.put({ type: 'customers', data: customers, updatedAt: Date.now() });
-    store.put({ type: 'categories', data: categories, updatedAt: Date.now() });
-    
-    return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
-}
+  const tx = db.transaction('catalog', 'readwrite');
+  // Vaciamos la caché anterior para evitar basura
+  await tx.objectStore('catalog').clear();
+  
+  // Guardamos el catálogo fresco
+  for (const product of products) {
+    await tx.store.put(product);
+  }
+  await tx.done;
+  console.log('[SurvivalDB] 📦 Catálogo cacheado exitosamente:', products.length, 'productos.');
+};
 
-export async function getCachedMasterData(): Promise<{ products: Product[], customers: Customer[], categories: Category[] } | null> {
-    const db = await openDB();
-    const tx = db.transaction(STORES.MASTER_DATA, 'readonly');
-    const store = tx.objectStore(STORES.MASTER_DATA);
-    
-    const pReq = store.get('products');
-    const cReq = store.get('customers');
-    const catReq = store.get('categories');
-    
-    return new Promise((resolve) => {
-        let results = { products: [], customers: [], categories: [] };
-        let count = 0;
-        const check = () => {
-            count++;
-            if (count === 3) resolve(results.products.length ? results : null);
-        };
-        
-        pReq.onsuccess = () => { results.products = pReq.result?.data || []; check(); };
-        cReq.onsuccess = () => { results.customers = cReq.result?.data || []; check(); };
-        catReq.onsuccess = () => { results.categories = catReq.result?.data || []; check(); };
-        
-        pReq.onerror = cReq.onerror = catReq.onerror = () => check();
-    });
-}
+export const getCachedProducts = async (): Promise<Product[]> => {
+  const db = await initDB();
+  if (!db) return [];
+  return await db.getAll('catalog');
+};
 
-// --- OFFLINE QUEUE MANAGEMENT ---
-export async function queueOfflineSale(saleData: any): Promise<string> {
-    const db = await openDB();
-    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
-    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
-    
-    const id = `off_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
-    const offlineSale: OfflineSale = {
-        id,
-        saleData,
-        timestamp: Date.now(),
-        synced: false,
-        retryCount: 0
-    };
-    
-    store.add(offlineSale);
-    
-    return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve(id);
-        tx.onerror = () => reject(tx.error);
-    });
-}
+export const getCachedProductByBarcode = async (barcode: string): Promise<Product | undefined> => {
+    const db = await initDB();
+    if (!db) return undefined;
+    return await db.get('catalog', barcode);
+};
 
-export async function getOfflineQueue(): Promise<OfflineSale[]> {
-    const db = await openDB();
-    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readonly');
-    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
-    const request = store.getAll();
-    
-    return new Promise((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result || []);
-        request.onerror = () => reject(request.error);
-    });
-}
+// --- SYNC QUEUE MANAGEMENT --- //
 
-export async function removeFromOfflineQueue(id: string): Promise<void> {
-    const db = await openDB();
-    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
-    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
-    store.delete(id);
-    
-    return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
-}
+export const addToSyncQueue = async (type: 'SALE' | 'EXPENSE', payload: any) => {
+  const db = await initDB();
+  if (!db) return;
 
-export async function updateOfflineSale(sale: OfflineSale): Promise<void> {
-    const db = await openDB();
-    const tx = db.transaction(STORES.OFFLINE_QUEUE, 'readwrite');
-    const store = tx.objectStore(STORES.OFFLINE_QUEUE);
-    store.put(sale);
-    
-    return new Promise((resolve, reject) => {
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error);
-    });
-}
+  // Generamos un ID temporal único localmente basado en el tiempo y un sufijo aleatorio
+  const localId = `offline-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+  
+  await db.add('sync_queue', {
+    id: localId,
+    type,
+    payload,
+    timestamp: Date.now()
+  });
+
+  console.log(`[SurvivalDB] 📥 Añadido a la bóveda de sincronización [${type}]:`, localId);
+  return localId;
+};
+
+export const getSyncQueue = async () => {
+  const db = await initDB();
+  if (!db) return [];
+  return await db.getAllFromIndex('sync_queue', 'by-timestamp');
+};
+
+export const removeFromSyncQueue = async (id: string) => {
+  const db = await initDB();
+  if (!db) return;
+  await db.delete('sync_queue', id);
+  console.log(`[SurvivalDB] 📤 Eliminado de la bóveda de sincronización:`, id);
+};
+
+export const clearSyncQueue = async () => {
+  const db = await initDB();
+  if (!db) return;
+  await db.clear('sync_queue');
+};

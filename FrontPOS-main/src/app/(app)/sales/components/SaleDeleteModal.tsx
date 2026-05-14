@@ -63,6 +63,9 @@ export default function SaleDeleteModal({ isOpen, onOpenChange, sale, onSuccess 
                 className: "bg-emerald-500 text-white border-none font-bold"
             });
             
+            const { broadcastRevalidate } = await import('@/lib/revalidate');
+            broadcastRevalidate('SALE_MADE'); // Refrescar stock y finanzas globalmente
+
             setReason('');
             onSuccess();
             onOpenChange(false);

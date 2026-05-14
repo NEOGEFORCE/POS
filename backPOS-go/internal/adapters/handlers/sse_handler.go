@@ -5,19 +5,15 @@ import (
 	"io"
 	"net/http"
 
-	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 
 	"github.com/gin-gonic/gin"
 )
 
-type SSEHandler struct {
-	sseService *services.SSEService
-}
+type SSEHandler struct{}
 
-func NewSSEHandler(sseService *services.SSEService) *SSEHandler {
-	return &SSEHandler{
-		sseService: sseService,
-	}
+func NewSSEHandler() *SSEHandler {
+	return &SSEHandler{}
 }
 
 // Stream maneja la conexión SSE persistente
@@ -30,8 +26,8 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 	c.Writer.Header().Set("Access-Control-Allow-Origin", "*")
 
 	// Suscribirse al servicio de eventos
-	eventChan := h.sseService.Subscribe()
-	defer h.sseService.Unsubscribe(eventChan)
+	eventChan := sse.GetSSEService().Subscribe()
+	defer sse.GetSSEService().Unsubscribe(eventChan)
 
 	// Canal para detectar desconexión del cliente
 	clientGone := c.Request.Context().Done()
@@ -41,7 +37,7 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 		case <-clientGone:
 			return false
 		case event := <-eventChan:
-			formatted, err := services.FormatSSE(event)
+			formatted, err := sse.FormatSSE(event)
 			if err != nil {
 				return true
 			}
@@ -53,6 +49,6 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 
 // TestBroadcast envía un evento de prueba (Solo para desarrollo)
 func (h *SSEHandler) TestBroadcast(c *gin.Context) {
-	h.sseService.Broadcast("PING", "Ultra-Instinto Active")
+	sse.GetSSEService().Broadcast("PING", "Ultra-Instinto Active")
 	c.JSON(http.StatusOK, gin.H{"status": "broadcasted"})
 }

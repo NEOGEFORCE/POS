@@ -2,7 +2,7 @@
 
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Button, Input, Select, SelectItem, Switch, Autocomplete, AutocompleteItem
+  Button, Input, Select, SelectItem, Switch, Autocomplete, AutocompleteItem, Chip
 } from "@heroui/react";
 import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
@@ -73,13 +73,21 @@ const ProductFormModal = memo(function ProductFormModal({
   
   // Estado para búsqueda de producto base en modo pack
   const [searchTerm, setSearchTerm] = useState("");
+  const [supplierSearchValue, setSupplierSearchValue] = useState("");
+  const [categorySearchValue, setCategorySearchValue] = useState("");
 
-  // Limpiar estado de duplicados al abrir/cerrar
+  // Limpiar estado de duplicados al abrir/cerrar y sincronizar búsquedas
   useEffect(() => {
     if (!isOpen) {
       setDuplicateFound(null);
+      setSupplierSearchValue("");
+      setCategorySearchValue("");
+    } else if (editingProduct && !addDialogOpen) {
+      // Sincronizar nombre de categoría al editar
+      const cat = categories.find(c => String(c.id) === String(editingProduct.categoryId));
+      if (cat) setCategorySearchValue(cat.name);
     }
-  }, [isOpen]);
+  }, [isOpen, editingProduct, addDialogOpen, categories]);
 
   // Combinar errores de validación local y errores de API
   const getFieldError = useCallback((fieldName: string): string | undefined => {
@@ -112,7 +120,7 @@ const ProductFormModal = memo(function ProductFormModal({
     [allProducts]
   );
   
-  // Filtro real para el buscador de producto base
+  // Filtro real para el buscador de producto base (se mantiene por lógica de packs)
   const filteredBaseProducts = useMemo(() => {
     if (!searchTerm) return baseProducts;
     const term = searchTerm.toLowerCase();
@@ -121,6 +129,26 @@ const ProductFormModal = memo(function ProductFormModal({
       p.barcode.toLowerCase().includes(term)
     );
   }, [baseProducts, searchTerm]);
+  
+  // Filtrado explícito para proveedores (Mejora la respuesta del buscador)
+  const filteredSuppliers = useMemo(() => {
+    if (!supplierSearchValue) return suppliers;
+    const term = supplierSearchValue.toLowerCase();
+    return suppliers.filter(s => 
+      s.name.toLowerCase().includes(term) || 
+      String(s.id).includes(term)
+    );
+  }, [suppliers, supplierSearchValue]);
+
+  // Filtrado explícito para categorías
+  const filteredCategories = useMemo(() => {
+    if (!categorySearchValue) return categories;
+    const term = categorySearchValue.toLowerCase();
+    return categories.filter(c => 
+      c.name.toLowerCase().includes(term) ||
+      String(c.id).includes(term)
+    );
+  }, [categories, categorySearchValue]);
 
   // Lógica reactiva para detección de duplicados
   useEffect(() => {
@@ -189,12 +217,51 @@ const ProductFormModal = memo(function ProductFormModal({
   }, [addDialogOpen, setNewProduct, setEditingProduct]);
 
   // Callbacks estables para Select de Categoría
-  const handleCategoryChange = useCallback((keys: any) => {
-    const v = Array.from(keys)[0] as string;
-    const numVal = v ? parseInt(v) || 0 : 0;
+  const handleCategoryChange = useCallback((key: any) => {
+    if (!key) return;
+    const numVal = parseInt(String(key)) || 0;
+    
+    // Sincronizar el nombre en el buscador para feedback visual
+    const selectedCat = categories.find(c => String(c.id) === String(numVal));
+    if (selectedCat) {
+      setCategorySearchValue(selectedCat.name);
+    }
+
     if (addDialogOpen) setNewProduct((p: any) => ({ ...p, categoryId: numVal }));
     else setEditingProduct((p: any) => p ? { ...p, categoryId: numVal } : null);
-  }, [addDialogOpen, setNewProduct, setEditingProduct]);
+  }, [addDialogOpen, setNewProduct, setEditingProduct, categories]);
+
+  // Manejador para añadir proveedores vía Autocomplete (Búsqueda)
+  const handleAddSupplier = useCallback((key: any) => {
+    if (!key) return;
+    const id = parseInt(String(key));
+    
+    const currentSuppliers = addDialogOpen ? (newProduct.suppliers || []) : (editingProduct?.suppliers || []);
+    if (currentSuppliers.some((s: any) => s.id === id)) return;
+
+    const newSuppliersPayload = [...currentSuppliers, { id }];
+    
+    if (addDialogOpen) {
+      setNewProduct((p: any) => ({ ...p, suppliers: newSuppliersPayload, supplierId: id }));
+    } else {
+      setEditingProduct((p: any) => p ? { ...p, suppliers: newSuppliersPayload, supplierId: id } : null);
+    }
+    // Limpiar el buscador después de añadir
+    setSupplierSearchValue("");
+  }, [addDialogOpen, newProduct.suppliers, editingProduct?.suppliers, setNewProduct, setEditingProduct]);
+
+  // Manejador para remover proveedores
+  const handleRemoveSupplier = useCallback((idToRemove: number) => {
+    const currentSuppliers = addDialogOpen ? (newProduct.suppliers || []) : (editingProduct?.suppliers || []);
+    const newSuppliersPayload = currentSuppliers.filter((s: any) => s.id !== idToRemove);
+    const newPrimaryId = newSuppliersPayload.length > 0 ? newSuppliersPayload[0].id : 0;
+
+    if (addDialogOpen) {
+      setNewProduct((p: any) => ({ ...p, suppliers: newSuppliersPayload, supplierId: newPrimaryId }));
+    } else {
+      setEditingProduct((p: any) => p ? { ...p, suppliers: newSuppliersPayload, supplierId: newPrimaryId } : null);
+    }
+  }, [addDialogOpen, newProduct.suppliers, editingProduct?.suppliers, setNewProduct, setEditingProduct]);
 
   // Callback estable para Autocomplete de Producto Base
   const handleBaseProductChange = useCallback((key: any) => {
@@ -301,27 +368,30 @@ const ProductFormModal = memo(function ProductFormModal({
         body: JSON.stringify(supplier),
       }, token!);
       
-      toast({ variant: 'success', title: 'ÉXITO', description: 'PROVEEDOR CREADO' });
-      
-      // Actualizar la lista de proveedores del padre
-      if (mutateSuppliers) mutateSuppliers();
+      // Notificar a todo el sistema que hay un nuevo proveedor
+      const { broadcastRevalidate } = await import('@/lib/revalidate');
+      broadcastRevalidate('SUPPLIER_UPDATE');
+
+      // Actualizar la lista de proveedores del padre y esperar
+      if (mutateSuppliers) await mutateSuppliers();
       
       // Auto-seleccionar el nuevo proveedor
-      const newSupObj = { id: created.id };
       if (addDialogOpen) {
         setNewProduct((p: any) => ({
           ...p,
           supplierId: created.id,
-          suppliers: [...(p.suppliers || []), newSupObj]
+          suppliers: [...(p.suppliers || []), { id: created.id }]
         }));
       } else {
         setEditingProduct((p: any) => p ? {
           ...p,
           supplierId: created.id,
-          suppliers: [...(p.suppliers || []), newSupObj]
+          suppliers: [...(p.suppliers || []), { id: created.id }]
         } : null);
       }
+      
       setQuickSupplierOpen(false);
+      setSupplierSearchValue(""); // Limpiar buscador tras creación exitosa
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message });
     }
@@ -337,7 +407,10 @@ const ProductFormModal = memo(function ProductFormModal({
       
       toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA CREADA' });
       
-      if (mutateCategories) mutateCategories();
+      const { broadcastRevalidate } = await import('@/lib/revalidate');
+      broadcastRevalidate('CATEGORY_UPDATE');
+
+      if (mutateCategories) await mutateCategories();
       
       if (addDialogOpen) {
         setNewProduct((p: any) => ({ ...p, categoryId: created.id }));
@@ -347,6 +420,7 @@ const ProductFormModal = memo(function ProductFormModal({
       
       setQuickCategoryOpen(false);
       setNewCategoryName("");
+      setCategorySearchValue(""); // Limpiar buscador
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message });
     }
@@ -443,6 +517,7 @@ const ProductFormModal = memo(function ProductFormModal({
                     <div className="relative">
                       <Input
                         value={addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '')}
+                        inputMode="text"
                         onValueChange={(v) => {
                           const val = v.toUpperCase().trim();
                           if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: val }));
@@ -541,10 +616,11 @@ const ProductFormModal = memo(function ProductFormModal({
                   <label className={`${itemInputClass.label} ${hasFieldError('purchasePrice') ? 'text-rose-500' : ''}`}>COSTO</label>
                   <Input
                     variant="flat"
+                    inputMode="decimal"
                     startContent={<span className={`font-black text-[10px] ${hasFieldError('purchasePrice') ? 'text-rose-500' : 'text-emerald-500'}`}>$</span>}
                     value={(() => {
                       const price = addDialogOpen ? newProduct.purchasePrice : editingProduct?.purchasePrice;
-                      return price ? formatCurrency(price) : '';
+                      return (price !== undefined && price !== null && (price as any) !== '') ? formatCurrency(price) : '';
                     })()}
                     onValueChange={(v) => {
                       const val = parseCurrency(v);
@@ -595,8 +671,12 @@ const ProductFormModal = memo(function ProductFormModal({
                 <div className="flex flex-col gap-0.5 relative">
                   <label className={`text-xs font-black uppercase tracking-widest italic text-center w-full mb-0.5 ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-emerald-500'}`}>PVP FINAL</label>
                   <Input
+                    inputMode="decimal"
                     startContent={<span className={`font-black text-xs ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-emerald-500'}`}>$</span>}
-                    value={String(addDialogOpen ? (newProduct.salePrice || '') : (editingProduct?.salePrice || ''))}
+                    value={(() => {
+                        const price = addDialogOpen ? (newProduct.salePrice) : (editingProduct?.salePrice);
+                        return (price !== undefined && price !== null && (price as any) !== '') ? String(price) : '';
+                    })()}
                     onValueChange={(v) => {
                       const newPVP = parseFloat(v) || 0;
                       const currentMargin = addDialogOpen ? newMargin : editMargin;
@@ -643,105 +723,113 @@ const ProductFormModal = memo(function ProductFormModal({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3 bg-gray-50/20 dark:bg-black/10 p-3 rounded-2xl border border-gray-100/50 dark:border-white/5">
-                  <div className="flex flex-col gap-0.5">
-                    <label className={itemInputClass.label}>PROVEEDOR</label>
-                    <div className="flex gap-1.5 items-end">
-                      <div className="flex-1">
-                        <Select
-                          aria-label="Seleccionar proveedores"
-                          selectionMode="multiple"
-                          selectedKeys={(() => {
-                            const product = addDialogOpen ? newProduct : editingProduct;
-                            const suppliersList = product?.suppliers || [];
-                            if (suppliersList.length > 0) {
-                              return suppliersList.map((s: any) => String(s.id));
-                            }
-                            return product?.supplierId ? [String(product.supplierId)] : [];
-                          })()}
-                          onSelectionChange={handleSupplierChange}
-                          placeholder="SELECCIONAR..."
+                  <div className="flex flex-col gap-1.5">
+                    <label className={itemInputClass.label}>PROVEEDORES (BUSCAR Y AÑADIR)</label>
+                    <div className="flex flex-col gap-2">
+                      <div className="flex gap-1.5 items-center">
+                        <Autocomplete
+                          aria-label="Buscar proveedores"
+                          placeholder="ESCRIBE PARA BUSCAR..."
+                          onSelectionChange={handleAddSupplier}
+                          inputValue={supplierSearchValue}
+                          onInputChange={setSupplierSearchValue}
+                          items={filteredSuppliers}
                           startContent={<Truck size={14} className="text-emerald-500 mr-1" />}
-                          selectorIcon={<span />}
                           classNames={{
-                            trigger: "h-11 bg-gray-50/80 dark:bg-black/40 border border-gray-200/50 dark:border-white/10 rounded-xl",
-                            value: "font-black text-[10px] uppercase italic text-left",
-                          }}
-                          renderValue={(items) => {
-                            const visible = items.slice(0, 2);
-                            const remaining = items.length - 2;
-                            return (
-                              <div className="flex items-center gap-1 overflow-hidden">
-                                {visible.map((item) => (
-                                  <span key={item.key} className="bg-emerald-500/10 text-emerald-500 text-[8px] font-black px-1.5 py-0.5 rounded-md border border-emerald-500/20 uppercase italic truncate max-w-[80px]">
-                                    {item.textValue}
-                                  </span>
-                                ))}
-                                {remaining > 0 && (
-                                  <span className="text-emerald-500 text-[8px] font-black">+{remaining}</span>
-                                )}
-                              </div>
-                            );
+                            base: "flex-1",
                           }}
                           popoverProps={{
-                            className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl",
-                            onClose: handlePopoverClose
+                            className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl"
+                          }}
+                          inputProps={{
+                            classNames: {
+                              inputWrapper: "h-11 bg-gray-50/80 dark:bg-black/40 border border-gray-200/50 dark:border-white/10 rounded-xl px-3",
+                              input: "font-bold text-xs uppercase text-gray-900 dark:text-white placeholder:text-gray-400",
+                            }
                           }}
                         >
-                          {(suppliers || []).map(s => (
-                            <SelectItem key={String(s.id)} textValue={s.name}>
+                          {(s: any) => (
+                            <AutocompleteItem key={String(s.id)} textValue={s.name}>
                               <span className="text-[10px] font-black uppercase italic">{s.name}</span>
-                            </SelectItem>
-                          ))}
-                        </Select>
+                            </AutocompleteItem>
+                          )}
+                        </Autocomplete>
+                        <Button
+                          isIconOnly
+                          variant="flat"
+                          className="h-11 w-11 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl active:scale-95"
+                          onPress={() => setQuickSupplierOpen(true)}
+                        >
+                          <PlusCircle size={18} />
+                        </Button>
                       </div>
-                      <Button
-                        isIconOnly
-                        variant="flat"
-                        className="h-8 w-8 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-lg active:scale-95"
-                        onPress={() => setQuickSupplierOpen(true)}
-                      >
-                        <PlusCircle size={14} />
-                      </Button>
+                      
+                      {/* Visualización de proveedores seleccionados */}
+                      <div className="flex flex-wrap gap-1.5 p-2 min-h-[40px] bg-gray-50/30 dark:bg-black/20 rounded-xl border border-dashed border-gray-200 dark:border-white/5">
+                        {((addDialogOpen ? newProduct.suppliers : editingProduct?.suppliers) || []).length === 0 ? (
+                          <span className="text-[8px] font-bold text-gray-400 uppercase italic m-auto">Sin proveedores vinculados</span>
+                        ) : (
+                          ((addDialogOpen ? newProduct.suppliers : editingProduct?.suppliers) || []).map((s: any) => {
+                            const fullInfo = suppliers.find(sup => sup.id === s.id);
+                            return (
+                              <Chip 
+                                key={s.id} 
+                                size="sm"
+                                variant="flat"
+                                color="success"
+                                onClose={() => handleRemoveSupplier(s.id)}
+                                className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-black text-[8px] uppercase italic"
+                              >
+                                {fullInfo?.name || `ID: ${s.id}`}
+                              </Chip>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
                   </div>
 
                   <div className="flex flex-col gap-0.5">
                     <label className={itemInputClass.label}>CATEGORÍA</label>
-                    <div className="flex gap-1.5 items-end">
-                      <div className="flex-1">
-                        <Select
-                          aria-label="Seleccionar categoría"
-                          selectedKeys={addDialogOpen
-                            ? (newProduct.categoryId ? [String(newProduct.categoryId)] : [])
-                            : (editingProduct?.categoryId ? [String(editingProduct.categoryId)] : [])
+                    <div className="flex gap-1.5 items-center">
+                      <Autocomplete
+                        aria-label="Seleccionar categoría"
+                        placeholder="BUSCAR..."
+                        inputValue={categorySearchValue}
+                        onInputChange={setCategorySearchValue}
+                        selectedKey={addDialogOpen
+                          ? (newProduct.categoryId ? String(newProduct.categoryId) : null)
+                          : (editingProduct?.categoryId ? String(editingProduct.categoryId) : null)
+                        }
+                        onSelectionChange={handleCategoryChange}
+                        items={filteredCategories}
+                        startContent={<Package size={14} className="text-emerald-500 mr-1" />}
+                        classNames={{
+                          base: "flex-1",
+                        }}
+                        popoverProps={{
+                          className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl"
+                        }}
+                        inputProps={{
+                          classNames: {
+                            inputWrapper: "h-11 bg-gray-50/80 dark:bg-black/40 border border-gray-200/50 dark:border-white/10 rounded-xl px-3",
+                            input: "font-bold text-xs uppercase text-gray-900 dark:text-white placeholder:text-gray-400",
                           }
-                          onSelectionChange={handleCategoryChange}
-                          placeholder="SELECCIONAR..."
-                          startContent={<Package size={14} className="text-emerald-500 mr-1" />}
-                          selectorIcon={<span />}
-                          classNames={{
-                            trigger: "h-11 bg-gray-50/80 dark:bg-black/40 border border-gray-200/50 dark:border-white/10 rounded-xl",
-                            value: "font-black text-[10px] uppercase italic text-left",
-                          }}
-                          popoverProps={{
-                            className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl",
-                            onClose: handlePopoverClose
-                          }}
-                        >
-                          {(categories || []).map(c => (
-                            <SelectItem key={String(c.id)} textValue={c.name}>
-                              <span className="text-[10px] font-black uppercase italic">{c.name}</span>
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      </div>
+                        }}
+                      >
+                        {(c: any) => (
+                          <AutocompleteItem key={String(c.id)} textValue={c.name}>
+                            <span className="text-[10px] font-black uppercase italic">{c.name}</span>
+                          </AutocompleteItem>
+                        )}
+                      </Autocomplete>
                       <Button
                         isIconOnly
                         variant="flat"
-                        className="h-8 w-8 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-lg active:scale-95"
+                        className="h-11 w-11 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl active:scale-95"
                         onPress={() => setQuickCategoryOpen(true)}
                       >
-                        <PlusCircle size={14} />
+                        <PlusCircle size={18} />
                       </Button>
                     </div>
                   </div>
@@ -750,10 +838,11 @@ const ProductFormModal = memo(function ProductFormModal({
                     <label className={itemInputClass.label}>STOCK ACTUAL</label>
                     <Input
                       type={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "text" : "number"}
+                      inputMode={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "decimal" : "numeric"}
                       isDisabled={addDialogOpen ? newProduct.isWeighted : (editingProduct?.isWeighted || false)}
                       value={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "∞" : String(addDialogOpen ? (newProduct.quantity ?? '') : (editingProduct?.quantity ?? ''))}
                       onValueChange={(v) => {
-                        const val = v === '' ? undefined : parseFloat(v);
+                        const val = v === '' ? '' : parseFloat(v);
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: val }));
                         else setEditingProduct((p: any) => p ? { ...p, quantity: val } : null);
                       }}
@@ -769,12 +858,13 @@ const ProductFormModal = memo(function ProductFormModal({
                     <label className={`text-xs font-black uppercase tracking-widest italic text-center w-full mb-0.5 ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`}>STOCK MÍNIMO</label>
                     <Input
                       type="number"
+                      inputMode="numeric"
                       value={String(addDialogOpen 
                         ? (newProduct.minStock ?? '') 
                         : (editingProduct?.minStock ?? '')
                       )}
                       onValueChange={(v) => {
-                        const val = v === '' ? undefined : parseFloat(v);
+                        const val = v === '' ? '' : parseFloat(v);
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, minStock: val }));
                         else setEditingProduct((p: any) => p ? { ...p, minStock: val } : null);
                       }}
@@ -916,12 +1006,11 @@ const ProductFormModal = memo(function ProductFormModal({
                         <label className="text-xs font-black uppercase tracking-widest italic text-center w-full">PRODUCTO BASE</label>
                         <Autocomplete
                           aria-label="Seleccionar producto base para pack"
-                          items={filteredBaseProducts}
+                          items={baseProducts}
                           selectedKey={(addDialogOpen ? newProduct.baseProductBarcode : editingProduct?.baseProductBarcode) || null}
                           placeholder="BUSCAR..."
                           startContent={<Package size={14} className="text-emerald-500 mr-1 flex-shrink-0" />}
                           onSelectionChange={handleBaseProductChange}
-                          onInputChange={(value) => setSearchTerm(value)}
                           allowsCustomValue={false}
                           classNames={{
                             base: "w-full",
@@ -953,6 +1042,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         <label className="text-xs font-black uppercase tracking-widest italic text-center w-full">UND/PAQ</label>
                         <Input
                           type="number"
+                          inputMode="numeric"
                           size="sm"
                           value={String(addDialogOpen ? (newProduct.packMultiplier ?? '') : (editingProduct?.packMultiplier ?? ''))}
                           onValueChange={handlePackMultiplierChange}

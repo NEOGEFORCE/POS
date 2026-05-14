@@ -8,6 +8,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,11 +16,10 @@ import (
 type ExpenseHandler struct {
 	service      *services.ExpenseService
 	auditService *services.AuditService
-	sseService   *services.SSEService
 }
 
-func NewExpenseHandler(s *services.ExpenseService, a *services.AuditService, sse *services.SSEService) *ExpenseHandler {
-	return &ExpenseHandler{service: s, auditService: a, sseService: sse}
+func NewExpenseHandler(s *services.ExpenseService, a *services.AuditService) *ExpenseHandler {
+	return &ExpenseHandler{service: s, auditService: a}
 }
 
 func (h *ExpenseHandler) Create(c *gin.Context) {
@@ -50,6 +50,9 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, expense)
 
+	// AVISO GLOBAL: Nuevo gasto registrado (Actualiza Dashboard)
+	go sse.GetSSEService().BroadcastExpenseUpdate(expense)
+
 	// Auditoría de Egreso
 	name, _ := c.Get("userName")
 	h.auditService.Log(expense.CreatedByDNI, fmt.Sprintf("%v", name), "CREATE_EXPENSE", "FINANCES", 
@@ -57,7 +60,7 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 		fmt.Sprintf("Se registró un egreso por %s de $%s", expense.Description, fmt.Sprintf("%.2f", expense.Amount)),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *ExpenseHandler) GetAll(c *gin.Context) {
@@ -78,6 +81,9 @@ func (h *ExpenseHandler) Delete(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Gasto eliminado correctamente"})
 
+	// AVISO GLOBAL: Gasto eliminado (Actualiza Dashboard)
+	go sse.GetSSEService().BroadcastDashboardUpdate()
+
 	// Auditoría de Eliminación de Egreso
 	dni, _ := c.Get("dni")
 	name, _ := c.Get("userName")
@@ -86,7 +92,7 @@ func (h *ExpenseHandler) Delete(c *gin.Context) {
 		fmt.Sprintf("Se eliminó permanentemente el egreso con ID #%d", id),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *ExpenseHandler) Update(c *gin.Context) {
@@ -101,8 +107,11 @@ func (h *ExpenseHandler) Update(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar gasto", err)
 		return
 	}
-	go h.sseService.BroadcastDashboardUpdate()
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 	c.JSON(http.StatusOK, expense)
+
+	// AVISO GLOBAL: Gasto saldado (Actualiza Dashboard)
+	go sse.GetSSEService().BroadcastExpenseUpdate(expense)
 }
 
 // CreateLinked crea un egreso vinculado a una orden de compra pendiente
@@ -149,6 +158,9 @@ func (h *ExpenseHandler) CreateLinked(c *gin.Context) {
 		"linkedOrderId": req.LinkedOrderID,
 	})
 
+	// AVISO GLOBAL: Actualizar Dashboard, Gastos e Inventario
+	go sse.GetSSEService().BroadcastExpenseUpdate(expense)
+
 	// Auditoría de Egreso Vinculado
 	name, _ := c.Get("userName")
 	h.auditService.Log(req.Expense.CreatedByDNI, fmt.Sprintf("%v", name), "CREATE_LINKED_EXPENSE", "FINANCES", 
@@ -188,5 +200,5 @@ func (h *ExpenseHandler) Settle(c *gin.Context) {
 		fmt.Sprintf("Se pagó la deuda de $%s con %s", fmt.Sprintf("%.2f", expense.Amount), expense.PaymentSource),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }

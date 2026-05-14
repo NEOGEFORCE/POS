@@ -18,6 +18,7 @@ const (
 	CacheKeyProducts          = "all_products"
 	CacheKeyCategories        = "all_categories"
 	CacheKeyClients           = "all_clients"
+	CacheKeySuppliers         = "all_suppliers"
 	CacheKeyDashboardOverview = "dashboard_overview"
 	CacheKeyProductCount      = "product_count"
 	CacheKeyCategoryCount     = "category_count"
@@ -35,6 +36,7 @@ func InvalidateAllMasterData() {
 	CacheManager.Delete(CacheKeyProducts)
 	CacheManager.Delete(CacheKeyCategories)
 	CacheManager.Delete(CacheKeyClients)
+	CacheManager.Delete(CacheKeySuppliers)
 	CacheManager.Delete(CacheKeyProductCount)
 	CacheManager.Delete(CacheKeyCategoryCount)
 	CacheManager.Delete(CacheKeyClientCount)

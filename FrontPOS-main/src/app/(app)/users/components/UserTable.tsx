@@ -10,6 +10,7 @@ import {
     ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { User } from '@/lib/definitions';
+import { formatDateTime } from '@/lib/utils';
 
 interface TableProps {
     users: User[];
@@ -101,7 +102,7 @@ const UserTable = memo(({
                             </span>
                         </div>
                         <span className="text-[7px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-tighter">
-                            {lastLoginDate ? lastLoginDate.toLocaleString('es-ES', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : "SIN REGISTRO"}
+                            {lastLoginDate ? formatDateTime(lastLoginDate) : "SIN REGISTRO"}
                         </span>
                     </div>
                 );
@@ -206,7 +207,7 @@ const UserTable = memo(({
                                                         const isMe = currentDni === u.dni;
                                                         const isRecentlyActive = lastLoginDate ? (new Date().getTime() - lastLoginDate.getTime() < 5 * 60 * 1000) : false;
                                                         if (isMe || isRecentlyActive) return "VISTO: AHORA MISMO";
-                                                        return lastLoginDate ? `VISTO: ${lastLoginDate.toLocaleString('es-ES', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}` : "NUNCA VISTO";
+                                                        return lastLoginDate ? `VISTO: ${formatDateTime(lastLoginDate)}` : "NUNCA VISTO";
                                                     })()}
                                                 </span>
                                             </div>

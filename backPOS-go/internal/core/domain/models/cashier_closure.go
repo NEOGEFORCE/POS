@@ -27,6 +27,7 @@ type CashierClosure struct {
 	TotalBancolombia float64       `json:"totalBancolombia"`
 	TotalOtherTransfer float64     `json:"totalOtherTransfer"`
 	NetBalance      float64        `json:"netBalance"`
+	ExpectedCash    float64        `json:"expectedCash"`
 	CashBills       float64        `json:"cashBills"`
 	Coins200        float64        `json:"coins200"`
 	Coins100        float64        `json:"coins100"`

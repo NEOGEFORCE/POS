@@ -27,6 +27,7 @@ type SuggestedOrder struct {
 	MinStock       float64     `json:"minStock"`
 	IsPack         bool        `json:"isPack"`         // Modo Pack existente
 	PackMultiplier int         `json:"packMultiplier"` // Multiplicador del pack
+	OrderMultiple  int         `json:"orderMultiple"`  // Alias para frontend (REQUERIDO)
 	RequiredMin    float64     `json:"requiredMin"`    // Mínimo obligado (MinStock - Stock)
 	ProjectedSales float64     `json:"projectedSales"` // Proyección por ventas (TotalIdeal - RequiredMin)
 	TotalIdeal     float64     `json:"totalIdeal"`     // Total ideal calculado (redondeado a PackMultiplier)
@@ -50,8 +51,8 @@ func (s *InventoryService) CalculateSalesVelocity(barcode string, days int) (flo
 	}
 
 	now := time.Now()
-	startDate := now.AddDate(0, 0, -days).Format("2006-01-02")
-	endDate := now.Format("2006-01-02")
+	startDate := now.AddDate(0, 0, -days)
+	endDate := now
 
 	salesMap, err := s.saleRepo.GetSoldQuantitiesByBarcodes([]string{barcode}, startDate, endDate)
 	if err != nil {
@@ -85,8 +86,8 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 	}
 
 	now := time.Now()
-	fourteenDaysAgo := now.AddDate(0, 0, -14).Format("2006-01-02")
-	todayStr := now.Format("2006-01-02")
+	fourteenDaysAgo := now.AddDate(0, 0, -14)
+	todayStr := now
 
 	salesMap, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, fourteenDaysAgo, todayStr)
 	if err != nil {
@@ -99,10 +100,10 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 		avgDaily := float64(sold) / 14.0
 		avgDaily = math.Round(avgDaily*100) / 100
 
-		const DIAS_COBERTURA = 15.0
+		diasCobertura := 15.0 // MEGA-SPRINT: Fallback base
 		
 		sugeridoBase := p.MinStock - p.Quantity
-		stockProyectado := avgDaily * DIAS_COBERTURA
+		stockProyectado := avgDaily * diasCobertura
 		sugeridoPorVentas := stockProyectado - p.Quantity
 
 		// La Regla de Decisión: El pedido final es el MAYOR entre el sugerido por ventas y el sugerido base
@@ -115,9 +116,16 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 			// Redondeo hacia arriba para evitar fracciones en pedidos de logística
 			totalIdeal = math.Ceil(totalIdeal)
 			
-			// Si es un pack, ajustar al multiplicador
-			if p.IsPack && p.PackMultiplier > 1 {
-				totalIdeal = math.Ceil(totalIdeal/float64(p.PackMultiplier)) * float64(p.PackMultiplier)
+			// Si es un pack o tiene múltiplo de pedido, ajustar al mayor
+			roundingFactor := 1
+			if p.OrderMultiple > 1 {
+				roundingFactor = p.OrderMultiple
+			} else if p.IsPack && p.PackMultiplier > 1 {
+				roundingFactor = p.PackMultiplier
+			}
+
+			if roundingFactor > 1 {
+				totalIdeal = math.Ceil(totalIdeal/float64(roundingFactor)) * float64(roundingFactor)
 			}
 		}
 
@@ -164,6 +172,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 			MinStock:       p.MinStock,
 			IsPack:         p.IsPack,
 			PackMultiplier: p.PackMultiplier,
+			OrderMultiple:  p.OrderMultiple,
 			RequiredMin:    requiredMin,
 			ProjectedSales: projectedSales,
 			TotalIdeal:     totalIdeal,
@@ -220,8 +229,8 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 	}
 
 	now := time.Now()
-	fourteenDaysAgo := now.AddDate(0, 0, -14).Format("2006-01-02")
-	todayStr := now.Format("2006-01-02")
+	fourteenDaysAgo := now.AddDate(0, 0, -14)
+	todayStr := now
 
 	salesMap, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, fourteenDaysAgo, todayStr)
 	if err != nil {
@@ -234,10 +243,10 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 		avgDaily := float64(sold) / 14.0
 		avgDaily = math.Round(avgDaily*100) / 100
 
-		const DIAS_COBERTURA = 15.0
+		diasCobertura := 15.0 // MEGA-SPRINT: Fallback base
 		
 		sugeridoBase := p.MinStock - p.Quantity
-		stockProyectado := avgDaily * DIAS_COBERTURA
+		stockProyectado := avgDaily * diasCobertura
 		sugeridoPorVentas := stockProyectado - p.Quantity
 
 		// La Regla de Decisión: El pedido final es el MAYOR entre el sugerido por ventas y el sugerido base
@@ -247,12 +256,16 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 		if totalIdeal <= 0 {
 			totalIdeal = 0
 		} else {
-			// Redondeo hacia arriba
-			totalIdeal = math.Ceil(totalIdeal)
-			
-			// Si es un pack, ajustar al multiplicador
-			if p.IsPack && p.PackMultiplier > 1 {
-				totalIdeal = math.Ceil(totalIdeal/float64(p.PackMultiplier)) * float64(p.PackMultiplier)
+			// Si es un pack o tiene múltiplo, ajustar
+			roundingFactor := 1
+			if p.OrderMultiple > 1 {
+				roundingFactor = p.OrderMultiple
+			} else if p.IsPack && p.PackMultiplier > 1 {
+				roundingFactor = p.PackMultiplier
+			}
+
+			if roundingFactor > 1 {
+				totalIdeal = math.Ceil(totalIdeal/float64(roundingFactor)) * float64(roundingFactor)
 			}
 		}
 
@@ -288,6 +301,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 			MinStock:       p.MinStock,
 			IsPack:         p.IsPack,
 			PackMultiplier: p.PackMultiplier,
+			OrderMultiple:  p.OrderMultiple,
 			RequiredMin:    requiredMin,
 			ProjectedSales: projectedSales,
 			TotalIdeal:     totalIdeal,
@@ -326,13 +340,13 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 	return suggested, nil
 }
 
-func (s *InventoryService) GetInventory(from, to string) ([]ports.InventoryStat, error) {
+func (s *InventoryService) GetInventory(from, to time.Time) ([]ports.InventoryStat, error) {
 	stats, err := s.repo.GetInventoryStats(from, to)
 	if err != nil {
 		return nil, err
 	}
 
-	days := calculateDays(from, to)
+	days := calculateDaysTime(from, to)
 
 	for i := range stats {
 		if days > 0 {
@@ -344,15 +358,7 @@ func (s *InventoryService) GetInventory(from, to string) ([]ports.InventoryStat,
 	return stats, nil
 }
 
-func calculateDays(from, to string) int {
-	if from == "" || to == "" {
-		return 1
-	}
-	start, err1 := time.Parse("2006-01-02", from)
-	end, err2 := time.Parse("2006-01-02", to)
-	if err1 != nil || err2 != nil {
-		return 1
-	}
+func calculateDaysTime(start, end time.Time) int {
 	diff := int(end.Sub(start).Hours()/24) + 1
 	if diff < 1 {
 		return 1

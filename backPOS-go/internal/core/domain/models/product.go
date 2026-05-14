@@ -35,6 +35,7 @@ type Product struct {
 	IsPack             bool     `gorm:"default:false;column:isPack" json:"isPack"`
 	BaseProductBarcode *string  `gorm:"index;column:baseProductBarcode" json:"baseProductBarcode"`
 	PackMultiplier     int      `gorm:"default:1;column:packMultiplier" json:"packMultiplier"`
+	OrderMultiple      int      `gorm:"default:1;column:order_multiple" json:"order_multiple"`
 	BaseProduct        *Product `gorm:"foreignKey:BaseProductBarcode;references:Barcode;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"baseProduct,omitempty"`
 
 	NetProfit float64        `gorm:"-" json:"netProfit"`

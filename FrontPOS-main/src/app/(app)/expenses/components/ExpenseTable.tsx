@@ -14,6 +14,7 @@ import {
   useDisclosure
 } from "@heroui/react";
 import { Expense } from '@/lib/definitions';
+import { formatTimeWithSeconds } from '@/lib/utils';
 
 interface TableProps {
   expenses: Expense[];
@@ -98,7 +99,7 @@ const ExpenseTable = memo(({
                         {new Date(expense.date).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase()}
                         <span className="mx-1 text-gray-300 dark:text-zinc-700">|</span>
                         <span className="text-rose-500 font-bold">
-                          {new Date(expense.date).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          {formatTimeWithSeconds(expense.date)}
                         </span>
                       </span>
                     </div>
@@ -194,9 +195,7 @@ const ExpenseTable = memo(({
                     {(expense.paymentSource === 'PRESTAMO' || expense.paymentSource === 'PREST.') && (
                       <span className="text-[6px] font-black text-amber-500 uppercase italic">POR: {expense.lenderName}</span>
                     )}
-                    <span className="text-[6px] font-bold text-zinc-500 uppercase leading-none">
-                      {new Date(expense.date).toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                    </span>
+                      {formatTimeWithSeconds(expense.date)}
                   </div>
                 </div>
               </div>
@@ -210,14 +209,16 @@ const ExpenseTable = memo(({
                     <span className="text-[6px] font-bold text-gray-400 uppercase">| {expense.creator?.role || 'REGISTRADOR'}</span>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-emerald-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
-                    <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg border border-emerald-500/10 transition-all hover:bg-emerald-500 hover:text-white" onPress={() => onEdit(expense)}><Edit size={12} /></Button>
-                  </Tooltip>
-                  <Tooltip content="ELIMINAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-none shadow-xl" }} placement="top-end">
-                    <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg border border-rose-500/10 transition-all hover:bg-rose-500 hover:text-white" onPress={() => onDelete(expense.id)}><Trash2 size={12} /></Button>
-                  </Tooltip>
-                </div>
+                {isAdmin && (
+                  <div className="flex gap-2">
+                    <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-emerald-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
+                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg border border-emerald-500/10 transition-all hover:bg-emerald-500 hover:text-white" onPress={() => onEdit(expense)}><Edit size={12} /></Button>
+                    </Tooltip>
+                    <Tooltip content="ELIMINAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-none shadow-xl" }} placement="top-end">
+                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg border border-rose-500/10 transition-all hover:bg-rose-500 hover:text-white" onPress={() => onDelete(expense.id)}><Trash2 size={12} /></Button>
+                    </Tooltip>
+                  </div>
+                )}
               </div>
             </div>
           ))}

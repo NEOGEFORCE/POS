@@ -194,8 +194,8 @@ type VoidReportItem struct {
 }
 
 type PnLReport struct {
-	From             string  `json:"from"`
-	To               string  `json:"to"`
+	From             time.Time `json:"from"`
+	To               time.Time `json:"to"`
 	TotalRevenue     float64 `json:"totalRevenue"`
 	TotalCOGS        float64 `json:"totalCogs"`
 	GrossProfit      float64 `json:"grossProfit"`
@@ -215,7 +215,7 @@ type StockMovementReportItem struct {
 	Ref      string    `json:"ref"`
 }
 
-func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
+func (s *DashboardService) GetOverview(ctx context.Context) (*DashboardOverview, error) {
 	// CACHÉ L1: Retorno instantáneo si existe en RAM (Barrera HFT)
 	if cached, found := cache.CacheManager.Get(cache.CacheKeyDashboardOverview); found {
 		if overview, ok := cached.(*DashboardOverview); ok {
@@ -225,6 +225,10 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	}
 
 	log.Println("⚡ HFT: Dashboard MISS (Ejecutando Goroutines de Alta Intensidad...)")
+	
+	// Usar el contexto de la petición para permitir cancelación
+	g, ctx := errgroup.WithContext(ctx)
+
 	now := time.Now().UTC()
 	// 0. Determinar Rango del Turno Actual (Para Cierre y Caja)
 	activeShift, _ := s.shiftRepo.GetActive()
@@ -253,28 +257,15 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	if shiftStartDate.IsZero() {
 		shiftStartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
 	}
-	shiftStartStr := shiftStartDate.Format("2006-01-02 15:04:05")
-
-	// Si no había activeShift, intentar obtener el lastClosure de nuevo si falló antes para los cálculos de bóveda
-	if lastClosure == nil && activeShift == nil {
-		lastClosure, _ = s.closureRepo.GetLast()
-	}
 
 	// 0.1 Determinar Inicio del Día Calendario (Medianoche Local)
 	dayStart := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
-	dayStartStr := dayStart.Format("2006-01-02 15:04:05")
-
-	nowStr := time.Now().Format("2006-01-02 15:04:05")
-	tomorrowStr := now.AddDate(0, 0, 1).Format("2006-01-02")
-
-	sevenDaysAgoStr := now.AddDate(0, 0, -7).Format("2006-01-02")
-	// CORRECCIÓN: calcular dinámicamente el inicio del mes actual
-	currentMonthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	
+	// Para reportes mensuales y semanales (usamos UTC para la DB)
+	nowUTC := time.Now()
+	sevenDaysAgo := nowUTC.AddDate(0, 0, -7)
+	currentMonthStart := time.Date(nowUTC.Year(), nowUTC.Month(), 1, 0, 0, 0, 0, time.UTC)
 	nextMonthStart := currentMonthStart.AddDate(0, 1, 0)
-	currentMonthStr := currentMonthStart.Format("2006-01-02")
-	nextMonthStr := nextMonthStart.Format("2006-01-02")
-
-	g, _ := errgroup.WithContext(context.Background())
 
 	g.Go(func() error {
 		lastClosure, _ = s.closureRepo.GetLast()
@@ -361,44 +352,44 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 
 	// 2. Optimized Real-time Queries (Only Today or small sets)
 	g.Go(func() error {
-		log.Printf("📊 [Dashboard] Iniciando GetByDateRange (Expenses Shift) desde %s", shiftStartStr)
+		log.Printf("📊 [Dashboard] Iniciando GetByDateRange (Expenses Shift) desde %v", shiftStartDate)
 		var err error
-		todayExpensesRaw, err = s.expenseRepo.GetByDateRange(shiftStartStr, nowStr)
+		todayExpensesRaw, err = s.expenseRepo.GetByDateRange(shiftStartDate, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error Expenses Shift: %v", err) }
 		return nil
 	})
 	g.Go(func() error {
-		log.Printf("📊 [Dashboard] Iniciando GetByDateRange (Expenses Day) desde %s", dayStartStr)
+		log.Printf("📊 [Dashboard] Iniciando GetByDateRange (Expenses Day) desde %v", dayStart)
 		var err error
-		dayExpensesRaw, err = s.expenseRepo.GetByDateRange(dayStartStr, nowStr)
+		dayExpensesRaw, err = s.expenseRepo.GetByDateRange(dayStart, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error Expenses Day: %v", err) }
 		return nil
 	})
 	g.Go(func() error {
 		log.Printf("📊 [Dashboard] Iniciando GetByDateRange (Payments Shift) desde %v", shiftStartDate)
 		var err error
-		todayPaymentsRaw, err = s.creditRepo.GetByDateRange(shiftStartDate, now)
+		todayPaymentsRaw, err = s.creditRepo.GetByDateRange(shiftStartDate, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error Payments Shift: %v", err) }
 		return nil
 	})
 	g.Go(func() error {
 		log.Printf("📊 [Dashboard] Iniciando GetByDateRange (Payments Day) desde %v", dayStart)
 		var err error
-		dayPaymentsRaw, err = s.creditRepo.GetByDateRange(dayStart, now)
+		dayPaymentsRaw, err = s.creditRepo.GetByDateRange(dayStart, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error Payments Day: %v", err) }
 		return nil
 	})
 	g.Go(func() error {
-		log.Printf("📊 [Dashboard] Iniciando GetDashboardStats (Day) desde %s", dayStartStr)
+		log.Printf("📊 [Dashboard] Iniciando GetDashboardStats (Day) desde %v", dayStart)
 		var err error
-		todaySalesAmount, todaySalesCount, _, err = s.saleRepo.GetDashboardStats(dayStartStr, nowStr)
+		todaySalesAmount, todaySalesCount, _, err = s.saleRepo.GetDashboardStats(dayStart, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error Stats (Day): %v", err) }
 		return nil
 	})
 	g.Go(func() error {
-		log.Printf("📊 [Dashboard] Iniciando GetDashboardStats (Shift) desde %s", shiftStartStr)
+		log.Printf("📊 [Dashboard] Iniciando GetDashboardStats (Shift) desde %v", shiftStartDate)
 		var err error
-		shiftSalesAmount, shiftSalesCount, _, err = s.saleRepo.GetDashboardStats(shiftStartStr, nowStr)
+		shiftSalesAmount, shiftSalesCount, _, err = s.saleRepo.GetDashboardStats(shiftStartDate, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error Stats (Shift): %v", err) }
 		return nil
 	})
@@ -430,25 +421,25 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	})
 	g.Go(func() error {
 		var err error
-		salesFilter := ports.SaleFilter{Page: 1, PageSize: 20, From: currentMonthStr, To: nextMonthStr}
+		salesFilter := ports.SaleFilter{Page: 1, PageSize: 20, From: currentMonthStart.Format("2006-01-02"), To: nextMonthStart.Format("2006-01-02")}
 		recentSalesRaw, _, err = s.saleRepo.FindAll(salesFilter)
 		if err != nil { log.Printf("❌ [Dashboard] Error RecentSales: %v", err) }
 		return nil
 	})
 	g.Go(func() error {
 		var err error
-		dailySalesMap, err = s.saleRepo.GetDailySalesByRange(sevenDaysAgoStr, tomorrowStr)
+		dailySalesMap, err = s.saleRepo.GetDailySalesByRange(sevenDaysAgo, nowUTC)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		dailyCollectedMap, err = s.creditRepo.GetDailyCollectedByRange(sevenDaysAgoStr, tomorrowStr)
+		dailyCollectedMap, err = s.creditRepo.GetDailyCollectedByRange(sevenDaysAgo, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error DailyCollected: %v", err) }
 		return nil
 	})
 	g.Go(func() error {
 		var err error
-		topProducts, err = s.saleRepo.GetTopSellingProducts(currentMonthStr, nextMonthStr, 7)
+		topProducts, err = s.saleRepo.GetTopSellingProducts(currentMonthStart, nextMonthStart, 7)
 		return err
 	})
 	g.Go(func() error {
@@ -463,8 +454,8 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	})
 	g.Go(func() error {
 		var err error
-		log.Printf("📊 [Dashboard] Iniciando GetSalesBreakdown (Day) desde %s", dayStartStr)
-		todaySalesByPayment, err = s.saleRepo.GetSalesBreakdownByRange(dayStartStr, nowStr)
+		log.Printf("📊 [Dashboard] Iniciando GetSalesBreakdown (Day) desde %v", dayStart)
+		todaySalesByPayment, err = s.saleRepo.GetSalesBreakdownByRange(dayStart, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error SalesByPayment (Day): %v", err) }
 		return nil
 	})
@@ -531,25 +522,25 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 	// Today Profit Components
 	g.Go(func() error {
 		var err error
-		todayExpenses, err = s.expenseRepo.GetPaidAmountByRange(shiftStartStr, nowStr)
+		todayExpenses, err = s.expenseRepo.GetPaidAmountByRange(shiftStartDate, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error TodayExpenses (Shift): %v", err) }
 		return nil
 	})
 	g.Go(func() error {
 		var err error
-		todayReturns, err = s.returnRepo.GetTotalReturnedByRange(shiftStartStr, nowStr)
+		todayReturns, err = s.returnRepo.GetTotalReturnedByRange(shiftStartDate, nowUTC)
 		if err != nil { log.Printf("❌ [Dashboard] Error TodayReturns (Shift): %v", err) }
 		return nil
 	})
 	g.Go(func() error {
 		var err error
-		globalReturns, err = s.returnRepo.GetTotalReturnedByRange("", "")
+		globalReturns, err = s.returnRepo.GetTotalReturnedByRange(time.Time{}, time.Time{})
 		if err != nil { log.Printf("❌ [Dashboard] Error GlobalReturns: %v", err) }
 		return nil
 	})
 	var shiftFundExpenses float64
 	g.Go(func() error {
-		expenses, err := s.expenseRepo.GetGlobalPaidExpensesByMethodInRange(shiftStartStr, nowStr)
+		expenses, err := s.expenseRepo.GetGlobalPaidExpensesByMethodInRange(shiftStartDate, nowUTC)
 		if err == nil {
 			shiftFundExpenses = expenses["FONDO"]
 		}
@@ -569,11 +560,11 @@ func (s *DashboardService) GetOverview() (*DashboardOverview, error) {
 		totalProductsSold = mvStats.ProductsSold
 		monthlyCollectedDebts = mvStats.TotalAbonos
 	} else {
-		// Fallback si la MV no está lista
-		totalSalesAmount, _ = s.saleRepo.GetGlobalTotalSales() // Solo status='PAID'
-		totalCOGS, _ = s.saleRepo.GetGlobalCOGS()
-		monthlyExpenses, _ = s.expenseRepo.GetGlobalTotalPaidExpenses() // Mejor que nada
-		totalProductsSold = 0 // Simplificado si no hay MV
+		// Fallback dinámico si la MV no está lista: Filtrar estrictamente por mes actual para evitar cifras irreales
+		totalSalesAmount, _ = s.saleRepo.GetTotalSalesByRange(currentMonthStart, nextMonthStart)
+		totalCOGS, _ = s.saleRepo.GetCOGSByRange(currentMonthStart, nextMonthStart)
+		monthlyExpenses, _ = s.expenseRepo.GetPaidAmountByRange(currentMonthStart, nextMonthStart)
+		totalProductsSold = 0 // Simplificado
 	}
 
 	estimatedNetProfit := (totalSalesAmount - totalCOGS) - monthlyExpenses
@@ -1009,9 +1000,9 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 		openingCash = lastClosure.TotalCashReal
 	}
 
-	// 3. Preparar rangos para la base de datos (Usamos el timezone local de la BD)
-	startStr := startDate.Format("2006-01-02 15:04:05")
-	endStr := time.Now().In(loc).Format("2006-01-02 15:04:05")
+	// 3. Preparar rangos para la base de datos (Usamos objetos time.Time directamente)
+	// Aseguramos que endDate sea el momento exacto actual (UTC) para capturar todo
+	endDate := time.Now()
 
 	g, _ := errgroup.WithContext(context.Background())
 
@@ -1022,22 +1013,22 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 	g.Go(func() error {
 		var err error
-		sales, err = s.saleRepo.GetByDateRange(startStr, endStr)
+		sales, err = s.saleRepo.GetByDateRange(startDate, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		expenses, err = s.expenseRepo.GetByDateRange(startStr, endStr)
+		expenses, err = s.expenseRepo.GetByDateRange(startDate, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		returns, err = s.returnRepo.GetByDateRange(startStr, endStr)
+		returns, err = s.returnRepo.GetByDateRange(startDate, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		payments, err = s.creditRepo.GetByDateRange(startDate, time.Now())
+		payments, err = s.creditRepo.GetByDateRange(startDate, endDate)
 		return err
 	})
 
@@ -1235,7 +1226,7 @@ func (s *DashboardService) DeleteClosure(id uint) error {
 	return nil
 }
 
-func (s *DashboardService) GetRankingReport(from, to string) ([]ports.ProductRankingItem, error) {
+func (s *DashboardService) GetRankingReport(from, to time.Time) ([]ports.ProductRankingItem, error) {
 	sales, err := s.saleRepo.GetByDateRange(from, to)
 	if err != nil {
 		return nil, err
@@ -1273,7 +1264,7 @@ func (s *DashboardService) GetRankingReport(from, to string) ([]ports.ProductRan
 	return ranking, nil
 }
 
-func (s *DashboardService) GetCategoryReport(from, to string) ([]CategoryReportItem, error) {
+func (s *DashboardService) GetCategoryReport(from, to time.Time) ([]CategoryReportItem, error) {
 	sales, err := s.saleRepo.GetByDateRange(from, to)
 	if err != nil {
 		return nil, err
@@ -1306,7 +1297,7 @@ func (s *DashboardService) GetCategoryReport(from, to string) ([]CategoryReportI
 	return report, nil
 }
 
-func (s *DashboardService) GetVIPClientsReport(from, to string) ([]VIPClientItem, error) {
+func (s *DashboardService) GetVIPClientsReport(from, to time.Time) ([]VIPClientItem, error) {
 	sales, err := s.saleRepo.GetByDateRange(from, to)
 	if err != nil {
 		return nil, err
@@ -1345,7 +1336,7 @@ func (s *DashboardService) GetVIPClientsReport(from, to string) ([]VIPClientItem
 	return report, nil
 }
 
-func (s *DashboardService) GetVoidsReport(from, to string) ([]VoidReportItem, error) {
+func (s *DashboardService) GetVoidsReport(from, to time.Time) ([]VoidReportItem, error) {
 	returns, err := s.returnRepo.GetByDateRange(from, to)
 	if err != nil {
 		return nil, err
@@ -1388,10 +1379,16 @@ func (s *DashboardService) GetVoidsReport(from, to string) ([]VoidReportItem, er
 	return report, nil
 }
 
-func (s *DashboardService) GetPnLReport(from, to string) (*PnLReport, error) {
-	start, _ := time.Parse("2006-01-02", from)
-	end, _ := time.Parse("2006-01-02", to)
-	endQuery := end.AddDate(0, 0, 1)
+func (s *DashboardService) GetPnLReport(from, to time.Time) (*PnLReport, error) {
+	// Ajustamos el rango: end debe ser el final del día si solo viene la fecha
+	// Pero como ya viene como time.Time, lo usamos directamente.
+	// Si el llamador mandó "2023-01-01 00:00:00", queremos hasta "2023-01-01 23:59:59"
+	// pero eso lo debe manejar el llamador o lo ajustamos aquí si detectamos que es medianoche.
+	
+	endDate := to
+	if to.Hour() == 0 && to.Minute() == 0 {
+		endDate = to.Add(24*time.Hour - time.Second)
+	}
 
 	g, _ := errgroup.WithContext(context.Background())
 
@@ -1401,17 +1398,17 @@ func (s *DashboardService) GetPnLReport(from, to string) (*PnLReport, error) {
 
 	g.Go(func() error {
 		var err error
-		sales, err = s.saleRepo.GetByDateRange(from, to)
+		sales, err = s.saleRepo.GetByDateRange(from, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		expenses, err = s.expenseRepo.GetByDateRange(from, to)
+		expenses, err = s.expenseRepo.GetByDateRange(from, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		payments, err = s.creditRepo.GetByDateRange(start, endQuery)
+		payments, err = s.creditRepo.GetByDateRange(from, endDate)
 		return err
 	})
 
@@ -1507,7 +1504,7 @@ func (s *DashboardService) GetGlobalDebt() (float64, error) {
 	return totalDebt, nil
 }
 
-func (s *DashboardService) GetInventoryMovementsReport(from, to string) ([]StockMovementReportItem, error) {
+func (s *DashboardService) GetInventoryMovementsReport(from, to time.Time) ([]StockMovementReportItem, error) {
 	movements, err := s.movementRepo.GetByDateRange(from, to)
 	if err != nil {
 		return nil, err
@@ -1559,14 +1556,12 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 
 	start := activeShift.StartTime
 	now := time.Now()
-	startStr := start.Format("2006-01-02 15:04:05")
-	nowStr := now.Format("2006-01-02 15:04:05")
 
 	var movements []MovementDetail
 	totals := make(map[string]float64)
 
 	// 1. Obtener Ventas
-	sales, err := s.saleRepo.GetByDateRange(startStr, nowStr)
+	sales, err := s.saleRepo.GetByDateRange(start, now)
 	if err == nil {
 		for _, sale := range sales {
 			method := strings.ToUpper(sale.PaymentMethod)
@@ -1597,7 +1592,7 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 	}
 
 	// 2. Obtener Gastos
-	expenses, err := s.expenseRepo.GetByDateRange(startStr, nowStr)
+	expenses, err := s.expenseRepo.GetByDateRange(start, now)
 	if err == nil {
 		for _, exp := range expenses {
 			method := strings.ToUpper(exp.PaymentSource)

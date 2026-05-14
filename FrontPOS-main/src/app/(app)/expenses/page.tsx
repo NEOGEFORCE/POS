@@ -11,7 +11,7 @@ import { Expense } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
-import { broadcastRevalidate } from '@/lib/revalidate';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 // Dinámicos para optimización de carga y HMR
 const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: false });
@@ -120,7 +120,17 @@ export default function ExpensesPage() {
     }
   }, [toast]);
 
-  useEffect(() => { loadExpenses(); }, [loadExpenses]);
+  useEffect(() => { 
+    loadExpenses(); 
+    
+    // Escuchar actualizaciones de egresos (Incluso si ocurren en otra pestaña o proceso)
+    const cleanup = setupSyncListener((event) => {
+      if (event === 'EXPENSE_UPDATE' || event === 'DASHBOARD_UPDATE') {
+        loadExpenses();
+      }
+    });
+    return cleanup;
+  }, [loadExpenses]);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -222,6 +232,7 @@ export default function ExpensesPage() {
 
       setAddDialogOpen(false);
       setEditDialogOpen(false);
+      localStorage.removeItem('expense-form-draft'); // Limpieza estricta tras éxito
       setEditingExpense(null);
       loadExpenses();
       broadcastRevalidate('EXPENSE_UPDATE');

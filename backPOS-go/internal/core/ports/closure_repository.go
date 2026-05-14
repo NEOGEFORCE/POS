@@ -14,4 +14,5 @@ type ClosureRepository interface {
 	GetGlobalCoins() (map[string]float64, error)
 	GetGlobalDifferenceSum() (float64, error)
 	GetGlobalHistoricalSum() (expected float64, real float64, err error)
+	Delete(id uint) error
 }

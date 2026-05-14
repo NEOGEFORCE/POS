@@ -21,9 +21,20 @@ export function AppHeader() {
 
   const userInitial = user?.email?.charAt(0).toUpperCase() || user?.name?.charAt(0).toUpperCase() || "U"
 
+  const [isOnline, setIsOnline] = useState(true)
+  
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(timer)
+    setIsOnline(navigator.onLine)
+    const h1 = () => setIsOnline(true)
+    const h2 = () => setIsOnline(false)
+    window.addEventListener('online', h1)
+    window.addEventListener('offline', h2)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('online', h1)
+      window.removeEventListener('offline', h2)
+    }
   }, [])
 
   const timeStr = now.toLocaleTimeString('es-CO', {
@@ -70,7 +81,11 @@ export function AppHeader() {
           </div>
         </div>
       </div>
-      <div className="flex items-center gap-2 sm:gap-6">
+      <div className="flex items-center gap-2 sm:gap-4">
+        <div className={`hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-full border transition-all duration-500 ${isOnline ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-500' : 'bg-amber-500/10 border-amber-500/20 text-amber-500'}`}>
+          <div className={`h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-amber-500 animate-pulse shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`} />
+          <span className="text-[8px] font-black uppercase tracking-widest">{isOnline ? 'Sincronizado' : 'Modo Supervivencia'}</span>
+        </div>
         <ThemeToggle />
 
         <div className="hidden lg:flex flex-col items-end">

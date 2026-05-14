@@ -14,7 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Customer } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
-import { broadcastRevalidate } from '@/lib/revalidate';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 // Dinámicos para aligerar HMR y carga inicial
 const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
@@ -22,6 +22,7 @@ const CustomerFormModal = dynamic(() => import('./components/CustomerFormModal')
 const DeleteCustomerModal = dynamic(() => import('./components/DeleteCustomerModal'), { ssr: false });
 const CustomerStats = dynamic(() => import('./components/CustomerStats'), { ssr: false });
 const CustomerTable = dynamic(() => import('./components/CustomerTable'), { ssr: false });
+const ClientStatementModal = dynamic(() => import('./components/ClientStatementModal'), { ssr: false });
 
 async function fetchCustomers(token: string): Promise<Customer[]> {
   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/all-clients`, {
@@ -108,12 +109,14 @@ export default function CustomersPage() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [payCreditDialogOpen, setPayCreditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [statementDialogOpen, setStatementDialogOpen] = useState(false);
 
   // Estados de Datos
-  const [newClient, setNewClient] = useState<Partial<Customer>>({ dni: '', name: '', phone: '', address: '', creditLimit: 0 });
+  const [newClient, setNewClient] = useState<Partial<Customer>>({ dni: '', name: '', phone: '', address: '', creditLimit: '' as any });
   const [editingClient, setEditingClient] = useState<Customer | null>(null);
   const [payingClient, setPayingClient] = useState<Customer | null>(null);
   const [deletingDni, setDeletingDni] = useState<string | null>(null);
+  const [statementClient, setStatementClient] = useState<Customer | null>(null);
 
   const [lastChange, setLastChange] = useState(0);
   const [showSuccessScreen, setShowSuccessScreen] = useState(false);
@@ -132,7 +135,17 @@ export default function CustomersPage() {
     }
   }, []);
 
-  useEffect(() => { loadCustomers(); }, [loadCustomers]);
+  useEffect(() => { 
+    loadCustomers(); 
+    
+    // SINCRONIZACIÓN ZERO-F5 (Clientes y Ventas afectan créditos)
+    const cleanup = setupSyncListener((event) => {
+        if (event === 'CUSTOMER_UPDATE' || event === 'SALE_MADE' || event === 'DASHBOARD_UPDATE') {
+            loadCustomers();
+        }
+    });
+    return cleanup;
+  }, [loadCustomers]);
 
   // Lógica de Filtrado y Paginación
   const filteredCustomers = useMemo(() => {
@@ -169,12 +182,21 @@ export default function CustomersPage() {
     const token = Cookies.get('org-pos-token');
     try {
       const { cash, transfer, transferSource, totalPaid, change } = paymentData;
+      
+      const methodsCount = (cash > 0 ? 1 : 0) + (transfer > 0 ? 1 : 0);
+      let paymentMethod = "EFECTIVO";
+      if (methodsCount > 1) {
+        paymentMethod = "MIXTO";
+      } else if (transfer > 0) {
+        paymentMethod = transferSource || "TRANSFERENCIA";
+      }
 
       const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/pay-credit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
           clientDni: payingClient.dni,
+          paymentMethod: paymentMethod,
           amountCash: cash,
           amountTransfer: transfer,
           transferSource: transferSource,
@@ -202,7 +224,7 @@ export default function CustomersPage() {
     const existing = customers.find(c => c.dni === dni);
     if (existing) {
       toast({ variant: "success", title: "CLIENTE IDENTIFICADO", description: "ACCEDIENDO A FICHA EXISTENTE..." });
-      setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 });
+      setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: '' as any });
       setAddDialogOpen(false);
       setEditingClient({ ...existing });
       setEditDialogOpen(true);
@@ -225,7 +247,7 @@ export default function CustomersPage() {
         throw new Error(errorMsg);
       }
       toast({ variant: "success", title: "ÉXITO", description: "CLIENTE REGISTRADO EN MAESTRO" }); setAddDialogOpen(false);
-      setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: 0 }); loadCustomers();
+      setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: '' as any }); loadCustomers();
       broadcastRevalidate('CUSTOMER_UPDATE');
     } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL CREAR" }); }
   };
@@ -293,9 +315,10 @@ export default function CustomersPage() {
       <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
         <CustomerTable
           customers={currentCustomers}
-          onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setDialogAmount(''); setPayCreditDialogOpen(true); }}
+          onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setPayCreditDialogOpen(true); }}
           onEdit={(c) => { setEditingClient({ ...c }); setEditDialogOpen(true); }}
           onDelete={(dni) => { setDeletingDni(dni); setDeleteDialogOpen(true); }}
+          onViewStatement={(c) => { setStatementClient(c); setStatementDialogOpen(true); }}
           currentPage={page}
           totalPages={totalPages}
           pageSize={pageSize}
@@ -339,6 +362,12 @@ export default function CustomersPage() {
         isOpen={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteCustomer}
+      />
+
+      <ClientStatementModal
+        isOpen={statementDialogOpen}
+        onOpenChange={setStatementDialogOpen}
+        customer={statementClient}
       />
 
     </div>

@@ -14,6 +14,7 @@ import { AuditLog } from '@/lib/definitions';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { formatTime } from '@/lib/utils';
 
 interface AuditTableProps {
   logs: AuditLog[];
@@ -99,7 +100,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         {format(new Date(log.created_at), "dd MMM yyyy", { locale: es }).toUpperCase()}
                     </span>
                     <span className="text-[9px] font-medium text-gray-400 italic">
-                        {format(new Date(log.created_at), "HH:mm:ss", { locale: es })}
+                        {formatTime(log.created_at)}
                     </span>
                 </div>
             );
@@ -314,7 +315,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                                     classNames={{ name: "text-[10px] font-black uppercase", description: "text-[8px] font-bold" }}
                                 />
                                 <div className="flex flex-col items-end">
-                                    <span className="text-[8px] font-black text-gray-400 uppercase">{format(new Date(log.created_at), "HH:mm:ss")}</span>
+                                    <span className="text-[8px] font-black text-gray-400 uppercase">{formatTime(log.created_at)}</span>
                                     <span className="text-[8px] font-bold text-emerald-500 uppercase">{format(new Date(log.created_at), "dd/MM/yy")}</span>
                                 </div>
                             </div>

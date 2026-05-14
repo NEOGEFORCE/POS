@@ -30,20 +30,20 @@ func (r *PostgresCreditPaymentRepository) GetByDateRange(start, end time.Time) (
 	return payments, err
 }
 
-func (r *PostgresCreditPaymentRepository) GetTotalCollectedByDateRange(start, end string) (float64, error) {
+func (r *PostgresCreditPaymentRepository) GetTotalCollectedByDateRange(start, end time.Time) (float64, error) {
 	var total float64
 	err := r.db.Model(&models.CreditPayment{}).
-		Where("\"paymentDate\" >= ? AND \"paymentDate\" < ?", start, end).
+		Where("\"paymentDate\" >= ? AND \"paymentDate\" <= ?", start, end).
 		Select("COALESCE(SUM(\"totalPaid\"), 0)").
 		Scan(&total).Error
 	return total, err
 }
 
-func (r *PostgresCreditPaymentRepository) GetDailyCollectedByRange(from, to string) (map[string]float64, error) {
+func (r *PostgresCreditPaymentRepository) GetDailyCollectedByRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("credit_payments").
 		Select("TO_CHAR(\"paymentDate\", 'YYYY-MM-DD') as day, SUM(\"totalPaid\") as total").
-		Where("\"paymentDate\" >= ? AND \"paymentDate\" < ?", from, to).
+		Where("\"paymentDate\" >= ? AND \"paymentDate\" <= ?", from, to).
 		Group("day").
 		Rows()
 

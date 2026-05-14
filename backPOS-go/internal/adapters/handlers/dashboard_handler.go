@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 	"github.com/jung-kurt/gofpdf"
 )
@@ -52,7 +53,7 @@ func NewDashboardHandler(s *services.DashboardService, tg *services.TelegramServ
 }
 
 func (h *DashboardHandler) GetOverview(c *gin.Context) {
-	data, err := h.service.GetOverview()
+	data, err := h.service.GetOverview(c.Request.Context())
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener resumen del dashboard", err)
 		return
@@ -77,22 +78,16 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 		return
 	}
 
-	// Obtener usuario del contexto (AuthMiddleware) - Usar claves consistentes
-	dniVal, _ := c.Get("dni")
-	if dniVal != nil {
-		closure.ClosedByDNI = fmt.Sprintf("%v", dniVal)
-	} else {
-		closure.ClosedByDNI = "S.N."
-	}
-	
-	nameVal, _ := c.Get("userName")
-	if nameVal != nil {
-		closure.ClosedByName = fmt.Sprintf("%v", nameVal)
-	} else {
-		closure.ClosedByName = "USUARIO"
-	}
+	// Obtener usuario del contexto de forma segura
+	dniStr, nameStr := GetContextUser(c)
+	closure.ClosedByDNI = dniStr
+	closure.ClosedByName = nameStr
 
 	log.Printf("💾 [SaveClosure] Iniciando persistencia. Cajero: %s (%s)", closure.ClosedByName, closure.ClosedByDNI)
+
+	// Asegurar que la fecha de fin sea la hora actual del servidor (UTC para consistencia)
+	closure.EndDate = time.Now()
+	closure.Date = time.Now()
 
 	err := h.service.SaveClosure(&closure)
 	if err != nil {
@@ -104,8 +99,6 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	log.Printf("✅ [SaveClosure] Cierre guardado con éxito. ID: %d. Iniciando envío asíncrono de reportes...", closure.ID)
 
 	// Auditoría Forense de Cierre de Caja
-	dni, _ := c.Get("dni")
-	name, _ := c.Get("userName")
 	isCritical := closure.Difference != 0
 	expectedCash := closure.TotalCash - closure.TotalExpenses
 	
@@ -114,8 +107,8 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 		closure.ClosedByName, fmt.Sprintf("%.2f", closure.PhysicalCash), fmt.Sprintf("%.2f", expectedCash), fmt.Sprintf("%.2f", closure.Difference))
 	
 	changes := fmt.Sprintf(`{"expected": %f, "physical": %f, "difference": %f}`, expectedCash, closure.PhysicalCash, closure.Difference)
-
-	h.auditService.Log(dni.(string), name.(string), "CASH_CLOSURE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), isCritical)
+	
+	h.auditService.Log(dniStr, nameStr, "CASH_CLOSURE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), isCritical)
 
 	// BLINDAJE: El envío de Telegram y PDF se hace en una goroutine para no bloquear la respuesta al cliente
 	go func(cl models.CashierClosure) {
@@ -137,6 +130,9 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 		log.Printf("📤 [SaveClosure] Reportes asíncronos enviados para cierre ID: %d", cl.ID)
 	}(closure)
 
+	// Notificar a todos los clientes conectados que hubo un cierre (Zero-Reload)
+	go sse.GetSSEService().BroadcastDashboardUpdate()
+
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Cierre de caja procesado y guardado correctamente", 
 		"id": closure.ID,
@@ -154,21 +150,17 @@ func (h *DashboardHandler) AdjustInitialBalance(c *gin.Context) {
 		return
 	}
 
-	dniVal, _ := c.Get("dni")
-	nameVal, _ := c.Get("userName")
-	
-	dni := "ADMIN"
-	if dniVal != nil { dni = dniVal.(string) }
-	name := "ADMINISTRADOR"
-	if nameVal != nil { name = nameVal.(string) }
-
-	err := h.service.AdjustInitialBalance(body.Cash, body.Nequi, body.Daviplata, name, dni)
+	dniStr, nameStr := GetContextUser(c)
+	err := h.service.AdjustInitialBalance(body.Cash, body.Nequi, body.Daviplata, nameStr, dniStr)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al ajustar saldo inicial", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Saldo inicial ajustado correctamente"})
+
+	// AVISO GLOBAL: Ajuste de saldo base de caja
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
@@ -177,6 +169,10 @@ func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de reporte inválido", err)
 		return
 	}
+
+	// Asegurar que el reporte parcial refleje la hora exacta del servidor
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	closure.EndDate = time.Now().In(loc)
 
 	// Telegram Alert (Partial)
 	tgMsg := h.formatTelegramClosureMessage(closure, true)
@@ -223,6 +219,7 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	}
 
 	// 1. INFO GENERAL
+	loc := time.FixedZone("America/Bogota", -5*60*60)
 	header := fmt.Sprintf("%s\n━━━━━━━━━━━━━━━━━━━━\n"+
 		"👤 *CAJERO:* %s\n"+
 		"📅 *INICIO:* `%s`\n"+
@@ -230,8 +227,8 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		"━━━━━━━━━━━━━━━━━━━━\n\n",
 		title,
 		closure.ClosedByName,
-		closure.StartDate.Format("02/01 15:04"),
-		closure.EndDate.Format("02/01 15:04"))
+		closure.StartDate.In(loc).Format("02/01 15:04"),
+		closure.EndDate.In(loc).Format("02/01 15:04"))
 
 	// 2. RESUMEN FINANCIERO
 	core := fmt.Sprintf("💰 *RESUMEN DE CAJA*\n"+
@@ -368,12 +365,7 @@ func (h *DashboardHandler) DeleteClosure(c *gin.Context) {
 	}
 
 	// Auditoría Forense: Eliminación de cierre es SIEMPRE crítica
-	dni, _ := c.Get("dni")
-	name, _ := c.Get("userName")
-	dniStr := "ADMIN"
-	if dni != nil { dniStr = dni.(string) }
-	nameStr := "ADMINISTRADOR"
-	if name != nil { nameStr = name.(string) }
+	dniStr, nameStr := GetContextUser(c)
 
 	details := fmt.Sprintf("Cierre de caja ID #%d ELIMINADO permanentemente por %s", id, nameStr)
 	human := fmt.Sprintf("El administrador %s eliminó el cierre de caja #%d del sistema. Este registro fue borrado permanentemente.", nameStr, id)
@@ -386,6 +378,9 @@ func (h *DashboardHandler) DeleteClosure(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": fmt.Sprintf("Cierre #%d eliminado correctamente", id),
 	})
+
+	// AVISO GLOBAL: Cierre eliminado (Actualiza historial)
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *DashboardHandler) GetDetailedReport(c *gin.Context) {
@@ -452,16 +447,17 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 	pdf.SetFont("Arial", "B", 8)
 	pdf.CellFormat(45, 7, tr(" FECHA IMPRESIÓN:"), "T", 0, "L", false, 0, "")
 	pdf.SetFont("Arial", "", 8)
-	pdf.CellFormat(50, 7, tr(" "+time.Now().Format("02/01/2006 15:04")), "RT", 1, "L", false, 0, "")
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	pdf.CellFormat(50, 7, tr(" "+time.Now().In(loc).Format("02/01/2006 15:04")), "RT", 1, "L", false, 0, "")
 	
 	pdf.SetFont("Arial", "B", 8)
 	pdf.CellFormat(30, 7, tr(" TURNO:"), "LB", 0, "L", false, 0, "")
 	pdf.SetFont("Arial", "", 8)
-	pdf.CellFormat(65, 7, tr(fmt.Sprintf(" %s a %s", closure.StartDate.Format("15:04"), closure.EndDate.Format("15:04"))), "B", 0, "L", false, 0, "")
+	pdf.CellFormat(65, 7, tr(fmt.Sprintf(" %s a %s", closure.StartDate.In(loc).Format("15:04"), closure.EndDate.In(loc).Format("15:04"))), "B", 0, "L", false, 0, "")
 	pdf.SetFont("Arial", "B", 8)
 	pdf.CellFormat(45, 7, tr(" ID CIERRE:"), "B", 0, "L", false, 0, "")
 	pdf.SetFont("Arial", "", 8)
-	pdf.CellFormat(50, 7, tr(fmt.Sprintf(" CC-%d", closure.Date.Unix()%1000000)), "RB", 1, "L", false, 0, "")
+	pdf.CellFormat(50, 7, tr(fmt.Sprintf(" CC-%d", closure.Date.In(loc).Unix()%1000000)), "RB", 1, "L", false, 0, "")
 	
 	// Línea Gruesa de Auditoría
 	pdf.SetLineWidth(0.6)

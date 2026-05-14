@@ -10,6 +10,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
@@ -58,6 +59,9 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, supplier)
 
+	// AVISO GLOBAL: Nuevo proveedor
+	go sse.GetSSEService().BroadcastSupplierUpdate(supplier)
+
 	// Auditoría de Creación
 	name, _ := c.Get("userName")
 	h.auditService.Log(dniStr, name.(string), "CREATE_SUPPLIER", "DIRECTORY", 
@@ -94,6 +98,9 @@ func (h *SupplierHandler) GetByID(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, supplier)
+
+	// AVISO GLOBAL: Proveedor actualizado
+	go sse.GetSSEService().BroadcastSupplierUpdate(supplier)
 }
 
 func (h *SupplierHandler) Update(c *gin.Context) {
@@ -146,6 +153,9 @@ func (h *SupplierHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Proveedor eliminado"})
+
+	// AVISO GLOBAL: Proveedor eliminado
+	go sse.GetSSEService().BroadcastSupplierUpdate(id)
 
 	// Auditoría de Eliminación
 	dniEmployee, _ := c.Get("dni")

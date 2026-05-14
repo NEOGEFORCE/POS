@@ -15,7 +15,8 @@ import {
     ChevronRight,
     Info,
     CreditCard,
-    PlusCircle
+    PlusCircle,
+    FileText
 } from 'lucide-react';
 import { Customer } from '@/lib/definitions';
 
@@ -24,6 +25,7 @@ interface TableProps {
     onPay: (customer: Customer) => void;
     onEdit: (customer: Customer) => void;
     onDelete: (dni: string) => void;
+    onViewStatement: (customer: Customer) => void;
     currentPage: number;
     totalPages: number;
     pageSize: number;
@@ -41,7 +43,7 @@ const COLUMNS = [
 ];
 
 const CustomerTable = memo(({
-    customers, onPay, onEdit, onDelete,
+    customers, onPay, onEdit, onDelete, onViewStatement,
     currentPage, totalPages, pageSize, totalRecords,
     onPageChange, onPageSizeChange, onAdd
 }: TableProps) => {
@@ -111,16 +113,14 @@ const CustomerTable = memo(({
                 return (
                     <div className="flex justify-end gap-1 px-1 items-center">
                         {Number(c.currentCredit) > 0 && (
-                            <Tooltip content="ABONAR" delay={0} placement="top" classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-emerald-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
-                                <Button
-                                    isIconOnly
-                                    size="sm"
-                                    onPress={() => onPay(c)}
-                                    className="h-8 w-8 md:h-9 md:w-9 bg-emerald-500 text-white font-black rounded-lg md:rounded-xl shadow-lg shadow-emerald-500/20 active:scale-90 transition-all"
-                                >
-                                    <DollarSign size={16} strokeWidth={3} />
-                                </Button>
-                            </Tooltip>
+                            <Button
+                                size="md"
+                                onPress={() => onPay(c)}
+                                className="h-11 px-6 bg-emerald-500 text-white font-black rounded-2xl shadow-xl shadow-emerald-500/30 active:scale-95 transition-all animate-pulse flex items-center gap-3 border-2 border-white/20"
+                            >
+                                <DollarSign size={18} strokeWidth={4} />
+                                <span className="text-[12px] tracking-[0.15em] mb-0.5">ABONAR</span>
+                            </Button>
                         )}
                         <Tooltip content="EDITAR" delay={0} placement="top" classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-emerald-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
                             <Button
@@ -144,12 +144,23 @@ const CustomerTable = memo(({
                                 <Trash2 size={14} />
                             </Button>
                         </Tooltip>
+                        <Tooltip content="REPORTE DEUDA" delay={0} placement="top-end" classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-blue-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
+                            <Button
+                                isIconOnly
+                                size="sm"
+                                variant="flat"
+                                className="h-8 w-8 md:h-9 md:w-9 bg-blue-500/5 text-blue-500 hover:text-white hover:bg-blue-500 transition-all rounded-lg md:rounded-xl border border-blue-500/10 active:scale-90"
+                                onPress={() => onViewStatement(c)}
+                            >
+                                <FileText size={14} />
+                            </Button>
+                        </Tooltip>
                     </div>
                 );
             default:
                 return null;
         }
-    }, [onPay, onEdit, onDelete]);
+    }, [onPay, onEdit, onDelete, onViewStatement]);
 
     return (
         <div className="flex-1 min-h-0 bg-white/50 dark:bg-zinc-900/30 backdrop-blur-sm border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-2xl shadow-emerald-500/5 transition-all">
@@ -256,8 +267,9 @@ const CustomerTable = memo(({
                                     </div>
                                     <div className="flex items-center gap-1">
                                         {Number(c.currentCredit) > 0 && (
-                                            <Button isIconOnly size="sm" className="h-8 w-8 bg-emerald-500 text-white rounded-lg shadow-lg shadow-emerald-500/20" onPress={() => onPay(c)}>
-                                                <DollarSign size={14} strokeWidth={3} />
+                                            <Button size="sm" className="h-10 px-4 bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/20 flex items-center gap-2 active:scale-95 transition-all animate-pulse border border-white/10" onPress={() => onPay(c)}>
+                                                <DollarSign size={15} strokeWidth={3} />
+                                                <span className="text-[10px] font-black tracking-wider mb-0.5">ABONAR</span>
                                             </Button>
                                         )}
                                         <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 rounded-lg text-gray-500" onPress={() => onEdit(c)}>
@@ -265,6 +277,9 @@ const CustomerTable = memo(({
                                         </Button>
                                         <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg" onPress={() => onDelete(c.dni)}>
                                             <Trash2 size={14} />
+                                        </Button>
+                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-blue-500/10 text-blue-500 rounded-lg" onPress={() => onViewStatement(c)}>
+                                            <FileText size={14} />
                                         </Button>
                                     </div>
                                 </div>

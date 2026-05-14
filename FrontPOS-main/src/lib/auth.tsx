@@ -115,10 +115,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Limpieza profunda de sesión
     Cookies.remove('org-pos-user');
     Cookies.remove('org-pos-token');
+    
+    if (typeof window !== 'undefined') {
+      localStorage.clear();
+      sessionStorage.clear();
+    }
+
     setUser(null);
-    router.push('/login');
+    router.replace('/login');
   };
 
   return (

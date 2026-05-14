@@ -188,7 +188,7 @@ export default function CustomerFormModal({
                 <Input 
                   labelPlacement="outside"
                   placeholder="0"
-                  value={(customer?.creditLimit !== undefined && customer?.creditLimit !== null && String(customer?.creditLimit) !== '') 
+                  value={(customer?.creditLimit !== undefined && customer?.creditLimit !== null && String(customer?.creditLimit) !== '' && Number(customer?.creditLimit) !== 0) 
                     ? String(customer.creditLimit).replace(/\D/g, '').replace(/\B(?=(\d{3})+(?!\d))/g, ".") 
                     : ''}
                   onValueChange={(v) => {

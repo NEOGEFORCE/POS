@@ -1,6 +1,9 @@
 package ports
 
-import "backPOS-go/internal/core/domain/models"
+import (
+	"backPOS-go/internal/core/domain/models"
+	"time"
+)
 
 type ProductRankingItem struct {
 	Barcode  string  `json:"barcode"`
@@ -18,6 +21,7 @@ type SaleFilter struct {
 	EmployeeDNI string
 	MinTotal    float64
 	MaxTotal    float64
+	Search      string
 }
 
 type MVMonthlyStats struct {
@@ -36,28 +40,31 @@ type MVMonthlyStats struct {
 type SaleRepository interface {
 	Create(sale *models.Sale) error
 	CreateWithTx(tx interface{}, sale *models.Sale) error
+	GetDB() interface{}
 	GetAll() ([]models.Sale, error)
-	GetByDateRange(from, to string) ([]models.Sale, error)
-	GetDeletedByDateRange(from, to string) ([]models.Sale, error)
+	GetByDateRange(from, to time.Time) ([]models.Sale, error)
+	GetDeletedByDateRange(from, to time.Time) ([]models.Sale, error)
 	GetByID(id uint) (*models.Sale, error)
 	Delete(id uint, reason string, employeeDNI string) error
 	UpdatePayment(id uint, sale *models.Sale) error
 	FindAll(filter SaleFilter) ([]models.Sale, int64, error)
 	FindPendingDebts() ([]models.Sale, error)
 	UpdateDebt(id uint, newDebt float64) error
-	GetDashboardStats(from, to string) (float64, int64, float64, error)
+	GetDashboardStats(from, to time.Time) (float64, int64, float64, error)
 	GetMonthlyTotals() (map[string]float64, error)
-	GetSoldQuantityByProduct(barcode string, from, to string) (float64, error)
-	GetSoldQuantitiesByBarcodes(barcodes []string, from, to string) (map[string]float64, error)
-	GetTopSellingProducts(from, to string, limit int) ([]ProductRankingItem, error)
-	GetDailySalesByRange(from, to string) (map[string]float64, error)
-	GetSalesByPaymentMethod(from, to string) (map[string]float64, error)
+	GetSoldQuantityByProduct(barcode string, from, to time.Time) (float64, error)
+	GetSoldQuantitiesByBarcodes(barcodes []string, from, to time.Time) (map[string]float64, error)
+	GetTopSellingProducts(from, to time.Time, limit int) ([]ProductRankingItem, error)
+	GetDailySalesByRange(from, to time.Time) (map[string]float64, error)
+	GetSalesByPaymentMethod(from, to time.Time) (map[string]float64, error)
 	GetMonthlyStatsFromMV(monthYear string) (*MVMonthlyStats, error)
 	GetMonthlyStatsTrendFromMV() ([]MVMonthlyStats, error)
 	GetGlobalTotalSales() (float64, error)
 	GetGlobalSalesByMethod() (map[string]float64, error)
 	GetGlobalCollectedDebtsByMethod() (map[string]float64, error)
 	GetGlobalCOGS() (float64, error)
-	GetCOGSByRange(from, to string) (float64, error)
-	GetSalesBreakdownByRange(from, to string) (map[string]float64, error)
+	GetCOGSByRange(from, to time.Time) (float64, error)
+	GetTotalSalesByRange(from, to time.Time) (float64, error)
+	GetSalesBreakdownByRange(from, to time.Time) (map[string]float64, error)
+	GetPendingByClient(clientDNI string) ([]models.Sale, error)
 }

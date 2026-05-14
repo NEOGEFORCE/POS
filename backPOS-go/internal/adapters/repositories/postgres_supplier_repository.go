@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 
+	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
 )
 
@@ -17,7 +19,12 @@ func NewPostgresSupplierRepository(db *gorm.DB) *PostgresSupplierRepository {
 }
 
 func (r *PostgresSupplierRepository) Save(supplier *models.Supplier) error {
-	return r.db.Create(supplier).Error
+	err := r.db.Create(supplier).Error
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeySuppliers)
+		sse.GetSSEService().Broadcast("SUPPLIER_UPDATE", nil)
+	}
+	return err
 }
 
 func (r *PostgresSupplierRepository) GetByID(id uint) (*models.Supplier, error) {
@@ -62,11 +69,21 @@ func (r *PostgresSupplierRepository) GetAll() ([]models.Supplier, error) {
 }
 
 func (r *PostgresSupplierRepository) Update(id uint, supplier *models.Supplier) error {
-	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Updates(supplier).Error
+	err := r.db.Model(&models.Supplier{}).Where("id = ?", id).Updates(supplier).Error
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeySuppliers)
+		sse.GetSSEService().Broadcast("SUPPLIER_UPDATE", nil)
+	}
+	return err
 }
 
 func (r *PostgresSupplierRepository) Delete(id uint) error {
-	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("is_active", false).Error
+	err := r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("is_active", false).Error
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeySuppliers)
+		sse.GetSSEService().Broadcast("SUPPLIER_UPDATE", nil)
+	}
+	return err
 }
 
 func (r *PostgresSupplierRepository) GetByVisitDay(day string) ([]models.Supplier, error) {

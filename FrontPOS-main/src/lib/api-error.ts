@@ -27,32 +27,88 @@ export class ApiError extends Error {
 // Mapa de traducciones para errores comunes de base de datos / red
 const ERROR_TRANSLATIONS: Record<string, string> = {
   // Errores de MySQL / base de datos
-  '1062': 'REGISTRO DUPLICADO: El documento o código ya existe en el sistema',
-  'UNIQUE': 'REGISTRO DUPLICADO: Ya existe un registro con estos datos',
-  'duplicate': 'REGISTRO DUPLICADO: Ya existe un registro con estos datos',
-  'foreign key': 'CONFLICTO DE DATOS: Este registro está vinculado a otros registros',
-  'cannot delete': 'NO SE PUEDE ELIMINAR: Este registro tiene dependencias activas',
-  'Data too long': 'DATOS EXCEDEN EL LÍMITE: Reduce la longitud del texto ingresado',
-  'Incorrect decimal': 'VALOR NUMÉRICO INVÁLIDO: Verifica los campos de precio o cantidad',
-  'Out of range': 'NÚMERO FUERA DE RANGO: El valor ingresado es demasiado grande o pequeño',
-  'connection refused': 'SIN CONEXIÓN AL SERVIDOR: Verifica que el servidor esté activo',
-  'deadline exceeded': 'TIEMPO AGOTADO: El servidor tardó demasiado en responder',
-  'record not found': 'REGISTRO NO ENCONTRADO: El elemento ya fue eliminado o no existe',
-  'not found': 'REGISTRO NO ENCONTRADO: El elemento no existe en el sistema',
+  '1062': 'REGISTRO DUPLICADO: Ya existe un elemento con este código o nombre',
+  'UNIQUE': 'REGISTRO DUPLICADO: Este dato ya está registrado',
+  'duplicate': 'REGISTRO DUPLICADO: Este dato ya está registrado',
+  'foreign key': 'CONFLICTO DE VÍNCULOS: Este elemento tiene información asociada que impide la acción',
+  'cannot delete': 'BLOQUEO DE ELIMINACIÓN: Primero debes borrar o desvincular los registros relacionados',
+  'Data too long': 'TEXTO DEMASIADO LARGO: Por favor, reduce la descripción o el nombre',
+  'Incorrect decimal': 'ERROR EN PRECIO/CANTIDAD: Verifica que los números sean válidos',
+  'Out of range': 'NÚMERO INVÁLIDO: El valor es demasiado alto para el sistema',
+  'connection refused': 'FALLO DE CONEXIÓN: No hay comunicación con el servidor central',
+  'deadline exceeded': 'TIEMPO EXCEDIDO: La respuesta tardó mucho, intenta de nuevo',
+  'record not found': 'NO ENCONTRADO: El registro no existe o fue eliminado por otro usuario',
+  'not found': 'BÚSQUEDA SIN RESULTADOS: No se encontró lo que buscas',
+  
+  // Errores de Inventario / POS
+  'insufficient stock': 'SIN INVENTARIO: No hay suficiente stock para realizar esta venta',
+  'out of stock': 'PRODUCTO AGOTADO: No puedes vender este producto sin existencias',
+  'low stock': 'ADVERTENCIA: El stock está por debajo del mínimo permitido',
+  'invalid price': 'PRECIO INVÁLIDO: El precio de venta no puede ser menor al de costo',
+  'negative quantity': 'CANTIDAD INVÁLIDA: No se permiten valores negativos en este campo',
+  'stock cannot be negative': 'ERROR DE STOCK: El inventario no puede quedar en negativo para este producto',
+  'already exists': 'YA EXISTE: Ese código o nombre ya está en uso',
+  'bad request': 'DATOS INVÁLIDOS: Revisa la información ingresada',
+  'internal server error': 'FALLO INTERNO: Hubo un error en el servidor, contacta a soporte',
+  'network error': 'ERROR DE RED: Verifica tu conexión a internet',
+  'timeout': 'TIEMPO EXCEDIDO: El servidor tardó demasiado en responder',
+  
   // Errores de autenticación
-  'token': 'SESIÓN EXPIRADA: Cierra sesión e ingresa nuevamente',
-  'unauthorized': 'ACCESO DENEGADO: No tienes permisos para esta acción',
-  'forbidden': 'ACCESO PROHIBIDO: Tu rol no permite esta operación',
+  'token': 'SESIÓN EXPIRADA: Tu ingreso ha caducado, por favor vuelve a entrar',
+  'unauthorized': 'SIN PERMISOS: No tienes autorización para realizar esta operación',
+  'forbidden': 'ROL RESTRINGIDO: Tu nivel de acceso no permite entrar aquí',
+  'invalid credentials': 'DATOS INCORRECTOS: El usuario o la contraseña no coinciden',
+  'user not found': 'USUARIO NO EXISTE: Revisa el nombre de usuario ingresado',
+  'password too short': 'CONTRASEÑA DÉBIL: Debe tener al menos 6 caracteres',
+
   // Errores de validación de campos (Gin/Gorm)
-  'required': 'CAMPO OBLIGATORIO: Faltan datos necesarios',
-  'is_active': 'ESTADO DE ACCESO',
-  'dni': 'DOCUMENTO DE IDENTIDAD (DNI)',
-  'role': 'NIVEL DE ROL / PERMISOS',
-  'email': 'CORREO ELECTRÓNICO',
-  'unmarshal': 'ERROR DE FORMATO: Los datos enviados no son válidos para el servidor',
-  'unsupported format': 'FORMATO NO SOPORTADO: Verifica que los campos numéricos contengan solo números',
-  'json: cannot unmarshal': 'VALOR INVÁLIDO: Uno de los campos tiene un formato incompatible con el servidor',
+  'required': 'CAMPO FALTANTE: Es obligatorio completar este dato',
+  'unmarshal': 'FORMATO ERRONEO: El valor ingresado no es del tipo esperado (ej: letras en un campo numérico)',
+  'unsupported format': 'ARCHIVO O FORMATO NO VÁLIDO: Verifica los datos ingresados',
+  'json: cannot unmarshal': 'DATO INVÁLIDO: Ingresaste un texto donde se esperaba un número o viceversa',
 };
+
+/**
+ * Convierte nombres de campos técnicos del backend a nombres amigables para el usuario.
+ */
+function humanizeFieldName(field: string): string {
+  const fields: Record<string, string> = {
+    'productName': 'Nombre del Producto',
+    'product_name': 'Nombre del Producto',
+    'barcode': 'Código de Barras',
+    'salePrice': 'Precio de Venta',
+    'sale_price': 'Precio de Venta',
+    'purchasePrice': 'Precio de Compra',
+    'purchase_price': 'Precio de Compra',
+    'quantity': 'Cantidad/Stock',
+    'minStock': 'Stock Mínimo',
+    'min_stock': 'Stock Mínimo',
+    'categoryId': 'Categoría',
+    'category_id': 'Categoría',
+    'supplierId': 'Proveedor',
+    'supplier_id': 'Proveedor',
+    'dni': 'Documento de Identidad',
+    'email': 'Correo Electrónico',
+    'phone': 'Teléfono',
+    'address': 'Dirección',
+    'amount': 'Monto/Valor',
+    'description': 'Descripción',
+    'name': 'Nombre',
+    'role': 'Nivel de Permisos',
+    'password': 'Contraseña',
+    'tax_id': 'NIT/RUT',
+    'iva': 'Impuesto IVA',
+    'packMultiplier': 'Multiplicador de Pack',
+    'paymentSource': 'Fuente de Pago',
+    'payment_source': 'Fuente de Pago',
+    'salariesDetail': 'Detalle de Nómina',
+    'expensesDetail': 'Detalle de Gastos',
+    'physicalCash': 'Efectivo Físico',
+    'physical_cash': 'Efectivo Físico',
+  };
+
+  return fields[field] || field.replace(/([A-Z])/g, ' $1').toUpperCase();
+}
 
 /**
  * Analiza un texto de error y busca si coincide con algún error conocido para
@@ -90,10 +146,23 @@ export async function extractApiError(res: Response, fallback: string): Promise<
   try {
     const data = await res.json();
     
-    // Formato 1: Estructurado { error: { code, message, details } }
+    // Formato 1: Estructurado { error: { code, message, details, fields } }
     if (data?.error && typeof data.error === 'object') {
-      const { message, details } = data.error;
+      const { message, details, fields } = data.error;
       
+      // Si hay errores de campos específicos (en 'fields' o 'metadata'), construir un mensaje detallado
+      const errorContext = fields || data.error.metadata;
+      if (errorContext && typeof errorContext === 'object' && Object.keys(errorContext).length > 0) {
+        const fieldMsgs = Object.entries(errorContext).map(([key, msg]) => {
+          const friendlyField = humanizeFieldName(key);
+          const friendlyMsg = typeof msg === 'string' ? (translateError(msg) || msg) : 'Dato inválido o faltante';
+          return `${friendlyField}: ${friendlyMsg}`;
+        });
+        if (fieldMsgs.length > 0) {
+            return `REVISA LO SIGUIENTE:\n${fieldMsgs.join('\n')}`.toUpperCase();
+        }
+      }
+
       // Intentar traducir los detalles técnicos primero (más específicos)
       if (details) {
         const translated = translateError(details);
@@ -102,15 +171,11 @@ export async function extractApiError(res: Response, fallback: string): Promise<
       
       // Si el message del backend ya es descriptivo, usarlo
       if (message && message !== fallback && !message.toLowerCase().includes("formato de datos")) {
-        // Aún así, intentar enriquecer con traducción
         const translated = translateError(message);
         return translated || message.toUpperCase();
       }
 
-      // Si llegamos aquí y hay detalles, devolver los detalles (aunque no tengan traducción oficial)
-      if (details) {
-        return details.toUpperCase();
-      }
+      if (details) return details.toUpperCase();
     }
     
     // Formato 2: Simple { error: "string" }
@@ -126,21 +191,21 @@ export async function extractApiError(res: Response, fallback: string): Promise<
     }
     
   } catch {
-    // No se pudo parsear el JSON — probablemente error de red o 500 puro
+    // No se pudo parsear el JSON
   }
   
   // Usar el código HTTP para dar contexto
   const httpMessages: Record<number, string> = {
-    400: 'SOLICITUD INVÁLIDA: Verifica los datos ingresados',
-    401: 'SESIÓN EXPIRADA: Cierra sesión e ingresa nuevamente',
-    403: 'ACCESO DENEGADO: No tienes permisos para esta acción',
-    404: 'NO ENCONTRADO: El recurso solicitado no existe',
-    409: 'CONFLICTO: Ya existe un registro con estos datos',
-    422: 'DATOS INVÁLIDOS: Revisa los campos del formulario',
-    429: 'DEMASIADAS SOLICITUDES: Espera un momento e intenta de nuevo',
-    500: 'ERROR INTERNO DEL SERVIDOR: Contacta al administrador',
-    502: 'SERVIDOR NO DISPONIBLE: El servicio está temporalmente fuera de línea',
-    503: 'SERVICIO NO DISPONIBLE: Intenta de nuevo en unos minutos',
+    400: 'DATOS INCOMPLETOS: Revisa que todos los campos obligatorios estén llenos',
+    401: 'ACCESO CADUCADO: Vuelve a ingresar tus credenciales',
+    403: 'SIN AUTORIZACIÓN: No tienes permiso para realizar esta acción',
+    404: 'NO ENCONTRADO: Lo que buscas no existe o ha sido movido',
+    409: 'DUPLICADO: Estos datos ya pertenecen a otro registro activo',
+    422: 'ERROR DE VALIDACIÓN: Corrige los datos marcados antes de continuar',
+    429: 'SISTEMA OCUPADO: Espera unos segundos y vuelve a intentar',
+    500: 'FALLO TÉCNICO: Hubo un error en el servidor. Intenta de nuevo.',
+    502: 'ERROR DE PUERTA DE ENLACE: Problemas de comunicación con el servidor',
+    503: 'SERVIDOR EN MANTENIMIENTO: Intenta en unos minutos',
   };
   
   return httpMessages[res.status] || fallback;
@@ -182,36 +247,10 @@ export async function apiFetch<T = any>(
   }
   
   if (!res.ok) {
-    const errorData = await res.json().catch(() => null);
-    
-    // Extraer el mensaje real del error (compatible con ambos formatos del backend)
-    let errorMsg = fallbackError;
-    if (errorData) {
-      // Formato diagnóstico: { error: "UPDATE_FAILED", message: "...", detail: "..." }
-      if (errorData.message && typeof errorData.message === 'string') {
-        errorMsg = errorData.message.toUpperCase();
-      }
-      // Formato estructurado: { error: { code, message, details } }
-      else if (errorData.error && typeof errorData.error === 'object' && errorData.error.message) {
-        errorMsg = errorData.error.message.toUpperCase();
-      }
-      // Formato simple: { error: "string" }
-      else if (errorData.error && typeof errorData.error === 'string') {
-        const translated = errorData.error.toUpperCase();
-        errorMsg = translated;
-      }
-    }
-    
-    // Fallback por código HTTP si no pudimos extraer nada útil
-    if (errorMsg === fallbackError) {
-      const httpMessages: Record<number, string> = {
-        400: 'SOLICITUD INVÁLIDA: Verifica los datos ingresados',
-        401: 'SESIÓN EXPIRADA: Cierra sesión e ingresa nuevamente',
-        404: 'NO ENCONTRADO: El recurso solicitado no existe',
-        500: 'ERROR INTERNO DEL SERVIDOR: Contacta al administrador',
-      };
-      errorMsg = httpMessages[res.status] || fallbackError;
-    }
+    // Clonar la respuesta antes de consumirla para evitar el error "body is already used"
+    const clonedRes = res.clone();
+    const errorMsg = await extractApiError(res, fallbackError);
+    const errorData = await clonedRes.json().catch(() => null);
     
     throw new ApiError(errorMsg, res.status, errorData);
   }

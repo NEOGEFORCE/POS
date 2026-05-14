@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
@@ -6,28 +7,31 @@ import { Button, Input, Badge, Spinner, Select, SelectItem, Autocomplete, Autoco
 import {
     Search, Plus, Camera, Truck, RefreshCw,
     Trash2, Package, ShieldCheck, Gift, ArrowDownLeft, Barcode, Loader2, Zap, TrendingDown, AlertTriangle, Sparkles, ChevronDown, Check, X,
-    ShoppingBag, Info
+    ShoppingBag, Info, Wallet, Landmark, HandCoins, Building2
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Product, Supplier } from '@/lib/definitions';
 import { formatCurrency, applyRounding } from "@/lib/utils";
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import Cookies from 'js-cookie';
 import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/auth';
+import { apiFetch } from '@/lib/api-error';
 
 const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 const ReceptionRow = dynamic(() => import('./components/ReceptionRow'), { ssr: false });
 const SupplierFormModal = dynamic(() => import('../../suppliers/components/SupplierFormModal'), { ssr: false });
 
 // Stats Component inline (mismo patrón que ProductStats)
-const SPARKLINE_DATA_1 = [{val: 40}, {val: 30}, {val: 45}, {val: 20}, {val: 50}];
-const SPARKLINE_DATA_2 = [{val: 10}, {val: 25}, {val: 15}, {val: 40}, {val: 35}];
-const SPARKLINE_DATA_3 = [{val: 50}, {val: 45}, {val: 55}, {val: 60}, {val: 40}];
-const SPARKLINE_DATA_4 = [{val: 20}, {val: 35}, {val: 25}, {val: 45}, {val: 50}];
+const SPARKLINE_DATA_1 = [{ val: 40 }, { val: 30 }, { val: 45 }, { val: 20 }, { val: 50 }];
+const SPARKLINE_DATA_2 = [{ val: 10 }, { val: 25 }, { val: 15 }, { val: 40 }, { val: 35 }];
+const SPARKLINE_DATA_3 = [{ val: 50 }, { val: 45 }, { val: 55 }, { val: 60 }, { val: 40 }];
+const SPARKLINE_DATA_4 = [{ val: 20 }, { val: 35 }, { val: 25 }, { val: 45 }, { val: 50 }];
 
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
 export interface ReceiveItem {
+    lineId: string;
     barcode: string;
     productName: string;
     addedQuantity: number;
@@ -52,9 +56,10 @@ export default function ReceiveInventoryPage() {
 
     const [products, setProducts] = useState<Product[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-    const [selectedGlobalSupplier, setSelectedGlobalSupplier] = useState<string>('none');
+    const [selectedGlobalSupplier, setSelectedGlobalSupplier] = useState<string>('');
     const [receiveList, setReceiveList] = useState<ReceiveItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
+    const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
     const [isOrderModalOpen, setIsOrderModalOpen] = useState(false);
@@ -64,19 +69,32 @@ export default function ReceiveInventoryPage() {
     const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
     const { user, loading: authLoading } = useAuth();
     const [bypassExpense, setBypassExpense] = useState(false);
+    const [paymentSource, setPaymentSource] = useState<string>('EFECTIVO');
     const [isSyncConfirmOpen, setIsSyncConfirmOpen] = useState(false);
-    
+
+    const paymentMethods = [
+        { id: 'EFECTIVO', label: 'Caja', icon: Wallet },
+        { id: 'FONDO', label: 'Fondo', icon: Landmark },
+        { id: 'NEQUI', label: 'Nequi', icon: Zap },
+        { id: 'DAVIPLATA', label: 'Davi', icon: Zap },
+        { id: 'PRESTAMO', label: 'Prest.', icon: HandCoins }
+    ];
+
     // FASE 3: Blindaje de Rol Estricto - Cargando desde Contexto Centralizado
-    const isAdmin = user?.role === 'ADMIN' || user?.role === 'SUPERADMIN'; 
-    
+    // FASE 3: Blindaje de Rol Estricto - Cargando desde Contexto Centralizado
+    const isAdmin = useMemo(() => {
+        const role = (user?.role || user?.Role || '').toLowerCase();
+        return ['admin', 'administrador', 'superadmin'].includes(role);
+    }, [user]);
+
     // Si estamos cargando la sesión, asumimos admin temporalmente para no ocultar la UI si el usuario lo es
     const showAdminControls = authLoading || isAdmin;
-    
+
     // Forzar false si definitivamente no es admin y ya terminó de cargar
     useEffect(() => {
         if (!authLoading && !isAdmin && bypassExpense) setBypassExpense(false);
     }, [authLoading, isAdmin, bypassExpense]);
-    
+
 
     const searchRef = useRef<HTMLInputElement>(null);
     const hiddenScannerRef = useRef<HTMLInputElement>(null);
@@ -86,18 +104,74 @@ export default function ReceiveInventoryPage() {
         const token = Cookies.get('org-pos-token');
         if (!token) { router.push('/login'); return; }
         try {
-            const [pRes, sRes] = await Promise.all([
-                fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, { headers: { 'Authorization': `Bearer ${token}` } }),
-                fetch(`${process.env.NEXT_PUBLIC_API_URL}/suppliers/all-suppliers`, { headers: { 'Authorization': `Bearer ${token}` } })
+            const [pData, sData] = await Promise.all([
+                apiFetch<Product[]>('/products/all-products', {}, token),
+                apiFetch<Supplier[]>('/suppliers/all-suppliers', {}, token)
             ]);
-            if (pRes.ok) setProducts(await pRes.json());
-            if (sRes.ok) setSuppliers(await sRes.json());
-        } catch (err) { console.error(err); } finally { setLoading(false); }
-    }, [router]);
 
-    useEffect(() => { 
-        loadData(); 
+            // FILTRAR "SIN PROVEEDOR" PARA QUE NO APAREZCA NUNCA
+            const cleanSuppliers = (sData || []).filter((s: any) =>
+                s.name && !s.name.toUpperCase().includes('SIN PROVEEDOR')
+            );
+
+            setProducts(pData || []);
+            setSuppliers(cleanSuppliers);
+        } catch (err: any) {
+            console.error(err);
+            toast({ variant: 'destructive', title: "ERROR DE CARGA", description: err.message });
+        } finally {
+            setLoading(false);
+        }
+    }, [router, toast]);
+
+    const suppliersList = useMemo(() => suppliers, [suppliers]);
+
+    // FILTRO MANUAL BLINDADO (IDÉNTICO A EGRESOS)
+    const filteredSuppliers = useMemo(() => {
+        if (!suppliers) return [];
+        // FILTRAR "SIN PROVEEDOR" POR SEGURIDAD
+        const cleanSuppliers = suppliers.filter(s => s.name && !s.name.toUpperCase().includes('SIN PROVEEDOR'));
+
+        const search = (supplierSearchTerm || '').toLowerCase().trim();
+        if (!search) return cleanSuppliers;
+
+        // Prioridad 1: Empieza con el nombre (STRICT)
+        const startsWithName = cleanSuppliers.filter(s => s.name.toLowerCase().startsWith(search));
+
+        // Prioridad 2: Contiene el nombre pero no empieza con él
+        const containsName = cleanSuppliers.filter(s =>
+            s.name.toLowerCase().includes(search) && !s.name.toLowerCase().startsWith(search)
+        );
+
+        // Prioridad 3: Coincide con el ID/NIT
+        const matchesId = cleanSuppliers.filter(s =>
+            String(s.id).includes(search) &&
+            !startsWithName.some(i => i.id === s.id) &&
+            !containsName.some(i => i.id === s.id)
+        );
+
+        return [...startsWithName, ...containsName, ...matchesId];
+    }, [suppliers, supplierSearchTerm]);
+
+    useEffect(() => {
+        loadData();
+
+        // Escuchar actualizaciones de otros paneles (Productos o Proveedores)
+        const cleanup = setupSyncListener((event) => {
+            if (event === 'PRODUCT_UPDATE' || event === 'SUPPLIER_UPDATE') {
+                loadData();
+            }
+        });
+        return cleanup;
     }, [loadData]);
+
+    // Sincronizar el término de búsqueda con el proveedor seleccionado (IDÉNTICO A EGRESOS)
+    useEffect(() => {
+        if (selectedGlobalSupplier && suppliers.length > 0) {
+            const sup = suppliers.find(s => String(s.id) === String(selectedGlobalSupplier));
+            if (sup) setSupplierSearchTerm(sup.name);
+        }
+    }, [selectedGlobalSupplier, suppliers]);
 
     // --- PESISTENCIA ---
     useEffect(() => {
@@ -106,10 +180,18 @@ export default function ReceiveInventoryPage() {
         if (savedList) {
             try {
                 const parsed = JSON.parse(savedList);
-                if (Array.isArray(parsed)) setReceiveList(parsed);
+                if (Array.isArray(parsed)) {
+                    // Limpieza de IDs duplicados o corruptos (Blindaje de Reactividad)
+                    const sanitized = parsed.map(item => ({
+                        ...item,
+                        lineId: Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4)
+                    }));
+                    setReceiveList(sanitized);
+                }
             } catch (e) { console.error("Error loading saved reception list", e); }
         }
-        if (savedSupplier) setSelectedGlobalSupplier(savedSupplier);
+        if (savedSupplier && savedSupplier !== 'none') setSelectedGlobalSupplier(savedSupplier);
+        else setSelectedGlobalSupplier('');
     }, []);
 
     useEffect(() => {
@@ -161,18 +243,14 @@ export default function ReceiveInventoryPage() {
         return products.filter(p =>
             p.productName.toLowerCase().includes(searchQuery.toLowerCase()) ||
             p.barcode.includes(searchQuery)
-        ).slice(0, 6);
+        ).slice(0, 10);
     }, [products, searchQuery]);
 
     const addToReceive = useCallback((product: Product, customQty?: number, customPrice?: number) => {
         setReceiveList(prev => {
-            const existing = prev.find(item => item.barcode === product.barcode);
-            if (existing && !customQty) {
-                return prev.map(item => item.barcode === product.barcode
-                    ? { ...item, addedQuantity: item.addedQuantity + 1 } : item
-                );
-            }
+            const newLineId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
             return [{
+                lineId: newLineId,
                 barcode: product.barcode,
                 productName: product.productName,
                 addedQuantity: customQty || 0, // Inicia en 0 para que el input se vea vacío (Prompt V8.1)
@@ -191,7 +269,7 @@ export default function ReceiveInventoryPage() {
     }, []);
 
     const fetchPendingOrders = async () => {
-        if (selectedGlobalSupplier === 'none') {
+        if (!selectedGlobalSupplier) {
             toast({ title: "Error", description: "Selecciona un proveedor primero", variant: "destructive" });
             return;
         }
@@ -225,6 +303,10 @@ export default function ReceiveInventoryPage() {
             setSuppliers(prev => [...prev, created]);
             setSelectedGlobalSupplier(String(created.id));
             setIsAddSupplierOpen(false);
+
+            // Notificar a todo el sistema que hay un nuevo proveedor
+            broadcastRevalidate('SUPPLIER_UPDATE');
+
             toast({ variant: 'success', title: "ÉXITO", description: "PROVEEDOR CREADO Y SELECCIONADO" });
         }
     };
@@ -247,7 +329,7 @@ export default function ReceiveInventoryPage() {
     const handleCodeSubmit = useCallback((code: string) => {
         const finalCode = code.trim().toUpperCase();
         if (!finalCode) return;
-        
+
         const product = products.find(p => p.barcode === finalCode);
         if (product) {
             addToReceive(product);
@@ -286,9 +368,9 @@ export default function ReceiveInventoryPage() {
             if (typeof window === 'undefined') return;
             const target = document.activeElement as HTMLElement;
             const isRealInput = (
-                target?.tagName === 'INPUT' || 
-                target?.tagName === 'TEXTAREA' || 
-                target?.tagName === 'BUTTON' || 
+                target?.tagName === 'INPUT' ||
+                target?.tagName === 'TEXTAREA' ||
+                target?.tagName === 'BUTTON' ||
                 target?.closest('button') ||
                 target?.closest('[role="combobox"]') ||
                 target?.closest('[role="listbox"]') ||
@@ -296,23 +378,30 @@ export default function ReceiveInventoryPage() {
                 target?.closest('[role="option"]') ||
                 target?.closest('[role="dialog"]') ||
                 target?.closest('.heroui-select') ||
+                target?.closest('[data-slot="input-wrapper"]') ||
                 target?.hasAttribute('data-slot')
             ) && !target.classList.contains('scanner-gate');
+
+            // Also check if any autocomplete popover is open
+            const hasOpenPopover = document.querySelector('[data-slot="popover"][data-open="true"]') ||
+                document.querySelector('.heroui-autocomplete-listbox') ||
+                document.querySelector('[role="listbox"]');
+
             const isModalOpen = isScannerOpen || submitting;
-            
-            if (!isRealInput && !isModalOpen && hiddenScannerRef.current) {
+
+            if (!isRealInput && !isModalOpen && !hasOpenPopover && hiddenScannerRef.current) {
                 hiddenScannerRef.current.focus();
             }
-        }, 1500); // Aumentado a 1.5s para dar más tiempo a las transiciones de UI
+        }, 2000);
         return () => clearInterval(interval);
     }, [isScannerOpen, submitting]);
 
-    const updateItem = useCallback((barcode: string, updates: Partial<ReceiveItem>) => {
-        setReceiveList(prev => prev.map(item => item.barcode === barcode ? { ...item, ...updates } : item));
+    const updateItem = useCallback((lineId: string, updates: Partial<ReceiveItem>) => {
+        setReceiveList(prev => prev.map(item => item.lineId === lineId ? { ...item, ...updates } : item));
     }, []);
 
-    const deleteItem = useCallback((barcode: string) => {
-        setReceiveList(prev => prev.filter(item => item.barcode !== barcode));
+    const deleteItem = useCallback((lineId: string) => {
+        setReceiveList(prev => prev.filter(item => item.lineId !== lineId));
     }, []);
 
     const totalOrderValue = useMemo(() => {
@@ -323,12 +412,12 @@ export default function ReceiveInventoryPage() {
             const iva = Number(item.iva || 0);
             const icui = Number(item.icui || 0);
             const ibua = Number(item.ibua || 0);
-            
+
             // Descuento SUMA al costo (no resta)
             const withDiscount = basePrice * (1 + discount / 100);
             const totalUnit = withDiscount * (1 + iva / 100 + icui / 100 + ibua / 100);
             const lineTotal = totalUnit * item.addedQuantity;
-            
+
             if (item.entryType === 'purchase') return sum + lineTotal;
             if (item.entryType === 'return') return sum - lineTotal;
             if (item.entryType === 'gift') return sum; // Gratis = 0
@@ -338,12 +427,12 @@ export default function ReceiveInventoryPage() {
 
     const handleConfirmReceive = async () => {
         if (receiveList.length === 0) return;
-        
-        if (selectedGlobalSupplier === 'none') {
-            toast({ 
-                variant: 'destructive', 
-                title: "PROVEEDOR REQUERIDO", 
-                description: "Debes seleccionar un proveedor antes de sincronizar la carga maestra." 
+
+        if (!selectedGlobalSupplier) {
+            toast({
+                variant: 'destructive',
+                title: "PROVEEDOR REQUERIDO",
+                description: "Debes seleccionar un proveedor antes de sincronizar la carga maestra."
             });
             return;
         }
@@ -357,13 +446,13 @@ export default function ReceiveInventoryPage() {
                 const ivaPct = Number(item.iva || 0);
                 const icuiPct = Number(item.icui || 0);
                 const ibuaPct = Number(item.ibua || 0);
-                
+
                 const afterDiscount = basePrice * (1 - discountPct / 100);
                 const unitDiscountAmount = basePrice * (discountPct / 100);
                 const unitIvaAmount = afterDiscount * (ivaPct / 100);
                 const unitIcuiAmount = afterDiscount * (icuiPct / 100);
                 const unitIbuaAmount = afterDiscount * (ibuaPct / 100);
-                
+
                 return {
                     barcode: item.barcode,
                     addedQuantity: item.entryType === 'return' ? -Number(item.addedQuantity) : Number(item.addedQuantity),
@@ -373,40 +462,69 @@ export default function ReceiveInventoryPage() {
                     iva: unitIvaAmount,
                     icui: unitIcuiAmount,
                     ibua: unitIbuaAmount,
+                    ivaPct: ivaPct,
+                    icuiPct: icuiPct,
+                    ibuaPct: ibuaPct,
                     discount: unitDiscountAmount
                 };
             });
 
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/bulk-receive`, {
+            await apiFetch('/products/bulk-receive', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ 
+                body: JSON.stringify({
                     orderId: selectedOrderId,
                     entries,
                     bypassExpense: bypassExpense,
-                    paymentSource: 'EFECTIVO'
-                })
-            });
+                    paymentSource: paymentSource,
+                    supplierId: selectedGlobalSupplier ? Number(selectedGlobalSupplier) : null
+                }),
+                fallbackError: 'ERROR AL SINCRONIZAR INVENTARIO'
+            }, token);
 
-            if (res.ok) {
-                toast({ 
-                    variant: 'success', 
-                    title: "OPERACIÓN EXITOSA", 
-                    description: bypassExpense ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : "INVENTARIO Y EGRESO SINCRONIZADOS" 
-                });
-                localStorage.removeItem('org-pos-reception-list');
-                localStorage.removeItem('org-pos-reception-supplier');
-                setReceiveList([]);
-                router.push('/dashboard'); 
-            } else {
-                const errData = await res.json();
-                toast({ variant: 'destructive', title: "ERROR EN SINCRONIZACIÓN", description: errData.error?.message || "No se pudo completar la operación." });
-            }
-        } catch (err) { 
-            console.error(err); 
-            toast({ variant: 'destructive', title: "ERROR DE RED", description: "No se pudo conectar con el servidor." });
-        } finally { 
-            setSubmitting(false); 
+            toast({
+                variant: 'success',
+                title: "OPERACIÓN EXITOSA",
+                description: bypassExpense ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : "INVENTARIO Y EGRESO SINCRONIZADOS"
+            });
+            localStorage.removeItem('org-pos-reception-list');
+            localStorage.removeItem('org-pos-reception-supplier');
+            setReceiveList([]);
+
+            // SINCRONIZACIÓN GLOBAL: Notificar que productos y dashboard cambiaron
+            broadcastRevalidate('PRODUCT_UPDATE');
+            broadcastRevalidate('DASHBOARD_UPDATE');
+            if (!bypassExpense) broadcastRevalidate('EXPENSE_UPDATE');
+
+            router.push('/dashboard');
+        } catch (err: any) {
+            // SPRINT AUDIT: Log de auditoría forense para diagnóstico de rebotes (Producto "ENVUELTO")
+            const errorData = err.data || {};
+            const payload = {
+                orderId: selectedOrderId,
+                entries: receiveList.map(item => ({
+                    barcode: item.barcode,
+                    addedQuantity: item.addedQuantity,
+                    newPurchasePrice: item.newPurchasePrice,
+                    newSalePrice: item.newSalePrice
+                })),
+                bypassExpense,
+                paymentSource,
+                supplierId: selectedGlobalSupplier
+            };
+
+            console.error("🛑 DETALLE DEL ERROR DE SINCRONIZACIÓN:", errorData);
+            console.error("📦 PAYLOAD ENVIADO:", payload);
+
+            // Extraer mensaje real del backend o usar fallback descriptivo
+            const errorMsg = errorData.error?.message || errorData.message || err.message || "Error desconocido en la comunicación con el backend";
+            
+            toast({ 
+                variant: 'destructive', 
+                title: "FALLO DE SINCRONIZACIÓN", 
+                description: errorMsg.toUpperCase() 
+            });
+        } finally {
+            setSubmitting(false);
         }
     };
 
@@ -431,362 +549,372 @@ export default function ReceiveInventoryPage() {
     ];
 
     return <div className="flex flex-col w-full max-w-[1600px] mx-auto h-svh min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-visible relative">
-            {/* SCANNER SIEMPRE ACTIVO - Input oculto */}
-            <input
-                ref={hiddenScannerRef}
-                type="text"
-                value={barcodeInput}
-                onChange={(e) => setBarcodeInput(e.target.value)}
-                className="scanner-gate absolute opacity-0 w-0 h-0 pointer-events-none"
-                autoFocus
-                aria-label="Scanner input"
-            />
+        {/* SCANNER SIEMPRE ACTIVO - Input oculto */}
+        <input
+            ref={hiddenScannerRef}
+            type="text"
+            value={barcodeInput}
+            onChange={(e) => setBarcodeInput(e.target.value)}
+            inputMode="none"
+            className="scanner-gate absolute opacity-0 w-0 h-0 pointer-events-none"
+            autoFocus
+            aria-label="Scanner input"
+        />
 
-            {/* MAIN CONTENT WRAPPER */}
-            <div className="flex flex-col h-svh max-h-svh overflow-hidden bg-gray-100 dark:bg-zinc-950">
-                {/* HEADER COMPACTO PREMIUM */}
-                <div className="shrink-0 px-3 pt-1.5 pb-1.5 flex flex-col gap-1.5 bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/5">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <div className="bg-emerald-500 h-8 w-8 rounded-lg text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3 transition-transform hover:rotate-0">
-                                <Truck size={16} />
-                            </div>
-                            <div className="flex flex-col">
-                                <div className="flex items-center gap-1.5">
-                                    <h1 className="text-[12px] font-black text-gray-900 dark:text-white tracking-tight uppercase italic leading-none">
-                                        Carga <span className="text-emerald-500">Maestra</span>
-                                    </h1>
-                                    <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/10 italic">V9.0</span>
-                                    
-                                    {showAdminControls && (
-                                        <div className="ml-2 flex items-center gap-2 px-2 py-1 bg-gray-100 dark:bg-white/5 rounded-full border border-gray-200 dark:border-white/5">
-                                            <Switch 
-                                                size="sm"
-                                                color="warning"
-                                                isSelected={bypassExpense}
-                                                onValueChange={setBypassExpense}
-                                                classNames={{
-                                                    wrapper: "h-3 w-7 bg-gray-300 dark:bg-zinc-800",
-                                                    thumb: "h-2.5 w-2.5"
-                                                }}
-                                            />
-                                            <span className={`text-[7px] font-black uppercase italic leading-none ${bypassExpense ? 'text-orange-500' : 'text-gray-400'}`}>
-                                                Egreso
-                                            </span>
-                                        </div>
-                                    )}
-
-                                    {selectedGlobalSupplier === 'none' && receiveList.length > 0 && (
-                                        <div className="ml-2 flex items-center gap-1 px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full animate-bounce">
-                                            <AlertTriangle size={8} className="text-amber-500" />
-                                            <span className="text-[7px] font-black uppercase text-amber-600 dark:text-amber-500 italic">Escoge Proveedor</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                        
-                        {/* BOTONES DE ACCIÓN - Desktop only */}
-                        <div className="hidden md:flex items-center gap-2">
-                            <Button 
-                                isIconOnly
-                                variant="flat"
-                                onPress={() => loadData()}
-                                className="h-8 w-8 bg-gray-100 dark:bg-zinc-900 text-gray-400 dark:text-emerald-500 rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-95"
-                            >
-                                <RefreshCw size={14} />
-                            </Button>
-                            
-                            {receiveList.length > 0 && (
-                                <Button 
-                                    isIconOnly
-                                    variant="flat" 
-                                    color="danger" 
-                                    onPress={() => setIsClearConfirmOpen(true)}
-                                    className="h-8 w-8 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/20"
-                                >
-                                    <Trash2 size={14} />
-                                </Button>
-                            )}
-
-                            <Button 
-                                onPress={() => setIsScannerOpen(true)} 
-                                className="h-8 px-3 bg-emerald-500 text-white rounded-lg shadow-md active:scale-95 flex items-center gap-1.5"
-                            >
-                                <Barcode size={14} />
-                                <span className="font-black uppercase text-[9px] italic">Cámara</span>
-                            </Button>
-
-                            {showAdminControls && (
-                                <div className={`flex items-center gap-3 px-4 py-2 rounded-xl border transition-all ${bypassExpense ? 'bg-orange-500/10 border-orange-500/40 shadow-lg shadow-orange-500/5' : 'bg-gray-50 dark:bg-zinc-900 border-gray-100 dark:border-white/5'}`}>
-                                    <label className="flex items-center gap-2 cursor-pointer group">
-                                        <div className="relative flex items-center">
-                                            <input 
-                                                type="checkbox" 
-                                                className="peer sr-only"
-                                                checked={bypassExpense}
-                                                onChange={(e) => setBypassExpense(e.target.checked)}
-                                            />
-                                            <div className="w-10 h-5 bg-gray-300 dark:bg-zinc-700 rounded-full peer-checked:bg-orange-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5 shadow-inner"></div>
-                                        </div>
-                                        <span className={`text-[10px] font-black uppercase italic tracking-tighter transition-colors ${bypassExpense ? 'text-orange-600 dark:text-orange-500' : 'text-gray-400'}`}>
-                                            {bypassExpense ? "SOLO STOCK (SIN EGRESO)" : "REGISTRAR EGRESO"}
-                                        </span>
-                                        <Tooltip 
-                                            content={
-                                                <div className="flex flex-col gap-1">
-                                                    <p className="font-bold text-gray-900 dark:text-white uppercase italic text-[10px] tracking-tight">Información de Contabilidad</p>
-                                                    <p className="font-medium text-[11px] leading-relaxed text-gray-500 dark:text-zinc-400">
-                                                        Al activar esta opción, el sistema sumará el stock sin generar salida de dinero en caja. 
-                                                        Úsalo si el pago ya fue gestionado <span className="text-emerald-500 font-bold">(efectivo, transferencia, etc).</span>
-                                                    </p>
-                                                </div>
-                                            }
-                                            showArrow
-                                            placement="bottom"
-                                            classNames={{
-                                                content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.1)] rounded-2xl p-4 w-72 z-[100]",
-                                                base: "before:bg-white dark:before:bg-zinc-950"
-                                            }}
-                                        >
-                                            <div className="cursor-help text-gray-400 hover:text-emerald-500 transition-colors p-1 rounded-full hover:bg-gray-100 dark:hover:bg-white/5">
-                                                <Info size={14} />
-                                            </div>
-                                        </Tooltip>
-                                    </label>
-                                </div>
-                             )}
-
-                            <Button
-                                onPress={() => setIsSyncConfirmOpen(true)}
-                                isDisabled={receiveList.length === 0 || selectedGlobalSupplier === 'none' || submitting}
-                                className={`h-8 px-4 rounded-lg font-black uppercase text-[10px] tracking-widest shadow-lg transition-all active:scale-95 flex items-center gap-1.5 ${
-                                    receiveList.length > 0 
-                                    ? 'bg-gray-900 dark:bg-white text-white dark:text-black' 
-                                    : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'
-                                }`}
-                            >
-                                {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-                                <span>{submitting ? "..." : `SINCRONIZAR ${receiveList.length > 0 ? `(${receiveList.length})` : ""}`}</span>
-                            </Button>
-                        </div>
-                    </div>
-
-                    <div className="grid grid-cols-12 gap-2">
-                        <div className="relative col-span-6 md:col-span-8 group/search">
-                            <Input 
-                                ref={searchRef}
-                                placeholder="BUSCAR" 
-                                value={searchQuery} 
-                                onValueChange={setSearchQuery} 
-                                onFocus={(e) => e.target.select()}
-                                startContent={<Search size={14} className="text-emerald-500 hidden sm:block" />}
-                                classNames={{ 
-                                    inputWrapper: "h-10 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-data-[focus=true]:border-emerald-500 transition-all px-2 sm:px-3", 
-                                    input: "text-[8.5px] md:text-[10px] font-black tracking-widest italic uppercase" 
-                                }} 
-                            />
-                            {/* Dropdown de búsqueda */}
-                            {filteredProductsSearch.length > 0 && searchQuery && (
-                                <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-xl overflow-hidden shadow-2xl z-50 max-h-60 overflow-hidden">
-                                    {filteredProductsSearch.map(p => (
-                                        <button key={p.barcode} onClick={() => addToReceive(p)} className="w-full p-3 flex justify-between items-center hover:bg-emerald-500 hover:text-white border-b border-gray-50 dark:border-white/5 last:border-none transition-all group">
-                                            <div className="text-left flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-lg bg-gray-100 dark:bg-zinc-900 flex items-center justify-center group-hover:bg-white/20"><Package size={14} /></div>
-                                                <div>
-                                                    <p className="text-[11px] font-black uppercase italic">{p.productName}</p>
-                                                    <div className="flex items-center gap-2">
-                                                        <p className="text-[9px] font-mono opacity-50">#{p.barcode}</p>
-                                                        <span className={`text-[8px] font-black px-1.5 rounded-full ${p.quantity <= 0 ? 'bg-rose-500/20 text-rose-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
-                                                            STOCK: {p.quantity}
-                                                        </span>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-[11px] font-black italic">${formatCurrency(Number(p.purchasePrice))}</p>
-                                            </div>
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </div>
-                        
-                        <div className="col-span-6 md:col-span-4">
-                            <div className="bg-emerald-500/5 dark:bg-emerald-500/10 border border-emerald-500/20 rounded-2xl p-2 h-full shadow-inner flex flex-col gap-1.5">
-                                <div className="flex justify-between items-center px-1">
-                                    <span className="text-[7px] font-black text-emerald-600 dark:text-emerald-400 uppercase italic tracking-widest leading-none">Proveedor Seleccionado</span>
-                                    <Button
-                                        isIconOnly
-                                        variant="light"
-                                        size="sm"
-                                        className="h-5 w-5 min-w-unit-0 bg-emerald-500/10 text-emerald-500 rounded-lg"
-                                        onPress={() => setIsAddSupplierOpen(true)}
-                                    >
-                                        <Plus size={12} />
-                                    </Button>
-                                </div>
-                                
-                                <div className="flex items-center gap-2">
-                                    <Autocomplete
-                                        size="sm"
-                                        placeholder="SELECCIONAR PROVEEDOR..."
-                                        className="flex-1"
-                                        defaultItems={[{id: 'none', name: 'SIN PROVEEDOR'}, ...suppliers]}
-                                        selectedKey={selectedGlobalSupplier || 'none'}
-                                        onSelectionChange={(key) => {
-                                            setSelectedGlobalSupplier(String(key || 'none'));
-                                            setSelectedOrderId(null);
-                                        }}
-                                        startContent={<Truck size={14} className="text-emerald-500" />}
-                                        inputProps={{
-                                            onFocus: (e: any) => e.target.select(),
-                                            classNames: {
-                                                inputWrapper: "h-9 bg-white dark:bg-zinc-900 border-2 border-emerald-500/30 shadow-none rounded-xl data-[focused=true]:border-emerald-500 transition-all px-2 !mask-none",
-                                                input: "text-[10px] font-black uppercase italic text-gray-900 dark:text-white !overflow-visible placeholder:text-gray-400"
-                                            }
-                                        }}
-                                        popoverProps={{
-                                            classNames: {
-                                                content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-xl"
-                                            }
-                                        }}
-                                        listboxProps={{
-                                            itemClasses: {
-                                                base: "rounded-lg gap-3 data-[hover=true]:bg-emerald-500 data-[hover=true]:text-white",
-                                                title: "text-[11px] font-black uppercase italic"
-                                            }
-                                        }}
-                                    >
-                                        {(item) => (
-                                            <AutocompleteItem key={String(item.id)} textValue={item.name} className="dark:text-white">
-                                                <div className="flex items-center gap-2">
-                                                    <div className={`w-6 h-6 rounded-lg flex items-center justify-center ${item.id === 'none' ? 'bg-gray-100 dark:bg-zinc-800' : 'bg-emerald-100 dark:bg-emerald-900/30'}`}>
-                                                        {item.id === 'none' ? <span className="text-[10px] text-gray-400">-</span> : <Truck size={12} className="text-emerald-500" />}
-                                                    </div>
-                                                    <span className="font-bold text-[10px]">{item.name}</span>
-                                                </div>
-                                            </AutocompleteItem>
-                                        )}
-                                    </Autocomplete>
-                                
-                                    <Button
-                                        isIconOnly
-                                        variant="flat"
-                                        className={`h-9 w-9 min-w-unit-0 rounded-xl border transition-all ${selectedGlobalSupplier !== 'none' ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-lg shadow-amber-500/10' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400 border-transparent opacity-50'}`}
-                                        onPress={fetchPendingOrders}
-                                        isDisabled={selectedGlobalSupplier === 'none'}
-                                    >
-                                        <ShoppingBag size={16} />
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* BARRA DE ACCIÓN FIJA INFERIOR - Solo móvil */}
-                <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 p-2.5 px-3 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-2xl border-t border-gray-200 dark:border-white/10 shadow-[0_-15px_40px_rgba(0,0,0,0.2)] md:hidden">
-                    <div className="flex items-center gap-1.5 bg-gray-100/50 dark:bg-white/5 p-1 rounded-2xl border border-gray-200 dark:border-white/5">
-                        <Button isIconOnly variant="light" onPress={() => loadData()} className="h-9 w-9 text-gray-400 dark:text-emerald-500 rounded-xl">
-                            <RefreshCw size={16} />
-                        </Button>
-                        {receiveList.length > 0 && (
-                            <Button isIconOnly variant="light" onPress={() => setIsClearConfirmOpen(true)} className="h-9 w-9 text-rose-500 rounded-xl">
-                                <Trash2 size={16} />
-                            </Button>
-                        )}
-                    </div>
-
-                    <Button onPress={() => setIsScannerOpen(true)} className="h-10 px-4 bg-emerald-500 text-white rounded-2xl shadow-lg flex-1 max-w-[120px] gap-2">
-                        <Camera size={18} />
-                        <span className="font-black uppercase text-[10px] italic">Cámara</span>
-                    </Button>
-
-                    {/* SINCRONIZAR (DERECHA) */}
+        {/* MAIN CONTENT WRAPPER */}
+        <div className="flex flex-col h-svh max-h-svh overflow-hidden bg-gray-100 dark:bg-zinc-950">
+            {/* HEADER COMPACTO PREMIUM */}
+            <div className="shrink-0 px-3 pt-1.5 pb-1.5 flex flex-col gap-1.5 bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/5">
+                <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                        <Button onPress={() => setIsSyncConfirmOpen(true)} isDisabled={receiveList.length === 0 || selectedGlobalSupplier === 'none' || submitting} className={`h-10 px-4 rounded-2xl font-black uppercase text-[10px] gap-2 ${receiveList.length > 0 ? 'bg-gray-900 dark:bg-white text-white dark:text-black' : 'bg-gray-200 dark:bg-zinc-800 text-gray-500'}`}>
-                            {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={16} />}
-                            <span className="flex flex-col items-start leading-none">
-                                <span>SINCRONIZAR</span>
-                                {receiveList.length > 0 && <span className="text-[7px] opacity-60">({receiveList.length})</span>}
-                            </span>
-                        </Button>
-                    </div>
-                </div>
-
-                {/* CONTENT AREA */}
-                <div className="flex-1 min-h-0 px-2 pt-1.5 pb-0 bg-gray-100 dark:bg-[#09090b] relative overflow-hidden flex flex-col">
-                    {submitting && (
-                        <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-white/80 dark:bg-black/90 backdrop-blur-sm gap-4 transition-all">
-                            <Spinner color="success" size="lg" />
-                            <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse italic">Sincronizando Inventario...</p>
+                        <div className="bg-emerald-500 h-8 w-8 rounded-lg text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3 transition-transform hover:rotate-0">
+                            <Truck size={16} />
                         </div>
-                    )}
-                    
-                    <div className="flex-1 flex flex-col gap-2 min-h-0 relative">
-                        {/* STATS ROW */}
-                        <div className="shrink-0 p-1.5 lg:p-0 grid grid-cols-2 md:grid-cols-4 gap-1.5">
-                            {stats.map((k, i) => (
-                                <div 
-                                    key={i} 
-                                    className="relative overflow-hidden group bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 p-1.5 px-2 rounded-lg flex flex-col justify-center shadow-sm transition-all hover:border-emerald-500/30 active:scale-95 cursor-pointer h-[62px]"
-                                >
-                                    <div className="absolute inset-x-0 bottom-0 h-4 opacity-10 pointer-events-none">
-                                        <ResponsiveContainer width="100%" height="100%">
-                                            <AreaChart data={k.data}>
-                                                <Area type="monotone" dataKey="val" stroke={k.color} fill={k.color} fillOpacity={1} strokeWidth={2}/>
-                                            </AreaChart>
-                                        </ResponsiveContainer>
-                                    </div>
+                        <div className="flex flex-col">
+                            <div className="flex items-center gap-1.5">
+                                <h1 className="text-[12px] font-black text-gray-900 dark:text-white tracking-tight uppercase italic leading-none">
+                                    Carga <span className="text-emerald-500">Maestra</span>
+                                </h1>
+                                <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-500 border border-emerald-500/10 italic">V9.0</span>
 
-                                    <div className="flex justify-between items-start z-10 w-full mb-0.5">
-                                        <div className="flex flex-col min-w-0">
-                                            <span className="text-[7px] font-black text-gray-400 dark:text-zinc-500 uppercase italic leading-none mb-0.5 truncate">{k.label}</span>
-                                            <span className="text-[13px] md:text-sm font-black tabular-nums tracking-tighter leading-none text-gray-900 dark:text-white italic truncate">
-                                                {k.val}
-                                            </span>
-                                        </div>
-                                        <div className="p-1 rounded-md shrink-0 ml-1" style={{ backgroundColor: `${k.color}20`, color: k.color }}>
-                                            <k.icon size={10} />
-                                        </div>
+                                {showAdminControls && (
+                                    <div className="ml-2 flex items-center gap-2 px-3 py-1.5 bg-gray-100/80 dark:bg-white/10 rounded-full border border-gray-300 dark:border-white/10 hover:bg-gray-200 dark:hover:bg-white/20 transition-all cursor-pointer shadow-sm">
+                                        <Switch
+                                            size="sm"
+                                            color="warning"
+                                            isSelected={bypassExpense}
+                                            onValueChange={setBypassExpense}
+                                            classNames={{
+                                                base: "transition-transform active:scale-90",
+                                                wrapper: "h-4 w-8 bg-gray-300 dark:bg-zinc-700 group-data-[selected=true]:bg-orange-500 group-data-[selected=true]:shadow-[0_0_12px_rgba(249,115,22,0.6)] transition-all duration-300",
+                                                thumb: "h-3 w-3 bg-white shadow-lg group-data-[selected=true]:ml-4 transition-all duration-300"
+                                            }}
+                                        />
+                                        <span className={`text-[9px] font-black uppercase italic leading-none transition-colors duration-300 ${bypassExpense ? 'text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]' : 'text-gray-500 dark:text-zinc-400'}`}>
+                                            Egreso
+                                        </span>
                                     </div>
+                                )}
 
-                                    <div className="z-10 flex items-center gap-1">
-                                         <div className="h-0.5 w-0.5 rounded-full" style={{ backgroundColor: k.color }} />
-                                         <p className="text-[6px] font-black text-gray-500 dark:text-zinc-500 uppercase italic leading-none truncate tracking-tighter">{k.desc}</p>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {/* TABLE AREA */}
-                        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
-                            <div className="flex-1 bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm overflow-hidden flex flex-col">
-                                {receiveList.length === 0 ? (
-                                    <div className="flex-1 flex flex-col items-center justify-center opacity-20 text-zinc-500">
-                                        <Package size={80} strokeWidth={0.5} />
-                                        <p className="text-[12px] font-black uppercase tracking-[0.5em] mt-4 italic">Lista Vacía</p>
-                                        <p className="text-[9px] font-medium uppercase tracking-wider mt-2">Escanee o busque productos para iniciar</p>
-                                    </div>
-                                ) : (
-                                    <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-smooth">
-                                        <div className="divide-y divide-gray-100 dark:divide-white/5 pb-[180px]">
-                                            {receiveList.map((item) => (
-                                                <ReceptionRow 
-                                                    key={item.barcode}
-                                                    item={item}
-                                                    onUpdate={updateItem}
-                                                    onDelete={deleteItem}
-                                                />
-                                            ))}
-                                        </div>
+                                {selectedGlobalSupplier === 'none' && receiveList.length > 0 && (
+                                    <div className="ml-2 flex items-center gap-1 px-2 py-0.5 bg-amber-500/10 border border-amber-500/20 rounded-full animate-bounce">
+                                        <AlertTriangle size={8} className="text-amber-500" />
+                                        <span className="text-[7px] font-black uppercase text-amber-600 dark:text-amber-500 italic">Escoge Proveedor</span>
                                     </div>
                                 )}
                             </div>
                         </div>
                     </div>
+
+                    {/* BOTONES DE ACCIÓN - Desktop only */}
+                    <div className="hidden md:flex items-center gap-2">
+                        <Button
+                            isIconOnly
+                            variant="flat"
+                            onPress={() => loadData()}
+                            className="h-8 w-8 bg-gray-100 dark:bg-zinc-900 text-gray-400 dark:text-emerald-500 rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-95"
+                        >
+                            <RefreshCw size={14} />
+                        </Button>
+
+                        {receiveList.length > 0 && (
+                            <Button
+                                isIconOnly
+                                variant="flat"
+                                color="danger"
+                                onPress={() => setIsClearConfirmOpen(true)}
+                                className="h-8 w-8 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/20"
+                            >
+                                <Trash2 size={14} />
+                            </Button>
+                        )}
+
+                        <Button
+                            onPress={() => setIsScannerOpen(true)}
+                            className="h-8 px-3 bg-emerald-500 text-white rounded-lg shadow-md active:scale-95 flex items-center gap-1.5"
+                        >
+                            <Barcode size={14} />
+                            <span className="font-black uppercase text-[9px] italic">Cámara</span>
+                        </Button>
+
+                        {showAdminControls && (
+                            <div className={`flex items-center gap-3 px-4 py-2 rounded-xl border transition-all ${bypassExpense ? 'bg-orange-500/10 border-orange-500/40 shadow-lg shadow-orange-500/5' : 'bg-gray-50 dark:bg-zinc-900 border-gray-100 dark:border-white/5'}`}>
+                                <label className="flex items-center gap-2 cursor-pointer group">
+                                    <div className="relative flex items-center">
+                                        <input
+                                            type="checkbox"
+                                            className="peer sr-only"
+                                            checked={bypassExpense}
+                                            onChange={(e) => setBypassExpense(e.target.checked)}
+                                        />
+                                        <div className="w-10 h-5 bg-gray-300 dark:bg-zinc-700 rounded-full peer-checked:bg-orange-500 transition-colors after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5 shadow-inner"></div>
+                                    </div>
+                                    <span className={`text-[10px] font-black uppercase italic tracking-tighter transition-colors ${bypassExpense ? 'text-orange-600 dark:text-orange-500' : 'text-gray-400'}`}>
+                                        {bypassExpense ? "SOLO STOCK (SIN EGRESO)" : "REGISTRAR EGRESO"}
+                                    </span>
+                                    <Tooltip
+                                        content={
+                                            <div className="flex flex-col gap-1">
+                                                <p className="font-bold text-gray-900 dark:text-white uppercase italic text-[10px] tracking-tight">Información de Contabilidad</p>
+                                                <p className="font-medium text-[11px] leading-relaxed text-gray-500 dark:text-zinc-400">
+                                                    Al activar esta opción, el sistema sumará el stock sin generar salida de dinero en caja.
+                                                    Úsalo si el pago ya fue gestionado <span className="text-emerald-500 font-bold">(efectivo, transferencia, etc).</span>
+                                                </p>
+                                            </div>
+                                        }
+                                        showArrow
+                                        placement="bottom"
+                                        classNames={{
+                                            content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_10px_40px_rgba(0,0,0,0.1)] rounded-2xl p-4 w-72 z-[100]",
+                                            base: "before:bg-white dark:before:bg-zinc-950"
+                                        }}
+                                    >
+                                        <div className="cursor-help text-gray-400 hover:text-emerald-500 transition-colors p-1 rounded-full hover:bg-gray-100 dark:hover:bg-white/5">
+                                            <Info size={14} />
+                                        </div>
+                                    </Tooltip>
+                                </label>
+                            </div>
+                        )}
+
+                        <Button
+                            onPress={() => setIsSyncConfirmOpen(true)}
+                            isDisabled={receiveList.length === 0 || selectedGlobalSupplier === 'none' || submitting}
+                            className={`h-8 px-4 rounded-lg font-black uppercase text-[10px] tracking-widest shadow-lg transition-all active:scale-95 flex items-center gap-1.5 ${receiveList.length > 0
+                                    ? 'bg-gray-900 dark:bg-white text-white dark:text-black'
+                                    : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'
+                                }`}
+                        >
+                            {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
+                            <span>{submitting ? "..." : `SINCRONIZAR ${receiveList.length > 0 ? `(${receiveList.length})` : ""}`}</span>
+                        </Button>
+                    </div>
                 </div>
+
+                <div className="grid grid-cols-12 gap-2">
+                    <div className="relative col-span-6 md:col-span-8 group/search">
+                        <Input
+                            ref={searchRef}
+                            placeholder="BUSCAR"
+                            value={searchQuery}
+                            onValueChange={setSearchQuery}
+                            onFocus={(e) => e.target.select()}
+                            startContent={<Search size={14} className="text-emerald-500 hidden sm:block" />}
+                            classNames={{
+                                inputWrapper: "h-10 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-data-[focus=true]:border-emerald-500 transition-all px-2 sm:px-3",
+                                input: "text-[8.5px] md:text-[10px] font-black tracking-widest italic uppercase"
+                            }}
+                        />
+                        {/* Dropdown de búsqueda */}
+                        {filteredProductsSearch.length > 0 && searchQuery && (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl z-50 max-h-72 overflow-y-auto">
+                                {filteredProductsSearch.map(p => (
+                                    <button key={p.barcode} onClick={() => addToReceive(p)} className="w-full p-3 flex justify-between items-center hover:bg-emerald-500 hover:text-white border-b border-gray-50 dark:border-white/5 last:border-none transition-all group">
+                                        <div className="text-left flex items-center gap-3">
+                                            <div className="h-8 w-8 rounded-lg bg-gray-100 dark:bg-zinc-900 flex items-center justify-center group-hover:bg-white/20"><Package size={14} /></div>
+                                            <div>
+                                                <p className="text-[11px] font-black uppercase italic">{p.productName}</p>
+                                                <div className="flex items-center gap-2">
+                                                    <p className="text-[9px] font-mono opacity-50">#{p.barcode}</p>
+                                                    <span className={`text-[8px] font-black px-1.5 rounded-full ${p.quantity <= 0 ? 'bg-rose-500/20 text-rose-500' : 'bg-emerald-500/20 text-emerald-500'}`}>
+                                                        STOCK: {p.quantity}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-[11px] font-black italic">${formatCurrency(Number(p.purchasePrice))}</p>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="col-span-6 md:col-span-4">
+                        <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
+                            <div className="flex justify-between items-center">
+                                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">2. Proveedor</label>
+                                <Button
+                                    size="sm"
+                                    variant="light"
+                                    className="h-6 text-[9px] font-black text-sky-500 px-0 min-w-0"
+                                    onPress={() => setIsAddSupplierOpen(true)}
+                                >
+                                    + NUEVO
+                                </Button>
+                            </div>
+
+                            <div className="flex items-center gap-2">
+                                <Autocomplete
+                                    size="sm"
+                                    placeholder="BUSCAR..."
+                                    className="flex-1"
+                                    items={filteredSuppliers}
+                                    inputValue={supplierSearchTerm}
+                                    onInputChange={(val) => setSupplierSearchTerm(val)}
+                                    selectedKey={selectedGlobalSupplier || null}
+                                    menuTrigger="focus" // Apertura inmediata para móvil
+                                    onSelectionChange={(key) => {
+                                        if (!key) {
+                                            setSelectedGlobalSupplier('');
+                                            return;
+                                        }
+                                        const newId = String(key);
+                                        setSelectedGlobalSupplier(newId);
+                                        setSelectedOrderId(null);
+                                        const name = suppliers.find(s => String(s.id) === String(newId))?.name || '';
+                                        if (name) setSupplierSearchTerm(name);
+                                    }}
+                                    onKeyDown={(e: any) => {
+                                        if (e.key === 'Enter') {
+                                            const search = supplierSearchTerm.toLowerCase().trim();
+                                            const match = filteredSuppliers.find(s => s.name.toLowerCase().trim() === search) || filteredSuppliers[0];
+                                            if (match) {
+                                                setSelectedGlobalSupplier(String(match.id));
+                                                setSupplierSearchTerm(match.name);
+                                            }
+                                        }
+                                    }}
+                                    allowsCustomValue
+                                    classNames={{
+                                        listbox: "bg-white dark:bg-zinc-950",
+                                        popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-xl min-w-[280px]"
+                                    }}
+                                    inputProps={{
+                                        classNames: {
+                                            inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-xl shadow-inner",
+                                            input: "font-bold text-xs uppercase"
+                                        }
+                                    }}
+                                >
+                                    {(item) => (
+                                        <AutocompleteItem key={String(item.id)} textValue={`${item.name} ${item.id}`} className="dark:text-white rounded-xl h-10">
+                                            <div className="flex items-center gap-2">
+                                                <Building2 size={14} className="text-sky-500" />
+                                                <span className="text-[10px] font-black uppercase">{item.name}</span>
+                                            </div>
+                                        </AutocompleteItem>
+                                    )}
+                                </Autocomplete>
+
+                                <Button
+                                    isIconOnly
+                                    variant="flat"
+                                    className={`h-12 w-12 min-w-unit-0 rounded-xl border transition-all ${selectedGlobalSupplier ? 'bg-amber-500/10 text-amber-500 border-amber-500/20 shadow-lg shadow-amber-500/10' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400 border-transparent opacity-50'}`}
+                                    onPress={fetchPendingOrders}
+                                    isDisabled={!selectedGlobalSupplier}
+                                >
+                                    <ShoppingBag size={16} />
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* BARRA DE ACCIÓN FIJA INFERIOR - Solo móvil */}
+            <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-2 p-2.5 px-3 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-2xl border-t border-gray-200 dark:border-white/10 shadow-[0_-15px_40px_rgba(0,0,0,0.2)] md:hidden">
+                <div className="flex items-center gap-1.5 bg-gray-100/50 dark:bg-white/5 p-1 rounded-2xl border border-gray-200 dark:border-white/5">
+                    <Button isIconOnly variant="light" onPress={() => loadData()} className="h-9 w-9 text-gray-400 dark:text-emerald-500 rounded-xl">
+                        <RefreshCw size={16} />
+                    </Button>
+                    {receiveList.length > 0 && (
+                        <Button isIconOnly variant="light" onPress={() => setIsClearConfirmOpen(true)} className="h-9 w-9 text-rose-500 rounded-xl">
+                            <Trash2 size={16} />
+                        </Button>
+                    )}
+                </div>
+
+                <Button onPress={() => setIsScannerOpen(true)} className="h-10 px-4 bg-emerald-500 text-white rounded-2xl shadow-lg flex-1 max-w-[120px] gap-2">
+                    <Camera size={18} />
+                    <span className="font-black uppercase text-[10px] italic">Cámara</span>
+                </Button>
+
+                {/* SINCRONIZAR (DERECHA) */}
+                <div className="flex items-center gap-2">
+                    <Button onPress={() => setIsSyncConfirmOpen(true)} isDisabled={receiveList.length === 0 || selectedGlobalSupplier === 'none' || submitting} className={`h-10 px-4 rounded-2xl font-black uppercase text-[10px] gap-2 ${receiveList.length > 0 ? 'bg-gray-900 dark:bg-white text-white dark:text-black' : 'bg-gray-200 dark:bg-zinc-800 text-gray-500'}`}>
+                        {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={16} />}
+                        <span className="flex flex-col items-start leading-none">
+                            <span>SINCRONIZAR</span>
+                            {receiveList.length > 0 && <span className="text-[7px] opacity-60">({receiveList.length})</span>}
+                        </span>
+                    </Button>
+                </div>
+            </div>
+
+            {/* CONTENT AREA */}
+            <div className="flex-1 min-h-0 px-2 pt-1.5 pb-0 bg-gray-100 dark:bg-[#09090b] relative overflow-hidden flex flex-col">
+                {submitting && (
+                    <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center bg-white/80 dark:bg-black/90 backdrop-blur-sm gap-4 transition-all">
+                        <Spinner color="success" size="lg" />
+                        <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse italic">Sincronizando Inventario...</p>
+                    </div>
+                )}
+
+                <div className="flex-1 flex flex-col gap-2 min-h-0 relative">
+                    {/* STATS ROW */}
+                    <div className="shrink-0 p-1.5 lg:p-0 grid grid-cols-2 md:grid-cols-4 gap-1.5">
+                        {stats.map((k, i) => (
+                            <div
+                                key={i}
+                                className="relative overflow-hidden group bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 p-1.5 px-2 rounded-lg flex flex-col justify-center shadow-sm transition-all hover:border-emerald-500/30 active:scale-95 cursor-pointer h-[62px]"
+                            >
+                                <div className="absolute inset-x-0 bottom-0 h-4 opacity-10 pointer-events-none">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <AreaChart data={k.data}>
+                                            <Area type="monotone" dataKey="val" stroke={k.color} fill={k.color} fillOpacity={1} strokeWidth={2} />
+                                        </AreaChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                <div className="flex justify-between items-start z-10 w-full mb-0.5">
+                                    <div className="flex flex-col min-w-0">
+                                        <span className="text-[7px] font-black text-gray-400 dark:text-zinc-500 uppercase italic leading-none mb-0.5 truncate">{k.label}</span>
+                                        <span className="text-[13px] md:text-sm font-black tabular-nums tracking-tighter leading-none text-gray-900 dark:text-white italic truncate">
+                                            {k.val}
+                                        </span>
+                                    </div>
+                                    <div className="p-1 rounded-md shrink-0 ml-1" style={{ backgroundColor: `${k.color}20`, color: k.color }}>
+                                        <k.icon size={10} />
+                                    </div>
+                                </div>
+
+                                <div className="z-10 flex items-center gap-1">
+                                    <div className="h-0.5 w-0.5 rounded-full" style={{ backgroundColor: k.color }} />
+                                    <p className="text-[6px] font-black text-gray-500 dark:text-zinc-500 uppercase italic leading-none truncate tracking-tighter">{k.desc}</p>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* TABLE AREA */}
+                    <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+                        <div className="flex-1 bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm overflow-hidden flex flex-col">
+                            {receiveList.length === 0 ? (
+                                <div className="flex-1 flex flex-col items-center justify-center opacity-20 text-zinc-500">
+                                    <Package size={80} strokeWidth={0.5} />
+                                    <p className="text-[12px] font-black uppercase tracking-[0.5em] mt-4 italic">Lista Vacía</p>
+                                    <p className="text-[9px] font-medium uppercase tracking-wider mt-2">Escanee o busque productos para iniciar</p>
+                                </div>
+                            ) : (
+                                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar scroll-smooth">
+                                    <div className="divide-y divide-gray-100 dark:divide-white/5 pb-[180px]">
+                                        {receiveList.map((item) => (
+                                            <ReceptionRow
+                                                key={item.lineId}
+                                                item={item}
+                                                onUpdate={updateItem}
+                                                onDelete={deleteItem}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <ScannerOverlay
                 isOpen={isScannerOpen}
@@ -806,8 +934,8 @@ export default function ReceiveInventoryPage() {
                 }}
                 onResult={(res) => {
                     const p = products.find(prod => prod.barcode === res);
-                    if (p) { 
-                        addToReceive(p); 
+                    if (p) {
+                        addToReceive(p);
                         playScanSound('success');
                     } else {
                         setScannedNotFoundCode(res);
@@ -832,9 +960,9 @@ export default function ReceiveInventoryPage() {
             </Modal>
 
             {/* MODAL DE ÓRDENES PENDIENTES */}
-            <Modal 
-                isOpen={isOrderModalOpen} 
-                onOpenChange={setIsOrderModalOpen} 
+            <Modal
+                isOpen={isOrderModalOpen}
+                onOpenChange={setIsOrderModalOpen}
                 size="xl"
                 scrollBehavior="inside"
                 backdrop="blur"
@@ -864,7 +992,7 @@ export default function ReceiveInventoryPage() {
                                 ) : (
                                     <div className="grid gap-3">
                                         {pendingOrders.map((order) => (
-                                            <button 
+                                            <button
                                                 key={order.id}
                                                 onClick={() => loadOrderIntoList(order)}
                                                 className="w-full flex items-center justify-between p-4 rounded-2xl border border-gray-200 dark:border-white/5 hover:border-emerald-500 transition-all bg-white dark:bg-zinc-900 group"
@@ -888,8 +1016,8 @@ export default function ReceiveInventoryPage() {
                                 )}
                             </ModalBody>
                             <ModalFooter className="bg-gray-50/50 dark:bg-zinc-900/50 p-4 border-t border-gray-100 dark:border-white/5">
-                                <Button 
-                                    variant="flat" 
+                                <Button
+                                    variant="flat"
                                     onPress={onClose}
                                     className="bg-gray-100 dark:bg-zinc-800 text-gray-700 dark:text-zinc-300 font-black uppercase text-xs"
                                 >
@@ -900,15 +1028,15 @@ export default function ReceiveInventoryPage() {
                     )}
                 </ModalContent>
             </Modal>
-            <SupplierFormModal 
-                isOpen={isAddSupplierOpen} 
-                onOpenChange={setIsAddSupplierOpen} 
-                onSave={handleCreateSupplier} 
-                isEdit={false} 
+            <SupplierFormModal
+                isOpen={isAddSupplierOpen}
+                onOpenChange={setIsAddSupplierOpen}
+                onSave={handleCreateSupplier}
+                isEdit={false}
             />
             {/* MODAL DE CONFIRMACIÓN DE SINCRONIZACIÓN */}
-            <Modal 
-                isOpen={isSyncConfirmOpen} 
+            <Modal
+                isOpen={isSyncConfirmOpen}
                 onOpenChange={setIsSyncConfirmOpen}
                 backdrop="blur"
                 classNames={{
@@ -952,27 +1080,52 @@ export default function ReceiveInventoryPage() {
                                     )}
 
                                     {!bypassExpense && (
-                                        <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-start gap-3 shadow-sm">
-                                            <ShieldCheck className="text-emerald-500 shrink-0 mt-0.5" size={24} />
-                                            <div className="flex flex-col">
-                                                <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-500 uppercase italic">CONTABILIDAD SINCRONIZADA</span>
-                                                <p className="text-[11px] font-bold text-emerald-600/80 dark:text-emerald-500/70 leading-tight mt-1">
-                                                    Se generará un egreso automático en caja por el valor total. Flujo contable estándar activo.
-                                                </p>
+                                        <div className="flex flex-col gap-3">
+                                            <div className="p-4 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-start gap-3 shadow-sm">
+                                                <ShieldCheck className="text-emerald-500 shrink-0 mt-0.5" size={24} />
+                                                <div className="flex flex-col">
+                                                    <span className="text-[12px] font-black text-emerald-600 dark:text-emerald-500 uppercase italic">CONTABILIDAD SINCRONIZADA</span>
+                                                    <p className="text-[11px] font-bold text-emerald-600/80 dark:text-emerald-500/70 leading-tight mt-1">
+                                                        Se generará un egreso automático en caja por el valor total. Flujo contable estándar activo.
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex flex-col gap-2 p-4 bg-gray-50 dark:bg-zinc-900/50 border border-gray-100 dark:border-white/5 rounded-2xl">
+                                                <span className="text-[10px] font-black uppercase text-gray-500 tracking-widest italic mb-1">Medio de Pago</span>
+                                                <div className="grid grid-cols-3 gap-2">
+                                                    {paymentMethods.map(method => (
+                                                        <button
+                                                            key={method.id}
+                                                            onClick={() => setPaymentSource(method.id)}
+                                                            className={`relative h-14 rounded-xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${paymentSource === method.id
+                                                                ? (method.id === 'FONDO'
+                                                                    ? 'bg-cyan-600 border-cyan-600 text-white shadow-lg shadow-cyan-600/20'
+                                                                    : 'bg-zinc-900 dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-lg')
+                                                                : 'bg-white dark:bg-zinc-900/30 border-gray-100 dark:border-white/5 text-gray-400 hover:border-gray-200'
+                                                                }`}
+                                                        >
+                                                            <method.icon size={16} />
+                                                            <span className="text-[8px] font-black uppercase">{method.label}</span>
+                                                            {method.id === 'FONDO' && (
+                                                                <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[5px] font-black bg-cyan-500 text-white px-1 rounded-full whitespace-nowrap">BOVEDA</span>
+                                                            )}
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </div>
                                     )}
                                 </div>
                             </ModalBody>
                             <ModalFooter className="p-6 pt-4 gap-3">
-                                <Button 
-                                    variant="flat" 
+                                <Button
+                                    variant="flat"
                                     onPress={onClose}
                                     className="h-12 flex-1 rounded-2xl font-black uppercase text-[11px] tracking-widest text-gray-400 bg-gray-100 dark:bg-zinc-900 transition-all hover:bg-gray-200 dark:hover:bg-zinc-800"
                                 >
                                     Cancelar
                                 </Button>
-                                <Button 
+                                <Button
                                     onPress={() => {
                                         onClose();
                                         handleConfirmReceive();

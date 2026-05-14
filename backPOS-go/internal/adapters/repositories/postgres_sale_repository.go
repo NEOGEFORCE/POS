@@ -8,25 +8,34 @@ import (
 	"log"
 	"strings"
 
+	"backPOS-go/internal/infrastructure/refresher"
+	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
+	"sync"
+	"time"
 )
 
 type PostgresSaleRepository struct {
-	db *gorm.DB
+	db           *gorm.DB
+	isRefreshing bool
+	mu           sync.Mutex
 }
 
 func NewPostgresSaleRepository(db *gorm.DB) *PostgresSaleRepository {
 	return &PostgresSaleRepository{db: db}
 }
 
+func (r *PostgresSaleRepository) GetDB() interface{} {
+	return r.db
+}
+
 func (r *PostgresSaleRepository) invalidateDashboardCache() {
 	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
-	go func() {
-		if err := r.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats_monthly").Error; err != nil {
-			log.Printf("⚠️ [MV Refresh] Fallo concurrente (reintentando normal): %v", err)
-			r.db.Exec("REFRESH MATERIALIZED VIEW mv_dashboard_stats_monthly")
-		}
-	}()
+	// Solicitar refresco asíncrono y debounced al servicio centralizado
+	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
+
+	// Notificar sincronización global
+	sse.GetSSEService().BroadcastNewSale(nil)
 }
 
 func (r *PostgresSaleRepository) Create(sale *models.Sale) error {
@@ -55,26 +64,26 @@ func (r *PostgresSaleRepository) GetAll() ([]models.Sale, error) {
 	return sales, err
 }
 
-func (r *PostgresSaleRepository) GetByDateRange(from, to string) ([]models.Sale, error) {
+func (r *PostgresSaleRepository) GetByDateRange(from, to time.Time) ([]models.Sale, error) {
 	var sales []models.Sale
 	query := r.db.Preload("Client").Preload("SaleDetails.Product.Category")
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("\"saleDate\" <= ?", to)
 	}
 	err := query.Order("\"saleDate\" DESC").Find(&sales).Error
 	return sales, err
 }
 
-func (r *PostgresSaleRepository) GetDeletedByDateRange(from, to string) ([]models.Sale, error) {
+func (r *PostgresSaleRepository) GetDeletedByDateRange(from, to time.Time) ([]models.Sale, error) {
 	var sales []models.Sale
 	query := r.db.Unscoped().Where("\"deletedAt\" IS NOT NULL").Preload("Client").Preload("SaleDetails.Product.Category")
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("\"saleDate\" <= ?", to)
 	}
 	err := query.Order("\"saleDate\" DESC").Find(&sales).Error
@@ -140,6 +149,12 @@ func (r *PostgresSaleRepository) FindAll(filter ports.SaleFilter) ([]models.Sale
 	if filter.EmployeeDNI != "" {
 		query = query.Where("\"employeeDni\" = ?", filter.EmployeeDNI)
 	}
+	if filter.Search != "" {
+		searchTerm := "%" + strings.ToLower(filter.Search) + "%"
+		query = query.Joins("LEFT JOIN clients ON clients.dni = sales.\"clientDni\"").
+			Where("LOWER(clients.name) LIKE ? OR sales.\"clientDni\" LIKE ? OR CAST(sales.\"saleId\" AS TEXT) LIKE ?", 
+				searchTerm, searchTerm, searchTerm)
+	}
 	if filter.MinTotal > 0 {
 		query = query.Where("\"totalAmount\" >= ?", filter.MinTotal)
 	}
@@ -199,17 +214,17 @@ func (r *PostgresSaleRepository) FindAll(filter ports.SaleFilter) ([]models.Sale
 	return sales, total, err
 }
 
-func (r *PostgresSaleRepository) GetDashboardStats(from, to string) (float64, int64, float64, error) {
+func (r *PostgresSaleRepository) GetDashboardStats(from, to time.Time) (float64, int64, float64, error) {
 	var stats struct {
 		TotalAmount  float64
 		TotalCount   int64
 	}
 
 	query := r.db.Model(&models.Sale{}).Where("status IN ('PAID', 'CREDIT') AND deleted_at IS NULL")
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("\"saleDate\" <= ?", to)
 	}
 
@@ -286,16 +301,16 @@ func (r *PostgresSaleRepository) GetMonthlyTotals() (map[string]float64, error) 
 	return results, nil
 }
 
-func (r *PostgresSaleRepository) GetSoldQuantityByProduct(barcode string, from, to string) (float64, error) {
+func (r *PostgresSaleRepository) GetSoldQuantityByProduct(barcode string, from, to time.Time) (float64, error) {
 	var total float64
 	query := r.db.Table("sale_details").
 		Joins("JOIN sales ON sales.\"saleId\" = sale_details.\"saleId\"").
 		Where("sale_details.barcode = ?", barcode)
 	
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("sales.\"saleDate\" >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("sales.\"saleDate\" <= ?", to)
 	}
 	
@@ -303,7 +318,7 @@ func (r *PostgresSaleRepository) GetSoldQuantityByProduct(barcode string, from, 
 	return total, err
 }
 
-func (r *PostgresSaleRepository) GetSoldQuantitiesByBarcodes(barcodes []string, from, to string) (map[string]float64, error) {
+func (r *PostgresSaleRepository) GetSoldQuantitiesByBarcodes(barcodes []string, from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	if len(barcodes) == 0 {
 		return results, nil
@@ -314,10 +329,10 @@ func (r *PostgresSaleRepository) GetSoldQuantitiesByBarcodes(barcodes []string, 
 		Select("sale_details.barcode, SUM(sale_details.quantity) as total").
 		Where("sale_details.barcode IN ?", barcodes)
 
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("sales.\"saleDate\" >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("sales.\"saleDate\" <= ?", to)
 	}
 
@@ -339,7 +354,7 @@ func (r *PostgresSaleRepository) GetSoldQuantitiesByBarcodes(barcodes []string, 
 	return results, nil
 }
 
-func (r *PostgresSaleRepository) GetTopSellingProducts(from, to string, limit int) ([]ports.ProductRankingItem, error) {
+func (r *PostgresSaleRepository) GetTopSellingProducts(from, to time.Time, limit int) ([]ports.ProductRankingItem, error) {
 	var ranking []ports.ProductRankingItem
 	query := `
 		SELECT 
@@ -354,7 +369,7 @@ func (r *PostgresSaleRepository) GetTopSellingProducts(from, to string, limit in
 				SUM(sd.subtotal) as total
 			FROM sale_details sd
 			JOIN sales s ON s."saleId" = sd."saleId"
-			WHERE s."saleDate"::DATE >= ? AND s."saleDate"::DATE <= ? AND s.status IN ('PAID', 'CREDIT') AND s.deleted_at IS NULL
+			WHERE s."saleDate" >= ? AND s."saleDate" <= ? AND s.status IN ('PAID', 'CREDIT') AND s.deleted_at IS NULL
 			GROUP BY sd.barcode
 			ORDER BY quantity DESC
 			LIMIT ?
@@ -367,11 +382,11 @@ func (r *PostgresSaleRepository) GetTopSellingProducts(from, to string, limit in
 	}
 	return ranking, err
 }
-func (r *PostgresSaleRepository) GetDailySalesByRange(from, to string) (map[string]float64, error) {
+func (r *PostgresSaleRepository) GetDailySalesByRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("sales").
 		Select("TO_CHAR(\"saleDate\", 'YYYY-MM-DD') as day, COALESCE(SUM(\"totalAmount\"), 0) as total").
-		Where("\"saleDate\"::DATE >= ? AND \"saleDate\"::DATE <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL", from, to).
+		Where("\"saleDate\" >= ? AND \"saleDate\" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL", from, to).
 		Group("day").
 		Rows()
 
@@ -392,13 +407,13 @@ func (r *PostgresSaleRepository) GetDailySalesByRange(from, to string) (map[stri
 	return results, nil
 }
 
-func (r *PostgresSaleRepository) GetSalesByPaymentMethod(from, to string) (map[string]float64, error) {
+func (r *PostgresSaleRepository) GetSalesByPaymentMethod(from, to time.Time) (map[string]float64, error) {
 	// Usamos la versión V2 que separa correctamente efectivo, transferencias y fiados
 	// especialmente para ventas a crédito con abonos iniciales.
 	return r.GetSalesByPaymentMethodV2(from, to)
 }
 
-func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to string) (map[string]float64, error) {
+func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	
 	// 1. Sumar efectivo directo de todas las ventas (PAID y CREDIT)
@@ -476,6 +491,23 @@ func (r *PostgresSaleRepository) GetGlobalTotalSales() (float64, error) {
 	return total, nil
 }
 
+func (r *PostgresSaleRepository) GetTotalSalesByRange(from, to time.Time) (float64, error) {
+	var total float64
+	query := r.db.Model(&models.Sale{}).Where("status IN ('PAID', 'CREDIT', 'FIADO') AND deleted_at IS NULL")
+	if !from.IsZero() {
+		query = query.Where("\"saleDate\" >= ?", from)
+	}
+	if !to.IsZero() {
+		query = query.Where("\"saleDate\" < ?", to)
+	}
+	err := query.Select("COALESCE(SUM(\"totalAmount\"), 0)").Scan(&total).Error
+	if err != nil {
+		log.Printf("❌ [GetTotalSalesByRange] Error: %v", err)
+		return 0, nil
+	}
+	return total, nil
+}
+
 func (r *PostgresSaleRepository) GetGlobalCOGS() (float64, error) {
 	var total float64
 	err := r.db.Table("sale_details").
@@ -491,7 +523,7 @@ func (r *PostgresSaleRepository) GetGlobalCOGS() (float64, error) {
 	return total, nil
 }
 
-func (r *PostgresSaleRepository) GetCOGSByRange(from, to string) (float64, error) {
+func (r *PostgresSaleRepository) GetCOGSByRange(from, to time.Time) (float64, error) {
 	var total float64
 	err := r.db.Table("sale_details").
 		Joins("JOIN sales ON sales.\"saleId\" = sale_details.\"saleId\"").
@@ -593,7 +625,7 @@ func (r *PostgresSaleRepository) GetGlobalCollectedDebtsByMethod() (map[string]f
 
 	return results, nil
 }
-func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to string) (map[string]float64, error) {
+func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	
 	// Usamos una consulta unificada para evitar duplicidades y asegurar que cada movimiento se cuente una vez
@@ -645,4 +677,13 @@ func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to string) (map[
 	results["TRANSFERENCIA"] = totalTransferSum
 
 	return results, nil
+}
+
+func (r *PostgresSaleRepository) GetPendingByClient(clientDNI string) ([]models.Sale, error) {
+	var sales []models.Sale
+	err := r.db.Preload("SaleDetails").Preload("SaleDetails.Product").
+		Where("status = ? AND \"clientDni\" = ? AND \"debtPending\" > 0", "CREDIT", clientDNI).
+		Order("\"saleDate\" ASC").
+		Find(&sales).Error
+	return sales, err
 }

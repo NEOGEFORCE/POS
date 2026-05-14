@@ -5,7 +5,7 @@ import {
 } from "@heroui/react";
 import {
   TrendingDown, Wallet, Zap, Building2, HandCoins, Sparkles,
-  FileText, CreditCard, Layers, UserPlus, Search, Landmark
+  FileText, CreditCard, Layers, UserPlus, Search, Landmark, Briefcase, Plus
 } from 'lucide-react';
 import { Expense, Supplier } from '@/lib/definitions';
 import { useApi } from '@/hooks/use-api';
@@ -58,6 +58,7 @@ interface PurchaseOrder {
 const CATEGORIES = [
   { id: 'Proveedores', label: 'Proveedores', icon: Building2, color: 'sky' },
   { id: 'Servicios Públicos', label: 'Servicios Públicos', icon: Zap, color: 'amber' },
+  { id: 'Nómina', label: 'Nómina', icon: Briefcase, color: 'emerald' },
   { id: 'Daños / Arreglos', label: 'Daños / Arreglos', icon: Layers, color: 'rose' },
   { id: 'Otros Gastos', label: 'Otros Gastos', icon: HandCoins, color: 'gray' }
 ];
@@ -76,6 +77,7 @@ const ExpenseFormModal = memo(({
   const [pendingOrders, setPendingOrders] = useState<PurchaseOrder[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
 
   const [localExpense, setLocalExpense] = useState<LocalExpenseState>({
@@ -89,6 +91,28 @@ const ExpenseFormModal = memo(({
     isManualDescription: false,
     taxAmount: 0
   });
+
+  const [supplierInputValue, setSupplierInputValue] = useState('');
+
+  // --- PERSISTENCIA DE BORRADORES (Tarea 4) ---
+  useEffect(() => {
+    if (isEdit) return;
+    const saved = localStorage.getItem('expense-form-draft');
+    if (saved && isOpen) {
+      try {
+        const draft = JSON.parse(saved);
+        setLocalExpense(prev => ({ ...prev, ...draft }));
+      } catch (e) {
+        console.error("Error loading expense draft", e);
+      }
+    }
+  }, [isOpen, isEdit]);
+
+  useEffect(() => {
+    if (isOpen && !isEdit) {
+      localStorage.setItem('expense-form-draft', JSON.stringify(localExpense));
+    }
+  }, [localExpense, isOpen, isEdit]);
 
   useEffect(() => {
     if (isOpen && initialExpense) {
@@ -104,6 +128,9 @@ const ExpenseFormModal = memo(({
         isManualDescription: true,
         taxAmount: initialExpense.taxAmount || 0
       });
+      // Sincronizar el input con el nombre del proveedor si existe
+      const sName = suppliers?.find((s: any) => s.id === initialExpense.supplierId)?.name || '';
+      setSupplierInputValue(sName);
     } else if (isOpen) {
       setLocalExpense({
         description: '',
@@ -116,31 +143,74 @@ const ExpenseFormModal = memo(({
         isManualDescription: false,
         taxAmount: 0
       });
+      setSupplierInputValue('');
     }
-  }, [isOpen, initialExpense]);
+    // Resetear estado de envío al abrir/cerrar
+    setIsSubmitting(false);
+  }, [isOpen, initialExpense, suppliers]);
+
+  // FILTRO MANUAL BLINDADO
+  const filteredSuppliers = React.useMemo(() => {
+    if (!suppliers) return [];
+    // FILTRAR "SIN PROVEEDOR" POR SEGURIDAD
+    const cleanSuppliers = suppliers.filter(s => s.name && !s.name.toUpperCase().includes('SIN PROVEEDOR'));
+    
+    const search = (supplierInputValue || '').toLowerCase().trim();
+    if (!search) return cleanSuppliers;
+    
+    // Prioridad 1: Empieza con el nombre (STRICT)
+    const startsWithName = cleanSuppliers.filter(s => s.name.toLowerCase().startsWith(search));
+    
+    // Prioridad 2: Contiene el nombre pero no empieza con él
+    const containsName = cleanSuppliers.filter(s => 
+        s.name.toLowerCase().includes(search) && !s.name.toLowerCase().startsWith(search)
+    );
+
+    // Prioridad 3: Coincide con el ID/NIT
+    const matchesId = cleanSuppliers.filter(s => 
+        String(s.id).includes(search) && 
+        !startsWithName.some(i => i.id === s.id) && 
+        !containsName.some(i => i.id === s.id)
+    );
+    
+    return [...startsWithName, ...containsName, ...matchesId];
+  }, [suppliers, supplierInputValue]);
 
   // Lógica de Autocompletado y Bloqueo
   useEffect(() => {
     if (isEdit) return;
 
     if (localExpense.category === 'Proveedores') {
-      const supplierName = suppliers?.find((s: any) => s.id === localExpense.supplierId)?.name || '';
-      if (supplierName) {
+      // Intentamos buscar por ID, y si no (como en creaciones nuevas), usamos el valor que ya tenemos en el input
+      const supplierName = suppliers?.find((s: any) => s.id === localExpense.supplierId)?.name || supplierInputValue || '';
+      
+      if (supplierName && !localExpense.isManualDescription) {
         setLocalExpense((prev: LocalExpenseState) => ({
           ...prev,
           description: `${supplierName} - PAGO DE PROVEEDOR`.toUpperCase(),
-          isManualDescription: false
         }));
-      } else {
-        setLocalExpense((prev: LocalExpenseState) => ({ ...prev, description: '' }));
+      }
+    } else if (localExpense.category === 'Nómina') {
+      if (!localExpense.isManualDescription) {
+        setLocalExpense((prev: LocalExpenseState) => ({
+          ...prev,
+          description: 'PAGO DE NÓMINA',
+        }));
       }
     } else {
-      // Si no es proveedores y no ha sido editado manualmente, vaciar para que el usuario escriba
+      // Si no es proveedores o nómina y no ha sido editado manualmente, vaciar para que el usuario escriba
       if (!localExpense.isManualDescription) {
         setLocalExpense((prev: LocalExpenseState) => ({ ...prev, description: '' }));
       }
     }
   }, [localExpense.category, localExpense.supplierId, suppliers, isEdit]);
+
+  useEffect(() => {
+    if (localExpense.supplierId && suppliers) {
+      const supplier = suppliers.find(s => String(s.id) === String(localExpense.supplierId));
+      if (supplier) setSupplierInputValue(supplier.name);
+    }
+  }, [localExpense.supplierId, suppliers]);
 
   const updateField = (field: string, value: any) => {
     setLocalExpense((prev: LocalExpenseState) => {
@@ -189,9 +259,20 @@ const ExpenseFormModal = memo(({
 
       // El backend de Go usa 'id' (minúscula) por el tag json, pero verificamos ambos
       const supplierId = newSupplier?.id || newSupplier?.ID;
+      const supplierName = newSupplier?.name || supplierData.name || '';
 
       if (supplierId) {
-        updateField('supplierId', supplierId);
+        // Actualizamos ID y Concepto de una vez para que no quede vacío
+        setLocalExpense((prev: any) => ({
+          ...prev,
+          supplierId: supplierId,
+          description: localExpense.category === 'Proveedores' 
+            ? `${supplierName} - PAGO DE PROVEEDOR`.toUpperCase() 
+            : prev.description,
+          isManualDescription: localExpense.category === 'Proveedores' ? false : prev.isManualDescription
+        }));
+        
+        setSupplierInputValue(supplierName);
         setIsSupplierModalOpen(false);
         toast({ title: 'ÉXITO', description: 'PROVEEDOR CREADO Y SELECCIONADO' });
       } else {
@@ -281,8 +362,11 @@ const ExpenseFormModal = memo(({
                         {CATEGORIES.map(cat => (
                           <button
                             key={cat.id}
+                            type="button"
+                            tabIndex={0}
                             onClick={() => updateField('category', cat.id)}
-                            className={`h-12 px-3 rounded-xl flex items-center gap-2 border-2 transition-all ${localExpense.category === cat.id
+                            onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); updateField('category', cat.id); } }}
+                            className={`h-12 px-3 rounded-xl flex items-center gap-2 border-2 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50 transition-all ${localExpense.category === cat.id
                                 ? `bg-rose-500/10 border-rose-500 text-rose-500 shadow-sm`
                                 : 'bg-gray-50 dark:bg-zinc-900/30 border-transparent text-gray-400 hover:border-rose-500/20'
                               }`}
@@ -310,15 +394,44 @@ const ExpenseFormModal = memo(({
                         <Autocomplete
                           placeholder="BUSCAR..."
                           aria-label="Seleccionar proveedor"
-                          defaultItems={suppliers || []}
-                          selectedKey={localExpense.supplierId?.toString()}
-                          onSelectionChange={(key) => updateField('supplierId', key ? Number(key) : null)}
-                          classNames={{ listbox: "bg-white dark:bg-zinc-950", popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200" }}
+                          items={filteredSuppliers}
+                          inputValue={supplierInputValue}
+                          onInputChange={(value) => setSupplierInputValue(value)}
+                          selectedKey={localExpense.supplierId ? String(localExpense.supplierId) : null}
+                          menuTrigger="focus" // Apertura inmediata para móvil
+                          onSelectionChange={(key) => {
+                            if (!key) {
+                              updateField('supplierId', null);
+                              return;
+                            }
+                            const newId = Number(key);
+                            updateField('supplierId', newId);
+                            const name = suppliers?.find((s: any) => s.id === newId)?.name || '';
+                            if (name) setSupplierInputValue(name);
+                          }}
+                          onKeyDown={(e: any) => {
+                            if (e.key === 'Enter') {
+                              const search = supplierInputValue.toLowerCase().trim();
+                              const match = filteredSuppliers.find(s => s.name.toLowerCase().trim() === search) || filteredSuppliers[0];
+                              if (match) {
+                                updateField('supplierId', match.id);
+                                setSupplierInputValue(match.name);
+                              }
+                            }
+                          }}
+                          allowsCustomValue
+                          classNames={{ 
+                            listbox: "bg-white dark:bg-zinc-950", 
+                            popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-xl min-w-[280px]" 
+                          }}
                           inputProps={{ classNames: { inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-xl shadow-inner", input: "font-bold text-xs uppercase" } }}
                         >
                           {(item) => (
-                            <AutocompleteItem key={item.id} textValue={item.name} className="rounded-xl h-10">
-                              <span className="text-[10px] font-black uppercase">{item.name}</span>
+                            <AutocompleteItem key={String(item.id)} textValue={item.name} className="dark:text-white rounded-xl h-10">
+                              <div className="flex items-center gap-2">
+                                <Building2 size={14} className="text-sky-500" />
+                                <span className="text-[10px] font-black uppercase">{item.name}</span>
+                              </div>
                             </AutocompleteItem>
                           )}
                         </Autocomplete>
@@ -338,6 +451,7 @@ const ExpenseFormModal = memo(({
                       <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">3. Monto</label>
                       <Input
                         placeholder="0"
+                        inputMode="decimal"
                         value={localExpense.amount ? formatCurrency(localExpense.amount) : ''}
                         onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('amount', parseCurrency(v))}
@@ -451,7 +565,11 @@ const ExpenseFormModal = memo(({
                   </Button>
                   <Button
                     className="flex-[2] h-12 bg-rose-500 text-white font-black uppercase text-xs tracking-[0.2em] rounded-xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all"
-                    onPress={() => {
+                    isLoading={isSubmitting}
+                    isDisabled={isSubmitting}
+                    onPress={async () => {
+                      if (isSubmitting) return;
+
                       const result = validateExpense({
                         description: localExpense.description,
                         amount: localExpense.amount,
@@ -472,16 +590,22 @@ const ExpenseFormModal = memo(({
                         return;
                       }
 
-                      const payload = {
-                        ...localExpense,
-                        linkedOrderId: selectedOrderId,
-                        status: localExpense.paymentSource === 'PRESTAMO' ? 'PENDING' : 'PAID'
-                      };
-                      onSave(payload);
+                      setIsSubmitting(true);
+                      try {
+                        const payload = {
+                          ...localExpense,
+                          linkedOrderId: selectedOrderId,
+                          status: localExpense.paymentSource === 'PRESTAMO' ? 'PENDING' : 'PAID'
+                        };
+                        await onSave(payload);
+                      } catch (error) {
+                        console.error("Error al guardar egreso:", error);
+                        setIsSubmitting(false);
+                      }
                     }}
                   >
                     <Sparkles size={18} className="mr-2" />
-                    {isEdit ? "GUARDAR CAMBIOS" : "AUTORIZAR PAGO"}
+                    {isSubmitting ? "PROCESANDO..." : (isEdit ? "GUARDAR CAMBIOS" : "AUTORIZAR PAGO")}
                   </Button>
                 </div>
                 {validationErrors.length > 0 && <div className="w-full mt-4"><ValidationErrors errors={validationErrors} /></div>}

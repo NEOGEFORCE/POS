@@ -52,6 +52,24 @@ func (r *PostgresExpectedOrderRepository) GetExpectedToday() ([]models.ExpectedO
 	return orders, nil
 }
 
+// GetByDate obtiene los pedidos esperados para una fecha específica (YYYY-MM-DD)
+func (r *PostgresExpectedOrderRepository) GetByDate(date string) ([]models.ExpectedOrder, error) {
+	var orders []models.ExpectedOrder
+
+	err := r.db.Preload("Supplier").
+		Where("DATE(\"expectedDate\") = ? AND status = ?", date, "PENDING").
+		Order("\"expectedDate\" ASC").
+		Find(&orders).Error
+
+	if err != nil {
+		log.Printf("[GetByDate] ERROR EN CONSULTA para fecha %s: %v", date, err)
+		return nil, err
+	}
+
+	log.Printf("[GetByDate] Éxito: %d pedidos encontrados para la fecha %s", len(orders), date)
+	return orders, nil
+}
+
 // GetBySupplier obtiene pedidos esperados por proveedor
 func (r *PostgresExpectedOrderRepository) GetBySupplier(supplierID uint) ([]models.ExpectedOrder, error) {
 	var orders []models.ExpectedOrder

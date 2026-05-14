@@ -104,3 +104,8 @@ func (r *closureRepository) GetGlobalHistoricalSum() (expected float64, real flo
 	
 	return result.Expected, result.Real, err
 }
+
+func (r *closureRepository) Delete(id uint) error {
+	return r.db.Unscoped().Delete(&models.CashierClosure{}, id).Error
+}
+

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Button, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
-import { Database, Download, AlertTriangle, Trash2 } from "lucide-react";
+import { Database, Download, AlertTriangle, Trash2, Send } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { apiFetch } from "@/lib/api-error";
@@ -14,6 +14,7 @@ export default function MaintenancePanel() {
   const [isPurgeModalOpen, setIsPurgeModalOpen] = useState(false);
   const [purgeDate, setPurgeDate] = useState("");
   const [isPurgeLoading, setIsPurgeLoading] = useState(false);
+  const [isTelegramLoading, setIsTelegramLoading] = useState(false);
 
   const handleBackup = async () => {
     if (!user?.token) return;
@@ -47,6 +48,29 @@ export default function MaintenancePanel() {
       });
     } finally {
       setIsBackupLoading(false);
+    }
+  };
+
+  const handleTelegramBackup = async () => {
+    if (!user?.token) return;
+    setIsTelegramLoading(true);
+    try {
+      await apiFetch(`/admin/backup/telegram`, {
+        method: 'POST',
+      }, user.token);
+      
+      toast({
+        title: "Respaldo Enviado",
+        description: "El archivo se ha enviado exitosamente a Telegram.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Fallo en Envío",
+        description: error.message || "Error al conectar con el servidor",
+        variant: "destructive"
+      });
+    } finally {
+      setIsTelegramLoading(false);
     }
   };
 
@@ -108,7 +132,18 @@ export default function MaintenancePanel() {
             className="flex-1 md:flex-none font-black text-[10px] uppercase tracking-widest"
           >
             <Download size={16} className="mr-1" />
-            Descargar Respaldo
+            Descargar
+          </Button>
+
+          <Button
+            color="secondary"
+            variant="flat"
+            onPress={handleTelegramBackup}
+            isLoading={isTelegramLoading}
+            className="flex-1 md:flex-none font-black text-[10px] uppercase tracking-widest"
+          >
+            <Send size={16} className="mr-1" />
+            Enviar a Telegram
           </Button>
           
           <Button

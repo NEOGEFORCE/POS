@@ -4,21 +4,22 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
 type SaleHandler struct {
 	service      *services.SaleService
 	auditService *services.AuditService
-	sseService   *services.SSEService
 }
 
-func NewSaleHandler(s *services.SaleService, a *services.AuditService, sse *services.SSEService) *SaleHandler {
-	return &SaleHandler{service: s, auditService: a, sseService: sse}
+func NewSaleHandler(s *services.SaleService, a *services.AuditService) *SaleHandler {
+	return &SaleHandler{service: s, auditService: a}
 }
 
 func (h *SaleHandler) Create(c *gin.Context) {
@@ -28,37 +29,48 @@ func (h *SaleHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Inyectar metadatos (DNI del empleado que vende) de forma segura
-	dni, exists := c.Get("dni")
-	if !exists {
-		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "Usuario no autenticado", nil)
-		return
-	}
-
-	dniStr, ok := dni.(string)
-	if !ok {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error interno de autenticación", nil)
-		return
-	}
+	// Inyectar metadatos de forma segura usando el helper
+	dniStr, nameStr := GetContextUser(c)
 	sale.EmployeeDNI = dniStr
+	sale.Employee.Name = nameStr
 
 	if err := h.service.CreateSale(&sale); err != nil {
+		// Diferenciar errores de negocio (400) de errores de servidor (500)
+		msg := err.Error()
+		if containsBusinessError(msg) {
+			SendError(c, http.StatusBadRequest, ErrBadRequest, msg, nil)
+			return
+		}
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar venta", err)
 		return
 	}
 
 	// ULTRA-INSTINTO: Broadcast SSE para actualización en tiempo real del Dashboard
-	go h.sseService.BroadcastNewSale(sale)
-	go h.sseService.BroadcastDashboardUpdate()
+	// Protegido con recovery para evitar que un fallo en SSE tumbe el registro de la venta
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("⚠️ [SSE-Sale] Recovery from panic: %v\n", r)
+			}
+		}()
+		sse.GetSSEService().BroadcastNewSale(sale)
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
 
 	c.JSON(http.StatusCreated, sale)
 
-	// Auditoría de Venta
-	name, _ := c.Get("userName")
-	h.auditService.Log(dniStr, name.(string), "CREATE_SALE", "SALES", 
-		fmt.Sprintf("Venta registrada: #%d", sale.SaleID),
-		fmt.Sprintf("Se registró una nueva venta (#%d) por valor de $%s", sale.SaleID, fmt.Sprintf("%.2f", sale.TotalAmount)),
-		"", c.ClientIP(), c.Request.UserAgent(), false)
+	// Auditoría de Venta (Segundo Plano)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("⚠️ [Audit-Sale] Recovery from panic: %v\n", r)
+			}
+		}()
+		h.auditService.Log(dniStr, nameStr, "CREATE_SALE", "SALES", 
+			fmt.Sprintf("Venta registrada: #%d", sale.SaleID),
+			fmt.Sprintf("Se registró una nueva venta (#%d) por valor de $%s", sale.SaleID, fmt.Sprintf("%.2f", sale.TotalAmount)),
+			"", c.ClientIP(), c.Request.UserAgent(), false)
+	}()
 }
 
 func (h *SaleHandler) GetAll(c *gin.Context) {
@@ -68,6 +80,7 @@ func (h *SaleHandler) GetAll(c *gin.Context) {
 	to := c.Query("to")
 	clientDni := c.Query("clientDni")
 	employeeDni := c.Query("employeeDni")
+	search := c.Query("search")
 	minTotal, _ := strconv.ParseFloat(c.DefaultQuery("minTotal", "0"), 64)
 	maxTotal, _ := strconv.ParseFloat(c.DefaultQuery("maxTotal", "0"), 64)
 
@@ -80,6 +93,7 @@ func (h *SaleHandler) GetAll(c *gin.Context) {
 		EmployeeDNI: employeeDni,
 		MinTotal:    minTotal,
 		MaxTotal:    maxTotal,
+		Search:      search,
 	}
 
 	sales, total, err := h.service.ListSales(filter)
@@ -120,8 +134,7 @@ func (h *SaleHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	dni, _ := c.Get("dni")
-	dniStr := dni.(string)
+	dniStr, nameStr := GetContextUser(c)
 
 	if err := h.service.DeleteSale(uint(id), req.Reason, dniStr); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar venta", err)
@@ -129,15 +142,20 @@ func (h *SaleHandler) Delete(c *gin.Context) {
 	}
 
 	// Auditoría de Anulación de Venta (MUY CRÍTICO)
-	name, _ := c.Get("userName")
 	details := fmt.Sprintf("Venta #%d eliminada/anulada. Motivo: %s", id, req.Reason)
 	human := fmt.Sprintf("Se eliminó/anuló permanentemente la venta #%d", id)
 
-	h.auditService.Log(dniStr, name.(string), "VOID_SALE", "SALES", details, human, "{}", c.ClientIP(), c.Request.UserAgent(), true)
+	h.auditService.Log(dniStr, nameStr, "VOID_SALE", "SALES", details, human, "{}", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go func() {
+		defer func() { recover() }()
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
 
-	c.JSON(http.StatusOK, gin.H{"message": "Venta eliminada correctamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Venta anulada correctamente"})
+
+	// AVISO GLOBAL: Venta anulada (Devolver Stock y Dinero)
+	go sse.GetSSEService().BroadcastNewSale(models.Sale{SaleID: uint(id)})
 }
 
 func (h *SaleHandler) UpdatePayment(c *gin.Context) {
@@ -153,15 +171,34 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 		return
 	}
 
+	dniStr, nameStr := GetContextUser(c)
+
 	// Auditoría de Cambio de Pago
-	dni, _ := c.Get("dni")
-	name, _ := c.Get("userName")
-	h.auditService.Log(dni.(string), name.(string), "UPDATE_PAYMENT", "SALES", 
+	h.auditService.Log(dniStr, nameStr, "UPDATE_PAYMENT", "SALES", 
 		fmt.Sprintf("Actualizado pago venta #%d", id),
 		fmt.Sprintf("Se modificó la información de pago para la venta #%d", id),
 		"{}", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go func() {
+		defer func() { recover() }()
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})
+}
+
+func containsBusinessError(msg string) bool {
+	businessErrors := []string{
+		"insuficiente",
+		"debe seleccionar",
+		"supera su límite",
+		"no encontrado",
+		"formato",
+	}
+	for _, e := range businessErrors {
+		if strings.Contains(strings.ToLower(msg), e) {
+			return true
+		}
+	}
+	return false
 }

@@ -5,6 +5,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
 )
 
@@ -21,6 +22,7 @@ func (r *PostgresClientRepository) Save(client *models.Client) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(cache.CacheKeyClientCount)
+		sse.GetSSEService().Broadcast("CUSTOMER_UPDATE", nil)
 	}
 	return err
 }
@@ -80,6 +82,7 @@ func (r *PostgresClientRepository) Update(dni string, client *models.Client) err
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(cache.CacheKeyClientCount)
+		sse.GetSSEService().Broadcast("CUSTOMER_UPDATE", nil)
 	}
 	return err
 }
@@ -89,6 +92,7 @@ func (r *PostgresClientRepository) Delete(dni string) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(cache.CacheKeyClientCount)
+		sse.GetSSEService().Broadcast("CUSTOMER_UPDATE", nil)
 	}
 	return err
 }

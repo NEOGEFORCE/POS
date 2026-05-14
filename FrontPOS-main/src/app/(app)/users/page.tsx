@@ -9,8 +9,9 @@ import { extractApiError, apiFetch } from '@/lib/api-error';
 import {
   Users, Search, PlusCircle, RefreshCw
 } from 'lucide-react';
-import { Input, Button, Spinner } from "@heroui/react";
 import { User } from '@/lib/definitions';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { Input, Button, Spinner } from "@heroui/react";
 
 const UserStats = dynamic(() => import('./components/UserStats'), { ssr: false });
 const UserTable = dynamic(() => import('./components/UserTable'), { ssr: false });
@@ -170,6 +171,16 @@ export default function UsersPage() {
     }
   }, [user, authLoading, router, loadUsers]);
 
+  // SINCRONIZACIÓN ZERO-F5: Usuarios en tiempo real
+  useEffect(() => {
+    const cleanup = setupSyncListener((event) => {
+        if (event === 'USER_UPDATE') {
+            loadUsers();
+        }
+    });
+    return cleanup;
+  }, [loadUsers]);
+
   useEffect(() => {
     const timer = setTimeout(() => {
       setFilter(searchInput.toUpperCase());
@@ -225,6 +236,7 @@ export default function UsersPage() {
       toast({ variant: 'success', title: 'ÉXITO', description: 'ACCESO CREADO CORRECTAMENTE' });
       setAddDialogOpen(false);
       loadUsers();
+      broadcastRevalidate('USER_UPDATE');
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL CREAR ACCESO' }); }
   }, [users, loadUsers, toast]);
 
@@ -244,6 +256,7 @@ export default function UsersPage() {
       setEditDialogOpen(false);
       setEditingUser(null);
       loadUsers();
+      broadcastRevalidate('USER_UPDATE');
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ACTUALIZAR PERMISOS' }); }
   }, [loadUsers, toast]);
 
@@ -256,6 +269,7 @@ export default function UsersPage() {
       setDeleteDialogOpen(false);
       setDeletingDni(null);
       loadUsers();
+      broadcastRevalidate('USER_UPDATE');
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL REVOCAR ACCESO' }); }
   }, [deletingDni, loadUsers, toast]);
 
@@ -267,6 +281,7 @@ export default function UsersPage() {
       toast({ variant: 'success', title: 'ÉXITO', description: 'CONTRASEÑA ACTUALIZADA' });
       setResetDialogOpen(false);
       setResetUser(null);
+      broadcastRevalidate('USER_UPDATE');
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL RESETEAR CONTRASEÑA' }); }
   }, [resetUser, toast]);
 

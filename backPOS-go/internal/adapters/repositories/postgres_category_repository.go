@@ -5,6 +5,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
 )
 
@@ -21,6 +22,7 @@ func (r *PostgresCategoryRepository) Save(category *models.Category) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyCategories)
 		cache.InvalidateCache(cache.CacheKeyCategoryCount)
+		sse.GetSSEService().Broadcast("CATEGORY_UPDATE", nil)
 	}
 	return err
 }
@@ -79,6 +81,7 @@ func (r *PostgresCategoryRepository) Update(id uint, category *models.Category) 
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyCategories)
 		cache.InvalidateCache(cache.CacheKeyCategoryCount)
+		sse.GetSSEService().Broadcast("CATEGORY_UPDATE", nil)
 	}
 	return err
 }
@@ -88,6 +91,7 @@ func (r *PostgresCategoryRepository) Delete(id uint) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyCategories)
 		cache.InvalidateCache(cache.CacheKeyCategoryCount)
+		sse.GetSSEService().Broadcast("CATEGORY_UPDATE", nil)
 	}
 	return err
 }

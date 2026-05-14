@@ -11,18 +11,21 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
 type AdminHandler struct {
 	service      *services.AdminService
 	auditService *services.AuditService
+	telegram     *services.TelegramService
 }
 
-func NewAdminHandler(s *services.AdminService, a *services.AuditService) *AdminHandler {
+func NewAdminHandler(s *services.AdminService, a *services.AuditService, t *services.TelegramService) *AdminHandler {
 	return &AdminHandler{
 		service:      s,
 		auditService: a,
+		telegram:     t,
 	}
 }
 
@@ -110,6 +113,9 @@ func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 	h.auditService.Log(authorDNI, authorName, "CREATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Creado usuario %s con rol %s", emp.Name, emp.Role), fmt.Sprintf("Se registró un nuevo usuario: %s (%s) con rol %s", emp.Name, emp.DNI, emp.Role), "{}", ip, device, true)
 
 	c.JSON(http.StatusCreated, emp)
+
+	// AVISO GLOBAL: Cambio en la plantilla de empleados
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *AdminHandler) GetAllEmployees(c *gin.Context) {
@@ -194,6 +200,9 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 	h.auditService.Log(requesterDNI, requesterName, "UPDATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Actualizado usuario DNI: %s", dni), fmt.Sprintf("Se modificaron los datos del usuario: %s (%s)", emp.Name, dni), "{}", ip, device, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado actualizado correctamente"})
+
+	// AVISO GLOBAL: Datos de empleado actualizados
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
@@ -231,6 +240,9 @@ func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
 	h.auditService.Log(requesterDNI, requesterName, "DELETE_EMPLOYEE", "ADMIN", fmt.Sprintf("Desactivado usuario DNI: %s", dni), fmt.Sprintf("Se desactivó el acceso para el usuario con DNI: %s", dni), "{}", ip, device, true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Empleado eliminado correctamente"})
+
+	// AVISO GLOBAL: Empleado desactivado
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *AdminHandler) ResetEmployeePassword(c *gin.Context) {
@@ -317,6 +329,9 @@ func (h *AdminHandler) CreateMissingItem(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, item)
+
+	// AVISO GLOBAL: Nuevo faltante reportado
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *AdminHandler) GetAllMissingItems(c *gin.Context) {
@@ -345,52 +360,115 @@ func (h *AdminHandler) UpdateMissingItemStatus(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Estado de faltante actualizado"})
+
+	// AVISO GLOBAL: Cambio en estado de faltante
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 // --- Mantenimiento BD (V7.0) ---
 
 func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	// 1. Validar que tengamos los binarios de pg_dump
-	// En Windows esto asume que pg_dump está en el PATH, o usará variables de entorno
 	host := os.Getenv("DB_HOST")
 	port := os.Getenv("DB_PORT")
 	user := os.Getenv("DB_USER")
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
+	pgDumpPath := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
 
 	if host == "" { host = "localhost" }
 	if port == "" { port = "5432" }
 	if user == "" { user = "postgres" }
-	if dbname == "" { dbname = "pos_db" }
+	if dbname == "" { dbname = "sistemapos" }
+	if pgDumpPath == "" { pgDumpPath = "pg_dump" }
 
-	fileName := fmt.Sprintf("pos_backup_%s.sql", time.Now().Format("20060102_150405"))
+	fileName := fmt.Sprintf("pos_manual_backup_%s.sql", time.Now().Format("20060102_150405"))
 	filePath := "./" + fileName
 
 	// Comando pg_dump
-	cmd := exec.Command("pg_dump", "-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath)
+	args := []string{"-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath}
+	cmd := exec.Command(pgDumpPath, args...)
+	
 	// Setear la contraseña temporalmente en el entorno
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
 
+	log.Printf("🛠️ Manual Backup: %s %v", pgDumpPath, args)
 	if err := cmd.Run(); err != nil {
-		log.Printf("Error ejecutando pg_dump: %v", err)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo generar el respaldo. Verifique que pg_dump esté instalado.", err)
+		log.Printf("Error ejecutando pg_dump manual: %v", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo generar el respaldo. Verifique la ruta de pg_dump en el .env", err)
 		return
 	}
 
 	// 2. Registrar auditoría
 	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
-	h.auditService.Log(requesterDNI, requesterName, "DB_BACKUP", "ADMIN", "Generación de Respaldo SQL", "El administrador descargó un respaldo completo de la base de datos.", "{}", ip, device, true)
+	h.auditService.Log(requesterDNI, requesterName, "DB_BACKUP_MANUAL", "ADMIN", "Generación de Respaldo SQL Manual", "El administrador generó un respaldo manual de la base de datos.", "{}", ip, device, true)
 
 	// 3. Enviar archivo y limpiarlo
 	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Header("Content-Type", "application/octet-stream")
 	c.File(filePath)
 	
-	// Eliminar el archivo después de enviarlo (usando un goroutine corto)
+	// Eliminar el archivo después de enviarlo
 	go func() {
-		time.Sleep(5 * time.Second)
+		time.Sleep(10 * time.Second)
 		os.Remove(filePath)
 	}()
+}
+
+func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
+	// 1. Obtener credenciales de la DB
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USER")
+	dbname := os.Getenv("DB_NAME")
+	pass := os.Getenv("DB_PASSWORD")
+	pgDumpPath := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+
+	if host == "" { host = "localhost" }
+	if port == "" { port = "5432" }
+	if user == "" { user = "postgres" }
+	if dbname == "" { dbname = "sistemapos" }
+	if pgDumpPath == "" { pgDumpPath = "pg_dump" }
+
+	fileName := fmt.Sprintf("pos_manual_telegram_%s.sql", time.Now().Format("20060102_150405"))
+	filePath := "./" + fileName
+
+	// 2. Ejecutar pg_dump
+	args := []string{"-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath}
+	cmd := exec.Command(pgDumpPath, args...)
+	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
+
+	log.Printf("🛠️ Manual Telegram Backup: %s %v", pgDumpPath, args)
+	if err := cmd.Run(); err != nil {
+		log.Printf("Error ejecutando pg_dump para Telegram: %v", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo generar el respaldo para Telegram.", err)
+		return
+	}
+
+	// 3. Abrir archivo y enviar a Telegram
+	file, err := os.Open(filePath)
+	if err != nil {
+		log.Printf("Error abriendo backup manual: %v", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo abrir el archivo de respaldo.", err)
+		return
+	}
+	defer file.Close()
+	defer os.Remove(filePath)
+
+	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
+	caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema Cerberus POS Sincronizado_", 
+		requesterName, requesterDNI, time.Now().Format("02/01/2006 15:04"))
+
+	if err := h.telegram.SendDocument(file, fileName, caption); err != nil {
+		log.Printf("Error enviando backup a Telegram: %v", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al enviar el respaldo a Telegram.", err)
+		return
+	}
+
+	// 4. Registrar auditoría
+	h.auditService.Log(requesterDNI, requesterName, "DB_BACKUP_TELEGRAM", "ADMIN", "Envío de Respaldo a Telegram", "El administrador solicitó enviar un respaldo manual a Telegram.", "{}", ip, device, true)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Respaldo enviado exitosamente a Telegram"})
 }
 
 func (h *AdminHandler) PurgeOldData(c *gin.Context) {
@@ -419,4 +497,10 @@ func (h *AdminHandler) PurgeOldData(c *gin.Context) {
 		"message": "Purga completada exitosamente",
 		"records_deleted": rowsAffected,
 	})
+
+	// AVISO GLOBAL: Purga masiva realizada. Forzar recarga de dashboard y ventas.
+	go func() {
+		sse.GetSSEService().BroadcastDashboardUpdate()
+		sse.GetSSEService().BroadcastNewSale(models.Sale{}) // Trigger de historial
+	}()
 }

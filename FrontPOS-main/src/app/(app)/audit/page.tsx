@@ -6,6 +6,7 @@ import {
   ShieldCheck, RefreshCw, Download
 } from 'lucide-react';
 import { Button, Spinner } from "@heroui/react";
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { AuditLog } from '@/lib/definitions';
 import AuditTable from './components/AuditTable';
 import AuditStats from './components/AuditStats';
@@ -47,6 +48,14 @@ export default function AuditPage() {
 
   useEffect(() => {
     loadData();
+
+    // SINCRONIZACIÓN ZERO-F5: Auditoría en tiempo real
+    const cleanup = setupSyncListener((event) => {
+        if (event === 'PRODUCT_UPDATE' || event === 'SALE_MADE' || event === 'EXPENSE_UPDATE' || event === 'DASHBOARD_UPDATE') {
+            loadData();
+        }
+    });
+    return cleanup;
   }, [user]);
 
   if (authLoading || (loading && logs.length === 0)) {

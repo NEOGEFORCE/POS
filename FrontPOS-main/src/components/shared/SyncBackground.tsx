@@ -18,13 +18,13 @@ export default function SyncBackground() {
             if (isSyncingRef.current || !navigator.onLine) return;
 
             try {
-                const { getOfflineQueue, removeFromOfflineQueue, updateOfflineSale } = await import('@/lib/offline-db');
-                const queue = await getOfflineQueue();
+                const { getSyncQueue, removeFromSyncQueue } = await import('@/lib/offline-db');
+                const queue = await getSyncQueue();
 
                 // Filtrar las que ya fallaron permanentemente o excedieron reintentos
-                const pendingQueue = queue.filter(s => (s.status !== 'failed') && (s.retryCount || 0) < 5);
-
-                if (pendingQueue.length === 0) return;
+                // Nota: En la estructura actual de sync_queue, no tenemos retryCount explícito en el payload todavía,
+                // pero procesaremos la cola según el timestamp.
+                if (queue.length === 0) return;
 
                 isSyncingRef.current = true;
                 const token = Cookies.get('org-pos-token');
@@ -33,10 +33,10 @@ export default function SyncBackground() {
                     return;
                 }
 
-                console.log(`[SYNC] Intentando sincronizar ${pendingQueue.length} ventas...`);
+                console.log(`[SYNC] Intentando sincronizar ${queue.length} transacciones...`);
                 let successCount = 0;
 
-                for (const sale of pendingQueue) {
+                for (const item of queue) {
                     try {
                         const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/register`, {
                             method: 'POST',
@@ -44,25 +44,14 @@ export default function SyncBackground() {
                                 'Content-Type': 'application/json',
                                 'Authorization': `Bearer ${token}`
                             },
-                            body: JSON.stringify(sale.saleData)
+                            body: JSON.stringify(item.payload)
                         });
 
                         if (res.ok) {
-                            await removeFromOfflineQueue(sale.id);
+                            await removeFromSyncQueue(item.id);
                             successCount++;
                         } else {
-                            const errorText = await res.text();
-                            console.error(`[SYNC] Error en venta ${sale.id}:`, errorText);
-                            
-                            // Si es un error de validación (4xx), es probable que no se arregle solo
-                            const isValidationError = res.status >= 400 && res.status < 500;
-                            
-                            await updateOfflineSale({
-                                ...sale,
-                                retryCount: (sale.retryCount || 0) + 1,
-                                lastError: errorText,
-                                status: isValidationError ? 'failed' : 'pending'
-                            });
+                            console.error(`[SYNC] Fallo al subir item ${item.id}:`, res.status);
                         }
                     } catch (e) {
                         // Error de red en este fetch individual, paramos el loop por este ciclo
@@ -81,16 +70,49 @@ export default function SyncBackground() {
             } finally {
                 isSyncingRef.current = false;
             }
-        }, 30000); // Revisar cada 30 segundos
+        }, 15000); // Revisar cada 15 segundos para mayor agilidad (V9.5)
 
         return () => clearInterval(syncInterval);
     }, [toast]);
+
+    // Sincronización periódica del catálogo completo (Cada 5 minutos)
+    const syncFullCatalog = async () => {
+        try {
+            const token = Cookies.get('org-pos-token');
+            if (!token || !navigator.onLine) return;
+
+            console.log("[SYNC] Actualizando catálogo local para modo offline...");
+            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (res.ok) {
+                const products = await res.json();
+                const { saveProductsToCache } = await import('@/lib/offline-db');
+                await saveProductsToCache(products);
+                console.log("[SYNC] Catálogo local actualizado correctamente.");
+            }
+        } catch (e) {
+            console.warn("[SYNC] No se pudo actualizar el catálogo local (Servidor offline)");
+        }
+    };
+
+    useEffect(() => {
+        syncFullCatalog();
+        const catalogInterval = setInterval(syncFullCatalog, 5 * 60 * 1000); // Cada 5 min
+        return () => clearInterval(catalogInterval);
+    }, []);
 
     // Listener de eventos de sincronización global (BroadcastChannel)
     useEffect(() => {
         const cleanup = setupSyncListener((event) => {
             console.log(`[BROADCAST] Recibido evento: ${event}`);
             revalidateKeysForEvent(event);
+            
+            // Si hay actualización de productos, forzar refresco de catálogo local
+            if (event === 'PRODUCT_UPDATE' || event === 'STOCK_UPDATE' || event === 'INVENTORY_UPDATE') {
+                syncFullCatalog();
+            }
         });
         return cleanup;
     }, []);

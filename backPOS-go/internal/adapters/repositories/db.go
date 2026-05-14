@@ -53,6 +53,9 @@ func ConnectDB() {
 		log.Fatal("Failed to connect to database. \n", err)
 	}
 
+	// Habilitar extensión unaccent para búsquedas sin tildes
+	db.Exec("CREATE EXTENSION IF NOT EXISTS unaccent;")
+
 	// Limpiar restricciones antiguas que bloquean la migración (Email ya no es unique)
 	m := db.Migrator()
 	if m.HasConstraint(&models.Employee{}, "uni_employees_email") {
@@ -232,6 +235,14 @@ func ConnectDB() {
 				END LOOP;
 			END IF;
 			ALTER TABLE products ADD CONSTRAINT fk_products_base_product FOREIGN KEY ("baseProductBarcode") REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE SET NULL;
+			
+			-- NORMALIZACIÓN DE DNI (V9.5): Asegurar que el admin sea ADMIN
+			UPDATE employees SET dni = 'ADMIN' WHERE dni = 'admin';
+			UPDATE products SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
+			UPDATE products SET "updatedByDni" = 'ADMIN' WHERE "updatedByDni" = 'admin';
+			UPDATE clients SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
+			UPDATE categories SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
+			UPDATE expenses SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
 		END $$;
 	`)
 
@@ -279,9 +290,10 @@ func ConnectDB() {
 	// --- OPTIMIZACIÓN TIER 1: CONNECTION POOL ---
 	sqlDB, err := db.DB()
 	if err == nil {
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetMaxIdleConns(25)
+		sqlDB.SetMaxOpenConns(200)
 		sqlDB.SetConnMaxLifetime(time.Hour)
+		sqlDB.SetConnMaxIdleTime(15 * time.Minute)
 	}
 
 	// Ejecutar setup avanzado (RLS, roles, migraciones adicionales)
@@ -301,9 +313,9 @@ func ConnectDB() {
 
 	// 7. Seed Admin, Client, Categories and Products
 	SeedAdmin(db)
-	SeedClient(db, "admin")
-	SeedCategory(db, "admin")
-	SeedProducts(db)
+	SeedClient(db, "ADMIN")
+	SeedCategory(db, "ADMIN")
+	SeedProducts(db, "ADMIN")
 }
 
 // runDatabaseSetup ejecuta configuraciones avanzadas de BD (idempotente)
@@ -626,6 +638,15 @@ func createMaterializedViews(db *gorm.DB) error {
 		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID'
 		GROUP BY 1
 	),
+	return_stats AS (
+		SELECT 
+			TO_CHAR(date, 'YYYY-MM') as month_year,
+			SUM("totalReturned") as total_returned,
+			SUM((SELECT SUM(quantity) FROM return_details rd WHERE rd."returnId" = r.id AND rd."isExchange" = false)) as products_returned
+		FROM "returns" r
+		WHERE "deleted_at" IS NULL
+		GROUP BY 1
+	),
 	payment_stats AS (
 		SELECT 
 			TO_CHAR("paymentDate", 'YYYY-MM') as month_year,
@@ -640,15 +661,17 @@ func createMaterializedViews(db *gorm.DB) error {
 		SELECT month_year FROM expense_stats
 		UNION
 		SELECT month_year FROM payment_stats
+		UNION
+		SELECT month_year FROM return_stats
 	)
 	SELECT 
 		am.month_year,
-		COALESCE(sds.total_sales, 0) as total_sales,
+		COALESCE(sds.total_sales, 0) - COALESCE(ret.total_returned, 0) as total_sales,
 		COALESCE(sps.transaction_count, 0) as transaction_count,
-		COALESCE(sps.sales_cash, 0) as sales_cash,
+		COALESCE(sps.sales_cash, 0) - COALESCE(ret.total_returned, 0) as sales_cash,
 		COALESCE(sps.sales_transfer, 0) as sales_transfer,
 		COALESCE(sps.sales_credit, 0) as sales_credit,
-		COALESCE(sds.products_sold, 0) as products_sold,
+		COALESCE(sds.products_sold, 0) - COALESCE(ret.products_returned, 0) as products_sold,
 		COALESCE(sds.total_cogs, 0) as total_cogs,
 		COALESCE(e.total_expenses, 0) as total_expenses,
 		COALESCE(p.total_abonos, 0) as total_abonos
@@ -656,7 +679,8 @@ func createMaterializedViews(db *gorm.DB) error {
 	LEFT JOIN sale_detail_stats sds ON am.month_year = sds.month_year
 	LEFT JOIN sale_payment_stats sps ON am.month_year = sps.month_year
 	LEFT JOIN expense_stats e ON am.month_year = e.month_year
-	LEFT JOIN payment_stats p ON am.month_year = p.month_year;
+	LEFT JOIN payment_stats p ON am.month_year = p.month_year
+	LEFT JOIN return_stats ret ON am.month_year = ret.month_year;
 
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_dashboard_month_year ON mv_dashboard_stats_monthly(month_year);
 	`
@@ -693,7 +717,7 @@ func SeedAdmin(db *gorm.DB) {
 	if count == 0 {
 		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
 		admin := models.Employee{
-			DNI:      "admin",
+			DNI:      "ADMIN",
 			Name:     "ADMINISTRADOR",
 			Email:    "admin@pos.com",
 			Password: string(hashedPassword),
@@ -729,7 +753,7 @@ func SeedCategory(db *gorm.DB, adminDNI string) {
 	}
 }
 
-func SeedProducts(db *gorm.DB) {
+func SeedProducts(db *gorm.DB, adminDNI string) {
 	var count int64
 	db.Model(&models.Product{}).Where("barcode = ?", "0000").Count(&count)
 	if count == 0 {
@@ -742,6 +766,10 @@ func SeedProducts(db *gorm.DB) {
 			MarginPercentage: 20,
 			IsActive:         true,
 			CategoryID:       1,
+			CreatedByDNI:     adminDNI,
+			CreatedByName:    "ADMINISTRADOR",
+			UpdatedByDNI:     adminDNI,
+			UpdatedByName:    "ADMINISTRADOR",
 		}
 		if err := db.Create(&product).Error; err != nil {
 			log.Printf("⚠️ Warning: Failed to seed 'Varios' product: %v", err)

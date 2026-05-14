@@ -7,7 +7,7 @@ import {
 } from "@heroui/react";
 import React from 'react';
 import { FileSearch, TrendingUp, PieChart, Wallet, ShoppingBag, ArrowUpRight, ArrowDownRight, Tag } from "lucide-react";
-import { formatCurrency } from "@/lib/utils";
+import { formatCurrency, formatDateTime } from "@/lib/utils";
 
 interface PreviewModalProps {
   isOpen: boolean;
@@ -78,7 +78,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
             rows: data.map((item: any, i: number) => ({
                 id: i,
                 ...item,
-                date: new Date(item.date).toLocaleString(),
+                date: formatDateTime(item.date),
                 type: (
                    <Chip 
                      size="sm" 

@@ -5,7 +5,10 @@ import (
 	"backPOS-go/internal/infrastructure/cache"
 	"log"
 	"strings"
+	"backPOS-go/internal/infrastructure/refresher"
+	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
+	"time"
 )
 
 type PostgresExpenseRepository struct {
@@ -18,15 +21,13 @@ func NewPostgresExpenseRepository(db *gorm.DB) *PostgresExpenseRepository {
 
 func (r *PostgresExpenseRepository) invalidateDashboardCache() {
 	// Invalidate RAM cache
-	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 	
-	// Refresh Materialized View in background
-	go func() {
-		if err := r.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats_monthly").Error; err != nil {
-			log.Printf("⚠️ [MV Refresh - Expense] Fallo concurrente: %v", err)
-			r.db.Exec("REFRESH MATERIALIZED VIEW mv_dashboard_stats_monthly")
-		}
-	}()
+	// Solicitar refresco asíncrono y debounced
+	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
+
+	// Notificar sincronización global
+	sse.GetSSEService().BroadcastExpenseUpdate(nil)
 }
 
 func (r *PostgresExpenseRepository) Save(expense *models.Expense) error {
@@ -49,16 +50,16 @@ func (r *PostgresExpenseRepository) GetByID(id uint) (*models.Expense, error) {
 	return &expense, err
 }
 
-func (r *PostgresExpenseRepository) GetByDateRange(from, to string) ([]models.Expense, error) {
+func (r *PostgresExpenseRepository) GetByDateRange(from, to time.Time) ([]models.Expense, error) {
 	expenses := []models.Expense{}
 	query := r.db.Model(&models.Expense{})
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("date >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("date <= ?", to)
 	}
-	err := query.Order("date DESC").Limit(100).Find(&expenses).Error
+	err := query.Order("date DESC").Limit(500).Find(&expenses).Error
 	return expenses, err
 }
 
@@ -176,12 +177,12 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 	return results, nil
 }
 
-func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to string) (float64, error) {
+func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to time.Time) (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Expense{}).
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
-		Where("date >= ? AND date < ?", from, to).
+		Where("date >= ? AND date <= ?", from, to).
 		Select("COALESCE(SUM(amount + tax_amount), 0)").Scan(&total).Error
 	if err != nil {
 		log.Printf("❌ [GetPaidAmountByRange] Error: %v", err)
@@ -189,7 +190,7 @@ func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to string) (float
 	}
 	return total, nil
 }
-func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, to string) (map[string]float64, error) {
+func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").

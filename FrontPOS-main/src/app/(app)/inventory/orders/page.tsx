@@ -4,7 +4,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   ShoppingBag, Truck, Calendar, DollarSign, Plus, FileText,
   Sparkles, CheckCircle, Building2, PackageSearch, Check,
-  ChevronLeft, ChevronRight, Info
+  ChevronLeft, ChevronRight, Info, ChevronDown, RefreshCw
 } from 'lucide-react';
 import {
   Card, CardBody, Button, Input, Table, TableHeader,
@@ -12,11 +12,13 @@ import {
   Autocomplete, AutocompleteItem, Select, SelectItem,
   Pagination, Skeleton
 } from "@heroui/react";
+import { setupSyncListener } from '@/lib/revalidate';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import Cookies from 'js-cookie';
 import { Supplier } from '@/lib/definitions';
 import SupplierFormModal from '../../suppliers/components/SupplierFormModal';
+import { formatCurrency, applyRounding, getStockStatus } from "@/lib/utils";
 
 
 
@@ -27,6 +29,7 @@ interface SuggestedOrder {
   minStock: number;
   isPack: boolean;
   packMultiplier: number;
+  orderMultiple: number;
   requiredMin: number;
   projectedSales: number;
   totalIdeal: number;
@@ -96,18 +99,36 @@ export default function SmartRestockPage() {
 
   // Client-side pagination and filtering for the table
   const displayedItems = useMemo(() => {
-    let all = [];
+    let all: SuggestedOrder[] = [];
     if (selectedSupplier === "global") {
-      all = items;
+      all = [...items];
     } else {
-      // Priorizar orderItems (específicos del proveedor) si ya cargaron
-      // De lo contrario, filtrar la lista global como fallback inmediato
+      // Priorizar orderItems si el fetch por proveedor ya terminó
       if (orderItems.length > 0) {
-        all = orderItems;
+        all = [...orderItems];
       } else {
-        all = items.filter(item => String(item.supplierId) === selectedSupplier);
+        // Fallback al filtro local mientras carga o si falló
+        all = items.filter(item => String(item.supplierId) === selectedSupplier || String(item.bestSupplierId) === selectedSupplier);
       }
     }
+
+    // --- SISTEMA DE PRIORIZACIÓN DE ABASTECIMIENTO (SISTEMA OBLIGADO v2.0) ---
+    // 1. CRÍTICO (Rojo)
+    // 2. ADVERTENCIA (Amarillo)
+    // 3. RECOMENDADO POR IA (Proyección > Obligado)
+    // 4. CANTIDAD OBLIGATORIA (De mayor a menor)
+    all.sort((a, b) => {
+      const statusA = getStockStatus(a.stock, a.minStock);
+      const statusB = getStockStatus(b.stock, b.minStock);
+      
+      const priorityA = statusA === 'CRITICAL' ? 0 : statusA === 'REORDER' ? 1 : (a.projectedSales > a.requiredMin ? 2 : 3);
+      const priorityB = statusB === 'CRITICAL' ? 0 : statusB === 'REORDER' ? 1 : (b.projectedSales > b.requiredMin ? 2 : 3);
+      
+      if (priorityA !== priorityB) return priorityA - priorityB;
+      
+      // Tie-break: Cantidad obligatoria de mayor a menor
+      return b.requiredMin - a.requiredMin;
+    });
     
     const start = (page - 1) * pageSize;
     return all.slice(start, start + pageSize);
@@ -124,6 +145,17 @@ export default function SmartRestockPage() {
       console.error(err);
     }
   }, [apiUrl, authHeaders]);
+
+  // Lista completa para el Autocomplete
+    const suppliersList = useMemo(() => [{id: 'none', name: 'SIN PROVEEDOR'}, ...suppliers], [suppliers]);
+
+    // FILTRO MANUAL BLINDADO (Copiado de Egresos)
+  const filteredSuppliers = useMemo(() => {
+    if (!suppliers) return [];
+    if (!supplierSearchTerm) return suppliersList;
+    const search = supplierSearchTerm.toLowerCase();
+    return suppliersList.filter(s => s.name.toLowerCase().includes(search));
+  }, [suppliersList, supplierSearchTerm, suppliers]);
 
   const fetchMissingItems = useCallback(async () => {
     setLoadingMissingItems(true);
@@ -272,7 +304,17 @@ export default function SmartRestockPage() {
   useEffect(() => {
     fetchSuppliers();
     fetchMissingItems();
-  }, []);
+
+    const cleanup = setupSyncListener((event) => {
+        if (['PRODUCT_UPDATE', 'STOCK_UPDATE', 'SALE_MADE', 'DASHBOARD_UPDATE', 'CATEGORY_UPDATE'].includes(event as string)) {
+            fetchSuppliers();
+            fetchMissingItems();
+            if (selectedSupplier === "global") loadGlobalSuggestions();
+            else loadSuggestions(selectedSupplier);
+        }
+    });
+    return cleanup;
+  }, [fetchSuppliers, fetchMissingItems, selectedSupplier, loadGlobalSuggestions, loadSuggestions]);
 
   useEffect(() => {
     if (selectedSupplier === "global") {
@@ -374,10 +416,10 @@ export default function SmartRestockPage() {
     }
   };
 
-  const filteredSupplierOptions = useMemo(() => {
-    const filtered = suppliers.filter(s => s.name.toLowerCase().includes(supplierSearchTerm.toLowerCase()));
-    return [{ id: '__new__', name: '+ NUEVO PROVEEDOR' }, ...filtered];
-  }, [suppliers, supplierSearchTerm]);
+  const supplierOptionsWithGlobal = useMemo(() => {
+    const list = [{ id: 'global', name: 'RADAR GLOBAL' }, { id: '__new__', name: '+ NUEVO PROVEEDOR' }, ...suppliers];
+    return list;
+  }, [suppliers]);
 
   const SmartSourcingAlerts = () => {
     // SPRINT: Analizamos TODO el catálogo cargado para encontrar ahorros reales, 
@@ -436,204 +478,37 @@ export default function SmartRestockPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 bg-gray-100 dark:bg-zinc-900 p-1 rounded-2xl border border-gray-200 dark:border-white/5">
-          <button
-            onClick={() => handleSupplierChange("global")}
-            className={`px-4 py-1.5 rounded-xl text-[10px] font-black uppercase transition-all ${selectedSupplier === "global" ? 'bg-white dark:bg-zinc-800 text-emerald-500 shadow-sm' : 'text-zinc-400 hover:text-zinc-600'}`}
+        <div className="flex items-center gap-2">
+          {/* Espacio reservado para botones si se necesitan arriba */}
+          <Button
+            isIconOnly
+            variant="flat"
+            onPress={() => {
+                if (selectedSupplier === "global") loadGlobalSuggestions();
+                else loadSuggestions(selectedSupplier);
+            }}
+            className="h-10 w-10 bg-gray-100 dark:bg-zinc-900 text-emerald-500 rounded-xl border border-gray-200 dark:border-white/5 active:scale-95"
           >
-            Radar Global
-          </button>
-          <div className="w-[1px] h-4 bg-gray-200 dark:bg-white/10 mx-1" />
-          <div className="min-w-[180px]">
-            <Autocomplete
-              size="sm"
-              placeholder="Elegir Proveedor..."
-              className="max-w-xs"
-              selectedKey={selectedSupplier === "global" ? "none" : selectedSupplier}
-              onSelectionChange={handleSupplierChange}
-              popoverProps={{
-                classNames: {
-                  content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-xl"
-                }
-              }}
-              inputProps={{
-                classNames: {
-                  inputWrapper: "bg-transparent border-none shadow-none h-8",
-                  input: "text-[10px] font-bold uppercase"
-                }
-              }}
-            >
-              {suppliers.map((s) => (
-                <AutocompleteItem key={String(s.id)} textValue={s.name}>
-                  <div className="flex items-center gap-2">
-                    <Building2 size={14} className="text-zinc-400" />
-                    <span className="text-[11px] font-bold uppercase">{s.name}</span>
-                  </div>
-                </AutocompleteItem>
-              ))}
-            </Autocomplete>
-          </div>
+            <RefreshCw size={18} />
+          </Button>
         </div>
       </div>
 
       {/* CONTENIDO PRINCIPAL */}
       <div className="flex-1 p-1 md:p-2 min-h-0 md:overflow-hidden">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 h-full min-h-0 md:overflow-hidden">
+        <div className="flex flex-col lg:grid lg:grid-cols-12 gap-4 h-full min-h-0 md:overflow-hidden">
 
-          {/* COLUMNA IZQUIERDA: RECOMENDACIONES */}
-          <div className="lg:col-span-8 flex flex-col min-h-0 flex-1">
-            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden h-full flex flex-col">
-              <CardBody className="p-0 flex flex-col flex-1 min-h-0 overflow-hidden">
-
-                {/* ÁREA DE DATOS (SCROLLABLE) */}
-                <div className="flex-1 overflow-y-auto overscroll-contain pb-16 custom-scrollbar min-h-0 w-full">
-                  {/* TABLA DESKTOP */}
-                  <div className="hidden sm:block">
-                    <Table
-                      isCompact
-                      removeWrapper
-                      isHeaderSticky
-                      aria-label="Recomendaciones"
-                      classNames={{
-                        base: "w-full",
-                        wrapper: "flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
-                        th: "bg-gray-50/90 dark:bg-zinc-950/90 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-11 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-20 px-4",
-                        td: "py-2 border-b border-gray-100 dark:border-white/5 px-4",
-                        tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 h-12",
-                      }}
-                    >
-                      <TableHeader>
-                        <TableColumn>PRODUCTO</TableColumn>
-                        <TableColumn align="center">STOCK ACTUAL</TableColumn>
-                        <TableColumn align="center">STOCK REQUERIDO</TableColumn>
-                        <TableColumn align="center">PEDIDO OBLIGATORIO</TableColumn>
-                        <TableColumn align="center">SUGERIDO ROTACIÓN (IA)</TableColumn>
-                      </TableHeader>
-                      <TableBody emptyContent={loading ? <Skeleton className="h-32 w-full rounded-2xl" /> : "Sin recomendaciones activas"}>
-                        {displayedItems.map((item) => (
-                          <TableRow key={item.barcode}>
-                            <TableCell>
-                              <div className="flex flex-col">
-                                <span className="font-bold text-zinc-900 dark:text-white uppercase truncate max-w-[300px] text-[11px] leading-none">{item.productName}</span>
-                                <span className="text-[8px] font-mono text-zinc-400 mt-1 tracking-tighter leading-none">{item.barcode}</span>
-                              </div>
-                            </TableCell>
-                            <TableCell align="center">
-                              <span className="font-black text-xs tabular-nums">{Number(item.stock)}</span>
-                            </TableCell>
-                            <TableCell align="center">
-                              <span className="font-black text-xs tabular-nums text-zinc-400">
-                                {item.minStock}
-                              </span>
-                            </TableCell>
-                            <TableCell align="center">
-                              <span className={`font-black text-xs tabular-nums ${item.requiredMin > 0 ? 'text-amber-500' : 'text-zinc-500'}`}>
-                                {item.requiredMin > 0 ? `+${item.requiredMin}` : '0'}
-                              </span>
-                            </TableCell>
-                            <TableCell align="center">
-                              <div className="flex flex-col items-center leading-none">
-                                <span className={`font-black text-sm ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-400'}`}>
-                                  {item.projectedSales > 0 ? `+${Math.round(item.projectedSales)}` : '0'}
-                                </span>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  {/* VISTA MÓVIL (CARDS) */}
-                  <div className="sm:hidden h-full overflow-y-auto p-2 flex flex-col gap-2 custom-scrollbar">
-                    {displayedItems.map((item) => (
-                      <div key={item.barcode} className="bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 p-3 rounded-xl shadow-sm flex flex-col gap-3">
-                        <div className="flex flex-col">
-                          <span className="font-black text-[11px] uppercase truncate text-zinc-800 dark:text-zinc-200 italic leading-none">{item.productName}</span>
-                          <span className="text-[8px] font-mono text-zinc-400 mt-1">{item.barcode}</span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 bg-gray-50 dark:bg-black/20 p-2 rounded-lg border border-gray-100 dark:border-white/5">
-                          <div className="flex flex-col"><span className="text-[7px] font-black text-zinc-400 uppercase">STOCK</span><span className="text-[11px] font-black">{Number(item.stock)}</span></div>
-                          <div className="flex flex-col items-end"><span className="text-[7px] font-black text-zinc-400 uppercase">REQUERIDO</span><span className="text-[11px] font-black">{item.minStock}</span></div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-2 px-1">
-                          <div className="flex flex-col">
-                            <span className="text-[7px] font-black text-amber-500 uppercase italic">OBLIGATORIO</span>
-                            <span className="text-[11px] font-black text-amber-500">+{item.requiredMin}</span>
-                          </div>
-                          <div className="flex flex-col items-end">
-                            <span className={`text-[7px] font-black uppercase italic ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-500'}`}>SUGERIDO IA</span>
-                            <span className={`text-[11px] font-black ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-500'}`}>+{Math.round(item.projectedSales)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                {/* PIE DE PÁGINA (HORIZONTAL) */}
-                <div className="shrink-0 bg-white dark:bg-zinc-950 border-t border-gray-200 dark:border-white/10 p-4 flex flex-wrap items-center justify-center sm:justify-between gap-4 backdrop-blur-md">
-                  <div className="flex flex-col gap-1">
-                    <p className="text-[11px] text-gray-900 dark:text-white uppercase tracking-widest font-black italic leading-none">
-                      MOSTRANDO <span className="text-emerald-500">{totalItemsCount === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItemsCount)}</span> DE {totalItemsCount} <span className="text-[8px] opacity-30 ml-2">({pageSize} por pág.)</span>
-                    </p>
-                    <span className="text-[9px] font-black text-emerald-500/60 uppercase tracking-widest italic">Página {page} de {totalPagesCount}</span>
-                  </div>
-
-                  <div className="flex items-center gap-6">
-                    <Pagination
-                      key={totalPagesCount}
-                      showControls
-                      total={totalPagesCount}
-                      page={page}
-                      onChange={setPage}
-                      color="success"
-                      variant="flat"
-                      size="sm"
-                      siblings={1}
-                      boundaries={1}
-                    />
-
-                    <div className="flex items-center gap-2">
-                      <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest italic">Ver:</span>
-                      <div className="relative">
-                        <select
-                          value={pageSize}
-                          onChange={(e) => {
-                            setPageSize(Number(e.target.value));
-                            setPage(1);
-                          }}
-                          className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-3 pr-8 outline-none rounded-xl border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none hover:border-emerald-500/50 transition-all"
-                        >
-                          <option value={25}>25</option>
-                          <option value={50}>50</option>
-                          <option value={100}>100</option>
-                          <option value={10000}>TODOS</option>
-                        </select>
-                        <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
-                          <Info size={12} />
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-
-          {/* COLUMNA DERECHA: REGISTRO Y FALTANTES */}
-          <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar flex-1 min-h-0">
+          {/* COLUMNA DERECHA (AHORA PRIMERA EN MÓVIL): REGISTRO Y FALTANTES */}
+          <div className="order-1 lg:order-2 lg:col-span-4 flex flex-col gap-3 md:gap-4 overflow-y-auto lg:overflow-y-auto custom-scrollbar shrink-0 min-h-0">
             <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-lg relative overflow-hidden shrink-0">
               <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 to-amber-600" />
-              <CardBody className="p-5 flex flex-col gap-4">
+              <CardBody className="p-3 md:p-5 flex flex-col gap-3 md:gap-4">
                 <div className="flex items-center gap-2">
                   <Calendar size={18} className="text-amber-500" />
                   <h3 className="text-xs font-black uppercase italic tracking-tight">Registrar Preventa</h3>
                 </div>
 
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-3 md:gap-4">
                   <div className="flex flex-col gap-1.5">
                     <label className="text-[9px] font-black uppercase text-zinc-400 tracking-widest pl-1">Proveedor</label>
                     <div className="flex gap-2">
@@ -641,21 +516,19 @@ export default function SmartRestockPage() {
                         size="sm"
                         placeholder="Buscar..."
                         className="flex-1"
-                        selectedKey={newPreventa.supplierId ? String(newPreventa.supplierId) : undefined}
+                        items={filteredSuppliers}
                         inputValue={supplierSearchTerm}
                         onInputChange={setSupplierSearchTerm}
-                        items={filteredSupplierOptions}
-                        popoverProps={{
-                          classNames: {
-                            content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-xl"
-                          }
-                        }}
+                        defaultSelectedKey={newPreventa.supplierId ? String(newPreventa.supplierId) : undefined}
+                        allowsCustomValue
                         onSelectionChange={(key) => {
+                          if (!key) return;
                           if (key === '__new__') {
                             setIsSupplierModalOpen(true);
-                            setSupplierSearchTerm("");
                           } else {
-                            handleSupplierChange(key);
+                            handleSupplierChange(String(key));
+                            const name = suppliersList.find(s => String(s.id) === String(key))?.name || '';
+                            if (name) setSupplierSearchTerm(name);
                           }
                         }}
                         inputProps={{ classNames: { inputWrapper: "bg-gray-100 dark:bg-zinc-900 border-none rounded-xl", input: "text-[10px] font-bold" } }}
@@ -731,8 +604,6 @@ export default function SmartRestockPage() {
               </CardBody>
             </Card>
 
-            <SmartSourcingAlerts />
-
             <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden shrink-0">
               <CardBody className="p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
@@ -741,7 +612,7 @@ export default function SmartRestockPage() {
                     <h3 className="text-[10px] font-black uppercase italic text-zinc-500 tracking-wider">Faltantes en Caja</h3>
                   </div>
                 </div>
-                <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                <div className="flex flex-col gap-2 max-h-[200px] md:max-h-[300px] overflow-y-auto custom-scrollbar">
                   {loadingMissingItems ? <Skeleton className="h-10 w-full rounded-lg" /> : missingItems.length > 0 ? (
                     missingItems.map(m => (
                       <div key={m.id} className="flex items-center justify-between p-2.5 bg-rose-500/[0.03] rounded-xl border border-rose-500/10">
@@ -755,6 +626,245 @@ export default function SmartRestockPage() {
                       </div>
                     ))
                   ) : <div className="p-8 text-center text-[9px] font-black text-zinc-400 uppercase italic tracking-widest">Sin pendientes</div>}
+                </div>
+              </CardBody>
+            </Card>
+
+            <SmartSourcingAlerts />
+          </div>
+
+          {/* COLUMNA IZQUIERDA (AHORA SEGUNDA): RECOMENDACIONES */}
+          <div className="order-2 lg:order-1 lg:col-span-8 flex flex-col min-h-0 flex-1">
+            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-sm overflow-hidden h-full flex flex-col">
+              <CardBody className="p-0 flex flex-col flex-1 min-h-0 overflow-hidden">
+
+                {/* ÁREA DE DATOS (SCROLLABLE) */}
+                <div className="flex-1 overflow-y-auto overscroll-contain pb-4 custom-scrollbar min-h-0 w-full">
+                  {/* TABLA DESKTOP */}
+                  <div className="hidden sm:block">
+                    <Table
+                      isCompact
+                      removeWrapper
+                      isHeaderSticky
+                      aria-label="Recomendaciones"
+                      classNames={{
+                        base: "w-full",
+                        wrapper: "flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
+                        th: "bg-gray-50/90 dark:bg-zinc-950/90 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-11 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-20 px-4",
+                        td: "py-2 border-b border-gray-100 dark:border-white/5 px-4",
+                        tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 h-12",
+                      }}
+                    >
+                      <TableHeader>
+                        <TableColumn>PRODUCTO</TableColumn>
+                        <TableColumn align="center">STOCK ACTUAL</TableColumn>
+                        <TableColumn align="center">STOCK REQUERIDO</TableColumn>
+                        <TableColumn align="center">PEDIDO OBLIGATORIO</TableColumn>
+                        <TableColumn align="center">SUGERIDO ROTACIÓN (IA)</TableColumn>
+                      </TableHeader>
+                      <TableBody emptyContent={loading ? <Skeleton className="h-32 w-full rounded-2xl" /> : "Sin recomendaciones activas"}>
+                        {displayedItems.map((item) => (
+                          <TableRow key={item.barcode}>
+                            <TableCell>
+                              <div className="flex flex-col">
+                                <span className="font-bold text-zinc-900 dark:text-white uppercase truncate max-w-[300px] text-[11px] leading-none">{item.productName}</span>
+                                <span className="text-[8px] font-mono text-zinc-400 mt-1 tracking-tighter leading-none">{item.barcode}</span>
+                              </div>
+                            </TableCell>
+                            <TableCell align="center">
+                              {(() => {
+                                const status = getStockStatus(Number(item.stock), item.minStock);
+                                const colorClass = 
+                                  status === 'CRITICAL' ? 'text-rose-500 bg-rose-500/10' : 
+                                  status === 'REORDER' ? 'text-amber-500 bg-amber-500/10' : 
+                                  'text-emerald-500 bg-emerald-500/10';
+                                return (
+                                  <span className={`font-black text-xs tabular-nums px-2 py-0.5 rounded-full ${colorClass}`}>
+                                    {Number(item.stock)}
+                                  </span>
+                                );
+                              })()}
+                            </TableCell>
+                            <TableCell align="center">
+                              <span className="font-black text-xs tabular-nums text-zinc-400">
+                                {item.minStock}
+                              </span>
+                            </TableCell>
+                            <TableCell align="center">
+                              <span className={`font-black text-xs tabular-nums ${item.requiredMin > 0 ? 'text-amber-500' : 'text-zinc-500'}`}>
+                                {item.requiredMin > 0 ? (
+                                  item.orderMultiple > 1 ? (
+                                    `+${item.requiredMin} und (${Math.ceil(item.requiredMin / item.orderMultiple)} pacas)`
+                                  ) : (
+                                    `+${item.requiredMin}`
+                                  )
+                                ) : '0'}
+                              </span>
+                            </TableCell>
+                            <TableCell align="center">
+                              <div className="flex flex-col items-center leading-none">
+                                <span className={`font-black text-sm ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-400'}`}>
+                                  {item.projectedSales > 0 ? `+${Math.round(item.projectedSales)}` : '0'}
+                                </span>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+
+                  {/* VISTA MÓVIL (CARDS ULTRA COMPACTAS) */}
+                  <div className="sm:hidden flex flex-col bg-transparent">
+                    <div className="flex items-center justify-between px-3 py-2 bg-gray-50 dark:bg-zinc-900 border-b border-gray-200 dark:border-white/5 sticky top-0 z-20 backdrop-blur-md h-9">
+                        <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest flex-1">Producto / Ref</span>
+                        <div className="flex gap-0 pr-0 min-w-[120px] justify-end">
+                            <span className="text-[8px] font-black text-gray-400 uppercase w-10 text-center">Stk</span>
+                            <span className="text-[8px] font-black text-amber-500 uppercase w-10 text-center">Obl</span>
+                            <span className="text-[8px] font-black text-emerald-500 uppercase w-10 text-center">IA</span>
+                        </div>
+                    </div>
+                    {displayedItems.map((item) => {
+                      const status = getStockStatus(Number(item.stock), item.minStock);
+                      const statusColor = 
+                        status === 'CRITICAL' ? 'bg-rose-500' : 
+                        status === 'REORDER' ? 'bg-amber-500' : 
+                        'bg-emerald-500';
+
+                      return (
+                        <div key={item.barcode} className="bg-white dark:bg-zinc-950 border-b border-gray-100 dark:border-white/5 p-2 px-3 flex items-center justify-between gap-2 active:bg-gray-50 transition-colors relative overflow-hidden">
+                          {/* Barra de estado lateral ultra-compacta */}
+                          <div className={`absolute left-0 top-0 bottom-0 w-1 ${statusColor}`} />
+                          
+                          <div className="flex flex-col min-w-0 flex-1 ml-1">
+                            <span className="font-bold text-[10px] uppercase truncate italic text-zinc-800 dark:text-zinc-200 leading-none">{item.productName}</span>
+                            <span className="text-[7px] font-mono text-zinc-400 mt-0.5">{item.barcode}</span>
+                          </div>
+
+                          <div className="flex items-center gap-0 shrink-0 text-right min-w-[120px] justify-end">
+                            <div className="flex flex-col items-center w-10">
+                              <span className={`text-[10px] font-black tabular-nums leading-none ${status === 'CRITICAL' ? 'text-rose-500' : status === 'REORDER' ? 'text-amber-500' : ''}`}>
+                                {Number(item.stock)}
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-center w-10">
+                              <span className="text-[10px] font-black tabular-nums text-amber-500 leading-none">
+                                {item.requiredMin > 0 ? (
+                                  item.orderMultiple > 1 ? (
+                                    `+${item.requiredMin} (${Math.ceil(item.requiredMin / item.orderMultiple)}p)`
+                                  ) : (
+                                    `+${item.requiredMin}`
+                                  )
+                                ) : '0'}
+                              </span>
+                            </div>
+                            <div className="flex flex-col items-center w-10">
+                              <span className={`text-[10px] font-black tabular-nums leading-none ${item.projectedSales > item.requiredMin ? 'text-emerald-500' : 'text-zinc-400'}`}>
+                                  +{Math.round(item.projectedSales)}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {/* SELECTOR GLOBAL ABAJO (NUEVA LÍNEA) */}
+                  <div className="shrink-0 px-4 py-2.5 bg-gray-50 dark:bg-zinc-950/50 border-t border-gray-200 dark:border-white/5 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 bg-white dark:bg-zinc-900 p-1 rounded-2xl border border-gray-200 dark:border-white/10 shadow-sm flex-1 max-w-2xl">
+                      <button
+                        onClick={() => handleSupplierChange("global")}
+                        className={`flex-1 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${selectedSupplier === "global" ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-zinc-400 hover:text-zinc-600 hover:bg-gray-100 dark:hover:bg-zinc-800'}`}
+                      >
+                        RADAR GLOBAL
+                      </button>
+                      <div className="w-[1px] h-5 bg-gray-200 dark:bg-white/10 mx-1" />
+                      <div className="flex-[2] min-w-[200px]">
+                        <Autocomplete
+                          size="sm"
+                          placeholder="FILTRAR POR PROVEEDOR..."
+                          selectedKey={selectedSupplier === "global" ? "none" : selectedSupplier}
+                          onSelectionChange={handleSupplierChange}
+                          items={suppliers}
+                          popoverProps={{
+                            classNames: {
+                              content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-2xl"
+                            }
+                          }}
+                          inputProps={{
+                            classNames: {
+                              inputWrapper: "bg-transparent border-none shadow-none h-9 hover:bg-transparent",
+                              input: "text-[11px] font-black uppercase italic tracking-tighter"
+                            }
+                          }}
+                        >
+                          {(s) => (
+                            <AutocompleteItem key={String(s.id)} textValue={s.name}>
+                              <div className="flex items-center gap-3 py-1">
+                                <div className="h-7 w-7 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+                                  <Building2 size={14} />
+                                </div>
+                                <span className="text-[12px] font-black uppercase italic">{s.name}</span>
+                              </div>
+                            </AutocompleteItem>
+                          )}
+                        </Autocomplete>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* PIE DE PÁGINA (HORIZONTAL) - AHORA AL FINAL DE TODO */}
+                <div className="shrink-0 bg-white dark:bg-zinc-950 border-t border-gray-200 dark:border-white/10 p-3 md:p-4 flex flex-col sm:flex-row items-center justify-center sm:justify-between gap-3 backdrop-blur-md">
+                  <div className="flex flex-col gap-0.5 items-center sm:items-start">
+                    <p className="text-[9px] md:text-[11px] text-gray-900 dark:text-white uppercase tracking-widest font-black italic leading-none text-center sm:text-left">
+                      Viendo <span className="text-emerald-500">{totalItemsCount === 0 ? 0 : (page - 1) * pageSize + 1}-{Math.min(page * pageSize, totalItemsCount)}</span> de {totalItemsCount}
+                    </p>
+                    <span className="text-[8px] font-black text-emerald-500/60 uppercase tracking-widest italic leading-none">Pág {page} de {totalPagesCount}</span>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row items-center gap-3 md:gap-6">
+                    <Pagination
+                      key={totalPagesCount}
+                      showControls
+                      total={totalPagesCount}
+                      page={page}
+                      onChange={setPage}
+                      color="success"
+                      variant="flat"
+                      size="sm"
+                      siblings={0}
+                      boundaries={1}
+                      classNames={{
+                        wrapper: "gap-1",
+                        item: "w-7 h-7 min-w-0 text-[10px] font-bold",
+                        prev: "w-7 h-7 min-w-0",
+                        next: "w-7 h-7 min-w-0",
+                        cursor: "bg-emerald-500 text-white font-black"
+                      }}
+                    />
+
+                    <div className="flex items-center gap-2">
+                      <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest italic">Ver:</span>
+                      <div className="relative">
+                        <select
+                          value={pageSize}
+                          onChange={(e) => {
+                            setPageSize(Number(e.target.value));
+                            setPage(1);
+                          }}
+                          className="h-7 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[9px] font-black uppercase tracking-widest px-2 pr-6 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none hover:border-emerald-500/50 transition-all"
+                        >
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                          <option value={10000}>TODOS</option>
+                        </select>
+                        <div className="absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none opacity-30">
+                          <ChevronDown size={10} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </CardBody>
             </Card>

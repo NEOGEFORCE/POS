@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
@@ -41,6 +42,9 @@ func (h *ReportHandler) RecordReport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Report recorded successfully"})
+
+	// AVISO GLOBAL: Nuevo reporte disponible en el historial
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *ReportHandler) GetHistory(c *gin.Context) {
@@ -67,6 +71,9 @@ func (h *ReportHandler) DeleteReport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Report deleted successfully"})
+
+	// AVISO GLOBAL: Reporte eliminado del historial
+	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
 func (h *ReportHandler) GetStats(c *gin.Context) {

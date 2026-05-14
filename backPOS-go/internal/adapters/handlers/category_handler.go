@@ -8,6 +8,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
@@ -57,6 +58,9 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, category)
 
+	// AVISO GLOBAL: Nueva categoría
+	go sse.GetSSEService().BroadcastCategoryUpdate(category)
+
 	// Auditoría de Creación
 	name, _ := c.Get("userName")
 	h.auditService.Log(dniStr, name.(string), "CREATE_CATEGORY", "TAXONOMY", 
@@ -91,6 +95,9 @@ func (h *CategoryHandler) GetByID(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, category)
+
+	// AVISO GLOBAL: Categoría actualizada
+	go sse.GetSSEService().BroadcastCategoryUpdate(category)
 }
 
 func (h *CategoryHandler) Update(c *gin.Context) {
@@ -122,6 +129,9 @@ func (h *CategoryHandler) Update(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, category)
 
+	// AVISO GLOBAL: Categoría actualizada
+	go sse.GetSSEService().BroadcastCategoryUpdate(nil)
+
 	// Auditoría de Actualización
 	dni, _ := c.Get("dni")
 	name, _ := c.Get("userName")
@@ -147,6 +157,9 @@ func (h *CategoryHandler) Delete(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Category deleted"})
+
+	// AVISO GLOBAL: Categoría eliminada
+	go sse.GetSSEService().BroadcastCategoryUpdate(id)
 
 	// Auditoría de Eliminación
 	dni, _ := c.Get("dni")

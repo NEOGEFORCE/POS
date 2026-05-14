@@ -9,9 +9,11 @@ import {
 import Link from 'next/link';
 import { useApi } from "@/hooks/use-api";
 import { Product } from "@/lib/definitions";
-import { formatCurrency, formatCOP, formatStock, isProductWeighted } from "@/lib/utils";
+import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime } from "@/lib/utils";
 import Cookies from 'js-cookie';
 import React, { useMemo, useState, useEffect } from "react";
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import CreateScheduledDeliveryModal from "./components/CreateScheduledDeliveryModal";
 
 interface ExpectedOrder {
   id: number;
@@ -28,39 +30,17 @@ export default function InventoryHub() {
     revalidateOnFocus: true,
   });
 
-  // Estado para pedidos esperados (Preventa)
-  const [expectedOrders, setExpectedOrders] = useState<ExpectedOrder[]>([]);
-  const [loadingOrders, setLoadingOrders] = useState(false);
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [isPreventaModalOpen, setIsPreventaModalOpen] = useState(false);
-  const [newPreventa, setNewPreventa] = useState({ supplier: '', date: '', total: '' });
 
-  // Fetch pedidos esperados para hoy
-  useEffect(() => {
-    const fetchExpectedOrders = async () => {
-      setLoadingOrders(true);
-      try {
-        const token = Cookies.get('org-pos-token') || '';
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/orders/expected-today`, {
-          headers: { 
-            'Authorization': 'Bearer ' + token.replace(/^Bearer\s+/i, '').trim(), 
-            'Content-Type': 'application/json' 
-          }
-        });
-        if (res.ok) {
-          const data = await res.json();
+  // Fetch pedidos esperados para hoy con SWR (Reactividad Global)
+  const { 
+    data: expectedOrdersData, 
+    isLoading: loadingOrders, 
+    mutate: mutateOrders 
+  } = useApi<ExpectedOrder[]>(`/orders/expected-today?date=${selectedDate}`);
 
-          setExpectedOrders(data || []);
-        }
-      } catch (err) {
-        // BLINDAJE DEFENSIVO
-        console.error('🔥 Error fetching expected orders:', err);
-        setExpectedOrders([]);
-      } finally {
-        setLoadingOrders(false);
-      }
-    };
-    fetchExpectedOrders();
-  }, []);
+  const expectedOrders = expectedOrdersData || [];
 
   // Enviar fila a Telegram
   const sendToTelegram = async () => {
@@ -80,38 +60,21 @@ export default function InventoryHub() {
     }
   };
 
-  // Registrar nueva preventa
-  const handleRegisterPreventa = async () => {
-    try {
-      const token = Cookies.get('org-pos-token');
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/orders/expected`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          supplierName: newPreventa.supplier,
-          expectedDate: newPreventa.date,
-          totalEstimated: parseFloat(newPreventa.total) || 0
-        })
-      });
-      setIsPreventaModalOpen(false);
-      setNewPreventa({ supplier: '', date: '', total: '' });
-      // Refresh list
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/orders/expected-today`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setExpectedOrders(data || []);
-      }
-    } catch (err) {
-      console.error('Error registering preventa:', err);
-    }
+  // Registro de preventa ahora se maneja en el componente modal
+  const handleSuccessPreventa = () => {
+    mutateOrders();
   };
+
+  // Escuchar actualizaciones globales
+  useEffect(() => {
+    const cleanup = setupSyncListener((event) => {
+        if (['PRODUCT_UPDATE', 'STOCK_UPDATE', 'SALE_MADE', 'DASHBOARD_UPDATE', 'CATEGORY_UPDATE', 'SUPPLIER_UPDATE'].includes(event)) {
+            mutate();
+            mutateOrders();
+        }
+    });
+    return cleanup;
+  }, [mutate, mutateOrders]);
   
   // Cálculos en tiempo real con useMemo
   const stats = useMemo(() => {
@@ -437,13 +400,33 @@ export default function InventoryHub() {
                                     <Truck size={20} className="relative z-10" />
                                     <div className="absolute inset-0 rounded-xl bg-amber-500 blur-xl opacity-30" />
                                 </div>
-                                <div>
-                                    <h3 className="text-sm font-black text-zinc-900 dark:text-white uppercase italic tracking-tight">
-                                        Entregas Programadas <span className="text-amber-500">Hoy</span>
+                                <div className="flex-1">
+                                    <h3 className="text-sm font-black text-zinc-900 dark:text-white uppercase italic tracking-tight flex items-center gap-2">
+                                        Entregas Programadas <span className="text-amber-500">{selectedDate === new Date().toISOString().split('T')[0] ? 'Hoy' : selectedDate}</span>
                                     </h3>
                                     <p className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">
                                         Logística & Recepción
                                     </p>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <div className="relative">
+                                        <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                                        <input 
+                                            type="date" 
+                                            value={selectedDate}
+                                            onChange={(e) => setSelectedDate(e.target.value)}
+                                            className="h-9 pl-9 pr-3 bg-zinc-100 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl text-[10px] font-black uppercase tracking-wider focus:ring-2 focus:ring-amber-500/20 outline-none transition-all cursor-pointer"
+                                        />
+                                    </div>
+                                    <Button 
+                                        isIconOnly 
+                                        size="sm" 
+                                        variant="flat" 
+                                        className="bg-amber-500/10 text-amber-500 rounded-xl"
+                                        onPress={() => setIsPreventaModalOpen(true)}
+                                    >
+                                        <Plus size={16} />
+                                    </Button>
                                 </div>
                             </div>
 
@@ -469,7 +452,7 @@ export default function InventoryHub() {
                                                         {order.supplierName}
                                                     </p>
                                                     <p className="text-[9px] text-gray-500 dark:text-zinc-500 font-medium">
-                                                        {order.itemCount} ítems · {new Date(order.expectedDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        {order.itemCount} ítems · {formatTime(order.expectedDate)}
                                                     </p>
                                                 </div>
                                             </div>
@@ -492,7 +475,7 @@ export default function InventoryHub() {
                                     <div className="flex flex-col items-center justify-center py-8 text-zinc-600">
                                         <Truck size={32} className="mb-2 opacity-20" />
                                         <p className="text-xs font-bold uppercase tracking-widest">
-                                            No hay recepciones programadas para hoy
+                                            No hay recepciones para {selectedDate === new Date().toISOString().split('T')[0] ? 'hoy' : selectedDate}
                                         </p>
                                     </div>
                                 )}
@@ -540,6 +523,12 @@ export default function InventoryHub() {
                 <ShieldCheck size={12} />
                 <span className="text-[8px] font-black uppercase tracking-[0.4em] italic">Seguridad & Auditoría Activa</span>
             </div>
+
+            <CreateScheduledDeliveryModal 
+                isOpen={isPreventaModalOpen}
+                onClose={() => setIsPreventaModalOpen(false)}
+                onSuccess={handleSuccessPreventa}
+            />
 
             </div>
         </div>

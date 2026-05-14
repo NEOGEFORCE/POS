@@ -2,13 +2,17 @@
 
 import React, { useState } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Input } from "@heroui/react";
-import { Calculator, ShieldCheck, AlertCircle, TrendingUp } from 'lucide-react';
+import { Calculator, ShieldCheck, AlertCircle, TrendingUp, Coins } from 'lucide-react';
 import { formatCurrency } from "@/lib/utils";
 
 interface AuditBalances {
     cash: number;
     nequi: number;
     daviplata: number;
+    bills?: number;
+    coins1000?: number;
+    coins200?: number;
+    coins100?: number;
 }
 
 interface AuditModalProps {
@@ -18,21 +22,39 @@ interface AuditModalProps {
 }
 
 export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditModalProps) {
-    const [cash, setCash] = useState<string>('');
+    const [bills, setBills] = useState<string>('');
+    const [coins1000, setCoins1000] = useState<string>('');
+    const [coins200, setCoins200] = useState<string>('');
+    const [coins100, setCoins100] = useState<string>('');
     const [nequi, setNequi] = useState<string>('');
     const [daviplata, setDaviplata] = useState<string>('');
     const [isSubmitting, setIsSubmitting] = useState(false);
 
     const handleConfirm = async () => {
-        const numCash = parseFloat(cash) || 0;
+        const numBills = parseFloat(bills) || 0;
+        const numCoins1000 = parseFloat(coins1000) || 0;
+        const numCoins200 = parseFloat(coins200) || 0;
+        const numCoins100 = parseFloat(coins100) || 0;
+        const numCash = numBills + numCoins1000 + numCoins200 + numCoins100;
         const numNequi = parseFloat(nequi) || 0;
         const numDaviplata = parseFloat(daviplata) || 0;
         
         setIsSubmitting(true);
         try {
-            await onConfirm({ cash: numCash, nequi: numNequi, daviplata: numDaviplata });
+            await onConfirm({ 
+                cash: numCash, 
+                nequi: numNequi, 
+                daviplata: numDaviplata,
+                bills: numBills,
+                coins1000: numCoins1000,
+                coins200: numCoins200,
+                coins100: numCoins100
+            });
             onOpenChange(false);
-            setCash('');
+            setBills('');
+            setCoins1000('');
+            setCoins200('');
+            setCoins100('');
             setNequi('');
             setDaviplata('');
         } catch (error) {
@@ -77,23 +99,86 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                     </p>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                    <div className="space-y-2">
-                                        <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic ml-1">Efectivo en Caja</label>
-                                        <Input
-                                            autoFocus
-                                            type="number"
-                                            placeholder="0.00"
-                                            variant="flat"
-                                            value={cash}
-                                            onValueChange={setCash}
-                                            startContent={<span className="text-emerald-500 font-black">$</span>}
-                                            classNames={{
-                                                inputWrapper: "h-14 bg-gray-100 dark:bg-white/5 border-2 border-transparent group-data-[focus=true]:border-emerald-500 transition-all rounded-2xl px-4 shadow-inner",
-                                                input: "text-lg font-black italic tracking-tighter placeholder:text-gray-300 dark:placeholder:text-zinc-700"
-                                            }}
-                                        />
+                                {/* CALCULADORA DE EFECTIVO DETALLADA */}
+                                <div className="space-y-4 bg-gray-50 dark:bg-white/[0.02] p-5 rounded-[2rem] border border-gray-100 dark:border-white/5">
+                                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic ml-1 mb-2 block">Conteo Físico Detallado</label>
+                                    
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div className="space-y-1.5">
+                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Total Billetes</label>
+                                            <Input
+                                                type="number"
+                                                placeholder="0"
+                                                size="sm"
+                                                variant="flat"
+                                                value={bills}
+                                                onValueChange={setBills}
+                                                startContent={<span className="text-[10px] text-emerald-500 font-black">$</span>}
+                                                classNames={{
+                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
+                                                    input: "text-xs font-black italic tabular-nums"
+                                                }}
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Monedas 1k/500</label>
+                                            <Input
+                                                type="number"
+                                                placeholder="0"
+                                                size="sm"
+                                                variant="flat"
+                                                value={coins1000}
+                                                onValueChange={setCoins1000}
+                                                startContent={<span className="text-[10px] text-amber-500 font-black">$</span>}
+                                                classNames={{
+                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
+                                                    input: "text-xs font-black italic tabular-nums"
+                                                }}
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Monedas 200</label>
+                                            <Input
+                                                type="number"
+                                                placeholder="0"
+                                                size="sm"
+                                                variant="flat"
+                                                value={coins200}
+                                                onValueChange={setCoins200}
+                                                startContent={<span className="text-[10px] text-zinc-400 font-black">$</span>}
+                                                classNames={{
+                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
+                                                    input: "text-xs font-black italic tabular-nums"
+                                                }}
+                                            />
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Monedas 100</label>
+                                            <Input
+                                                type="number"
+                                                placeholder="0"
+                                                size="sm"
+                                                variant="flat"
+                                                value={coins100}
+                                                onValueChange={setCoins100}
+                                                startContent={<span className="text-[10px] text-zinc-500 font-black">$</span>}
+                                                classNames={{
+                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
+                                                    input: "text-xs font-black italic tabular-nums"
+                                                }}
+                                            />
+                                        </div>
                                     </div>
+                                    
+                                    <div className="flex items-center justify-between px-4 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl mt-2">
+                                        <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase italic">Total Efectivo Calculado</span>
+                                        <span className="text-lg font-black text-emerald-600 dark:text-emerald-400 italic">
+                                            ${formatCurrency((parseFloat(bills)||0) + (parseFloat(coins1000)||0) + (parseFloat(coins200)||0) + (parseFloat(coins100)||0))}
+                                        </span>
+                                    </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-2">
                                         <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic ml-1">Saldo Nequi</label>
                                         <Input
@@ -126,12 +211,19 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                     </div>
                                 </div>
 
-                                {(cash || nequi || daviplata) && (
+                                {(bills || coins1000 || coins200 || coins100 || nequi || daviplata) && (
                                     <div className="flex items-center justify-between p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 animate-in fade-in zoom-in duration-300">
                                         <div className="flex flex-col">
                                             <span className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase italic">Nuevo Saldo Total Combinado</span>
                                             <span className="text-xl font-black text-gray-900 dark:text-white italic">
-                                                ${formatCurrency((parseFloat(cash)||0) + (parseFloat(nequi)||0) + (parseFloat(daviplata)||0))}
+                                                ${formatCurrency(
+                                                    (parseFloat(bills)||0) + 
+                                                    (parseFloat(coins1000)||0) + 
+                                                    (parseFloat(coins200)||0) + 
+                                                    (parseFloat(coins100)||0) + 
+                                                    (parseFloat(nequi)||0) + 
+                                                    (parseFloat(daviplata)||0)
+                                                )}
                                             </span>
                                         </div>
                                         <TrendingUp className="text-emerald-500" size={24} />

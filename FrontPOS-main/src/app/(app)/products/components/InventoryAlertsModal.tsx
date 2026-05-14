@@ -4,6 +4,7 @@ import React, { memo } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, Button } from "@heroui/react";
 import { AlertTriangle, Check, Package, X, ArrowRight } from 'lucide-react';
 import { Product } from '@/lib/definitions';
+import { getStockStatus } from '@/lib/utils';
 
 interface InventoryAlertsModalProps {
     isOpen: boolean;
@@ -36,7 +37,7 @@ const InventoryAlertsModal = memo(({ isOpen, onOpenChange, products }: Inventory
                                     <h2 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter uppercase leading-none">
                                         Monitor <span className="text-amber-500">Maestro</span>
                                     </h2>
-                                    <span className="text-[10px] font-black text-amber-600/60 dark:text-amber-500/50 uppercase tracking-[0.3em] mt-2 not-italic">Items en Punto de Re-orden (≤ 5)</span>
+                                    <span className="text-[10px] font-black text-amber-600/60 dark:text-amber-500/50 uppercase tracking-[0.3em] mt-2 not-italic">Monitoreo de Quiebre & Reorden</span>
                                 </div>
                             </div>
                         </ModalHeader>
@@ -52,33 +53,40 @@ const InventoryAlertsModal = memo(({ isOpen, onOpenChange, products }: Inventory
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                    {products.map(p => (
-                                        <div key={p.barcode} className="group bg-gray-50 dark:bg-zinc-900/50 p-5 rounded-3xl border border-gray-200 dark:border-white/5 flex items-center justify-between gap-4 transition-all hover:bg-amber-500/5 hover:border-amber-500/20 shadow-sm overflow-hidden relative">
-                                            <div className="absolute top-0 right-0 p-2 opacity-10 text-amber-500 rotate-12 -mr-3 -mt-3">
-                                                <Package size={50} />
-                                            </div>
-                                            
-                                            <div className="flex items-center gap-4 relative z-10 min-w-0">
-                                                <div className="h-10 w-10 bg-white dark:bg-zinc-800 rounded-xl flex items-center justify-center text-amber-500 shadow-sm border border-gray-100 dark:border-white/5">
-                                                    <Package size={18} />
+                                    {products.map(p => {
+                                        const status = getStockStatus(p.quantity, p.minStock || 0);
+                                        const isCritical = status === 'CRITICAL';
+                                        
+                                        return (
+                                            <div key={p.barcode} className={`group bg-gray-50 dark:bg-zinc-900/50 p-5 rounded-3xl border flex items-center justify-between gap-4 transition-all shadow-sm overflow-hidden relative ${
+                                                isCritical ? 'border-rose-500/20 hover:border-rose-500/40 hover:bg-rose-500/5' : 'border-gray-200 dark:border-white/5 hover:bg-amber-500/5 hover:border-amber-500/20'
+                                            }`}>
+                                                <div className={`absolute top-0 right-0 p-2 opacity-10 rotate-12 -mr-3 -mt-3 ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>
+                                                    <Package size={50} />
                                                 </div>
-                                                <div className="flex flex-col min-w-0">
-                                                    <span className="text-xs font-black text-gray-900 dark:text-white uppercase italic tracking-tighter truncate leading-tight">
-                                                        {p.productName}
-                                                    </span>
-                                                    <span className="text-[8px] font-mono text-gray-400 dark:text-zinc-500 tracking-[0.2em] uppercase">#{p.barcode}</span>
+                                                
+                                                <div className="flex items-center gap-4 relative z-10 min-w-0">
+                                                    <div className={`h-10 w-10 bg-white dark:bg-zinc-800 rounded-xl flex items-center justify-center shadow-sm border border-gray-100 dark:border-white/5 ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>
+                                                        <Package size={18} />
+                                                    </div>
+                                                    <div className="flex flex-col min-w-0">
+                                                        <span className="text-xs font-black text-gray-900 dark:text-white uppercase italic tracking-tighter truncate leading-tight">
+                                                            {p.productName}
+                                                        </span>
+                                                        <span className="text-[8px] font-mono text-gray-400 dark:text-zinc-500 tracking-[0.2em] uppercase">#{p.barcode}</span>
+                                                    </div>
                                                 </div>
-                                            </div>
 
-                                            <div className="flex items-center gap-3 relative z-10 shrink-0">
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-xl font-black text-rose-500 italic tabular-nums leading-none">{p.quantity}</span>
-                                                    <span className="text-[7px] font-black text-rose-500/50 uppercase tracking-widest mt-1">STOCK</span>
+                                                <div className="flex items-center gap-3 relative z-10 shrink-0">
+                                                    <div className="flex flex-col items-end">
+                                                        <span className={`text-xl font-black italic tabular-nums leading-none ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>{p.quantity}</span>
+                                                        <span className={`text-[7px] font-black uppercase tracking-widest mt-1 ${isCritical ? 'text-rose-500/50' : 'text-amber-500/50'}`}>STOCK</span>
+                                                    </div>
+                                                    <ArrowRight size={12} className={`text-gray-300 group-hover:${isCritical ? 'text-rose-500' : 'text-amber-500'} transition-colors`} />
                                                 </div>
-                                                <ArrowRight size={12} className="text-gray-300 group-hover:text-amber-500 transition-colors" />
                                             </div>
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </ModalBody>

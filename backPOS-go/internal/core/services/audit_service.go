@@ -3,6 +3,7 @@ package services
 import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/sse"
 	"time"
 )
 
@@ -29,6 +30,9 @@ func (s *AuditService) Log(dni, name, action, module, details, human, changes, i
 		CreatedAt:     time.Now(),
 	}
 	_ = s.repo.Create(log)
+	
+	// AVISO GLOBAL: Nueva acción registrada en auditoría
+	go sse.GetSSEService().BroadcastAuditUpdate()
 }
 
 func (s *AuditService) GetLogs() ([]models.AuditLog, error) {

@@ -1,12 +1,15 @@
 package ports
 
-import "backPOS-go/internal/core/domain/models"
+import (
+	"backPOS-go/internal/core/domain/models"
+	"time"
+)
 
 type ExpenseRepository interface {
 	Save(expense *models.Expense) error
 	GetAll() ([]models.Expense, error)
 	GetByID(id uint) (*models.Expense, error)
-	GetByDateRange(from, to string) ([]models.Expense, error)
+	GetByDateRange(from, to time.Time) ([]models.Expense, error)
 	Delete(id uint) error
 	Count() (int64, error)
 	Update(id uint, expense *models.Expense) error
@@ -16,6 +19,6 @@ type ExpenseRepository interface {
 	GetExpensesByStatus(status string) ([]models.Expense, error)
 	GetGlobalTotalPaidExpenses() (float64, error)
 	GetGlobalPaidExpensesByMethod() (map[string]float64, error)
-	GetPaidAmountByRange(from, to string) (float64, error)
-	GetGlobalPaidExpensesByMethodInRange(from, to string) (map[string]float64, error)
+	GetPaidAmountByRange(from, to time.Time) (float64, error)
+	GetGlobalPaidExpensesByMethodInRange(from, to time.Time) (map[string]float64, error)
 }

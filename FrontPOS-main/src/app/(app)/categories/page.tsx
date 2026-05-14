@@ -10,7 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Category } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
-import { broadcastRevalidate } from '@/lib/revalidate';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 // Dinámicos para aligerar HMR y carga inicial
 const CategoryStats = dynamic(() => import('./components/CategoryStats'), { ssr: false });
@@ -61,7 +61,17 @@ export default function CategoriesPage() {
     }
   }, [toast]);
 
-  useEffect(() => { loadCategories(); }, [loadCategories]);
+  useEffect(() => { 
+    loadCategories(); 
+    
+    // SINCRONIZACIÓN ZERO-F5
+    const cleanup = setupSyncListener((event) => {
+        if (event === 'CATEGORY_UPDATE' || event === 'PRODUCT_UPDATE' || event === 'DASHBOARD_UPDATE') {
+            loadCategories();
+        }
+    });
+    return cleanup;
+  }, [loadCategories]);
 
   const filteredCategories = useMemo(() => {
     const query = filter.toLowerCase();

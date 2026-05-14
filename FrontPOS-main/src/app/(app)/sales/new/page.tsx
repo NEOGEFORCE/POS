@@ -11,6 +11,8 @@ import {
     Wifi, WifiOff
 } from 'lucide-react';
 
+import { motion, AnimatePresence } from 'framer-motion';
+
 import dynamic from 'next/dynamic';
 
 import { formatCurrency, applyRounding } from "@/lib/utils";
@@ -157,7 +159,20 @@ export default function NewSalePage() {
                     setScannerBuffer('');
                     isScanningRef.current = false;
                     return;
+                } else if (currentCart.length > 0) {
+                    // Si no hay nada en el scanner pero hay items, Enter abre el pago
+                    e.preventDefault();
+                    setIsPaymentDialogOpen(true);
+                    return;
                 }
+            }
+
+            if (e.key === '=') {
+                e.preventDefault();
+                if (currentCart.length > 0) {
+                    setIsPaymentDialogOpen(true);
+                }
+                return;
             }
 
             if (e.key === 'Escape') {
@@ -253,9 +268,10 @@ export default function NewSalePage() {
                 ref={hiddenScannerRef}
                 type="text"
                 autoComplete="off"
+                inputMode="none"
                 className="absolute opacity-0 pointer-events-none scanner-gate"
                 style={{ position: 'absolute', left: '-9999px', top: '0' }}
-                aria-hidden="true"
+                tabIndex={-1}
             />
 
             <div id="pos-main-container" className="flex-1 flex flex-col gap-1 min-h-0 overflow-hidden relative">
@@ -378,7 +394,20 @@ export default function NewSalePage() {
                             </div>
                             <div className="bg-emerald-100 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 px-4 py-1.5 rounded-lg flex items-center gap-4 shadow-sm">
                                 <p className="text-[9px] font-black text-emerald-700 dark:text-emerald-500 uppercase tracking-widest leading-none">TOTAL</p>
-                                <p className="text-2xl font-black text-gray-900 dark:text-white tabular-nums leading-none tracking-tighter">${formatCurrency(total)}</p>
+                                <div className="text-2xl font-black text-gray-900 dark:text-white tabular-nums leading-none tracking-tighter flex overflow-hidden h-7 items-center">
+                                    <span className="mr-1">$</span>
+                                    <AnimatePresence mode="wait">
+                                        <motion.span
+                                            key={total}
+                                            initial={{ y: 10, opacity: 0 }}
+                                            animate={{ y: 0, opacity: 1 }}
+                                            exit={{ y: -10, opacity: 0 }}
+                                            transition={{ duration: 0.15, ease: "easeOut" }}
+                                        >
+                                            {formatCurrency(total)}
+                                        </motion.span>
+                                    </AnimatePresence>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -407,13 +436,11 @@ export default function NewSalePage() {
                             </div>
 
                             <div className="grid grid-cols-4 gap-1 flex-1 mt-1">
-                                <Button color="danger" variant="flat" className="h-full min-h-[40px] rounded-md font-bold text-xs" onPress={() => { setSearchQuery(''); returnFocusToScanner(); }}>CE</Button>
-                                <Button variant="flat" className="h-full min-h-[40px] rounded-md font-bold text-base bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-white" onPress={() => { setSearchQuery(p => p + '*'); returnFocusToScanner(); }}>*</Button>
+                                <Button color="danger" variant="flat" className="h-full min-h-[40px] rounded-md font-bold text-xs" onPress={() => { setScannerBuffer(''); returnFocusToScanner(); }}>CE</Button>
+                                <Button variant="flat" className="h-full min-h-[40px] rounded-md font-bold text-base bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-white" onPress={() => { setScannerBuffer(p => p + '*'); returnFocusToScanner(); }}>*</Button>
                                 <Button variant="flat" className="h-full min-h-[40px] rounded-md font-bold text-xl bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-white leading-none" onPress={() => { if (selectedItemId) updateQuantity(selectedItemId, -1); returnFocusToScanner(); }}>-</Button>
                                 <Button variant="flat" className="h-full min-h-[40px] rounded-md font-bold text-xl bg-gray-100 dark:bg-zinc-800 text-gray-900 dark:text-white leading-none" onPress={() => {
-                                    if (searchQuery.length > 0) {
-                                        addMiscItem(searchQuery);
-                                    } else if (selectedItemId) {
+                                    if (selectedItemId) {
                                         updateQuantity(selectedItemId, 1);
                                     }
                                     returnFocusToScanner();
@@ -421,10 +448,24 @@ export default function NewSalePage() {
 
                                 <div className="col-span-3 grid grid-cols-3 gap-1">
                                     {['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '.'].map(n => (
-                                        <Button key={n} variant="bordered" className={`h-full min-h-[40px] rounded-md text-base font-bold bg-gray-50 dark:bg-zinc-950 border-gray-200 dark:border-white/5 text-gray-900 dark:text-white hover:border-emerald-500 ${n === '0' ? 'col-span-2' : ''}`} onPress={() => { setSearchQuery(p => p + n); returnFocusToScanner(); }}>{n}</Button>
+                                        <Button key={n} variant="bordered" className={`h-full min-h-[40px] rounded-md text-base font-bold bg-gray-50 dark:bg-zinc-950 border-gray-200 dark:border-white/5 text-gray-900 dark:text-white hover:border-emerald-500 ${n === '0' ? 'col-span-2' : ''}`} onPress={() => { setScannerBuffer(p => p + n); returnFocusToScanner(); }}>{n}</Button>
                                     ))}
                                 </div>
-                                <Button className="col-span-1 h-full min-h-[40px] rounded-md font-black text-2xl text-white bg-emerald-500 hover:bg-emerald-600 shadow-sm" onPress={() => { setIsPaymentDialogOpen(true); }} isDisabled={currentCart.length === 0}>=</Button>
+                                <Button 
+                                    className="col-span-1 h-full min-h-[40px] rounded-md font-black text-2xl text-white bg-emerald-500 hover:bg-emerald-600 shadow-sm" 
+                                    onPress={() => { 
+                                        if (scannerBuffer.length > 0) {
+                                            handleCodeSubmit(scannerBuffer);
+                                            setScannerBuffer('');
+                                        } else if (currentCart.length > 0) {
+                                            setIsPaymentDialogOpen(true); 
+                                        }
+                                        returnFocusToScanner();
+                                    }} 
+                                    isDisabled={currentCart.length === 0 && scannerBuffer.length === 0}
+                                >
+                                    =
+                                </Button>
                             </div>
                         </div>
                     </aside>

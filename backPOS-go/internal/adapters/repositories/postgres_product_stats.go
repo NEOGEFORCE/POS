@@ -2,12 +2,13 @@ package repositories
 
 import (
 	"fmt"
+	"time"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 )
 
 // GetInventoryStats genera un reporte detallado de rotación, costos y rentabilidad por producto
-func (r *PostgresProductRepository) GetInventoryStats(from, to string) ([]ports.InventoryStat, error) {
+func (r *PostgresProductRepository) GetInventoryStats(from, to time.Time) ([]ports.InventoryStat, error) {
 	var stats []ports.InventoryStat
 
 	query := r.db.Table("products").
@@ -16,10 +17,10 @@ func (r *PostgresProductRepository) GetInventoryStats(from, to string) ([]ports.
 		Joins("left join sale_details on sale_details.barcode = products.barcode").
 		Joins("left join sales on sales.\"saleId\" = sale_details.\"saleId\"")
 
-	if from != "" {
+	if !from.IsZero() {
 		query = query.Where("sales.\"saleDate\" >= ?", from)
 	}
-	if to != "" {
+	if !to.IsZero() {
 		query = query.Where("sales.\"saleDate\" <= ?", to)
 	}
 
@@ -58,6 +59,7 @@ func (r *PostgresProductRepository) GetSavingsOpportunities() ([]ports.SavingsOp
 			JOIN suppliers s ON ps."supplierId" = s.id
 			WHERE ps."purchasePrice" < p."purchasePrice"
 			AND p."quantity" > 0
+			AND COALESCE(p."isWeighted", false) = false
 		)
 		SELECT barcode, product_name, current_price, stock, best_price, best_supplier, potential_save
 		FROM RankedSuppliers

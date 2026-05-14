@@ -11,6 +11,7 @@ import { es } from 'date-fns/locale';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAuth } from '@/lib/auth';
 import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
+import { formatTime } from '@/lib/utils';
 
 interface SalesTableProps {
     sales: Sale[];
@@ -55,7 +56,7 @@ const SaleRow = React.memo(({
                     </div>
                     <div className="flex flex-col">
                         <span className="text-zinc-900 dark:text-white uppercase italic font-black text-xs">{format(new Date(sale.date), "dd MMM yyyy", { locale: es })}</span>
-                        <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium font-mono">{format(new Date(sale.date), "HH:mm:ss")}</span>
+                        <span className="text-[10px] text-gray-400 dark:text-zinc-500 font-medium font-mono">{formatTime(sale.date)}</span>
                     </div>
                 </div>
             </div>

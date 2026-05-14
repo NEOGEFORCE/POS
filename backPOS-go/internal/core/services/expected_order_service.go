@@ -83,6 +83,11 @@ func (s *ExpectedOrderService) GetExpectedOrdersToday() ([]models.ExpectedOrder,
 	return s.repo.GetExpectedToday()
 }
 
+// GetExpectedOrdersByDate obtiene los pedidos esperados para una fecha específica
+func (s *ExpectedOrderService) GetExpectedOrdersByDate(date string) ([]models.ExpectedOrder, error) {
+	return s.repo.GetByDate(date)
+}
+
 // GetExpectedOrdersBySupplier obtiene pedidos esperados por proveedor
 func (s *ExpectedOrderService) GetExpectedOrdersBySupplier(supplierID uint) ([]models.ExpectedOrder, error) {
 	return s.repo.GetBySupplier(supplierID)
@@ -111,6 +116,28 @@ func (s *ExpectedOrderService) DeleteExpectedOrder(id uint) error {
 // MarkAsReceived marca un pedido esperado como recibido
 func (s *ExpectedOrderService) MarkAsReceived(id uint) error {
 	return s.repo.UpdateStatus(id, "RECEIVED")
+}
+
+// MarkAsReceivedBySupplier busca y marca como recibido cualquier pedido pendiente de HOY para un proveedor
+func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
+	if supplierID == 0 {
+		return nil
+	}
+	
+	today := time.Now().Format("2006-01-02")
+	orders, err := s.repo.GetByDate(today)
+	if err != nil {
+		return err
+	}
+	
+	for _, o := range orders {
+		if o.SupplierID == supplierID && o.Status == "PENDING" {
+			log.Printf("[ExpectedOrderService] Marcando pedido #%d como recibido para proveedor %d", o.ID, supplierID)
+			_ = s.repo.UpdateStatus(o.ID, "RECEIVED")
+		}
+	}
+	
+	return nil
 }
 
 // CreateExpectedOrderFromRequest crea un pedido esperado desde un request

@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,15 +14,13 @@ type DebtHandler struct {
 	clientService *services.ClientService
 	saleService   *services.SaleService
 	auditService  *services.AuditService
-	sseService    *services.SSEService
 }
 
-func NewDebtHandler(client *services.ClientService, sale *services.SaleService, a *services.AuditService, sse *services.SSEService) *DebtHandler {
+func NewDebtHandler(client *services.ClientService, sale *services.SaleService, a *services.AuditService) *DebtHandler {
 	return &DebtHandler{
 		clientService: client,
 		saleService:   sale,
 		auditService:  a,
-		sseService:    sse,
 	}
 }
 
@@ -73,5 +72,8 @@ func (h *DebtHandler) RegisterPayment(c *gin.Context) {
 		fmt.Sprintf("Se registró un abono de $%s para la deuda con ID #%d usando el método %s", fmt.Sprintf("%.2f", paymentData.Amount), id, paymentData.Method),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
-	go h.sseService.BroadcastDashboardUpdate()
+	go func() {
+		sse.GetSSEService().BroadcastDashboardUpdate()
+		sse.GetSSEService().BroadcastCustomerUpdate(nil)
+	}()
 }

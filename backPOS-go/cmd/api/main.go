@@ -53,46 +53,47 @@ func main() {
 	emailService := services.NewEmailService()
 	printService := services.NewPrintService()
 	auditService := services.NewAuditService(auditRepo)
-	productService := services.NewProductService(productRepo, movementRepo)
-	sseService := services.NewSSEService()
-	sseService.StartHeartbeat()
+	expectedOrderService := services.NewExpectedOrderService(expectedOrderRepo)
+	productService := services.NewProductService(productRepo, movementRepo, expectedOrderService)
 
 	telegramService := services.NewTelegramService()
-	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo, sseService, telegramService)
+	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo, telegramService)
 	authService := services.NewAuthService(adminRepo, emailService, auditService)
 	categoryService := services.NewCategoryService(categoryRepo)
 	supplierService := services.NewSupplierService(supplierRepo)
 	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo, adminRepo, reportRepo)
 	inventoryService := services.NewInventoryService(productRepo, saleRepo)
 	clientService := services.NewClientService(clientRepo, creditRepo)
-	expenseService := services.NewExpenseService(expenseRepo, supplierRepo, orderRepo, productRepo, sseService)
+	expenseService := services.NewExpenseService(expenseRepo, supplierRepo, orderRepo, productRepo, expectedOrderService)
 	adminService := services.NewAdminService(adminRepo)
-	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo, movementRepo, sseService)
+	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo, movementRepo)
 	orderService := services.NewPurchaseOrderService(orderRepo)
-	expectedOrderService := services.NewExpectedOrderService(expectedOrderRepo)
 	reportService := services.NewReportService(reportRepo)
 
 	// Initialize Handlers
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService)
-	saleHandler := handlers.NewSaleHandler(saleService, auditService, sseService)
+	saleHandler := handlers.NewSaleHandler(saleService, auditService)
 	authHandler := handlers.NewAuthHandler(authService)
 	categoryHandler := handlers.NewCategoryHandler(categoryService, auditService)
 	supplierHandler := handlers.NewSupplierHandler(supplierService, auditService)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService)
 	dashboardReportHandler := handlers.NewDashboardReportHandler(dashboardService, auditService)
-	clientHandler := handlers.NewClientHandler(clientService, auditService)
-	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService, sseService)
-	adminHandler := handlers.NewAdminHandler(adminService, auditService)
-	returnHandler := handlers.NewReturnHandler(returnService, auditService, sseService)
+	clientHandler := handlers.NewClientHandler(clientService, saleRepo, auditService)
+	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService)
+	adminHandler := handlers.NewAdminHandler(adminService, auditService, telegramService)
+	returnHandler := handlers.NewReturnHandler(returnService, auditService)
 	orderHandler := handlers.NewOrderHandler(inventoryService, orderService, expectedOrderService, telegramService, auditService)
-	debtHandler := handlers.NewDebtHandler(clientService, saleService, auditService, sseService)
+	debtHandler := handlers.NewDebtHandler(clientService, saleService, auditService)
 	notificationHandler := handlers.NewNotificationHandler(telegramService)
 	reportHandler := handlers.NewReportHandler(reportService)
-	sseHandler := handlers.NewSSEHandler(sseService)
+	sseHandler := handlers.NewSSEHandler()
 
 	// Initialize and Start Cron Jobs
-	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService)
+	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService)
 	cronManager.Start()
+
+	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
+	telegramService.StartListener(inventoryService, saleRepo, dashboardService)
 
 	r := gin.New()
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -106,12 +107,10 @@ func main() {
 	// CORS Middleware - Strict Origin Policy
 	// Only allow specific origins for security
 	allowedOrigins := map[string]bool{
-		"http://localhost:3000":     true, // Dev frontend
-		"http://localhost:9002":     true, // Alternative dev port
-		"https://tudominio.com":     true, // Production domain
-		"https://app.tudominio.com": true, // Production app subdomain
-		"http://192.168.1.21:3000":  true, // Specific user IP
-		"http://192.168.1.6:3000":   true, // Primary local IP
+		"http://localhost:3000":     true,
+		"http://127.0.0.1:3000":     true,
+		"http://192.168.1.6:3000":   true,
+		"http://192.168.1.21:3000":  true,
 	}
 
 	isLocalIP := func(origin string) bool {
@@ -193,8 +192,8 @@ func main() {
 		if gin.Mode() == gin.ReleaseMode {
 			c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
 		}
-		// Content Security Policy (basic)
-		c.Writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' ws: wss:;")
+		// Content Security Policy (relaxed for local network and multiple ports)
+		c.Writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src * ws: wss:;")
 		c.Next()
 	})
 
@@ -232,8 +231,11 @@ func main() {
 			productManage.Use(middlewares.RoleMiddleware("empleado"))
 			{
 				productManage.POST("/products/create-products", productHandler.Create)
+				productManage.POST("/products/import-csv", productHandler.ImportCSV)
+				productManage.GET("/products/export-csv", productHandler.ExportCSV)
 				productManage.PUT("/products/update-products/:barcode", productHandler.Update)
 				productManage.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
+				productManage.POST("/products/open-bulk/:barcode", productHandler.OpenBulk)
 			}
 
 			// Products Administration (Solo Admin)
@@ -301,6 +303,7 @@ func main() {
 				clientGroup.GET("/get-client/:dni", clientHandler.GetByDNI)
 				clientGroup.POST("/create-client", clientHandler.Create) // Empleados pueden crear
 				clientGroup.POST("/pay-credit", clientHandler.PayCredit) // Empleados pueden recibir abonos
+				clientGroup.GET("/get-statement/:dni", clientHandler.GetStatement)
 
 				// Acciones de Gestión (Solo Admin/Superadmin)
 				clientAdmin := clientGroup.Group("/")
@@ -350,6 +353,7 @@ func main() {
 				dashboard.POST("/cashier-closure/close", middlewares.RoleMiddleware("empleado"), dashboardHandler.SaveClosure)
 				dashboard.POST("/telegram-report-partial", middlewares.RoleMiddleware("empleado"), dashboardHandler.SendPartialReport)
 				dashboard.GET("/cashier-history", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetClosuresHistory)
+				dashboard.DELETE("/cashier-history/:id", middlewares.RoleMiddleware("admin"), dashboardHandler.DeleteClosure)
 				dashboard.GET("/detailed-report", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetDetailedReport)
 				
 				// Analytical Reports
@@ -378,6 +382,7 @@ func main() {
 				
 				// Mantenimiento de BD (V7.0)
 				adminGroup.GET("/backup", adminHandler.GenerateDatabaseBackup)
+				adminGroup.POST("/backup/telegram", adminHandler.SendBackupToTelegram)
 				adminGroup.POST("/purge", adminHandler.PurgeOldData)
 			}
 
@@ -410,9 +415,8 @@ func main() {
 		}
 	}
 
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	healthHandler := handlers.NewHealthHandler(repositories.DB)
+	r.GET("/health", healthHandler.Check)
 
 	port := os.Getenv("PORT")
 	if port == "" {

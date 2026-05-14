@@ -3,25 +3,25 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Button, Input, Spinner } from "@heroui/react";
 import {
-    Package, Search, AlertTriangle, PlusCircle, RefreshCw, Barcode, Warehouse, ShoppingBag, ShieldCheck
+    Package, Search, AlertTriangle, PlusCircle, RefreshCw, Barcode, Warehouse, ShoppingBag, ShieldCheck, Camera, FileUp, FileDown
 } from 'lucide-react';
-import dynamic from 'next/dynamic';
-import { broadcastRevalidate } from '@/lib/revalidate';
+import nextDynamic from 'next/dynamic';
+import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Product, Category } from '@/lib/definitions';
-import { applyRounding, formatCurrency, parseCurrency, sanitizeProductPayload, getCriticalThreshold } from '@/lib/utils';
+import { applyRounding, formatCurrency, parseCurrency, sanitizeProductPayload, getStockStatus } from '@/lib/utils';
 import Cookies from 'js-cookie';
 import { apiFetch, ApiError } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
 
 // COMPONENTES DINÁMICOS PREMIUM
-const ProductStats = dynamic(() => import('./components/ProductStats'), { ssr: false });
-const ProductTable = dynamic(() => import('./components/ProductTable'), { ssr: false });
-const ProductFormModal = dynamic(() => import('./components/ProductFormModal'), { ssr: false });
-const InventoryAlertsModal = dynamic(() => import('./components/InventoryAlertsModal'), { ssr: false });
-const DeleteProtocolModal = dynamic(() => import('./components/DeleteProtocolModal'), { ssr: false });
-const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
+const ProductStats = nextDynamic(() => import('./components/ProductStats'), { ssr: false });
+const ProductTable = nextDynamic(() => import('./components/ProductTable'), { ssr: false });
+const ProductFormModal = nextDynamic(() => import('./components/ProductFormModal'), { ssr: false });
+const InventoryAlertsModal = nextDynamic(() => import('./components/InventoryAlertsModal'), { ssr: false });
+const DeleteProtocolModal = nextDynamic(() => import('./components/DeleteProtocolModal'), { ssr: false });
+const ScannerOverlay = nextDynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 
 const formatCOP = (val: number | string): string => {
     if (val === undefined || val === null || val === '') return '0';
@@ -69,13 +69,13 @@ export default function ProductsPage() {
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
     const [alertsDialogOpen, setAlertsDialogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
-    const [scanMode, setScanMode] = useState<'main' | 'alternate'>('main');
+    const [scanMode, setScanMode] = useState<'main' | 'alternate' | 'search'>('main');
 
     const [newProduct, setNewProduct] = useState<Omit<Product, 'id'>>({
-        barcode: '', productName: '', quantity: undefined as any, isWeighted: false,
+        barcode: '', productName: '', quantity: '' as any, isWeighted: false,
         purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20,
-        minStock: undefined as any,
-        packMultiplier: undefined as any
+        minStock: '' as any,
+        packMultiplier: '' as any
     });
     const [newMargin, setNewMargin] = useState(20);
     const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -84,27 +84,66 @@ export default function ProductsPage() {
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
     const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
 
+    // --- PERSISTENCIA DE BORRADORES (Tarea 4) ---
+    useEffect(() => {
+        const saved = localStorage.getItem('product-form-draft');
+        if (saved) {
+            try {
+                const draft = JSON.parse(saved);
+                setNewProduct(prev => ({ ...prev, ...draft }));
+            } catch (e) {
+                console.error("Error loading product draft", e);
+            }
+        }
+    }, []);
+
+    // SINCRONIZACIÓN ZERO-F5: Escuchar cambios globales (con blindaje contra parpadeo)
+    useEffect(() => {
+        let timeout: NodeJS.Timeout;
+        const cleanup = setupSyncListener((event) => {
+            if (event === 'PRODUCT_UPDATE' || event === 'SALE_MADE' || event === 'DASHBOARD_UPDATE' || event === 'CATEGORY_UPDATE' || event === 'SUPPLIER_UPDATE' || event === 'STOCK_UPDATE') {
+                // Pequeño delay de 800ms para evitar que la revalidación SSE 
+                // "pise" a una mutación optimista local que aún está en vuelo.
+                clearTimeout(timeout);
+                timeout = setTimeout(() => {
+                    mutateProducts();
+                    mutateAllProducts();
+                }, 800);
+            }
+        });
+        return () => {
+            cleanup();
+            clearTimeout(timeout);
+        };
+    }, [mutateProducts, mutateAllProducts]);
+
+    useEffect(() => {
+        if (addDialogOpen) {
+            localStorage.setItem('product-form-draft', JSON.stringify(newProduct));
+        }
+    }, [newProduct, addDialogOpen]);
+
     // Paginación y Filtrado 
     const products: Product[] = useMemo(() => productsData?.items || [], [productsData]);
     const totalItems = productsData?.total || 0;
     const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
     const stats = useMemo(() => {
-        const cost = products.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.purchasePrice)), 0);
-        const retail = products.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.salePrice)), 0);
+        const source = allProductsData || [];
+        const cost = source.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.purchasePrice)), 0);
+        const retail = source.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.salePrice)), 0);
+        const margin = cost > 0 ? ((retail - cost) / retail) * 100 : 0;
+        const totalItems = productsData?.total || source.length;
 
-        // Semáforo dinámico: contar críticos (rojo) y advertencias (ámbar) por separado
+        // Semáforo dinámico v2.0: contar críticos (rojo) y advertencias (reorden)
         const criticalCount = products.filter(p => {
             if (p.isWeighted) return false;
-            const threshold = getCriticalThreshold(p.minStock || 5);
-            return p.quantity <= threshold;
+            return getStockStatus(p.quantity, p.minStock || 0) === 'CRITICAL';
         }).length;
 
         const warningCount = products.filter(p => {
             if (p.isWeighted) return false;
-            const minStock = p.minStock || 5;
-            const threshold = getCriticalThreshold(minStock);
-            return p.quantity <= minStock && p.quantity > threshold;
+            return getStockStatus(p.quantity, p.minStock || 0) === 'REORDER';
         }).length;
 
         return {
@@ -112,7 +151,7 @@ export default function ProductsPage() {
             totalRetail: retail,
             criticalStock: criticalCount,
             warningStock: warningCount,
-            totalItems: products.length
+            totalItems: totalItems
         };
     }, [products]);
     
@@ -144,7 +183,8 @@ export default function ProductsPage() {
             }, token!);
             toast({ variant: 'success', title: 'ÉXITO', description: 'REFERENCIA SINCRONIZADA.' });
             setAddDialogOpen(false);
-            setNewProduct({ barcode: '', productName: '', quantity: undefined as any, isWeighted: false, purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20, minStock: undefined as any, packMultiplier: undefined as any });
+            localStorage.removeItem('product-form-draft'); // Limpieza estricta solo tras éxito
+            setNewProduct({ barcode: '', productName: '', quantity: '' as any, isWeighted: false, purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20, minStock: '' as any, packMultiplier: '' as any });
             mutateProducts();
             mutateAllProducts();
             broadcastRevalidate('PRODUCT_UPDATE');
@@ -178,6 +218,7 @@ export default function ProductsPage() {
                                     setAddDialogOpen(false);
                                     mutateProducts();
                                     mutateAllProducts();
+                                    broadcastRevalidate('PRODUCT_UPDATE');
                                 } catch (e: any) {
                                     toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
                                 }
@@ -271,22 +312,166 @@ export default function ProductsPage() {
             mutateProducts();
             mutateAllProducts();
             broadcastRevalidate('PRODUCT_UPDATE');
+            broadcastRevalidate('DASHBOARD_UPDATE');
+            broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
         }
     };
 
+    const [loadingBarcodes, setLoadingBarcodes] = useState<Set<string>>(new Set());
+
     const handleQuickStockUpdate = useCallback(async (barcode: string, amount: number) => {
         const token = Cookies.get('org-pos-token');
+        setLoadingBarcodes(prev => new Set(prev).add(barcode));
+
+        // Optimistic UI Update (v2.1: Functional Update to prevent race conditions)
+        if (productsData) {
+            mutateProducts((current: any) => {
+                if (!current || !current.items) return current;
+                return {
+                    ...current,
+                    items: current.items.map((p: any) => 
+                        p.barcode === barcode 
+                            ? { ...p, quantity: p.quantity + amount } 
+                            : p
+                    )
+                };
+            }, false);
+        }
+
         try {
             await apiFetch(`/products/adjust/${barcode}`, {
                 method: 'PATCH', body: JSON.stringify({ amount }), fallbackError: 'FALLO AL AJUSTAR'
             }, token!);
+            
+            // Ya no emitimos broadcastRevalidate localmente porque el backend 
+            // ya lo hace a través de SSE en el repositorio.
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+            // Revertir en caso de error (mutate sin data revalida del servidor)
             mutateProducts();
+        } finally {
+            setLoadingBarcodes(prev => {
+                const next = new Set(prev);
+                next.delete(barcode);
+                return next;
+            });
+        }
+    }, [toast, mutateProducts, productsData]);
+
+    const handleOpenBulk = useCallback(async (product: Product) => {
+        if (!window.confirm(`¿DESTAPAR 1 UNIDAD DE "${product.productName}" PARA VENTA LIBRE?\n\nEl stock bajará en 1, pero se justificará en el reporte como apertura de paca.`)) {
+            return;
+        }
+
+        const token = Cookies.get('org-pos-token');
+        const barcode = product.barcode;
+        setLoadingBarcodes(prev => new Set(prev).add(barcode));
+
+        // Optimistic UI Update (Zero-F5)
+        if (productsData) {
+            const optimisticData = {
+                ...productsData,
+                items: productsData.items.map((p: any) => 
+                    p.barcode === barcode 
+                        ? { ...p, quantity: p.quantity - 1 } 
+                        : p
+                )
+            };
+            mutateProducts(optimisticData, false);
+        }
+
+        try {
+            await apiFetch(`/products/open-bulk/${barcode}`, {
+                method: 'POST', fallbackError: 'FALLO AL ABRIR PACA'
+            }, token!);
+            
+            toast({ variant: 'success', title: 'PACA ABIERTA', description: 'STOCK AJUSTADO Y JUSTIFICADO EN EL KÁRDEX.' });
+            
+            // Revalidación global
+            broadcastRevalidate('PRODUCT_UPDATE');
+            mutateAllProducts();
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+            // Revertir
+            mutateProducts();
+        } finally {
+            setLoadingBarcodes(prev => {
+                const next = new Set(prev);
+                next.delete(barcode);
+                return next;
+            });
+        }
+    }, [toast, mutateProducts, productsData, mutateAllProducts]);
+
+    const handleImportCSV = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const token = Cookies.get('org-pos-token');
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/import-csv`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` },
+                body: formData
+            });
+
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error?.message || "Fallo en importación");
+
+            toast({ 
+                variant: 'success', 
+                title: 'IMPORTACIÓN COMPLETADA', 
+                description: `Se procesaron ${result.total} productos. Éxitos: ${result.success}.` 
+            });
+
+            if (result.errors && result.errors.length > 0) {
+                console.error("Errores de importación:", result.errors);
+                toast({
+                    variant: 'destructive',
+                    title: 'AVISO: ALGUNOS ERRORES',
+                    description: `${result.errors.length} líneas fallaron. Revisa la consola.`
+                });
+            }
+
+            mutateProducts();
+            mutateAllProducts();
+            broadcastRevalidate('PRODUCT_UPDATE');
+        } catch (err: any) {
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+        } finally {
+            e.target.value = ''; // Reset input
+        }
+    };
+
+    const handleExportCSV = async () => {
+        const token = Cookies.get('org-pos-token');
+        try {
+            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/export-csv`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) throw new Error("Falló la exportación");
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `catalogo_productos_${new Date().toISOString().split('T')[0]}.csv`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            
+            toast({ variant: 'success', title: 'ÉXITO', description: 'CATÁLOGO DESCARGADO.' });
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
         }
-    }, [toast, mutateProducts]);
+    };
 
     // Handler estable para editar producto (normaliza datos)
     const handleEdit = useCallback((p: Product) => {
@@ -304,7 +489,10 @@ export default function ProductsPage() {
     // Handlers estables para scanner
     const handleScannerResult = useCallback((b: string) => {
         const code = b.toUpperCase().trim();
-        if (scanMode === 'main') {
+        if (scanMode === 'search') {
+            setSearchTerm(code);
+            setFilter(code);
+        } else if (scanMode === 'main') {
             if (addDialogOpen) setNewProduct(p => ({ ...p, barcode: code }));
             else if (editDialogOpen) setEditingProduct(p => p ? ({ ...p, barcode: code }) : null);
         } else {
@@ -370,14 +558,39 @@ export default function ProductsPage() {
                             <RefreshCw size={16} />
                         </Button>
                         {canManage && (
-                            <Button
-                                onPress={() => setAddDialogOpen(true)}
-                                className="h-9 px-3 md:px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
-                            >
-                                <PlusCircle size={16} />
-                                <span className="hidden sm:inline ml-2">nuevo producto</span>
-                                <span className="sm:hidden ml-1.5 uppercase font-black">nuevo</span>
-                            </Button>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="file"
+                                    id="csv-import"
+                                    className="hidden"
+                                    accept=".csv"
+                                    onChange={handleImportCSV}
+                                />
+                                <Button
+                                    variant="flat"
+                                    onPress={handleExportCSV}
+                                    className="h-9 px-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 font-black text-[9px] uppercase tracking-widest italic rounded-xl border border-emerald-500/20 active:scale-95 transition-all"
+                                >
+                                    <FileDown size={16} />
+                                    <span className="hidden sm:inline ml-2">Exportar CSV</span>
+                                </Button>
+                                <Button
+                                    variant="flat"
+                                    onPress={() => document.getElementById('csv-import')?.click()}
+                                    className="h-9 px-3 bg-blue-500/10 text-blue-500 font-black text-[9px] uppercase tracking-widest italic rounded-xl border border-blue-500/20 active:scale-95 transition-all"
+                                >
+                                    <FileUp size={16} />
+                                    <span className="hidden sm:inline ml-2">Importar CSV</span>
+                                </Button>
+                                <Button
+                                    onPress={() => setAddDialogOpen(true)}
+                                    className="h-9 px-3 md:px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+                                >
+                                    <PlusCircle size={16} />
+                                    <span className="hidden sm:inline ml-2">nuevo producto</span>
+                                    <span className="sm:hidden ml-1.5 uppercase font-black">nuevo</span>
+                                </Button>
+                            </div>
                         )}
                     </div>
                 </div>
@@ -389,7 +602,18 @@ export default function ProductsPage() {
                             value={searchTerm}
                             onValueChange={setSearchTerm}
                             startContent={<Search size={16} className="text-emerald-500 ml-2" />}
-                            endContent={<Barcode size={16} className="text-gray-400 mr-2" />}
+                            endContent={
+                                <div className="flex items-center gap-2 mr-2">
+                                    <button 
+                                        onClick={() => { setScanMode('search'); setIsScannerOpen(true); }}
+                                        className="p-1.5 hover:bg-emerald-500/10 rounded-lg text-emerald-500 transition-all active:scale-90"
+                                        title="Escanear con Cámara"
+                                    >
+                                        <Camera size={18} />
+                                    </button>
+                                    <Barcode size={18} className="text-gray-400" />
+                                </div>
+                            }
                             classNames={{
                                 inputWrapper: "h-11 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-inner rounded-xl group-data-[focus=true]:border-emerald-500 transition-all",
                                 input: "text-[11px] font-black tracking-widest italic uppercase ml-2"
@@ -436,6 +660,8 @@ export default function ProductsPage() {
                             onEdit={handleEdit}
                             onDelete={(b) => { setDeletingBarcode(b); setDeleteDialogOpen(true); }}
                             onQuickUpdate={handleQuickStockUpdate}
+                            onOpenBulk={handleOpenBulk}
+                            loadingBarcodes={loadingBarcodes}
                             onPageChange={setCurrentPage}
                             onPageSizeChange={(s) => { setPageSize(s); setCurrentPage(1); }}
                             formatCOP={formatCOP}
@@ -484,7 +710,11 @@ export default function ProductsPage() {
             <InventoryAlertsModal
                 isOpen={alertsDialogOpen}
                 onOpenChange={setAlertsDialogOpen}
-                products={products.filter(p => !p.isWeighted && p.quantity <= (p.minStock || 5))}
+                products={products.filter(p => {
+                    if (p.isWeighted) return false;
+                    const status = getStockStatus(p.quantity, p.minStock || 0);
+                    return status === 'CRITICAL' || status === 'REORDER';
+                })}
             />
 
             <ScannerOverlay

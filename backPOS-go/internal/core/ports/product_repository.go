@@ -1,6 +1,9 @@
 package ports
 
-import "backPOS-go/internal/core/domain/models"
+import (
+	"backPOS-go/internal/core/domain/models"
+	"time"
+)
 
 type InventoryStat struct {
 	Barcode       string  `json:"barcode"`
@@ -43,12 +46,16 @@ type ReceiveEntry struct {
 	Iva              float64 `json:"iva"`
 	Icui             float64 `json:"icui"`
 	Ibua             float64 `json:"ibua"`
+	IvaPct           float64 `json:"ivaPct"`
+	IcuiPct          float64 `json:"icuiPct"`
+	IbuaPct          float64 `json:"ibuaPct"`
 	Discount         float64 `json:"discount"`
 }
 
 type ProductRepository interface {
 	Save(product *models.Product) error
 	GetByBarcode(barcode string) (*models.Product, error)
+	GetByBarcodes(barcodes []string) ([]models.Product, error)
 	GetByName(name string) (*models.Product, error)
 	GetByBarcodeWithPreloads(barcode string, preloads ...string) (*models.Product, error)
 	GetAll() ([]models.Product, error)
@@ -58,9 +65,11 @@ type ProductRepository interface {
 	Delete(barcode string) error
 	UpdateQuantity(barcode string, newQuantity float64) error
 	BatchUpdateQuantities(updates map[string]float64) error
+	BatchAdjustQuantities(adjustments map[string]float64) error
+	BatchAdjustQuantitiesWithTx(tx interface{}, adjustments map[string]float64) error
 	Count() (int64, error)
 	GetActiveCount() (int64, error)
-	GetInventoryStats(from, to string) ([]InventoryStat, error)
+	GetInventoryStats(from, to time.Time) ([]InventoryStat, error)
 	UpdateSupplierPrice(productBarcode string, supplierID uint, price float64) error
 	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
 	GetBySupplier(supplierID uint) ([]models.Product, error)
