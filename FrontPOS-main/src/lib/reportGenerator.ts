@@ -1,4 +1,4 @@
-import jsPDF from 'jspdf';
+﻿import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 import { formatCurrency } from './utils';
 
@@ -184,7 +184,7 @@ export const generatePDFReport = async ({
 
   if (sendToTelegram) {
     try {
-      let caption = `📊 ${title}\n${subtitle || ''}`;
+      let caption = `ðŸ“Š ${title}\n${subtitle || ''}`;
 
       // Lógica de Plantillas Premium para Telegram
       if (title.toUpperCase().includes('ARQUEO GENERAL DE BÓVEDA')) {
@@ -193,38 +193,38 @@ export const generatePDFReport = async ({
           return acc;
         }, {});
 
-        caption = `🏦 ARQUEO GENERAL DE BÓVEDA
-══════════════════════════════════
-📅 FECHA: ${new Date().toLocaleString('es-CO')}
+        caption = `ðŸ¦ ARQUEO GENERAL DE BÓVEDA
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+ðŸ“… FECHA: ${new Date().toLocaleString('es-CO')}
 
-🖥️ 1. CAJAS EN PISO (Registradoras)
-──────────────────────────────────
-▫️ Esperado (Sistema):  ${dataMap['Cajas en Piso (Teórico)'] || '$0'}
-▫️ Reportado (Cajero):  ${dataMap['Cajas en Piso (Físico)'] || '$0'}
-👉 DESCUADRE CAJAS:     ${dataMap['Descuadre Cajas'] || '$0'}
+ðŸ–¥ï¸ 1. CAJAS EN PISO (Registradoras)
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+â–«ï¸ Esperado (Sistema):  ${dataMap['Cajas en Piso (Teórico)'] || '$0'}
+â–«ï¸ Reportado (Cajero):  ${dataMap['Cajas en Piso (Físico)'] || '$0'}
+ðŸ‘‰ DESCUADRE CAJAS:     ${dataMap['Descuadre Cajas'] || '$0'}
 
-🗄️ 2. FONDO / BÓVEDA
-──────────────────────────────────
-▫️ Saldo Intacto:       ${dataMap['Fondo Bóveda/Caja Fuerte'] || '$0'}
+ðŸ—„ï¸ 2. FONDO / BÓVEDA
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+â–«ï¸ Saldo Intacto:       ${dataMap['Fondo Bóveda/Caja Fuerte'] || '$0'}
 
-💎 3. EFECTIVO TOTAL FÍSICO (LOCAL)
-──────────────────────────────────
-💰 TOTAL A CONTAR:      ${dataMap['TOTAL EFECTIVO EN LOCAL'] || '$0'}
-══════════════════════════════════`;
+ðŸ’Ž 3. EFECTIVO TOTAL FÍSICO (LOCAL)
+â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+ðŸ’° TOTAL A CONTAR:      ${dataMap['TOTAL EFECTIVO EN LOCAL'] || '$0'}
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`;
       } else if (title.toUpperCase().includes('INVENTARIO')) {
-        caption = `📦 REPORTE DE INVENTARIO
-══════════════════════════════════
-📅 FECHA: ${new Date().toLocaleDateString('es-CO')}
-📊 ESTADO: Auditoría Valorizada
-${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
-══════════════════════════════════`;
+        caption = `ðŸ“¦ REPORTE DE INVENTARIO
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+ðŸ“… FECHA: ${new Date().toLocaleDateString('es-CO')}
+ðŸ“Š ESTADO: Auditoría Valorizada
+${summary ? summary.map(s => `â–«ï¸ ${s.label}: ${s.value}`).join('\n') : ''}
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`;
       } else if (title.toUpperCase().includes('RESULTADOS') || title.toUpperCase().includes('PNL')) {
-        caption = `📈 ESTADO DE RESULTADOS (PyG)
-══════════════════════════════════
-📅 PERIODO: ${subtitle || 'Actual'}
-💰 UTILIDAD NETA: ${data.find((d: any) => d.label.includes('NETA'))?.amount || 'N/A'}
-📊 MARGEN: ${summary?.[0]?.value || 'N/A'}
-══════════════════════════════════`;
+        caption = `ðŸ“ˆ ESTADO DE RESULTADOS (PyG)
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+ðŸ“… PERIODO: ${subtitle || 'Actual'}
+ðŸ’° UTILIDAD NETA: ${data.find((d: any) => d.label.includes('NETA'))?.amount || 'N/A'}
+ðŸ“Š MARGEN: ${summary?.[0]?.value || 'N/A'}
+â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`;
       }
 
       const formData = new FormData();
@@ -233,7 +233,7 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
 
       const token = typeof window !== 'undefined' ? (await import('js-cookie')).default.get('org-pos-token') : '';
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/notifications/telegram`, {
+      const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/notifications/telegram`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -254,7 +254,7 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
       }
 
       // REGISTRAR EN EL HISTORIAL (DATABASE)
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history`, {
+      await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/reports/history`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -268,7 +268,7 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
         })
       }).catch(err => console.error("Error registrando historial:", err));
     } catch (error: any) {
-      console.error('❌ Error enviando PDF a Telegram:', error);
+      console.error('âŒ Error enviando PDF a Telegram:', error);
       
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('telegram-error', { 
@@ -279,7 +279,7 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
   } else {
     // Si no se envía a Telegram, igual registramos en el historial
     const token = typeof window !== 'undefined' ? (await import('js-cookie')).default.get('org-pos-token') : '';
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/reports/history`, {
+    await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/reports/history`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -301,3 +301,5 @@ ${summary ? summary.map(s => `▫️ ${s.label}: ${s.value}`).join('\n') : ''}
   doc.save(`${safeFilename}.pdf`);
   return pdfBlob;
 };
+
+

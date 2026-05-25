@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Card, CardBody, Button, Badge, Chip, Skeleton, Modal, ModalContent, ModalHeader, ModalBody, Input } from "@heroui/react";
 import { 
@@ -47,7 +47,7 @@ export default function InventoryHub() {
     if (expectedOrders.length === 0) return;
     try {
       const token = Cookies.get('org-pos-token');
-      await fetch(`${process.env.NEXT_PUBLIC_API_URL}/telegram/send-delivery-summary`, {
+      await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/telegram/send-delivery-summary`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -146,7 +146,7 @@ export default function InventoryHub() {
             description: "Registrar entradas de productos y facturas de proveedores.",
             icon: Truck,
             href: "/inventory/receive",
-            colorClass: "bg-emerald-500",
+            colorClass: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5",
             shadowClass: "shadow-emerald-500/40",
             badgeColor: "success",
             badge: "Sincronizado",
@@ -184,18 +184,18 @@ export default function InventoryHub() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2 mb-1">
-                        <div className="h-8 w-8 bg-emerald-500 text-white rounded-lg flex items-center justify-center shadow-md shadow-emerald-500/20 rotate-3">
+                        <div className="h-8 w-8 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
                             <Package size={16} />
                         </div>
-                        <h1 className="text-xl md:text-2xl font-black text-gray-900 dark:text-white tracking-tighter italic uppercase">
-                            Consola de <span className="text-emerald-500">Inventario</span>
+                        <h1 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter tracking-tight uppercase">
+                            Consola de <span className="text-zinc-900 dark:text-zinc-100">Inventario</span>
                         </h1>
                     </div>
-                    <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.3em] italic ml-1">Master Control Ledger</p>
+                    <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight ml-1">Master Control Ledger</p>
                 </div>
 
                 <div className="flex gap-2">
-                    <Button variant="flat" size="sm" className="h-8 rounded-lg font-black text-[9px] uppercase italic tracking-wider bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 px-3">
+                    <Button variant="flat" size="sm" className="h-8 rounded-2xl font-medium text-[9px] uppercase tracking-tight tracking-wider card-base border-none border border-gray-200 dark:border-white/10 px-3">
                         <BarChart3 size={12} className="mr-1" /> Reporte
                     </Button>
                 </div>
@@ -204,17 +204,17 @@ export default function InventoryHub() {
             {/* DASHBOARD INTELIGENTE - DATOS EN TIEMPO REAL */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
                 {/* Valorización Costo */}
-                <Card className="bg-zinc-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 rounded-xl shadow-sm backdrop-blur-md">
+                <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
-                        <div className="h-8 w-8 rounded-lg bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/20 rotate-3">
+                        <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
                             <DollarSign size={16} />
                         </div>
                         <div className="flex flex-col min-w-0">
-                            <span className="text-[8px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-wider italic">Inversión (Costo)</span>
+                            <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-wider tracking-tight">Inversión (Costo)</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-20 rounded" />
                             ) : (
-                                <h3 className="text-base font-black italic tracking-tighter truncate text-gray-900 dark:text-white">
+                                <h3 className="text-base font-medium tracking-tight tracking-tighter truncate text-zinc-900 dark:text-zinc-50">
                                     ${formatCOP(stats.totalCostValue)}
                                 </h3>
                             )}
@@ -223,17 +223,17 @@ export default function InventoryHub() {
                 </Card>
 
                 {/* Valorización Venta */}
-                <Card className="bg-blue-500/5 dark:bg-black/40 border border-blue-500/10 dark:border-white/5 rounded-xl shadow-sm backdrop-blur-md">
+                <Card className="bg-blue-500/5 dark:bg-[#18181b] border border-blue-500/10 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
-                        <div className="h-8 w-8 rounded-lg bg-blue-500 text-white flex items-center justify-center shadow-md shadow-blue-500/20 -rotate-3">
+                        <div className="h-8 w-8 rounded-2xl bg-blue-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-blue-500/20 -rotate-3">
                             <TrendingDown className="rotate-180" size={16} />
                         </div>
                         <div className="flex flex-col min-w-0">
-                            <span className="text-[8px] font-black text-blue-600 dark:text-blue-500 uppercase tracking-wider italic">Valor Proyectado</span>
+                            <span className="text-[8px] font-medium text-blue-600 dark:text-blue-500 uppercase tracking-wider tracking-tight">Valor Proyectado</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-20 rounded" />
                             ) : (
-                                <h3 className="text-base font-black italic tracking-tighter truncate text-gray-900 dark:text-white">
+                                <h3 className="text-base font-medium tracking-tight tracking-tighter truncate text-zinc-900 dark:text-zinc-50">
                                     ${formatCOP(stats.totalSaleValue)}
                                 </h3>
                             )}
@@ -242,17 +242,17 @@ export default function InventoryHub() {
                 </Card>
 
                 {/* Salud del Stock */}
-                <Card className="bg-zinc-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 rounded-xl shadow-sm backdrop-blur-md">
+                <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
-                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center shadow-md rotate-3 ${stats.healthPercentage >= 80 ? 'bg-emerald-500' : stats.healthPercentage >= 50 ? 'bg-amber-500' : 'bg-rose-500'} text-white`}>
+                        <div className={`h-8 w-8 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3 ${stats.healthPercentage >= 80 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' : stats.healthPercentage >= 50 ? 'bg-amber-500' : 'bg-rose-500'} text-white`}>
                             <ShieldCheck size={16} />
                         </div>
                         <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-wider italic">Salud de Stock</span>
+                            <span className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-wider tracking-tight">Salud de Stock</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-14 rounded" />
                             ) : (
-                                <h3 className={`text-base font-black italic tracking-tighter ${stats.healthPercentage >= 80 ? 'text-emerald-500' : stats.healthPercentage >= 50 ? 'text-amber-500' : 'text-rose-500'}`}>
+                                <h3 className={`text-base font-medium tracking-tight tracking-tighter ${stats.healthPercentage >= 80 ? 'text-zinc-900 dark:text-zinc-100' : stats.healthPercentage >= 50 ? 'text-amber-500' : 'text-rose-500'}`}>
                                     {stats.healthPercentage}%
                                 </h3>
                             )}
@@ -261,17 +261,17 @@ export default function InventoryHub() {
                 </Card>
                 
                 {/* Ítems Críticos */}
-                <Card className="bg-zinc-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 rounded-xl shadow-sm backdrop-blur-md">
+                <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
-                        <div className="h-8 w-8 rounded-lg bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/20 -rotate-3">
+                        <div className="h-8 w-8 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 -rotate-3">
                             <AlertTriangle size={16} />
                         </div>
                         <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-wider italic">Críticos</span>
+                            <span className="text-[8px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-wider tracking-tight">Críticos</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-10 rounded" />
                             ) : (
-                                <h3 className="text-base font-black italic tracking-tighter text-rose-500">
+                                <h3 className="text-base font-medium tracking-tight tracking-tighter text-rose-500">
                                     {stats.criticalItems.length}
                                 </h3>
                             )}
@@ -280,17 +280,17 @@ export default function InventoryHub() {
                 </Card>
 
                 {/* Total Referencias */}
-                <Card className="bg-zinc-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 rounded-xl shadow-sm">
+                <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
-                        <div className="h-8 w-8 rounded-lg bg-slate-500 text-white flex items-center justify-center shadow-md shadow-slate-500/20">
+                        <div className="h-8 w-8 rounded-2xl bg-slate-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-slate-500/20">
                             <Package size={16} />
                         </div>
                         <div className="flex flex-col">
-                            <span className="text-[8px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-wider italic">SKU</span>
+                            <span className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-wider tracking-tight">SKU</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-12 rounded" />
                             ) : (
-                                <h3 className="text-base font-black italic tracking-tighter text-gray-900 dark:text-white">
+                                <h3 className="text-base font-medium tracking-tight tracking-tighter text-zinc-900 dark:text-zinc-50">
                                     {stats.totalItems}
                                 </h3>
                             )}
@@ -301,22 +301,22 @@ export default function InventoryHub() {
 
             {/* PANEL DE ÍTEMS CRÍTICOS - ACTIONABLE UI */}
             {stats.criticalItems.length > 0 && (
-                <Card className="bg-rose-50 dark:bg-rose-950/20 border-2 border-rose-500/10 dark:border-rose-500/20 rounded-2xl overflow-hidden animate-pulse-subtle shrink-0 shadow-lg shadow-rose-500/5">
+                <Card className="bg-rose-50 dark:bg-rose-950/20 border-2 border-rose-500/10 dark:border-rose-500/20 rounded-2xl overflow-hidden animate-pulse-subtle shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/5">
                     <CardBody className="p-3">
                         <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-2">
-                                <div className="h-6 w-6 rounded-lg bg-rose-500 text-white flex items-center justify-center shadow-md shadow-rose-500/30">
+                                <div className="h-6 w-6 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/30">
                                     <TrendingDown size={12} />
                                 </div>
                                 <div>
-                                    <h3 className="text-xs font-black text-gray-900 dark:text-white uppercase italic tracking-tight">
+                                    <h3 className="text-xs font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight">
                                         Reabastecimiento <span className="text-rose-500">Urgente</span>
                                     </h3>
                                 </div>
                             </div>
                             <Link href="/inventory/orders">
                                 <Button 
-                                    className="bg-rose-500 text-white font-black uppercase text-[9px] tracking-wider rounded-lg shadow-md shadow-rose-500/20 hover:scale-105 transition-all h-7 px-3"
+                                    className="bg-rose-500 text-white font-medium uppercase text-[9px] tracking-wider rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 hover:scale-105 transition-all h-7 px-3"
                                     endContent={<ArrowRight size={12} />}
                                 >
                                     Pedido
@@ -328,10 +328,10 @@ export default function InventoryHub() {
                             {stats.criticalItems.map((item) => (
                                 <div 
                                     key={item.barcode || item.id} 
-                                    className="flex items-center gap-2 p-2 bg-white dark:bg-zinc-900 rounded-lg border border-rose-200 dark:border-rose-500/20 shadow-sm"
+                                    className="flex items-center gap-2 p-2 card-base border-none rounded-2xl border border-rose-200 dark:border-rose-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                                 >
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-[10px] font-bold text-gray-900 dark:text-white truncate">
+                                        <p className="text-[10px] font-bold text-zinc-900 dark:text-zinc-50 truncate">
                                             {item.productName}
                                         </p>
                                         <p className="text-[8px] text-gray-400">
@@ -359,15 +359,15 @@ export default function InventoryHub() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {modules.map((mod) => (
                     <Link key={mod.href} href={mod.href} className="group">
-                        <Card className="h-full bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-2xl shadow-md hover:border-emerald-500/50 dark:hover:border-emerald-500/30 transition-all duration-300 group-hover:scale-[1.02] overflow-hidden">
+                        <Card className="h-full card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:border-emerald-500/50 dark:hover:border-emerald-500/30 transition-all duration-300 group-hover:scale-[1.02] overflow-hidden">
                             <CardBody className="p-4 flex flex-col items-start gap-2 h-full relative">
-                                <div className={`h-10 w-10 rounded-xl ${mod.colorClass} text-white flex items-center justify-center shadow-lg ${mod.shadowClass} relative z-10 group-hover:rotate-6 transition-transform`}>
+                                <div className={`h-10 w-10 rounded-2xl ${mod.colorClass} text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${mod.shadowClass} relative z-10 group-hover:rotate-6 transition-transform`}>
                                     <mod.icon size={20} />
                                 </div>
 
                                 <div className="flex flex-col gap-0.5">
                                     <div className="flex items-center gap-2">
-                                        <h2 className="text-sm font-black text-gray-900 dark:text-white uppercase italic tracking-tighter">{mod.title}</h2>
+                                        <h2 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">{mod.title}</h2>
                                         <Badge color={mod.badgeColor} variant="flat" size="sm" className="font-bold text-[7px] tracking-wider border-none px-1.5 py-0">{mod.badge}</Badge>
                                     </div>
                                     <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-400 leading-tight">
@@ -375,7 +375,7 @@ export default function InventoryHub() {
                                     </p>
                                 </div>
 
-                                <div className="mt-2 flex items-center gap-1 text-emerald-500 font-bold text-[9px] uppercase tracking-wider italic">
+                                <div className="mt-2 flex items-center gap-1 text-zinc-900 dark:text-zinc-100 font-bold text-[9px] uppercase tracking-wider tracking-tight">
                                     Acceder <ChevronRight size={12} />
                                 </div>
 
@@ -390,18 +390,18 @@ export default function InventoryHub() {
             </div>
 
             {/* PANEL LOGÍSTICO PANORÁMICO - RECEPCIÓN DE MERCANCÍA */}
-            <Card className="w-full bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-xl overflow-hidden">
+            <Card className="w-full bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden">
                 <CardBody className="p-0">
                     <div className="flex flex-col lg:flex-row">
                         {/* LADO IZQUIERDO (70%) - FILA DE LLEGADAS */}
                         <div className="flex-1 lg:w-[70%] p-4 lg:p-5 border-b lg:border-b-0 lg:border-r border-gray-200 dark:border-white/10 flex flex-col h-fit">
                             <div className="flex items-center gap-3 mb-4">
-                                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 text-white flex items-center justify-center shadow-lg shadow-amber-500/20 relative">
+                                <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-amber-500/20 relative">
                                     <Truck size={20} className="relative z-10" />
-                                    <div className="absolute inset-0 rounded-xl bg-amber-500 blur-xl opacity-30" />
+                                    <div className="absolute inset-0 rounded-2xl bg-amber-500 blur-xl opacity-30" />
                                 </div>
                                 <div className="flex-1">
-                                    <h3 className="text-sm font-black text-zinc-900 dark:text-white uppercase italic tracking-tight flex items-center gap-2">
+                                    <h3 className="text-sm font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tight flex items-center gap-2">
                                         Entregas Programadas <span className="text-amber-500">{selectedDate === new Date().toISOString().split('T')[0] ? 'Hoy' : selectedDate}</span>
                                     </h3>
                                     <p className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">
@@ -415,14 +415,14 @@ export default function InventoryHub() {
                                             type="date" 
                                             value={selectedDate}
                                             onChange={(e) => setSelectedDate(e.target.value)}
-                                            className="h-9 pl-9 pr-3 bg-zinc-100 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl text-[10px] font-black uppercase tracking-wider focus:ring-2 focus:ring-amber-500/20 outline-none transition-all cursor-pointer"
+                                            className="h-9 pl-9 pr-3 bg-zinc-100 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 rounded-2xl text-[10px] font-medium uppercase tracking-wider focus:ring-2 focus:ring-amber-500/20 outline-none transition-all cursor-pointer"
                                         />
                                     </div>
                                     <Button 
                                         isIconOnly 
                                         size="sm" 
                                         variant="flat" 
-                                        className="bg-amber-500/10 text-amber-500 rounded-xl"
+                                        className="bg-amber-500/10 text-amber-500 rounded-2xl"
                                         onPress={() => setIsPreventaModalOpen(true)}
                                     >
                                         <Plus size={16} />
@@ -434,17 +434,17 @@ export default function InventoryHub() {
                             <div className="mt-4 space-y-3">
                                 {loadingOrders ? (
                                     <div className="flex gap-2">
-                                        <Skeleton className="h-14 flex-1 rounded-xl" />
-                                        <Skeleton className="h-14 flex-1 rounded-xl" />
+                                        <Skeleton className="h-14 flex-1 rounded-2xl" />
+                                        <Skeleton className="h-14 flex-1 rounded-2xl" />
                                     </div>
                                 ) : expectedOrders.length > 0 ? (
                                     expectedOrders.map((order) => (
                                         <div 
                                             key={order.id}
-                                            className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 rounded-xl hover:bg-gray-100 dark:hover:bg-zinc-800/50 hover:border-amber-500/20 transition-all group"
+                                            className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl hover:bg-gray-100 dark:hover:bg-zinc-100 dark:bg-zinc-800/50 hover:border-amber-500/20 transition-all group"
                                         >
                                             <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-lg bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-gray-500 dark:text-zinc-400 group-hover:text-amber-500 group-hover:bg-amber-500/10 transition-colors">
+                                                <div className="h-8 w-8 rounded-2xl bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-gray-500 dark:text-zinc-400 group-hover:text-amber-500 group-hover:bg-amber-500/10 transition-colors">
                                                     <Building2 size={14} />
                                                 </div>
                                                 <div>
@@ -452,19 +452,19 @@ export default function InventoryHub() {
                                                         {order.supplierName}
                                                     </p>
                                                     <p className="text-[9px] text-gray-500 dark:text-zinc-500 font-medium">
-                                                        {order.itemCount} ítems · {formatTime(order.expectedDate)}
+                                                        {order.itemCount} ítems Â· {formatTime(order.expectedDate)}
                                                     </p>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-3">
-                                                <span className="text-xs font-black text-zinc-900 dark:text-white tabular-nums">
+                                                <span className="text-xs font-medium text-zinc-900 dark:text-white tabular-nums">
                                                     {formatCurrency(Math.round(order.totalEstimated || 0))}
                                                 </span>
                                                 <Chip 
                                                     size="sm" 
                                                     variant="flat"
                                                     className="bg-amber-500/10 border border-amber-500/20 text-amber-500"
-                                                    classNames={{ content: "text-[8px] font-black uppercase tracking-wider" }}
+                                                    classNames={{ content: "text-[8px] font-medium uppercase tracking-wider" }}
                                                 >
                                                     En camino
                                                 </Chip>
@@ -483,16 +483,16 @@ export default function InventoryHub() {
                         </div>
 
                         {/* LADO DERECHO (30%) - CENTRO DE ACCIÓN */}
-                        <div className="lg:w-[30%] p-4 lg:p-5 bg-gray-50 dark:bg-zinc-900/30 flex flex-col justify-center">
-                            <h4 className="text-xs font-black text-zinc-900 dark:text-white uppercase tracking-widest mb-4 flex items-center gap-2">
-                                <Sparkles size={12} className="text-emerald-500" />
+                        <div className="lg:w-[30%] p-4 lg:p-5 bg-gray-50 dark:bg-[#18181b]/30 flex flex-col justify-center">
+                            <h4 className="text-xs font-medium text-zinc-900 dark:text-white uppercase tracking-widest mb-4 flex items-center gap-2">
+                                <Sparkles size={12} className="text-zinc-900 dark:text-zinc-100" />
                                 Reporte Logístico
                             </h4>
                             
                             <Button
                                 onPress={sendToTelegram}
                                 isDisabled={expectedOrders.length === 0}
-                                className="w-full h-16 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white rounded-xl font-bold text-[11px] uppercase tracking-wider shadow-lg shadow-sky-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
+                                className="w-full h-16 bg-gradient-to-r from-sky-500 to-blue-600 hover:from-sky-400 hover:to-blue-500 text-white rounded-2xl font-bold text-[11px] uppercase tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-sky-500/30 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-3"
                                 startContent={<Send size={20} />}
                             >
                                 Enviar Resumen a Telegram
@@ -501,14 +501,14 @@ export default function InventoryHub() {
                             {/* Stats mini */}
                             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-white/10 space-y-2">
                                 <div className="flex justify-between text-[10px]">
-                                    <span className="text-gray-500 dark:text-zinc-500 font-black uppercase tracking-tighter">TOTAL EN TRÁNSITO:</span>
-                                    <span className="text-zinc-900 dark:text-white font-black tabular-nums">
+                                    <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">TOTAL EN TRÁNSITO:</span>
+                                    <span className="text-zinc-900 dark:text-white font-medium tabular-nums">
                                         {expectedOrders.length} PEDIDO{expectedOrders.length !== 1 ? 'S' : ''}
                                     </span>
                                 </div>
                                 <div className="flex justify-between text-[10px]">
-                                    <span className="text-gray-500 dark:text-zinc-500 font-black uppercase tracking-tighter">VALOR ESTIMADO:</span>
-                                    <span className="text-emerald-600 dark:text-emerald-500 font-black tabular-nums">
+                                    <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">VALOR ESTIMADO:</span>
+                                    <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 font-medium tabular-nums">
                                         {formatCurrency(Math.round(expectedOrders.reduce((acc, o) => acc + o.totalEstimated, 0)))}
                                     </span>
                                 </div>
@@ -521,7 +521,7 @@ export default function InventoryHub() {
             {/* FOOTER INFO */}
             <div className="flex items-center justify-center gap-2 py-4 opacity-30">
                 <ShieldCheck size={12} />
-                <span className="text-[8px] font-black uppercase tracking-[0.4em] italic">Seguridad & Auditoría Activa</span>
+                <span className="text-[8px] font-medium uppercase tracking-[0.4em] tracking-tight">Seguridad & Auditoría Activa</span>
             </div>
 
             <CreateScheduledDeliveryModal 
@@ -534,3 +534,5 @@ export default function InventoryHub() {
         </div>
     );
 }
+
+

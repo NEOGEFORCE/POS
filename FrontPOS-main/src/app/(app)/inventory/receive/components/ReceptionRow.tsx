@@ -1,12 +1,17 @@
 "use client";
 
-import React, { memo, useState, useEffect } from 'react';
-import { Button } from "@heroui/react";
+import React, { memo, useState, useEffect, useMemo } from 'react';
+import { Button, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
 import { 
-    Barcode, Trash2, Truck, Gift, ArrowDownLeft 
+    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2 
 } from 'lucide-react';
 import { ReceiveItem } from '../page';
-import { formatCOP, formatInputCOP, parseCOP, applyRounding } from "@/lib/utils";
+import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText } from "@/lib/utils";
+import { useAuth } from '@/lib/auth';
+import { apiFetch } from '@/lib/api-error';
+import { broadcastRevalidate } from '@/lib/revalidate';
+import Cookies from 'js-cookie';
+import { useToast } from '@/hooks/use-toast';
 
 interface ReceptionRowProps {
     item: ReceiveItem;
@@ -15,26 +20,49 @@ interface ReceptionRowProps {
 }
 
 const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
-    // Calcular costo REAL con descuento aplicado
-    const calculateCostWithDiscount = (base: number, discountPct: number) => {
-        return base * (1 + discountPct / 100);
+    const { toast } = useToast();
+    const { user } = useAuth();
+    const isAdmin = useMemo(() => {
+        const role = (user?.role || user?.Role || '').toLowerCase();
+        return ['admin', 'administrador', 'superadmin'].includes(role);
+    }, [user]);
+
+    // Quick Edit State
+    const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [editName, setEditName] = useState(item.productName);
+    const [editBarcode, setEditBarcode] = useState(item.barcode);
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+
+    const physicalStock = item.actualPhysicalStock;
+    const currentStock = item.currentStock;
+
+    // TAREA 1: Fórmula Maestra de Modificadores Secuenciales (Compuesta) - Motor Surtifamiliar v10.0
+    // 1. Costo Bruto (sin descuento): Bruto = Base * (1+IVA) * (1+ICUI) * (1+IBUA)
+    const calculateGrossCost = (basePrice: number, iva: number, icui: number, ibua: number) => {
+        return basePrice 
+            * (1 + (Number(iva || 0) / 100)) 
+            * (1 + (Number(icui || 0) / 100)) 
+            * (1 + (Number(ibua || 0) / 100));
     };
 
-    // Calcular PVP: costoReal × (1 + taxes%) × (1 + margin%)
-    const calculateFinalPrice = (base: number, discountPct: number, ivaPct: number, icuiPct: number, ibuaPct: number, marginPct: number) => {
-        const withDiscount = base * (1 + discountPct / 100);
-        const withTaxes = withDiscount * (1 + ivaPct / 100 + icuiPct / 100 + ibuaPct / 100);
-        return withTaxes * (1 + marginPct / 100);
+    // Costo Neto Final para el inventario y pago: Neto = Bruto * (1 - DTO)
+    const calculateNetCost = (basePrice: number, iva: number, icui: number, ibua: number, discount: number) => {
+        return calculateGrossCost(basePrice, iva, icui, ibua) * (1 - (Number(discount || 0) / 100));
+    };
+
+    // 2. Cálculo de PVP Sugerido: Se calcula sobre el Costo Bruto para que el descuento beneficie al supermercado
+    const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number) => {
+        const grossCost = calculateGrossCost(basePrice, iva, icui, ibua);
+        return applyRounding(grossCost * (1 + (Number(marginPct || 0) / 100)));
     };
 
     // Helper para formateo inicial (0 -> "")
     const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
-    const formatInitialPercent = (val: number) => (val === 0 ? '' : String(Math.round(val)));
+    const formatInitialPercent = (val: number) => (val === 0 ? '' : String(val));
 
     // Local state
-    const costWithDiscount = calculateCostWithDiscount(item.newPurchasePrice, item.discount || 0);
-    const [localTotal, setLocalTotal] = useState(formatInitial(costWithDiscount * item.addedQuantity));
-    const [localCost, setLocalCost] = useState(formatInitial(costWithDiscount)); 
+    const [localTotal, setLocalTotal] = useState(formatInitial(item.newPurchasePrice * item.addedQuantity));
+    const [localCost, setLocalCost] = useState(formatInitial(calculateNetCost(item.newPurchasePrice, item.iva || 0, item.icui || 0, item.ibua || 0, item.discount || 0))); 
     const [localSalePrice, setLocalSalePrice] = useState(formatInitial(item.newSalePrice));
     const [localIva, setLocalIva] = useState(formatInitialPercent(item.iva || 0));
     const [localIcui, setLocalIcui] = useState(formatInitialPercent(item.icui || 0));
@@ -43,57 +71,93 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const [localMargin, setLocalMargin] = useState(formatInitialPercent(item.marginPercentage || 30));
 
     useEffect(() => {
-        const costWithDisc = calculateCostWithDiscount(item.newPurchasePrice, item.discount || 0);
-        setLocalTotal(formatInitial(costWithDisc * item.addedQuantity));
-        setLocalCost(formatInitial(costWithDisc)); 
-        setLocalSalePrice(formatInitial(item.newSalePrice));
-        setLocalIva(formatInitialPercent(item.iva || 0));
-        setLocalIcui(formatInitialPercent(item.icui || 0));
-        setLocalIbua(formatInitialPercent(item.ibua || 0));
-        setLocalDiscount(formatInitialPercent(item.discount || 0));
-        setLocalMargin(formatInitialPercent(item.marginPercentage || 30));
+        const basePrice = item.newPurchasePrice;
+        const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
+
+        // Solo actualizar si el valor calculado difiere del valor local parseado
+        const parsedLocalTotal = parseCOP(localTotal) || 0;
+        const targetTotal = neto * item.addedQuantity;
+        if (Math.abs(parsedLocalTotal - targetTotal) >= 1) {
+            setLocalTotal(formatInitial(targetTotal));
+        }
+
+        const parsedLocalCost = parseCOP(localCost) || 0;
+        if (Math.abs(parsedLocalCost - neto) >= 1) {
+            setLocalCost(formatInitial(neto));
+        }
+
+        const parsedLocalSalePrice = parseCOP(localSalePrice) || 0;
+        if (Math.abs(parsedLocalSalePrice - item.newSalePrice) >= 1) {
+            setLocalSalePrice(formatInitial(item.newSalePrice));
+        }
+
+        const parsedLocalIva = localIva === "" ? 0 : parseFloat(localIva.replace(",", ".")) || 0;
+        if (Math.abs(parsedLocalIva - (item.iva || 0)) >= 0.01) {
+            setLocalIva(formatInitialPercent(item.iva || 0));
+        }
+
+        const parsedLocalIcui = localIcui === "" ? 0 : parseFloat(localIcui.replace(",", ".")) || 0;
+        if (Math.abs(parsedLocalIcui - (item.icui || 0)) >= 0.01) {
+            setLocalIcui(formatInitialPercent(item.icui || 0));
+        }
+
+        const parsedLocalIbua = localIbua === "" ? 0 : parseFloat(localIbua.replace(",", ".")) || 0;
+        if (Math.abs(parsedLocalIbua - (item.ibua || 0)) >= 0.01) {
+            setLocalIbua(formatInitialPercent(item.ibua || 0));
+        }
+
+        const parsedLocalDiscount = localDiscount === "" ? 0 : parseFloat(localDiscount.replace(",", ".")) || 0;
+        if (Math.abs(parsedLocalDiscount - (item.discount || 0)) >= 0.01) {
+            setLocalDiscount(formatInitialPercent(item.discount || 0));
+        }
+
+        const parsedLocalMargin = localMargin === "" ? 0 : parseFloat(localMargin.replace(",", ".")) || 0;
+        if (Math.abs(parsedLocalMargin - (item.marginPercentage || 0)) >= 0.01) {
+            setLocalMargin(formatInitialPercent(item.marginPercentage || 30));
+        }
     }, [item.newPurchasePrice, item.addedQuantity, item.newSalePrice, item.iva, item.icui, item.ibua, item.discount, item.marginPercentage]);
 
     const handleTotalChange = (val: string) => {
         const formatted = formatInputCOP(val);
         setLocalTotal(formatted);
         const totalRow = parseCOP(val) || 0;
-        const costWithDiscount = totalRow / Math.max(1, item.addedQuantity);
-        const discountPct = Number(item.discount || 0);
-        const costBaseSinDiscount = costWithDiscount / (1 + discountPct / 100);
+        const basePrice = totalRow / Math.max(1, item.addedQuantity);
         
-        // REGLA: No actualizar el PVP automáticamente, recalculamos el MARGEN
-        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
-        const totalUnitCost = costWithDiscount * taxMultiplier;
-        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
+        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
         
-        setLocalCost(formatCOP(costWithDiscount));
-        setLocalMargin(String(Math.round(newMargin)));
+        setLocalCost(formatCOP(Math.round(neto)));
+        setLocalSalePrice(formatCOP(newSalePrice));
         
         onUpdate(item.lineId, {
-            newPurchasePrice: costBaseSinDiscount,
-            marginPercentage: newMargin
+            newPurchasePrice: basePrice,
+            newSalePrice: newSalePrice
         });
     };
 
     const handleCostChange = (val: string) => {
         const formatted = formatInputCOP(val);
         setLocalCost(formatted);
-        const costWithDiscount = parseCOP(val) || 0;
-        const discountPct = Number(item.discount || 0);
-        const costBaseSinDiscount = costWithDiscount / (1 + discountPct / 100);
-        const newTotal = costWithDiscount * item.addedQuantity;
-        setLocalTotal(formatCOP(newTotal));
+        const neto = parseCOP(val) || 0;
         
-        // REGLA: No actualizar el PVP automáticamente, recalculamos el MARGEN
-        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
-        const totalUnitCost = costWithDiscount * taxMultiplier;
-        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        // RECONSTRUCCIÓN: Obtener Base desde Neto (Operación inversa secuencial)
+        const multiplier = (1 + (Number(item.iva || 0) / 100)) 
+                         * (1 + (Number(item.icui || 0) / 100)) 
+                         * (1 + (Number(item.ibua || 0) / 100)) 
+                         * (1 - (Number(item.discount || 0) / 100));
         
-        setLocalMargin(String(Math.round(newMargin)));
+        const basePrice = neto / (multiplier || 1);
+        const newTotal = neto * item.addedQuantity;
+        
+        setLocalTotal(formatCOP(Math.round(newTotal)));
+        
+        const newSalePrice = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
+
+        setLocalSalePrice(formatCOP(newSalePrice));
+
         onUpdate(item.lineId, {
-            newPurchasePrice: costBaseSinDiscount,
-            marginPercentage: newMargin
+            newPurchasePrice: basePrice,
+            newSalePrice: newSalePrice
         });
     };
 
@@ -101,12 +165,12 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const formatted = formatInputCOP(val);
         setLocalSalePrice(formatted);
         const sale = applyRounding(parseCOP(val) || 0);
-        const discountPct = Number(item.discount || 0);
-        const costWithDiscount = item.newPurchasePrice * (1 + discountPct / 100);
-        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
-        const totalCost = costWithDiscount * taxMultiplier;
-        const margin = totalCost > 0 ? ((sale / totalCost) - 1) * 100 : item.marginPercentage;
-        setLocalMargin(String(Math.round(margin)));
+        
+        // Recalcular MARGEN basado en el Costo Bruto (el descuento no afecta el % nominal)
+        const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
+        const margin = bruto > 0 ? ((sale / bruto) - 1) * 100 : item.marginPercentage;
+        
+        setLocalMargin(String(margin));
         onUpdate(item.lineId, { 
             newSalePrice: sale, 
             marginPercentage: margin 
@@ -119,32 +183,32 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         if (type === 'ibua') setLocalIbua(val);
         
         const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
-        const currentIva = type === 'iva' ? value : Number(item.iva);
-        const currentIcui = type === 'icui' ? value : Number(item.icui);
-        const currentIbua = type === 'ibua' ? value : Number(item.ibua);
         
-        const discountPct = Number(item.discount || 0);
-        const costWithDiscount = item.newPurchasePrice * (1 + discountPct / 100);
-        const taxMultiplier = 1 + (currentIva + currentIcui + currentIbua) / 100;
-        const totalUnitCost = costWithDiscount * taxMultiplier;
+        const currentIVA = type === 'iva' ? value : item.iva;
+        const currentICUI = type === 'icui' ? value : item.icui;
+        const currentIBUA = type === 'ibua' ? value : item.ibua;
         
-        // REGLA: Recalculamos el MARGEN informativo, protegemos PVP
-        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
+        const neto = calculateNetCost(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.discount);
+        const pvp = calculatePVP(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.marginPercentage);
         
-        setLocalMargin(String(Math.round(newMargin)));
+        setLocalCost(formatCOP(Math.round(neto)));
+        setLocalSalePrice(formatCOP(pvp));
+
         onUpdate(item.lineId, { 
             [type]: value,
-            marginPercentage: newMargin
+            newSalePrice: pvp
         });
     };
 
     const handleMarginChange = (val: string) => {
         setLocalMargin(val);
-        const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
-        const newSale = applyRounding(calculateFinalPrice(item.newPurchasePrice, Number(item.discount || 0), Number(item.iva), Number(item.icui), Number(item.ibua), value));
+        const targetMargin = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
+        const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.discount);
+        const newSale = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, targetMargin);
+        
         setLocalSalePrice(formatCOP(newSale));
         onUpdate(item.lineId, { 
-            marginPercentage: value,
+            marginPercentage: targetMargin,
             newSalePrice: newSale
         });
     };
@@ -153,20 +217,14 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         setLocalDiscount(val);
         const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
         
-        const costWithDiscount = calculateCostWithDiscount(item.newPurchasePrice, value);
-        setLocalCost(formatCOP(costWithDiscount));
-        const newTotal = costWithDiscount * item.addedQuantity;
-        setLocalTotal(formatCOP(newTotal));
+        const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, value);
+        const newSalePrice = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
         
-        // REGLA: Recalculamos el MARGEN informativo, protegemos PVP
-        const taxMultiplier = 1 + (Number(item.iva) + Number(item.icui) + Number(item.ibua)) / 100;
-        const totalUnitCost = costWithDiscount * taxMultiplier;
-        const newMargin = totalUnitCost > 0 ? ((item.newSalePrice / totalUnitCost) - 1) * 100 : item.marginPercentage;
-        
-        setLocalMargin(String(Math.round(newMargin)));
+        setLocalCost(formatCOP(Math.round(neto)));
+        setLocalSalePrice(formatCOP(newSalePrice));
         onUpdate(item.lineId, { 
             discount: value,
-            marginPercentage: newMargin
+            newSalePrice: newSalePrice
         });
     };
 
@@ -174,30 +232,114 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         e.target.select();
     };
 
+    const handleSaveQuickEdit = async () => {
+        if (!editName.trim() || !editBarcode.trim()) return;
+        setIsSavingEdit(true);
+        try {
+            const token = Cookies.get('org-pos-token');
+            
+            // 1. Obtener el producto completo para no sobrescribir con ceros
+            const fullProduct = await apiFetch<any>(`/products/${item.barcode}`, {}, token!);
+            
+            if (!fullProduct) throw new Error("Producto no encontrado");
+
+            // 2. Modificar solo los campos deseados
+            const payload = {
+                ...fullProduct,
+                productName: normalizeText(editName),
+                barcode: normalizeText(editBarcode)
+            };
+            
+            // 3. PUT al API con el producto completo
+            await apiFetch(`/products/${item.barcode}`, {
+                method: 'PUT',
+                body: JSON.stringify(payload),
+                fallbackError: 'Error al actualizar producto'
+            }, token!);
+
+            // Mutar estado local inmediatamente
+            onUpdate(item.lineId, {
+                productName: payload.productName,
+                barcode: payload.barcode
+            });
+
+            // Emitir evento por BroadcastChannel
+            broadcastRevalidate('PRODUCT_UPDATE');
+
+            setIsEditModalOpen(false);
+            toast({ variant: 'success', title: 'ACTUALIZADO', description: 'Producto actualizado exitosamente' });
+        } catch (err: any) {
+            console.error("Error updating product:", err);
+            toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'No se pudo actualizar' });
+        } finally {
+            setIsSavingEdit(false);
+        }
+    };
+
     return (
-        <div className="flex flex-col lg:flex-row lg:items-center gap-0 p-1 px-2 md:p-4 bg-white dark:bg-black/40 hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors border-b border-gray-100 dark:border-white/5 first:rounded-t-2xl last:rounded-b-2xl shadow-sm overflow-hidden">
-            {/* Cabecera compacta: Nombre, Código y Acciones */}
-            <div className="flex-1 min-w-0 flex items-center justify-between gap-2 overflow-hidden py-0.5">
-                <div className="flex items-center gap-2 md:gap-3 min-w-0">
-                    <div className="h-6 w-6 md:h-10 md:w-10 rounded-lg md:rounded-xl bg-gray-100 dark:bg-zinc-900 flex items-center justify-center text-emerald-500 shrink-0 shadow-inner">
-                        <Barcode size={14} className="md:w-[18px] md:h-[18px]" />
+        <div className="flex flex-col gap-2 p-3 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl hover:bg-[var(--bg-card-hover)] transition-colors shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-[var(--accent)]">
+            {/* Modal Edición Rápida */}
+            <Modal isOpen={isEditModalOpen} onOpenChange={setIsEditModalOpen} placement="center">
+                <ModalContent className="dark:bg-zinc-950 border border-zinc-200 dark:border-white/10 rounded-2xl">
+                    {(onClose) => (
+                        <>
+                            <ModalHeader className="flex flex-col gap-1 text-center mt-2">
+                                <h2 className="font-medium tracking-tight text-xl uppercase tracking-tight text-white">Editar <span className="text-zinc-900 dark:text-zinc-100">Producto</span></h2>
+                            </ModalHeader>
+                            <ModalBody>
+                                <Input
+                                    label="Nombre del Producto"
+                                    value={editName}
+                                    onValueChange={setEditName}
+                                    classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
+                                />
+                                <Input
+                                    label="Código de Barras"
+                                    value={editBarcode}
+                                    onValueChange={setEditBarcode}
+                                    classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
+                                />
+                            </ModalBody>
+                            <ModalFooter>
+                                <Button color="danger" variant="flat" onPress={onClose} className="rounded-2xl font-bold">
+                                    Cancelar
+                                </Button>
+                                <Button color="success" onPress={handleSaveQuickEdit} isLoading={isSavingEdit} className="rounded-2xl font-bold">
+                                    Guardar
+                                </Button>
+                            </ModalFooter>
+                        </>
+                    )}
+                </ModalContent>
+            </Modal>
+
+            {/* Fila 1: Cabecera compacta (Nombre, Código y Acciones) */}
+            <div className="flex w-full items-center justify-between gap-2 overflow-hidden pb-1 border-b border-gray-50 dark:border-white/5">
+                <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
+                    <div className="h-8 w-8 md:h-10 md:w-10 rounded-2xl md:rounded-2xl bg-gray-100 dark:bg-[#18181b] flex items-center justify-center text-zinc-900 dark:text-zinc-100 shrink-0 shadow-inner">
+                        <Barcode size={16} className="md:w-[18px] md:h-[18px]" />
                     </div>
                     <div className="min-w-0 flex flex-col">
-                        <div className="flex items-baseline gap-1.5 min-w-0">
-                            <h3 className="text-[9px] md:text-[11px] font-black text-gray-900 dark:text-white uppercase italic leading-tight truncate">{item.productName}</h3>
-                            <span className="text-[7px] font-black text-gray-400 dark:text-zinc-600 font-mono tracking-tighter shrink-0">#{item.barcode}</span>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                            <h3 className="text-[10px] md:text-xs font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate">{item.productName}</h3>
+                            <span className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 font-mono tracking-tighter shrink-0 mt-0.5">#{item.barcode}</span>
+                            {isAdmin && (
+                                <button onClick={() => { setEditName(item.productName); setEditBarcode(item.barcode); setIsEditModalOpen(true); }} className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:text-zinc-100 transition-colors shrink-0 ml-1">
+                                    <Edit2 size={12} />
+                                </button>
+                            )}
                         </div>
                         <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase italic">Stock en Sistema:</span>
-                            <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg shadow-sm border ${item.currentStock <= 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>
+                            <span className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">Stock:</span>
+                            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border ${item.currentStock <= 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-blue-500/10 text-blue-500 border-blue-500/20'}`}>
                                 {item.currentStock} UND
                             </span>
                         </div>
                     </div>
                 </div>
                 
-                <div className="flex items-center gap-1.5 shrink-0 ml-4">
-                    <div className="flex bg-gray-100 dark:bg-zinc-900/50 p-0.5 rounded-lg gap-0.5 shrink-0 h-7 items-center">
+                <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                    <div className="flex bg-gray-100 dark:bg-[#18181b]/50 p-0.5 rounded-2xl gap-0.5 shrink-0 h-8 items-center">
                         {[
                             { id: 'purchase', icon: Truck, color: 'emerald' },
                             { id: 'gift', icon: Gift, color: 'pink' },
@@ -206,13 +348,13 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                             <button
                                 key={btn.id}
                                 onClick={() => onUpdate(item.lineId, { entryType: btn.id as any })}
-                                className={`flex items-center justify-center w-7 h-6 rounded-md transition-all ${
+                                className={`flex items-center justify-center w-8 h-7 rounded-2xl transition-all ${
                                     item.entryType === btn.id 
-                                    ? `bg-${btn.color === 'emerald' ? 'emerald' : btn.color === 'pink' ? 'pink' : 'rose'}-500 text-white shadow-sm` 
-                                    : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-800'
+                                    ? `bg-${btn.color === 'emerald' ? 'emerald' : btn.color === 'pink' ? 'pink' : 'rose'}-500 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]` 
+                                    : 'text-gray-400 hover:bg-gray-200 dark:hover:bg-zinc-100 dark:bg-zinc-800'
                                 }`}
                             >
-                                <btn.icon size={12} />
+                                <btn.icon size={13} />
                             </button>
                         ))}
                     </div>
@@ -222,100 +364,182 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         variant="flat" 
                         size="sm" 
                         onClick={() => onDelete(item.lineId)} 
-                        className="h-7 w-7 min-w-7 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/10 shadow-sm"
+                        className="h-8 w-8 min-w-8 bg-rose-50 dark:bg-rose-500/10 text-rose-500 rounded-2xl border border-rose-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ml-1"
                     >
-                        <Trash2 size={13} />
+                        <Trash2 size={14} />
                     </Button>
                 </div>
             </div>
 
-            {/* Fila de Inputs (4 columnas) */}
-            <div className="grid grid-cols-4 items-start gap-1 shrink-0 w-full lg:w-auto p-0 lg:p-0 bg-transparent rounded-xl">
-                {/* CANT */}
-                <div className="col-span-1 space-y-0">
-                    <span className="text-[6px] font-black text-gray-400 dark:text-zinc-600 uppercase italic ml-1 block mb-0">CANT</span>
-                    <div className="flex items-center bg-white dark:bg-zinc-900 rounded-lg h-7 px-1 gap-1 border border-gray-200 dark:border-white/10 shadow-sm">
-                        <input 
-                            type="number" 
-                            className="bg-transparent w-full text-center text-[9px] font-black text-gray-900 dark:text-white border-none outline-none focus:ring-0 p-0" 
-                            value={item.addedQuantity === 0 ? '' : item.addedQuantity}
+            {/* Fila 2: Entradas Principales (Rediseño 2 Filas Mobile) */}
+            <div className="flex flex-col gap-2 pt-1">
+                {/* SUB-FILA 1: CANTIDAD, FÍSICO REAL Y UNIDAD (3 Columnas) */}
+                <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Cantidad</label>
+                        <Input
+                            type="number"
+                            inputMode="decimal"
+                            size="sm"
+                            value={item.addedQuantity === 0 ? '' : String(item.addedQuantity)}
+                            onValueChange={(v) => {
+                                // 5.3 Validación de decimales
+                                let stringVal = v;
+                                if (!item.isWeighted) {
+                                    stringVal = stringVal.replace(/[.,]/g, ''); // Remover cualquier punto o coma
+                                }
+                                const numVal = Number(stringVal) || 0;
+                                // Si no es pesado, asegurar que sea entero
+                                const finalVal = !item.isWeighted ? Math.floor(numVal) : numVal;
+                                
+                                const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.discount);
+                                const newTotal = neto * finalVal;
+                                setLocalTotal(formatInitial(newTotal));
+                                
+                                onUpdate(item.lineId, { addedQuantity: finalVal });
+                            }}
+                            placeholder="0"
                             onFocus={handleFocus}
-                            onChange={(e) => onUpdate(item.lineId, { addedQuantity: Math.max(0, parseFloat(e.target.value) || 0) })} 
+                            classNames={{
+                                inputWrapper: "h-10 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-2xl shadow-inner px-3",
+                                input: "font-medium text-xs text-[var(--text-primary)]"
+                            }}
                         />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Físico Real</label>
+                        <Input
+                            type="number"
+                            inputMode="decimal"
+                            size="sm"
+                            value={item.actualPhysicalStock === undefined || item.actualPhysicalStock === null ? '' : String(item.actualPhysicalStock)}
+                            onValueChange={(v) => {
+                                if (v === '') {
+                                    onUpdate(item.lineId, { actualPhysicalStock: undefined });
+                                    return;
+                                }
+                                let stringVal = v;
+                                if (!item.isWeighted) {
+                                    stringVal = stringVal.replace(/[.,]/g, ''); // Remover cualquier punto o coma
+                                }
+                                const numVal = Number(stringVal) || 0;
+                                const finalVal = !item.isWeighted ? Math.floor(numVal) : numVal;
+                                onUpdate(item.lineId, { actualPhysicalStock: finalVal });
+                            }}
+                            placeholder={String(item.currentStock)}
+                            onFocus={handleFocus}
+                            classNames={{
+                                inputWrapper: "h-10 bg-[var(--bg-elevated)] border border-[var(--border)] rounded-2xl shadow-inner px-3 focus-within:border-[var(--accent)]",
+                                input: "font-medium text-xs text-amber-600 dark:text-amber-500"
+                            }}
+                        />
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Unidad</label>
+                        <Dropdown placement="bottom-end" classNames={{ content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl min-w-[100px]" }}>
+                            <DropdownTrigger>
+                                <button className="h-10 w-full bg-[var(--bg-elevated)] border border-[var(--border)] rounded-2xl px-3 flex items-center justify-between text-[10px] font-medium uppercase text-[var(--text-secondary)] outline-none hover:border-[var(--accent)] transition-all">
+                                    <span>{item.unit}</span>
+                                    <ChevronDown size={14} className="opacity-40" />
+                                </button>
+                            </DropdownTrigger>
+                            <DropdownMenu 
+                                aria-label="Seleccionar Unidad"
+                                variant="flat"
+                                disallowEmptySelection
+                                selectionMode="single"
+                                selectedKeys={new Set([item.unit])}
+                                onSelectionChange={(keys) => {
+                                    const selected = Array.from(keys)[0] as string;
+                                    onUpdate(item.lineId, { unit: selected as any });
+                                }}
+                            >
+                                <DropdownItem key="UND" className="font-medium text-[10px] uppercase h-10">UND (Unidades)</DropdownItem>
+                                <DropdownItem key="KG" className="font-medium text-[10px] uppercase h-10">KG (Kilogramos)</DropdownItem>
+                                <DropdownItem key="LB" className="font-medium text-[10px] uppercase h-10">LB (Libras)</DropdownItem>
+                            </DropdownMenu>
+                        </Dropdown>
                     </div>
                 </div>
 
-                {/* TOTAL */}
-                <div className="col-span-1 space-y-0">
-                    <span className="text-[6px] font-black text-indigo-500 uppercase italic ml-1 block mb-0">TOTAL</span>
-                    <div className="flex items-center bg-white dark:bg-zinc-900 rounded-lg h-7 px-1 gap-0.5 border border-gray-200 dark:border-white/10 shadow-sm">
-                        <span className="text-[7px] text-indigo-500 font-black">$</span>
-                        <input 
-                            className={`bg-transparent w-full text-[9px] font-black italic tabular-nums border-none outline-none focus:ring-0 p-0 ${item.entryType === 'gift' ? 'text-gray-400' : 'text-indigo-600 dark:text-indigo-400'}`} 
-                            value={localTotal}
-                            onFocus={handleFocus}
-                            onChange={(e) => handleTotalChange(e.target.value)}
-                            disabled={item.entryType === 'gift'}
-                        />
+                {/* SUB-FILA 2: COSTO, PVP, TOTAL (Grid 3 Columnas) */}
+                <div className="grid grid-cols-3 gap-2">
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Costo</label>
+                        <div className="flex items-center bg-[var(--bg-elevated)] rounded-2xl h-10 px-2 gap-1 border border-[var(--border)] shadow-sm focus-within:border-rose-500/50 transition-all">
+                            <span className="text-[10px] text-rose-500 font-medium">$</span>
+                            <input 
+                                className="bg-transparent w-full text-[11px] font-medium tracking-tight tabular-nums text-zinc-900 dark:text-zinc-50 border-none outline-none focus:ring-0 p-0" 
+                                value={localCost}
+                                inputMode="decimal"
+                                onFocus={handleFocus}
+                                onChange={(e) => handleCostChange(e.target.value)}
+                                disabled={item.entryType === 'gift'}
+                            />
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">PVP</label>
+                        <div className="flex items-center bg-[var(--bg-elevated)] rounded-2xl h-10 px-2 gap-1 border border-[var(--border)] shadow-sm focus-within:border-[var(--accent)] transition-all">
+                            <span className="text-[10px] text-zinc-900 dark:text-zinc-100 font-medium">$</span>
+                            <input 
+                                className="bg-transparent w-full text-[11px] font-medium tracking-tight tabular-nums text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 border-none outline-none focus:ring-0 p-0" 
+                                value={localSalePrice}
+                                inputMode="decimal"
+                                onFocus={handleFocus}
+                                onChange={(e) => handleSalePriceChange(e.target.value)}
+                            />
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Total</label>
+                        <div className="flex items-center bg-[var(--bg-elevated)] rounded-2xl h-10 px-2 gap-1 border border-[var(--border)] shadow-sm focus-within:border-indigo-500/50 transition-all">
+                            <span className="text-[10px] text-indigo-500 font-medium">$</span>
+                            <input 
+                                className={`bg-transparent w-full text-[11px] font-medium tracking-tight tabular-nums border-none outline-none focus:ring-0 p-0 ${item.entryType === 'gift' ? 'text-gray-400' : 'text-indigo-600 dark:text-indigo-400'}`} 
+                                value={localTotal}
+                                inputMode="decimal"
+                                onFocus={handleFocus}
+                                onChange={(e) => handleTotalChange(e.target.value)}
+                                disabled={item.entryType === 'gift'}
+                            />
+                        </div>
                     </div>
                 </div>
 
-                {/* COSTO */}
-                <div className="col-span-1 space-y-0">
-                    <span className="text-[6px] font-black text-gray-400 dark:text-zinc-600 uppercase italic ml-1 block mb-0">COSTO</span>
-                    <div className="flex items-center bg-white dark:bg-zinc-900 rounded-lg h-7 px-1 gap-0.5 border border-gray-200 dark:border-white/10 shadow-sm">
-                        <span className="text-[7px] text-rose-500 font-black">$</span>
-                        <input 
-                            className="bg-transparent w-full text-[9px] font-black italic tabular-nums text-gray-900 dark:text-white border-none outline-none focus:ring-0 p-0" 
-                            value={localCost}
-                            onFocus={handleFocus}
-                            onChange={(e) => handleCostChange(e.target.value)}
-                            disabled={item.entryType === 'gift'}
-                        />
+                {/* Panel de porcentajes (Fila 3) */}
+                <div className="flex flex-wrap items-center gap-1.5 bg-[var(--bg-elevated)] p-1.5 rounded-2xl border border-[var(--border)] shrink-0 shadow-inner">
+                    <div className="flex items-center gap-1 card-base border-none px-1.5 py-1 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                        <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 tracking-tight">DTO</span>
+                        <input className="bg-transparent w-6 text-center text-[10px] font-medium border-none outline-none p-0 tabular-nums" value={localDiscount} inputMode="decimal" onFocus={handleFocus} onChange={(e) => handleDiscountChange(e.target.value)} disabled={item.entryType === 'gift'} />
+                        <span className="text-[8px] text-zinc-900 dark:text-zinc-100 font-medium">%</span>
                     </div>
-                </div>
-
-                {/* PVP */}
-                <div className="col-span-1 space-y-0">
-                    <span className="text-[6px] font-black text-emerald-500 uppercase italic ml-1 block mb-0">PVP</span>
-                    <div className="flex items-center bg-white dark:bg-zinc-900 rounded-lg h-7 px-1 gap-0.5 border border-gray-200 dark:border-white/10 shadow-sm">
-                        <span className="text-[7px] text-emerald-500 font-black">$</span>
-                        <input 
-                            className="bg-transparent w-full text-[9px] font-black italic tabular-nums text-emerald-600 dark:text-emerald-500 border-none outline-none focus:ring-0 p-0" 
-                            value={localSalePrice}
-                            onFocus={handleFocus}
-                            onChange={(e) => handleSalePriceChange(e.target.value)}
-                        />
+                    <div className="flex items-center gap-1 card-base border-none px-1.5 py-1 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                        <span className="text-[8px] font-medium text-rose-500 tracking-tight">IVA</span>
+                        <input className="bg-transparent w-6 text-center text-[10px] font-medium border-none outline-none p-0 tabular-nums" value={localIva} inputMode="decimal" onFocus={handleFocus} onChange={(e) => handleTaxChange('iva', e.target.value)} />
+                        <span className="text-[8px] text-rose-500 font-medium">%</span>
                     </div>
-                </div>
-            </div>
-
-            {/* Panel de porcentajes */}
-            <div className="col-span-2 md:col-span-2 lg:md:col-span-1 flex flex-wrap items-center gap-1 bg-gray-100 dark:bg-white/5 p-1 rounded-lg border border-gray-200 dark:border-white/10 min-w-0 shadow-inner mt-0.5">
-                <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
-                    <span className="text-[7px] font-black text-emerald-500 italic">DTO</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localDiscount} onFocus={handleFocus} onChange={(e) => handleDiscountChange(e.target.value)} disabled={item.entryType === 'gift'} />
-                    <span className="text-[7px] text-emerald-500 font-black">%</span>
-                </div>
-                <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
-                    <span className="text-[7px] font-black text-rose-500 italic">IVA</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIva} onFocus={handleFocus} onChange={(e) => handleTaxChange('iva', e.target.value)} />
-                    <span className="text-[7px] text-rose-500 font-black">%</span>
-                </div>
-                <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
-                    <span className="text-[7px] font-black text-amber-500 italic">ICUI</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIcui} onFocus={handleFocus} onChange={(e) => handleTaxChange('icui', e.target.value)} />
-                    <span className="text-[7px] text-amber-500 font-black">%</span>
-                </div>
-                <div className="flex items-center gap-1 bg-white dark:bg-zinc-900 px-1 py-0.5 rounded-md border border-gray-200 dark:border-white/10">
-                    <span className="text-[7px] font-black text-sky-500 italic">IBUA</span>
-                    <input className="bg-transparent w-5 text-center text-[9px] font-black border-none outline-none p-0" value={localIbua} onFocus={handleFocus} onChange={(e) => handleTaxChange('ibua', e.target.value)} />
-                    <span className="text-[7px] text-sky-500 font-black">%</span>
-                </div>
-                <div className="flex items-center gap-1 bg-violet-500/10 dark:bg-violet-500/20 px-1 py-0.5 rounded-md border border-violet-500/20">
-                    <span className="text-[7px] font-black text-violet-500 italic">GAN</span>
-                    <input className="bg-transparent w-6 text-center text-[9px] font-black border-none outline-none p-0 text-violet-600 dark:text-violet-400" value={localMargin} onFocus={handleFocus} onChange={(e) => handleMarginChange(String(e.target.value))} />
-                    <span className="text-[7px] text-violet-500 font-black">%</span>
+                    <div className="flex items-center gap-1 card-base border-none px-1.5 py-1 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                        <span className="text-[8px] font-medium text-amber-500 tracking-tight">ICUI</span>
+                        <input className="bg-transparent w-6 text-center text-[10px] font-medium border-none outline-none p-0 tabular-nums" value={localIcui} inputMode="decimal" onFocus={handleFocus} onChange={(e) => handleTaxChange('icui', e.target.value)} />
+                        <span className="text-[8px] text-amber-500 font-medium">%</span>
+                    </div>
+                    <div className="flex items-center gap-1 card-base border-none px-1.5 py-1 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                        <span className="text-[8px] font-medium text-sky-500 tracking-tight">IBUA</span>
+                        <input className="bg-transparent w-6 text-center text-[10px] font-medium border-none outline-none p-0 tabular-nums" value={localIbua} inputMode="decimal" onFocus={handleFocus} onChange={(e) => handleTaxChange('ibua', e.target.value)} />
+                        <span className="text-[8px] text-sky-500 font-medium">%</span>
+                    </div>
+                    <div className="flex items-center gap-1 bg-violet-500/10 dark:bg-violet-500/20 px-1.5 py-1 rounded-2xl border border-violet-500/20">
+                        <span className="text-[8px] font-medium text-violet-500 tracking-tight">GAN</span>
+                        <input className="bg-transparent w-7 text-center text-[10px] font-medium border-none outline-none p-0 text-violet-600 dark:text-violet-400 tabular-nums" value={localMargin} inputMode="decimal" onFocus={handleFocus} onChange={(e) => handleMarginChange(String(e.target.value))} />
+                        <span className="text-[8px] text-violet-500 font-medium">%</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 bg-white/5 dark:bg-white/5 px-2 py-1 rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] animate-in fade-in slide-in-from-right-1 duration-300">
+                        <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-tight">Ganancia Real</span>
+                        <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300">
+                            {Math.round(((item.newSalePrice / (calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.discount) || 1)) - 1) * 100)}%
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>

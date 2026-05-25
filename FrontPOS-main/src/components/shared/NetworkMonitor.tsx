@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useEffect, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
@@ -16,7 +16,7 @@ export function NetworkMonitor() {
 
     const handleOffline = () => {
       setIsOffline(true);
-      console.log('[NetworkMonitor] 🔴 Conexión perdida. Activando Modo Supervivencia.');
+      console.log('[NetworkMonitor] ðŸ”´ Conexión perdida. Activando Modo Supervivencia.');
       toast({
         variant: "destructive",
         title: "MODO SUPERVIVENCIA",
@@ -26,7 +26,7 @@ export function NetworkMonitor() {
 
     const handleOnline = async () => {
       setIsOffline(false);
-      console.log('[NetworkMonitor] 🟢 Conexión recuperada. Iniciando volcado de bóveda...');
+      console.log('[NetworkMonitor] ðŸŸ¢ Conexión recuperada. Iniciando volcado de bóveda...');
       toast({
         variant: "success",
         title: "SISTEMA EN LÍNEA",
@@ -62,7 +62,7 @@ export function NetworkMonitor() {
         return;
       }
 
-      console.log(`[NetworkMonitor] 📦 Procesando ${queue.length} transacciones en bóveda.`);
+      console.log(`[NetworkMonitor] ðŸ“¦ Procesando ${queue.length} transacciones en bóveda.`);
 
       let successCount = 0;
       const token = Cookies.get('org-pos-token');
@@ -70,7 +70,7 @@ export function NetworkMonitor() {
       for (const item of queue) {
         try {
           if (item.type === 'SALE') {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/register`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
               body: JSON.stringify(item.payload)
@@ -111,3 +111,5 @@ export function NetworkMonitor() {
 
   return null; // Invisible global worker
 }
+
+

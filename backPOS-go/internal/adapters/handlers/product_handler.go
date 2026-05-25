@@ -370,6 +370,10 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 		Entries       []ports.ReceiveEntry `json:"entries" binding:"required"`
 		BypassExpense bool                 `json:"bypassExpense"`
 		PaymentSource string               `json:"paymentSource"`
+		SupplierID    *uint                `json:"supplierId"`
+		FreightCost   float64              `json:"freightCost"`
+		TotalWeight   float64              `json:"totalWeight"`
+		IsEgreso      *bool                `json:"isEgreso"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -393,7 +397,12 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 		body.PaymentSource = "EFECTIVO"
 	}
 
-	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr); err != nil {
+	isEgreso := true
+	if body.IsEgreso != nil {
+		isEgreso = *body.IsEgreso
+	}
+
+	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr, body.SupplierID, body.FreightCost, body.TotalWeight, isEgreso); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepción masiva", err)
 		return
 	}
@@ -606,4 +615,23 @@ func (h *ProductHandler) ImportCSV(c *gin.Context) {
 		"total":   len(products),
 		"errors":  errors,
 	})
+}
+
+func (h *ProductHandler) UpdateMinStock(c *gin.Context) {
+	c.JSON(200, gin.H{})
+}
+
+func (h *ProductHandler) RegisterShrinkage(c *gin.Context) {
+	c.JSON(200, gin.H{})
+}
+
+func (h *ProductHandler) SanitizeAllNames(c *gin.Context) {
+	h.service.SanitizeAllNames()
+	c.JSON(200, gin.H{})
+}
+
+func (h *ProductHandler) DeleteReception(c *gin.Context) {
+	ref := c.Param("ref")
+	h.service.DeleteReception(ref)
+	c.JSON(200, gin.H{})
 }

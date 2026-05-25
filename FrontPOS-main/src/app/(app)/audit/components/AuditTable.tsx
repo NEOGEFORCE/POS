@@ -96,10 +96,10 @@ export default function AuditTable({ logs }: AuditTableProps) {
         case "timestamp":
             return (
                 <div className="flex flex-col gap-0.5">
-                    <span className="text-[10px] font-black text-gray-700 dark:text-zinc-300">
+                    <span className="text-[10px] font-medium text-gray-700 dark:text-zinc-300">
                         {format(new Date(log.created_at), "dd MMM yyyy", { locale: es }).toUpperCase()}
                     </span>
-                    <span className="text-[9px] font-medium text-gray-400 italic">
+                    <span className="text-[9px] font-medium text-gray-400 tracking-tight">
                         {formatTime(log.created_at)}
                     </span>
                 </div>
@@ -114,7 +114,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         className: "bg-gradient-to-tr from-emerald-500 to-teal-400 text-white font-bold"
                     }}
                     classNames={{
-                        name: "text-[10px] font-black uppercase tracking-tighter",
+                        name: "text-[10px] font-medium uppercase tracking-tighter",
                         description: "text-[9px] font-bold text-gray-400"
                     }}
                 />
@@ -126,11 +126,11 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         size="sm" 
                         variant="flat" 
                         color={getActionColor(log.action, log.is_critical)}
-                        className="font-black border-1 uppercase text-[8px] h-5 tracking-widest italic"
+                        className="font-medium border-1 uppercase text-[8px] h-5 tracking-widest tracking-tight"
                     >
                         {log.action}
                     </Chip>
-                    <span className="text-[8px] uppercase text-gray-400 font-black tracking-widest px-1.5 py-0.5 bg-gray-100 dark:bg-zinc-800 rounded-full w-fit">
+                    <span className="text-[8px] uppercase text-gray-400 font-medium tracking-widest px-1.5 py-0.5 bg-gray-100 dark:bg-zinc-800 rounded-2xl w-fit">
                         {log.module}
                     </span>
                 </div>
@@ -138,7 +138,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
         case "details":
             return (
                 <div className="flex flex-col gap-1 pr-4 max-w-[400px]">
-                    <span className="text-[11px] text-gray-800 dark:text-zinc-200 font-bold italic line-clamp-2 leading-tight">
+                    <span className="text-[11px] text-zinc-800 dark:text-zinc-200 font-bold tracking-tight line-clamp-2 leading-tight">
                         {log.human_readable || log.details}
                     </span>
                     {!log.human_readable && (
@@ -155,7 +155,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         isIconOnly 
                         size="sm" 
                         variant="flat" 
-                        className="bg-emerald-500/5 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-sm active:scale-90"
+                        className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                         onPress={() => handleInspect(log)}
                     >
                         <Eye size={18} strokeWidth={2.5} />
@@ -168,20 +168,20 @@ export default function AuditTable({ logs }: AuditTableProps) {
   }, []);
 
   const renderChangesTable = (changesStr?: string) => {
-    if (!changesStr) return <p className="text-tiny text-default-400 italic">No hay detalles técnicos de cambios disponibles.</p>;
+    if (!changesStr) return <p className="text-tiny text-default-400 tracking-tight">No hay detalles técnicos de cambios disponibles.</p>;
     try {
       const changes = JSON.parse(changesStr);
       const before = changes.before || {};
       const after = changes.after || {};
       const keys = Object.keys({...before, ...after}).sort();
 
-      if (keys.length === 0) return <p className="text-tiny text-default-400 italic">No se detectaron cambios en los campos.</p>;
+      if (keys.length === 0) return <p className="text-tiny text-default-400 tracking-tight">No se detectaron cambios en los campos.</p>;
 
       return (
-        <div className="border border-default-100 dark:border-white/5 rounded-lg overflow-hidden bg-default-50/50 dark:bg-zinc-900/50">
+        <div className="border border-default-100 dark:border-white/5 rounded-2xl overflow-hidden bg-default-50/50 dark:bg-[#18181b]/50">
           <table className="w-full text-left text-tiny border-collapse">
             <thead>
-              <tr className="bg-default-100/50 dark:bg-black/20 border-b border-default-100 dark:border-white/5">
+              <tr className="bg-default-100/50 dark:bg-[#18181b] border-b border-default-100 dark:border-white/5">
                 <th className="px-3 py-2 font-bold text-default-600 dark:text-zinc-400 uppercase tracking-tighter">Campo</th>
                 <th className="px-3 py-2 font-bold text-default-600 dark:text-zinc-400 uppercase tracking-tighter">Valor Anterior</th>
                 <th className="px-3 py-2 font-bold text-default-600 dark:text-zinc-400 uppercase tracking-tighter">Valor Nuevo</th>
@@ -194,7 +194,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                   <td className="px-3 py-2 text-rose-500 font-medium line-through decoration-rose-300/50">
                     {typeof before[key] === 'object' ? JSON.stringify(before[key]) : String(before[key] ?? 'N/A')}
                   </td>
-                  <td className="px-3 py-2 text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1">
+                  <td className="px-3 py-2 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 font-bold flex items-center gap-1">
                     <ArrowRight size={10} className="text-default-300" />
                     {typeof after[key] === 'object' ? JSON.stringify(after[key]) : String(after[key] ?? 'N/A')}
                   </td>
@@ -205,14 +205,14 @@ export default function AuditTable({ logs }: AuditTableProps) {
         </div>
       );
     } catch {
-      return <pre className="text-[10px] p-2 bg-zinc-900 text-zinc-300 rounded overflow-x-auto">{changesStr}</pre>;
+      return <pre className="text-[10px] p-2 bg-[#18181b] text-zinc-300 rounded overflow-x-auto">{changesStr}</pre>;
     }
   };
 
   return (
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       {/* FILTROS AVANZADOS */}
-      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center bg-white/80 dark:bg-zinc-900/80 backdrop-blur-xl p-4 rounded-2xl border border-gray-200 dark:border-white/5 shadow-xl gap-4 shrink-0 transition-colors">
+      <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center card-base border-none p-4 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] gap-4 shrink-0 transition-colors">
         <div className="flex flex-col gap-3 w-full lg:w-auto">
           <Tabs 
             variant="underlined" 
@@ -221,9 +221,9 @@ export default function AuditTable({ logs }: AuditTableProps) {
             onSelectionChange={(key) => { setActiveTab(key as string); setPage(1); }}
             classNames={{
               tabList: "gap-6 w-full relative rounded-none p-0 border-b border-divider dark:border-white/5",
-              cursor: "w-full bg-emerald-500",
+              cursor: "w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5",
               tab: "max-w-fit px-0 h-10",
-              tabContent: "group-data-[selected=true]:text-emerald-500 font-black text-[10px] uppercase tracking-widest italic"
+              tabContent: "group-data-[selected=true]:text-zinc-900 dark:text-zinc-100 font-medium text-[10px] uppercase tracking-widest tracking-tight"
             }}
           >
             <Tab key="all" title="HISTORIAL COMPLETO" />
@@ -253,15 +253,15 @@ export default function AuditTable({ logs }: AuditTableProps) {
                 inputWrapper: "border-gray-200 dark:border-white/10 bg-white dark:bg-zinc-950"
             }}
           />
-          <div className="flex gap-2 items-center text-gray-400 italic text-[10px] font-black uppercase whitespace-nowrap">
-            <Info size={14} className="text-emerald-500" />
+          <div className="flex gap-2 items-center text-gray-400 tracking-tight text-[10px] font-medium uppercase whitespace-nowrap">
+            <Info size={14} className="text-zinc-900 dark:text-zinc-100" />
             {filteredLogs.length} EVENTOS
           </div>
         </div>
       </div>
 
       {/* CONTENEDOR DE TABLA / CARDS */}
-      <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-colors relative">
+      <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors relative">
         {!isMobile ? (
             <div className="flex-1 overflow-auto overscroll-contain custom-scrollbar min-h-0 w-full">
                 <Table
@@ -271,9 +271,9 @@ export default function AuditTable({ logs }: AuditTableProps) {
                     aria-label="Registro Maestro de Auditoría"
                     classNames={{
                         base: "min-w-[900px]",
-                        th: "bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
+                        th: "bg-gray-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
                         td: "py-2 border-b border-gray-100 dark:border-white/5 px-4",
-                        tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-default group"
+                        tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-default group"
                     }}
                 >
                     <TableHeader columns={COLUMNS}>
@@ -302,31 +302,31 @@ export default function AuditTable({ logs }: AuditTableProps) {
                 </Table>
             </div>
         ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-black/20">
+            <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-[#18181b]">
                 {items.length > 0 ? (
                     items.map((log) => (
-                        <div key={log.id} className={`relative p-4 rounded-2xl border border-gray-200 dark:border-white/10 shadow-lg bg-white dark:bg-[#18181b] flex flex-col gap-3 transition-all ${log.is_critical ? 'border-rose-500/40 bg-rose-500/5 shadow-rose-500/5' : 'hover:border-emerald-500/30'}`}>
+                        <div key={log.id} className={`relative p-4 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] card-base border-none flex flex-col gap-3 transition-all ${log.is_critical ? 'border-rose-500/40 bg-rose-500/5 shadow-rose-500/5' : 'hover:border-emerald-500/30'}`}>
                             {log.is_critical && <div className="absolute top-3 left-0 w-1 h-12 bg-rose-500 rounded-r-full" />}
                             <div className="flex justify-between items-start">
                                 <HeroUser
                                     name={log.employee_name}
                                     description={log.employee_dni}
                                     avatarProps={{ size: "sm" }}
-                                    classNames={{ name: "text-[10px] font-black uppercase", description: "text-[8px] font-bold" }}
+                                    classNames={{ name: "text-[10px] font-medium uppercase", description: "text-[8px] font-bold" }}
                                 />
                                 <div className="flex flex-col items-end">
-                                    <span className="text-[8px] font-black text-gray-400 uppercase">{formatTime(log.created_at)}</span>
-                                    <span className="text-[8px] font-bold text-emerald-500 uppercase">{format(new Date(log.created_at), "dd/MM/yy")}</span>
+                                    <span className="text-[8px] font-medium text-gray-400 uppercase">{formatTime(log.created_at)}</span>
+                                    <span className="text-[8px] font-bold text-zinc-900 dark:text-zinc-100 uppercase">{format(new Date(log.created_at), "dd/MM/yy")}</span>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <Chip size="sm" variant="flat" color={getActionColor(log.action, log.is_critical)} className="font-black uppercase text-[8px] h-5 tracking-tighter italic">{log.action}</Chip>
-                                <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest px-2 py-0.5 bg-gray-100 dark:bg-zinc-800 rounded-full">{log.module}</span>
+                                <Chip size="sm" variant="flat" color={getActionColor(log.action, log.is_critical)} className="font-medium uppercase text-[8px] h-5 tracking-tighter tracking-tight">{log.action}</Chip>
+                                <span className="text-[8px] font-medium text-gray-400 uppercase tracking-widest px-2 py-0.5 bg-gray-100 dark:bg-zinc-800 rounded-2xl">{log.module}</span>
                             </div>
-                            <p className="text-[11px] font-bold italic text-gray-700 dark:text-zinc-300 leading-tight border-t border-gray-100 dark:border-white/5 pt-2">
+                            <p className="text-[11px] font-bold tracking-tight text-gray-700 dark:text-zinc-300 leading-tight border-t border-gray-100 dark:border-white/5 pt-2">
                                 {log.human_readable || log.details}
                             </p>
-                            <Button size="sm" variant="flat" className="w-full mt-1 bg-emerald-500/10 text-emerald-600 font-black text-[9px] uppercase italic h-8" onPress={() => handleInspect(log)}>
+                            <Button size="sm" variant="flat" className="w-full mt-1 bg-white/5 text-emerald-600 font-medium text-[9px] uppercase tracking-tight h-8" onPress={() => handleInspect(log)}>
                                 Ver Detalles Técnicos <Eye size={12} className="ml-1" />
                             </Button>
                         </div>
@@ -339,25 +339,25 @@ export default function AuditTable({ logs }: AuditTableProps) {
 
         {/* PAGINACIÓN ESTILO PREMIUM */}
         {filteredLogs.length > rowsPerPage && (
-            <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 backdrop-blur-md z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
-                <div className="flex items-center gap-2 font-black">
+            <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
+                <div className="flex items-center gap-2 font-medium">
                     <Button
                         isIconOnly
                         size="sm"
                         variant="flat"
                         onPress={() => setPage(Math.max(1, page - 1))}
                         isDisabled={page === 1}
-                        className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                        className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                     >
                         <ChevronLeft size={18} />
                     </Button>
 
                     <div className="flex flex-col items-start px-1 leading-none">
-                        <span className="text-[7px] text-gray-400 dark:text-zinc-500 uppercase font-black tracking-tighter">EVENTOS</span>
-                        <p className="text-[10px] text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-1">
-                            <span className="italic font-black text-emerald-500">{(page - 1) * rowsPerPage + 1}-{Math.min(page * rowsPerPage, filteredLogs.length)}</span>
+                        <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">EVENTOS</span>
+                        <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
+                            <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{(page - 1) * rowsPerPage + 1}-{Math.min(page * rowsPerPage, filteredLogs.length)}</span>
                             <span className="opacity-20 text-[8px]">DE</span>
-                            <span className="italic font-black">{filteredLogs.length}</span>
+                            <span className="tracking-tight font-medium">{filteredLogs.length}</span>
                         </p>
                     </div>
 
@@ -367,7 +367,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         variant="flat"
                         onPress={() => setPage(Math.min(totalPages, page + 1))}
                         isDisabled={page === totalPages || totalPages === 0}
-                        className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                        className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                     >
                         <ChevronRight size={18} />
                     </Button>
@@ -377,7 +377,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                     <select
                         value={rowsPerPage}
                         onChange={(e) => { setRowsPerPage(Number(e.target.value)); setPage(1); }}
-                        className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-2 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none pr-6"
+                        className="h-8 card-base border-none text-zinc-900 dark:text-zinc-50 text-[10px] font-medium uppercase tracking-widest px-2 outline-none rounded-2xl border border-gray-200 dark:border-white/10 cursor-pointer shadow-[0_8px_30px_rgb(0,0,0,0.12)] appearance-none pr-6"
                     >
                         {[25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
                     </select>
@@ -394,7 +394,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
         backdrop="blur"
         scrollBehavior="inside"
         classNames={{
-            base: "bg-white dark:bg-zinc-950 border border-default-100 dark:border-white/10 shadow-2xl rounded-3xl",
+            base: "bg-white dark:bg-zinc-950 border border-default-100 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl",
             header: "border-b border-default-100 dark:border-white/10 py-6",
             body: "py-6 custom-scrollbar",
             footer: "border-t border-default-100 dark:border-white/10"
@@ -405,28 +405,28 @@ export default function AuditTable({ logs }: AuditTableProps) {
             <>
               <ModalHeader className="flex flex-col gap-1">
                 <div className="flex items-center gap-3">
-                    <div className={`h-12 w-12 rounded-2xl flex items-center justify-center text-white shadow-lg ${selectedLog?.is_critical ? 'bg-rose-500 shadow-rose-500/20' : 'bg-emerald-500 shadow-emerald-500/20'}`}>
+                    <div className={`h-12 w-12 rounded-2xl flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${selectedLog?.is_critical ? 'bg-rose-500 shadow-rose-500/20' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 '}`}>
                         {selectedLog?.is_critical ? <ShieldAlert size={24} /> : <History size={24} />}
                     </div>
                     <div className="flex flex-col">
-                        <h3 className="text-sm font-black uppercase tracking-tighter italic">Inspección Forense de Evento</h3>
+                        <h3 className="text-sm font-medium uppercase tracking-tighter tracking-tight">Inspección Forense de Evento</h3>
                         <p className="text-[10px] font-bold text-default-400 uppercase tracking-widest">ID Registro: #{selectedLog?.id}</p>
                     </div>
                 </div>
               </ModalHeader>
               <ModalBody className="flex flex-col gap-6">
                 <div className="grid grid-cols-2 gap-4">
-                    <div className="bg-default-50 dark:bg-zinc-900/50 p-3 rounded-2xl border border-default-100 dark:border-white/5">
+                    <div className="bg-default-50 dark:bg-[#18181b]/50 p-3 rounded-2xl border border-default-100 dark:border-white/5">
                         <div className="flex items-center gap-2 mb-2 text-default-400">
                             <Globe size={14} />
-                            <span className="text-[9px] font-black uppercase tracking-widest">Origen de Conexión</span>
+                            <span className="text-[9px] font-medium uppercase tracking-widest">Origen de Conexión</span>
                         </div>
-                        <p className="text-xs font-mono font-black text-default-700 dark:text-zinc-300">{selectedLog?.ip_address}</p>
+                        <p className="text-xs font-mono font-medium text-default-700 dark:text-zinc-300">{selectedLog?.ip_address}</p>
                     </div>
-                    <div className="bg-default-50 dark:bg-zinc-900/50 p-3 rounded-2xl border border-default-100 dark:border-white/5">
+                    <div className="bg-default-50 dark:bg-[#18181b]/50 p-3 rounded-2xl border border-default-100 dark:border-white/5">
                         <div className="flex items-center gap-2 mb-2 text-default-400">
                             <Monitor size={14} />
-                            <span className="text-[9px] font-black uppercase tracking-widest">Dispositivo / User-Agent</span>
+                            <span className="text-[9px] font-medium uppercase tracking-widest">Dispositivo / User-Agent</span>
                         </div>
                         <Tooltip content={selectedLog?.device || "N/A"}>
                             <p className="text-[10px] font-bold text-default-600 dark:text-zinc-400 truncate">{selectedLog?.device || "Desconocido"}</p>
@@ -435,29 +435,29 @@ export default function AuditTable({ logs }: AuditTableProps) {
                 </div>
 
                 <div className="flex flex-col gap-3">
-                    <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest italic flex items-center gap-2">
+                    <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest tracking-tight flex items-center gap-2">
                         <ArrowRight size={14} /> Trazabilidad de Cambios (Kardex Audit)
                     </h4>
                     {renderChangesTable(selectedLog?.changes)}
                 </div>
 
-                <div className="flex flex-col gap-2 p-4 bg-default-50 dark:bg-zinc-900/50 rounded-2xl border border-default-100 dark:border-white/5">
-                    <span className="text-[9px] font-black text-default-400 uppercase tracking-widest">Relato Técnico</span>
-                    <p className="text-xs font-medium text-default-600 dark:text-zinc-400 italic">
+                <div className="flex flex-col gap-2 p-4 bg-default-50 dark:bg-[#18181b]/50 rounded-2xl border border-default-100 dark:border-white/5">
+                    <span className="text-[9px] font-medium text-default-400 uppercase tracking-widest">Relato Técnico</span>
+                    <p className="text-xs font-medium text-default-600 dark:text-zinc-400 tracking-tight">
                         &quot;{selectedLog?.human_readable || selectedLog?.details}&quot;
                     </p>
                 </div>
               </ModalBody>
               <ModalFooter>
                 <Button 
-                    className="font-black text-[10px] uppercase tracking-widest italic rounded-xl h-10 border border-default-200 dark:border-white/10 bg-white dark:bg-zinc-900"
+                    className="font-medium text-[10px] uppercase tracking-widest tracking-tight rounded-2xl h-10 border border-default-200 dark:border-white/10 card-base border-none"
                     onPress={onClose}
                 >
                     Cerrar Informe
                 </Button>
                 <Button 
                     color="primary"
-                    className="font-black text-[10px] uppercase tracking-widest italic rounded-xl h-10 shadow-lg shadow-emerald-500/20"
+                    className="font-medium text-[10px] uppercase tracking-widest tracking-tight rounded-2xl h-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                     onPress={() => window.print()}
                 >
                     Imprimir Evidencia

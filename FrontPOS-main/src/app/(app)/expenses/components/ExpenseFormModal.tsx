@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect } from 'react';
+﻿import React, { memo, useState, useEffect } from 'react';
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   Button, Input, Autocomplete, AutocompleteItem, Card, CardBody, Switch, cn
@@ -292,7 +292,7 @@ const ExpenseFormModal = memo(({
         try {
           const token = Cookies.get('org-pos-token');
           const response = await fetch(
-            `${process.env.NEXT_PUBLIC_API_URL}/orders?supplier_id=${localExpense.supplierId}`,
+            `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/orders?supplier_id=${localExpense.supplierId}`,
             { headers: { 'Authorization': `Bearer ${token}` } }
           );
           if (response.ok) {
@@ -329,9 +329,9 @@ const ExpenseFormModal = memo(({
         backdrop="blur"
         size="4xl"
         classNames={{
-          base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-2xl",
-          closeButton: "absolute right-5 top-5 text-gray-400 hover:text-rose-500 transition-colors z-[100] rounded-full",
-          backdrop: "bg-black/60 backdrop-blur-md"
+          base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+          closeButton: "absolute right-5 top-5 text-gray-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
+          backdrop: "bg-[#18181b] "
         }}
       >
         <ModalContent>
@@ -339,11 +339,11 @@ const ExpenseFormModal = memo(({
             <>
               <ModalHeader className="px-8 py-5 border-b border-gray-100 dark:border-white/5">
                 <div className="flex items-center gap-4">
-                  <div className="h-12 w-12 bg-rose-500 text-white flex items-center justify-center rounded-2xl shadow-lg">
+                  <div className="h-12 w-12 bg-rose-500 text-white flex items-center justify-center rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <TrendingDown size={24} />
                   </div>
                   <div>
-                    <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight leading-none">
+                    <h2 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-none">
                       {isEdit ? "Modificar" : "Autorizar"} <span className="text-rose-500">Egreso</span>
                     </h2>
                     <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1">Control de Salida Maestro</p>
@@ -357,7 +357,7 @@ const ExpenseFormModal = memo(({
                   {/* COL 1: CLASIFICACIÓN */}
                   <div className="space-y-6">
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">1. Clasificación</label>
+                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">1. Clasificación</label>
                       <div className="grid grid-cols-2 gap-2">
                         {CATEGORIES.map(cat => (
                           <button
@@ -366,13 +366,13 @@ const ExpenseFormModal = memo(({
                             tabIndex={0}
                             onClick={() => updateField('category', cat.id)}
                             onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); updateField('category', cat.id); } }}
-                            className={`h-12 px-3 rounded-xl flex items-center gap-2 border-2 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50 transition-all ${localExpense.category === cat.id
-                                ? `bg-rose-500/10 border-rose-500 text-rose-500 shadow-sm`
-                                : 'bg-gray-50 dark:bg-zinc-900/30 border-transparent text-gray-400 hover:border-rose-500/20'
+                            className={`h-12 px-3 rounded-2xl flex items-center gap-2 border-2 outline-none focus-visible:ring-2 focus-visible:ring-rose-500/50 transition-all ${localExpense.category === cat.id
+                                ? `bg-rose-500/10 border-rose-500 text-rose-500 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`
+                                : 'bg-gray-50 dark:bg-[#18181b]/30 border-transparent text-gray-400 hover:border-rose-500/20'
                               }`}
                           >
                             <cat.icon size={16} />
-                            <span className="text-[9px] font-black uppercase leading-tight">{cat.label}</span>
+                            <span className="text-[9px] font-medium uppercase leading-tight">{cat.label}</span>
                           </button>
                         ))}
                       </div>
@@ -381,11 +381,11 @@ const ExpenseFormModal = memo(({
                     {localExpense.category === 'Proveedores' && (
                       <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
                         <div className="flex justify-between items-center">
-                          <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">2. Proveedor</label>
+                          <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">2. Proveedor</label>
                           <Button
                             size="sm"
                             variant="light"
-                            className="h-6 text-[9px] font-black text-sky-500 px-0 min-w-0"
+                            className="h-6 text-[9px] font-medium text-sky-500 px-0 min-w-0"
                             onClick={() => setIsSupplierModalOpen(true)}
                           >
                             + NUEVO
@@ -422,23 +422,23 @@ const ExpenseFormModal = memo(({
                           allowsCustomValue
                           classNames={{ 
                             listbox: "bg-white dark:bg-zinc-950", 
-                            popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl p-1 rounded-xl min-w-[280px]" 
+                            popoverContent: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-1 rounded-2xl min-w-[280px]" 
                           }}
-                          inputProps={{ classNames: { inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-xl shadow-inner", input: "font-bold text-xs uppercase" } }}
+                          inputProps={{ classNames: { inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl shadow-inner", input: "font-bold text-xs uppercase" } }}
                         >
                           {(item) => (
-                            <AutocompleteItem key={String(item.id)} textValue={item.name} className="dark:text-white rounded-xl h-10">
+                            <AutocompleteItem key={String(item.id)} textValue={item.name} className="dark:text-white rounded-2xl h-10">
                               <div className="flex items-center gap-2">
                                 <Building2 size={14} className="text-sky-500" />
-                                <span className="text-[10px] font-black uppercase">{item.name}</span>
+                                <span className="text-[10px] font-medium uppercase">{item.name}</span>
                               </div>
                             </AutocompleteItem>
                           )}
                         </Autocomplete>
                         {pendingOrders.length > 0 && (
-                          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-xl flex items-center gap-3">
+                          <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-3">
                             <Search size={14} className="text-amber-500" />
-                            <p className="text-[9px] font-black text-amber-600 uppercase">Orden #{selectedOrderId} activa</p>
+                            <p className="text-[9px] font-medium text-amber-600 uppercase">Orden #{selectedOrderId} activa</p>
                           </div>
                         )}
                       </div>
@@ -448,35 +448,35 @@ const ExpenseFormModal = memo(({
                   {/* COL 2: FINANCIERO */}
                   <div className="space-y-6">
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">3. Monto</label>
+                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">3. Monto</label>
                       <Input
                         placeholder="0"
                         inputMode="decimal"
                         value={localExpense.amount ? formatCurrency(localExpense.amount) : ''}
                         onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('amount', parseCurrency(v))}
-                        startContent={<span className="text-xl font-black text-rose-500">$</span>}
-                        classNames={{ inputWrapper: "h-16 bg-rose-50/50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl px-6", input: "font-black text-2xl text-gray-900 dark:text-white tabular-nums" }}
+                        startContent={<span className="text-xl font-medium text-rose-500">$</span>}
+                        classNames={{ inputWrapper: "h-16 bg-rose-50/50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl px-6", input: "font-medium text-2xl text-zinc-900 dark:text-zinc-50 tabular-nums" }}
                       />
                     </div>
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">4. Pago por</label>
+                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">4. Pago por</label>
                       <div className="grid grid-cols-3 gap-2">
                         {paymentMethods.map(method => (
                           <button
                             key={method.id}
                             onClick={() => updateField('paymentSource', method.id)}
-                            className={`relative h-14 rounded-xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${localExpense.paymentSource === method.id
+                            className={`relative h-14 rounded-2xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${localExpense.paymentSource === method.id
                                 ? (method.id === 'FONDO' 
-                                    ? 'bg-cyan-600 border-cyan-600 text-white shadow-lg shadow-cyan-600/20' 
-                                    : 'bg-zinc-900 dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-lg')
-                                : 'bg-white dark:bg-zinc-900/30 border-gray-100 dark:border-white/5 text-gray-400 hover:border-gray-200'
+                                    ? 'bg-cyan-600 border-cyan-600 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-cyan-600/20' 
+                                    : 'bg-[#18181b] dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)]')
+                                : 'card-base border-none/30 border-gray-100 dark:border-white/5 text-gray-400 hover:border-gray-200'
                               }`}
                           >
                             <method.icon size={16} />
-                            <span className="text-[8px] font-black uppercase">{method.label}</span>
+                            <span className="text-[8px] font-medium uppercase">{method.label}</span>
                             {method.id === 'FONDO' && (
-                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[5px] font-black bg-cyan-500 text-white px-1 rounded-full whitespace-nowrap">BOVEDA</span>
+                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[5px] font-medium bg-cyan-500 text-white px-1 rounded-2xl whitespace-nowrap">BOVEDA</span>
                             )}
                           </button>
                         ))}
@@ -486,7 +486,7 @@ const ExpenseFormModal = memo(({
                     {/* Campo de Acreedor - DISEÑO DE ALTO IMPACTO (ROJO) */}
                     {localExpense.paymentSource === 'PRESTAMO' && (
                       <div className="mt-4 p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-400">
-                        <label className="block text-[10px] font-black text-rose-500 mb-1.5 uppercase tracking-widest px-1">
+                        <label className="block text-[10px] font-medium text-rose-500 mb-1.5 uppercase tracking-widest px-1">
                           ACREEDOR / QUIÉN PRESTA EL DINERO *
                         </label>
                         <Input
@@ -498,13 +498,13 @@ const ExpenseFormModal = memo(({
                           isRequired
                           variant="bordered"
                           classNames={{
-                            input: "font-black text-[14px] uppercase placeholder:text-gray-400",
-                            inputWrapper: "h-12 bg-white/50 dark:bg-black/50 border-rose-500/30 hover:border-rose-500 focus-within:!border-rose-500 transition-all rounded-xl shadow-sm"
+                            input: "font-medium text-[14px] uppercase placeholder:text-gray-400",
+                            inputWrapper: "h-12 bg-white/50 dark:bg-[#18181b] border-rose-500/30 hover:border-rose-500 focus-within:!border-rose-500 transition-all rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                           }}
                           startContent={<HandCoins size={18} className="text-rose-500 mr-2" />}
                         />
-                        <p className="text-[8px] font-black text-rose-600 dark:text-rose-400 uppercase mt-2 px-1 tracking-tighter flex items-center gap-1.5">
-                          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+                        <p className="text-[8px] font-medium text-rose-600 dark:text-rose-400 uppercase mt-2 px-1 tracking-tighter flex items-center gap-1.5">
+                          <span className="w-1.5 h-1.5 rounded-2xl bg-rose-500 animate-pulse" />
                           ESTE GASTO SE REGISTRARÁ COMO DEUDA PENDIENTE
                         </p>
                       </div>
@@ -514,7 +514,7 @@ const ExpenseFormModal = memo(({
                   {/* COL 3: CONCEPTO Y RESUMEN */}
                   <div className="space-y-6">
                     <div className="space-y-3">
-                      <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">5. Concepto</label>
+                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">5. Concepto</label>
                       <Input
                         placeholder="DETALLES DEL EGRESO..."
                         value={localExpense.description}
@@ -522,35 +522,35 @@ const ExpenseFormModal = memo(({
                         onValueChange={(v) => updateField('description', v.toUpperCase())}
                         readOnly={localExpense.category === 'Proveedores'}
                         classNames={{
-                          inputWrapper: `h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-xl px-4 ${localExpense.category === 'Proveedores' ? 'opacity-70 cursor-not-allowed bg-gray-100' : ''}`,
-                          input: "font-bold text-[11px] uppercase text-gray-900 dark:text-white"
+                          inputWrapper: `h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl px-4 ${localExpense.category === 'Proveedores' ? 'opacity-70 cursor-not-allowed bg-gray-100' : ''}`,
+                          input: "font-bold text-[11px] uppercase text-zinc-900 dark:text-zinc-50"
                         }}
                       />
                     </div>
-                    <Card className="bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm mt-auto">
+                    <Card className="bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] mt-auto">
                       <CardBody className="p-5 space-y-4">
                         <div className="flex justify-between">
-                          <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest">Resumen Final</span>
-                          <span className="text-[8px] font-black text-gray-400 uppercase">{localExpense.paymentSource}</span>
+                          <span className="text-[8px] font-medium text-rose-500 uppercase tracking-widest">Resumen Final</span>
+                          <span className="text-[8px] font-medium text-gray-400 uppercase">{localExpense.paymentSource}</span>
                         </div>
                         <div className="space-y-1">
                           <p className="text-[8px] font-bold text-gray-400 uppercase">Concepto:</p>
-                          <p className="text-[10px] font-black text-gray-900 dark:text-white uppercase leading-tight line-clamp-2">
+                          <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase leading-tight line-clamp-2">
                             {localExpense.description || 'REQUERIDO...'}
                           </p>
                         </div>
                         <div className="pt-3 border-t border-gray-200 dark:border-white/5 space-y-2">
                           {localExpense.taxAmount > 0 && (
-                            <div className="flex justify-between items-center bg-rose-500/5 p-2 rounded-lg">
+                            <div className="flex justify-between items-center bg-rose-500/5 p-2 rounded-2xl">
                                <div className="flex flex-col">
-                                  <span className="text-[7px] font-black text-rose-500 uppercase tracking-widest">GMF (4x1000 Nequi)</span>
-                                  <span className="text-[10px] font-black text-rose-500 italic">+${formatCurrency(localExpense.taxAmount)}</span>
+                                  <span className="text-[7px] font-medium text-rose-500 uppercase tracking-widest">GMF (4x1000 Nequi)</span>
+                                  <span className="text-[10px] font-medium text-rose-500 tracking-tight">+${formatCurrency(localExpense.taxAmount)}</span>
                                </div>
                                <Zap size={12} className="text-rose-500" />
                             </div>
                           )}
                           <p className="text-[8px] font-bold text-gray-400 uppercase">Valor Total a Descontar:</p>
-                          <p className="text-2xl font-black text-rose-500 tabular-nums">${formatCurrency(Number(localExpense.amount || 0) + localExpense.taxAmount)}</p>
+                          <p className="text-2xl font-medium text-rose-500 tabular-nums">${formatCurrency(Number(localExpense.amount || 0) + localExpense.taxAmount)}</p>
                         </div>
                       </CardBody>
                     </Card>
@@ -558,13 +558,13 @@ const ExpenseFormModal = memo(({
                 </div>
               </ModalBody>
 
-              <ModalFooter className="px-8 py-6 border-t border-gray-100 dark:border-white/5 bg-gray-50/30 dark:bg-zinc-900/50">
+              <ModalFooter className="px-8 py-6 border-t border-gray-100 dark:border-white/5 bg-gray-50/30 dark:bg-[#18181b]/50">
                 <div className="flex w-full gap-4">
-                  <Button variant="flat" className="flex-1 h-12 rounded-xl font-black uppercase text-[10px] tracking-widest border border-gray-200 dark:border-white/5" onPress={onClose}>
+                  <Button variant="flat" className="flex-1 h-12 rounded-2xl font-medium uppercase text-[10px] tracking-widest border border-gray-200 dark:border-white/5" onPress={onClose}>
                     DESCARTAR
                   </Button>
                   <Button
-                    className="flex-[2] h-12 bg-rose-500 text-white font-black uppercase text-xs tracking-[0.2em] rounded-xl shadow-lg hover:scale-[1.02] active:scale-95 transition-all"
+                    className="flex-[2] h-12 bg-rose-500 text-white font-medium uppercase text-xs tracking-[0.2em] rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-[1.02] active:scale-95 transition-all"
                     isLoading={isSubmitting}
                     isDisabled={isSubmitting}
                     onPress={async () => {
@@ -627,4 +627,6 @@ const ExpenseFormModal = memo(({
 
 ExpenseFormModal.displayName = 'ExpenseFormModal';
 export default ExpenseFormModal;
+
+
 

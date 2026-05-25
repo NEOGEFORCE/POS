@@ -174,18 +174,19 @@ func (h *ExpenseHandler) Settle(c *gin.Context) {
 	id, _ := strconv.ParseUint(idStr, 10, 32)
 
 	var req struct {
-		PaymentSource string `json:"paymentSource" binding:"required"`
+		PaymentSource string  `json:"paymentSource" binding:"required"`
+		Amount        float64 `json:"amount"` // Added for partial payments
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fuente de pago requerida", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Datos inválidos", err)
 		return
 	}
 
 	val, _ := c.Get("dni")
 	updaterDNI := fmt.Sprintf("%v", val)
 
-	expense, err := h.service.SettleExpense(uint(id), req.PaymentSource, updaterDNI)
+	expense, err := h.service.SettleExpense(uint(id), req.PaymentSource, updaterDNI, req.Amount)
 	if err != nil {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, err.Error(), err)
 		return

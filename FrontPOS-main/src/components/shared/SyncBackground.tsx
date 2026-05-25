@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef } from 'react';
 import Cookies from 'js-cookie';
@@ -38,7 +38,7 @@ export default function SyncBackground() {
 
                 for (const item of queue) {
                     try {
-                        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/register`, {
+                        const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`, {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -82,7 +82,7 @@ export default function SyncBackground() {
             if (!token || !navigator.onLine) return;
 
             console.log("[SYNC] Actualizando catálogo local para modo offline...");
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/products/all-products`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
@@ -119,3 +119,4 @@ export default function SyncBackground() {
 
     return null; // Componente invisible
 }
+

@@ -10,4 +10,5 @@ type StockMovementRepository interface {
 	SaveWithTx(tx interface{}, movement *models.StockMovement) error
 	GetByProduct(barcode string, from, to time.Time) ([]models.StockMovement, error)
 	GetByDateRange(from, to time.Time) ([]models.StockMovement, error)
+	GetLastMovementByBarcodeAndReason(barcode string, reason string) (*models.StockMovement, error)
 }

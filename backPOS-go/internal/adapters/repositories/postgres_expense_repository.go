@@ -122,7 +122,7 @@ func (r *PostgresExpenseRepository) GetPendingDebtsSummary() (float64, int64, er
 	}
 	err := r.db.Model(&models.Expense{}).
 		Where("UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')", "PENDING").
-		Select("COALESCE(SUM(amount + tax_amount), 0) as amount, COUNT(*) as count").
+		Select("COALESCE(SUM(CASE WHEN remaining_amount > 0 THEN remaining_amount ELSE amount END + tax_amount), 0) as amount, COUNT(*) as count").
 		Scan(&result).Error
 	return result.Amount, result.Count, err
 }

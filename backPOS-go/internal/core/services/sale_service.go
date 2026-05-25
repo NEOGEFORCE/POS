@@ -69,9 +69,7 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 			effectiveQty = detail.Quantity * float64(product.PackMultiplier)
 		}
 
-		if !product.IsWeighted {
-			deductions[targetBarcode] += effectiveQty
-		}
+		deductions[targetBarcode] += effectiveQty
 	}
 
 	// 3. Validar stock total requerido
@@ -214,6 +212,51 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 			}
 		}()
 		
+		// TAREA 1: Notificaciones Proactivas de "Agotamiento Crítico"
+		for _, detail := range sale.SaleDetails {
+			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
+				continue
+			}
+
+			// Calcular promedio diario (últimos 14 días)
+			avgDaily, err := s.productRepo.GetDailySalesAverage(detail.Barcode, 14)
+			if err != nil || avgDaily <= 0 {
+				continue
+			}
+
+			// Obtener producto actualizado
+			product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "Supplier")
+			if err != nil || product == nil {
+				continue
+			}
+
+			// Solo alertar si tiene proveedor y frecuencia definida
+			if product.SupplierID != nil && product.Supplier.VisitFrequencyDays > 0 {
+				// Estimar días hasta la próxima visita
+				lastMove, err := s.movementRepo.GetLastMovementByBarcodeAndReason(detail.Barcode, "RECEPTION")
+				
+				daysUntilVisit := float64(product.Supplier.VisitFrequencyDays)
+				if err == nil && lastMove != nil {
+					elapsed := time.Since(lastMove.Date).Hours() / 24
+					daysUntilVisit = float64(product.Supplier.VisitFrequencyDays) - elapsed
+				}
+
+				// Si los días hasta la visita son mayores que los días que aguanta el stock -> ALERTA
+				stockSurvivalDays := product.Quantity / avgDaily
+				if daysUntilVisit > 0 && stockSurvivalDays < daysUntilVisit {
+					msg := fmt.Sprintf("⚠️ *¡ALERTA DE AGOTAMIENTO!*\n\n"+
+						"El producto *%s* se está vendiendo rápido.\n\n"+
+						"📦 *Stock Actual:* %.2f\n"+
+						"📈 *Venta Diaria:* %.2f\n"+
+						"🚚 *Próximo pedido en:* %.1f días\n\n"+
+						"💡 _Sugerencia: Surtir externamente para no perder ventas._",
+						product.ProductName, product.Quantity, avgDaily, daysUntilVisit)
+					
+					s.telegramService.SendMarkdownAlert(msg)
+				}
+			}
+		}
+
 		// Impresión de recibo
 		fullSale, err := s.saleRepo.GetByID(sale.SaleID)
 		if err == nil {

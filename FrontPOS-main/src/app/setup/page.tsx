@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -34,7 +34,7 @@ export default function SetupPage() {
     // Verificar si realmente se necesita setup
     const checkSetup = async () => {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/check-setup`);
+        const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/check-setup`);
         const data = await res.json();
         // Si no necesita setup o hay éxito pero dice falso, ir a login
         if (!data.needsSetup) {
@@ -66,7 +66,7 @@ export default function SetupPage() {
     setLoading(true);
 
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/setup`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/setup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -116,17 +116,17 @@ export default function SetupPage() {
         <ThemeToggle />
       </div>
 
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] h-[400px] sm:h-[600px] bg-emerald-500/5 dark:bg-emerald-500/10 blur-[100px] rounded-full pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] sm:w-[600px] h-[400px] sm:h-[600px] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 blur-[100px] rounded-2xl pointer-events-none" />
 
-      <Card className="w-full max-w-lg border border-gray-200 dark:border-white/5 rounded-[2.5rem] bg-white/80 dark:bg-zinc-950/60 backdrop-blur-3xl shadow-2xl relative z-10 p-4 sm:p-8">
+      <Card className="w-full max-w-lg border border-gray-200 dark:border-white/5 rounded-[2.5rem] card-base border-none dark:bg-zinc-950/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative z-10 p-4 sm:p-8">
         <CardHeader className="flex-col items-center pb-0">
-          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-emerald-100 dark:bg-emerald-500/10 text-emerald-600 dark:text-emerald-500 border border-emerald-200 dark:border-emerald-500/20 shadow-lg shadow-emerald-500/10">
+          <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-[1.5rem] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 border border-emerald-200 dark:border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10">
             <ShieldCheck className="h-8 w-8" />
           </div>
-          <h1 className="text-3xl font-black tracking-tighter text-gray-900 dark:text-white uppercase text-center">
+          <h1 className="text-3xl font-medium tracking-tighter text-zinc-900 dark:text-zinc-50 uppercase text-center">
             Configuración Inicial
           </h1>
-          <p className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-[0.2em] mt-3">
+          <p className="text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-[0.2em] mt-3">
             Crear cuenta de Superadministrador
           </p>
         </CardHeader>
@@ -145,7 +145,7 @@ export default function SetupPage() {
                 radius="lg"
                 startContent={<IdCard className="text-gray-400 w-4 h-4 mr-1" />}
                 classNames={{
-                  label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
+                  label: "text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
                   inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10",
                 }}
               />
@@ -160,7 +160,7 @@ export default function SetupPage() {
                 radius="lg"
                 startContent={<User className="text-gray-400 w-4 h-4 mr-1" />}
                 classNames={{
-                  label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
+                  label: "text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
                   inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10",
                 }}
               />
@@ -178,7 +178,7 @@ export default function SetupPage() {
               radius="lg"
               startContent={<Mail className="text-gray-400 w-4 h-4 mr-1" />}
               classNames={{
-                label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
+                label: "text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
                 inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10",
               }}
             />
@@ -195,7 +195,7 @@ export default function SetupPage() {
                 radius="lg"
                 startContent={<Lock className="text-gray-400 w-4 h-4 mr-1" />}
                 classNames={{
-                  label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
+                  label: "text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
                   inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10",
                 }}
               />
@@ -210,7 +210,7 @@ export default function SetupPage() {
                 radius="lg"
                 startContent={<Lock className="text-gray-400 w-4 h-4 mr-1" />}
                 classNames={{
-                  label: "text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
+                  label: "text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-wider mb-2",
                   inputWrapper: "h-12 bg-transparent border border-gray-200 dark:border-white/10",
                 }}
               />
@@ -230,7 +230,7 @@ export default function SetupPage() {
               size="lg"
               radius="lg"
               isLoading={loading}
-              className="w-full h-14 text-sm font-black bg-emerald-500 hover:bg-emerald-600 text-white dark:text-black shadow-lg shadow-emerald-500/20 transition-all uppercase"
+              className="w-full h-14 text-sm font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all uppercase"
             >
               Finalizar Configuración e Instalar
             </Button>
@@ -238,9 +238,11 @@ export default function SetupPage() {
         </form>
       </Card>
 
-      <div className="fixed bottom-8 text-[9px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] z-20 text-center w-full">
-        SISTEMA DE SEGURIDAD — FIRST RUN
+      <div className="fixed bottom-8 text-[9px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] z-20 text-center w-full">
+        SISTEMA DE SEGURIDAD â€” FIRST RUN
       </div>
     </div>
   );
 }
+
+

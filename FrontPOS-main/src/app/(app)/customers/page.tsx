@@ -15,6 +15,8 @@ import { Customer } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { normalizeText } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 
 // Dinámicos para aligerar HMR y carga inicial
 const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
@@ -25,7 +27,7 @@ const CustomerTable = dynamic(() => import('./components/CustomerTable'), { ssr:
 const ClientStatementModal = dynamic(() => import('./components/ClientStatementModal'), { ssr: false });
 
 async function fetchCustomers(token: string): Promise<Customer[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/all-clients`, {
+  const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/clients/all-clients`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Failed to fetch customers');
@@ -51,12 +53,12 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
       <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transition-transform active:scale-95">
+        <div className="h-10 w-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 transition-transform active:scale-95">
           <Users size={20} />
         </div>
         <div className="flex flex-col">
-          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">GESTIÓN DE <span className="text-emerald-500">CLIENTES</span></h1>
-          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1 italic leading-none">Directorio Maestro V4.2</p>
+          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">GESTIÓN DE <span className="text-zinc-900 dark:text-zinc-100">CLIENTES</span></h1>
+          <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1 tracking-tight leading-none">Directorio Maestro V4.2</p>
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -65,14 +67,14 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
           size="sm"
           onPress={onReload}
           isLoading={isLoading}
-          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          className="h-10 w-10 card-base border-none dark:bg-[#18181b]/80 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
           <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
           size="sm"
           onPress={onAdd}
-          className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+          className="h-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[9px] px-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] tracking-tight transition-all active:scale-95 shrink-0"
         >
           <PlusCircle size={16} />
           <span className="ml-2 tracking-widest">NUEVO</span>
@@ -85,16 +87,18 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       value={filter}
       onValueChange={onSearch}
       classNames={{
-        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
-        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest italic"
+        inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest tracking-tight"
       }}
-      startContent={<Search size={14} className="text-emerald-500 mr-1" />}
+      startContent={<Search size={14} className="text-zinc-900 dark:text-zinc-100 mr-1" />}
     />
   </header>
 ));
 CustomerHeader.displayName = 'CustomerHeader';
 
 export default function CustomersPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role?.toUpperCase() === 'ADMIN' || user?.role?.toUpperCase() === 'SUPERADMIN';
   const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -191,7 +195,7 @@ export default function CustomersPage() {
         paymentMethod = transferSource || "TRANSFERENCIA";
       }
 
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/pay-credit`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/clients/pay-credit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
@@ -238,9 +242,14 @@ export default function CustomersPage() {
   const handleAddCustomer = async () => {
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/create-client`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/clients/create-client`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...newClient, name: newClient.name?.toUpperCase(), creditLimit: Number(newClient.creditLimit) })
+        body: JSON.stringify({ 
+          ...newClient, 
+          name: normalizeText(newClient.name), 
+          address: normalizeText(newClient.address),
+          creditLimit: Number(newClient.creditLimit) 
+        })
       });
       if (!res.ok) {
         const errorMsg = await extractApiError(res, "FALLO AL CREAR CLIENTE");
@@ -256,9 +265,14 @@ export default function CustomersPage() {
     if (!editingClient) return;
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/update-client/${editingClient.dni}`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/clients/update-client/${editingClient.dni}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ ...editingClient, name: editingClient.name.toUpperCase(), creditLimit: Number(editingClient.creditLimit) })
+        body: JSON.stringify({ 
+          ...editingClient, 
+          name: normalizeText(editingClient.name), 
+          address: normalizeText(editingClient.address),
+          creditLimit: Number(editingClient.creditLimit) 
+        })
       });
       if (!res.ok) {
         const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CLIENTE");
@@ -273,7 +287,7 @@ export default function CustomersPage() {
     if (!deletingDni) return;
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/clients/delete-client/${deletingDni}`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/clients/delete-client/${deletingDni}`, {
         method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
@@ -289,14 +303,14 @@ export default function CustomersPage() {
 
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
     <Spinner color="success" size="lg" />
-    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse italic">Sincronizando Directorio...</p>
+    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse tracking-tight">Sincronizando Directorio...</p>
   </div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
 
       {/* HEADER SECTION: FIXED (TOP) - PARIDAD TOTAL CON USERS/SUPPLIERS */}
-      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <CustomerHeader
           filter={filter}
           onSearch={(v) => { setFilter(v.toUpperCase()); setPage(1); }}
@@ -326,6 +340,7 @@ export default function CustomersPage() {
           onPageChange={setPage}
           onPageSizeChange={setPageSize}
           onAdd={() => setAddDialogOpen(true)}
+          isAdmin={isAdmin}
         />
       </div>
 
@@ -373,3 +388,4 @@ export default function CustomersPage() {
     </div>
   );
 }
+

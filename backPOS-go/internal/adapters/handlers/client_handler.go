@@ -8,6 +8,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/core/utils"
 	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
@@ -29,9 +30,9 @@ func (h *ClientHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Mayúsculas y Metadatos
-	client.Name = strings.ToUpper(client.Name)
-	client.Address = strings.ToUpper(client.Address)
+	// Mayúsculas y Sanitización (Anti-Tildes)
+	client.Name = utils.NormalizeString(client.Name)
+	client.Address = utils.NormalizeString(client.Address)
 	dni, _ := c.Get("dni")
 	client.CreatedByDNI = dni.(string)
 	client.UpdatedByDNI = dni.(string)
@@ -85,6 +86,11 @@ func (h *ClientHandler) Update(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos de cliente inválido", err)
 		return
 	}
+	
+	// Sanitización (Anti-Tildes)
+	client.Name = utils.NormalizeString(client.Name)
+	client.Address = utils.NormalizeString(client.Address)
+
 	if err := h.service.UpdateClient(dni, &client); err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "not found") {
@@ -152,7 +158,7 @@ func (h *ClientHandler) PayCredit(c *gin.Context) {
 	}
 	payment.EmployeeDNI = dniStr
 
-	updatedClient, err := h.service.PayCredit(&payment)
+	updatedClient, err := h.service.PayCredit(&payment, h.saleRepo)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al registrar pago de crédito", err)
 		return

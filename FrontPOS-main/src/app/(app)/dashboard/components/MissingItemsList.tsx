@@ -50,17 +50,17 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
     };
 
     return (
-        <div className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-[2rem] p-8 shadow-sm h-full flex flex-col">
+        <div className="card-base border-none rounded-[2rem] p-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-full flex flex-col">
             <div className="flex items-center justify-between mb-8">
                 <div className="flex items-center gap-4">
                     <div className="h-12 w-12 bg-rose-500/10 text-rose-500 flex items-center justify-center rounded-2xl shadow-inner">
                         <PackageSearch size={24} />
                     </div>
                     <div>
-                        <h3 className="text-lg font-black text-gray-900 dark:text-white uppercase italic tracking-tighter leading-none">
+                        <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">
                             Control <span className="text-rose-500">Faltantes</span>
                         </h3>
-                        <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mt-1.5 leading-none">
+                        <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
                             Productos agotados reportados
                         </p>
                     </div>
@@ -68,7 +68,7 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                 <Chip 
                     variant="flat" 
                     color="danger" 
-                    className="h-6 font-black text-[9px] uppercase tracking-widest px-3 border-none bg-rose-50 dark:bg-rose-500/10 text-rose-500"
+                    className="h-6 font-medium text-[9px] uppercase tracking-widest px-3 border-none bg-rose-50 dark:bg-rose-500/10 text-rose-500"
                 >
                     {items?.length || 0} PENDIENTES
                 </Chip>
@@ -77,9 +77,9 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
             <div className="space-y-4 flex-1 overflow-hidden custom-scrollbar pr-2">
                 {(!items || items.length === 0) ? (
                     <div className="h-full flex flex-col items-center justify-center text-center py-10 opacity-50">
-                        <CheckCircle2 size={40} className="mb-4 text-emerald-500 opacity-20" />
-                        <p className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Todo bajo control</p>
-                        <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-1">No hay reportes de faltantes</p>
+                        <CheckCircle2 size={40} className="mb-4 text-zinc-900 dark:text-zinc-100 opacity-20" />
+                        <p className="text-[10px] font-medium text-gray-400 uppercase tracking-[0.2em]">Todo bajo control</p>
+                        <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest mt-1">No hay reportes de faltantes</p>
                     </div>
                 ) : (
                     items.slice(0, 4).map((item) => (
@@ -89,21 +89,21 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                         >
                             <div className="flex justify-between items-start gap-4">
                                 <div className="flex-1 min-w-0">
-                                    <h4 className="text-sm font-black text-gray-900 dark:text-white uppercase truncate italic mb-1">
+                                    <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase truncate tracking-tight mb-1">
                                         {item.product_name}
                                     </h4>
                                     <div className="flex flex-wrap gap-3">
-                                        <div className="flex items-center gap-1.5 text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase">
+                                        <div className="flex items-center gap-1.5 text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase">
                                             <User size={10} className="text-rose-500" />
                                             {item.reporter?.name || "SISTEMA"}
                                         </div>
-                                        <div className="flex items-center gap-1.5 text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase">
+                                        <div className="flex items-center gap-1.5 text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase">
                                             <Clock size={10} className="text-rose-500" />
                                             {formatTime(item.created_at)}
                                         </div>
                                     </div>
                                     {item.note && (
-                                        <p className="mt-3 text-[10px] leading-relaxed text-gray-500 dark:text-zinc-400 font-medium italic p-2 bg-white dark:bg-black/20 rounded-lg border border-gray-100 dark:border-white/5">
+                                        <p className="mt-3 text-[10px] leading-relaxed text-gray-500 dark:text-zinc-400 font-medium tracking-tight p-2 card-base border-none rounded-2xl border border-gray-100 dark:border-white/5">
                                             "{item.note}"
                                         </p>
                                     )}
@@ -111,13 +111,13 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                                 <Tooltip 
                                     content="Marcar como ADQUIRIDO" 
                                     placement="left" 
-                                    classNames={{ content: "font-bold text-[8px] uppercase tracking-wider bg-emerald-500 text-white py-0.5 px-2 shadow-xl" }}
+                                    classNames={{ content: "font-bold text-[8px] uppercase tracking-wider bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 py-0.5 px-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}
                                 >
                                     <Button
                                         isIconOnly
                                         size="sm"
                                         onPress={() => handleUpdateStatus(item.id, "ADQUIRIDO")}
-                                        className="bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/30 hover:scale-110 active:scale-90 transition-all shrink-0"
+                                        className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-110 active:scale-90 transition-all shrink-0"
                                     >
                                         <CheckCircle2 size={16} />
                                     </Button>
@@ -132,7 +132,7 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                 <Button
                     fullWidth
                     variant="light"
-                    className="h-10 text-[9px] font-black uppercase tracking-widest text-gray-400 dark:text-zinc-500 italic hover:text-rose-500 transition-all"
+                    className="h-10 text-[9px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400 tracking-tight hover:text-rose-500 transition-all"
                 >
                     Ver todo el historial
                 </Button>

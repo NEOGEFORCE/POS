@@ -1,4 +1,15 @@
 import type { NextConfig } from 'next';
+import withPWAInit from "@ducanh2912/next-pwa";
+
+const withPWA = withPWAInit({
+  dest: "public",
+  disable: process.env.NODE_ENV === "development",
+  register: true,
+  skipWaiting: true,
+  workboxOptions: {
+    disableDevLogs: true,
+  }
+});
 
 const nextConfig: NextConfig = {
   /* config options here */
@@ -16,7 +27,6 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: [
       '@heroui/react',
-      'lucide-react',
       'framer-motion',
       'recharts',
       'date-fns'
@@ -27,6 +37,8 @@ const nextConfig: NextConfig = {
     pagesBufferLength: 20,
   },
   transpilePackages: ['@ericblade/quagga2'],
+  // Nota: rewrites() puede causar conflictos con 'output: export'. Si hay errores, revísalo.
+  // Pero se mantiene como estaba originalmente.
   async rewrites() {
     return [
       {
@@ -37,4 +49,4 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+export default withPWA(nextConfig);

@@ -11,6 +11,7 @@ import { Category } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { normalizeText } from '@/lib/utils';
 
 // Dinámicos para aligerar HMR y carga inicial
 const CategoryStats = dynamic(() => import('./components/CategoryStats'), { ssr: false });
@@ -19,7 +20,7 @@ const CategoryFormModal = dynamic(() => import('./components/CategoryFormModal')
 const DeleteCategoryModal = dynamic(() => import('./components/DeleteCategoryModal'), { ssr: false });
 
 async function fetchCategories(token: string): Promise<Category[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/all-categories`, {
+  const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/all-categories`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   if (!res.ok) throw new Error('Error al cargar categorías');
@@ -98,11 +99,11 @@ export default function CategoriesPage() {
 
   // Acciones (Handlers)
   const handleAddCategory = async () => {
-    const name = newCatName.trim().toUpperCase();
+    const name = normalizeText(newCatName);
     if (!name) return;
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/create-categories`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/create-categories`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({ name })
@@ -125,10 +126,10 @@ export default function CategoriesPage() {
               <Button
                 size="sm"
                 color="success"
-                className="font-black text-[9px] uppercase"
+                className="font-medium text-[9px] uppercase"
                 onPress={async () => {
                   try {
-                    const reactRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/update-categories/${catId}`, {
+                    const reactRes = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/update-categories/${catId}`, {
                       method: 'PUT',
                       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                       body: JSON.stringify({ name, isActive: true })
@@ -166,10 +167,10 @@ export default function CategoriesPage() {
     if (!editingCategory) return;
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/update-categories/${editingCategory.id}`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/update-categories/${editingCategory.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-        body: JSON.stringify({ name: editingCategory.name.toUpperCase() })
+        body: JSON.stringify({ name: normalizeText(editingCategory.name) })
       });
       if (!res.ok) {
         const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CATEGORÍA");
@@ -187,7 +188,7 @@ export default function CategoriesPage() {
     if (!deletingId) return;
     const token = Cookies.get('org-pos-token');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/categories/delete-categories/${deletingId}`, {
+      const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/delete-categories/${deletingId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -205,27 +206,27 @@ export default function CategoriesPage() {
 
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
     <Spinner color="success" size="lg" />
-    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Sincronizando Categorías...</p>
+    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Categorías...</p>
   </div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
 
       {/* HEADER SECTION: FIXED (TOP) - MATCHING SUPPLIERS/USERS 3-PANEL STYLE */}
-      <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+      <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
 
         {/* PANEL 1: TITULO Y BOTONES ACCIÓN */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transform -rotate-2 hover:rotate-0 transition-all duration-500">
+            <div className="h-10 w-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 transform -rotate-2 hover:rotate-0 transition-all duration-500">
               <LayoutGrid size={20} className="md:size-5" strokeWidth={2.5} />
             </div>
             <div className="flex flex-col">
-              <h1 className="text-[13px] md:text-[14px] font-black uppercase tracking-tighter leading-none italic text-gray-900 dark:text-white">
-                CATÁLOGO DE <span className="text-emerald-500 text-[14px] md:text-[15px]">CATEGORÍAS</span>
+              <h1 className="text-[13px] md:text-[14px] font-medium uppercase tracking-tighter leading-none tracking-tight text-zinc-900 dark:text-zinc-50">
+                CATÁLOGO DE <span className="text-zinc-900 dark:text-zinc-100 text-[14px] md:text-[15px]">CATEGORÍAS</span>
               </h1>
-              <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1.5 flex items-center gap-1.5 leading-none">
-                <Sparkles size={8} className="text-emerald-500" /> TAXONOMÍA MAESTRA
+              <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1.5 flex items-center gap-1.5 leading-none">
+                <Sparkles size={8} className="text-zinc-900 dark:text-zinc-100" /> TAXONOMÍA MAESTRA
               </p>
             </div>
           </div>
@@ -235,13 +236,13 @@ export default function CategoriesPage() {
               isIconOnly
               size="sm"
               onPress={() => loadCategories()}
-              className="h-8 w-8 bg-white/80 dark:bg-zinc-900/80 text-gray-400 dark:text-zinc-500 rounded-lg shadow-sm border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
+              className="h-8 w-8 card-base border-none text-zinc-500 dark:text-zinc-400 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
             >
               <Clock size={14} />
             </Button>
             <Button
               onPress={() => setAddDialogOpen(true)}
-              className="h-8 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-lg shadow-lg shadow-emerald-500/20 active:scale-95 transition-all shrink-0"
+              className="h-8 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all shrink-0"
             >
               <PlusCircle size={14} className="mr-2" /> NUEVO
             </Button>
@@ -255,10 +256,10 @@ export default function CategoriesPage() {
             placeholder="LOCALIZAR DEPARTAMENTO O ID..."
             value={filter}
             onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
-            startContent={<Search size={14} className="text-emerald-500 mr-2" />}
+            startContent={<Search size={14} className="text-zinc-900 dark:text-zinc-100 mr-2" />}
             classNames={{
-              inputWrapper: "h-11 px-4 bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-xl",
-              input: "text-[11px] font-black tracking-widest uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600"
+              inputWrapper: "h-11 px-4 bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-2xl",
+              input: "text-[11px] font-medium tracking-widest uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600"
             }}
           />
         </div>
@@ -295,12 +296,12 @@ export default function CategoriesPage() {
         isEdit={editDialogOpen}
         categoryName={addDialogOpen ? newCatName : (editingCategory?.name || '')}
         setCategoryName={(name) => {
-          const val = name.toUpperCase().trim();
+          const val = normalizeText(name);
           if (addDialogOpen) {
             setNewCatName(name);
             // Detección automática de categoría existente
             if (val.length >= 3) {
-              const existing = categories.find(c => c.name.toUpperCase() === val);
+              const existing = categories.find(c => normalizeText(c.name) === val);
               if (existing) {
                 toast({
                   variant: "success",
@@ -328,3 +329,4 @@ export default function CategoriesPage() {
     </div>
   );
 }
+

@@ -2,7 +2,7 @@ import useSWR, { SWRConfiguration } from 'swr';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+import { API_URL } from '@/lib/constants';
 
 const fetcher = async (url: string) => {
   const token = Cookies.get('org-pos-token');

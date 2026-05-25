@@ -29,23 +29,23 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
     ];
 
     return (
-        <Card className="bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 shadow-xl h-full" radius="lg">
+        <Card className="card-featured h-full" radius="none" style={{ borderRadius: '1rem' }}>
             <CardBody className="p-5">
                 <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-3">
-                        <div className="p-2 bg-emerald-500/10 rounded-xl">
-                            <Wallet size={20} strokeWidth={2.5} className="text-emerald-500" />
+                        <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-white/8 text-zinc-500 dark:text-zinc-400 shrink-0">
+                            <Wallet size={18} />
                         </div>
                         <div>
-                            <h3 className="text-sm font-black text-gray-900 dark:text-white uppercase tracking-tighter italic">Flujo <span className="text-emerald-500">Hoy</span></h3>
-                            <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic leading-none">Ventas vs Egresos</p>
+                            <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 tracking-tight">Flujo <span className="text-zinc-900 dark:text-zinc-100">Hoy</span></h3>
+                            <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-widest leading-none mt-1">Ventas vs Egresos</p>
                         </div>
                     </div>
                     <Chip 
                         size="sm" 
                         variant="flat" 
                         color={balance >= 0 ? "success" : "danger"} 
-                        className="font-black text-[9px] uppercase italic tracking-widest"
+                        className="font-medium text-[9px] uppercase tracking-tight tracking-widest"
                     >
                         {balance >= 0 ? "POSITIVO" : "NEGATIVO"}
                     </Chip>
@@ -60,22 +60,22 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                         if (mIncome === 0 && mExpense === 0) return null;
 
                         return (
-                            <div key={method.key} className="p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.03] border border-gray-100 dark:border-white/5">
+                            <div key={method.key} className="p-3 rounded-2xl bg-zinc-100 dark:bg-zinc-800/30 border border-zinc-200 dark:border-white/5">
                                 <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
-                                        <method.icon size={14} className={`text-${method.color}-500`} />
-                                        <span className="text-[10px] font-black text-gray-700 dark:text-zinc-400 uppercase italic">{method.label}</span>
+                                        <method.icon size={14} className="text-zinc-500 dark:text-zinc-400" />
+                                        <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">{method.label}</span>
                                     </div>
-                                    <span className={`text-[11px] font-black italic ${mBalance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                    <span className={`text-[11px] font-medium tracking-tight font-['DM_Mono'] ${mBalance >= 0 ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>
                                         ${formatCurrency(mBalance)}
                                     </span>
                                 </div>
-                                <div className="flex justify-between items-center text-[9px] font-bold uppercase italic">
-                                    <div className="flex items-center gap-1 text-emerald-600/70 dark:text-emerald-500/50">
+                                <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-tight font-['DM_Mono']">
+                                    <div className="flex items-center gap-1 text-zinc-900 dark:text-zinc-100/50">
                                         <ArrowUpRight size={10} />
                                         <span>+${formatCurrency(mIncome)}</span>
                                     </div>
-                                    <div className="flex items-center gap-1 text-rose-600/70 dark:text-rose-500/50">
+                                    <div className="flex items-center gap-1 text-rose-500/50">
                                         <ArrowDownRight size={10} />
                                         <span>-${formatCurrency(mExpense)}</span>
                                     </div>
@@ -84,10 +84,10 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                         );
                     })}
 
-                    <div className="pt-4 border-t border-gray-100 dark:border-white/5">
+                    <div className="pt-4 border-t border-zinc-200 dark:border-white/5">
                         <div className="flex justify-between items-end mb-2">
-                            <span className="text-[10px] font-black text-gray-400 uppercase italic">Gasto vs Ingreso</span>
-                            <span className="text-[10px] font-black text-rose-500 italic">{progressRatio.toFixed(1)}%</span>
+                            <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-tight">Gasto vs Ingreso</span>
+                            <span className="text-[10px] font-medium text-rose-500 tracking-tight">{progressRatio.toFixed(1)}%</span>
                         </div>
                         <Progress 
                             value={progressRatio} 
@@ -96,9 +96,9 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                         />
                     </div>
 
-                    <div className="flex flex-col items-center justify-center p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
-                        <span className="text-[8px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-[0.3em] mb-1 italic">Balance Neto del Día</span>
-                        <span className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter">
+                    <div className="flex flex-col items-center justify-center p-4 bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-white/5 rounded-xl">
+                        <span className="text-[11px] font-medium tracking-widest uppercase text-zinc-500 mb-1">Balance Neto del Día</span>
+                        <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">
                             ${formatCurrency(balance)}
                         </span>
                     </div>

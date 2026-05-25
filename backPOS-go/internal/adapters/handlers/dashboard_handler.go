@@ -4,6 +4,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -53,7 +54,10 @@ func NewDashboardHandler(s *services.DashboardService, tg *services.TelegramServ
 }
 
 func (h *DashboardHandler) GetOverview(c *gin.Context) {
-	data, err := h.service.GetOverview(c.Request.Context())
+	startDate := c.Query("startDate")
+	endDate := c.Query("endDate")
+	
+	data, err := h.service.GetOverview(c.Request.Context(), startDate, endDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener resumen del dashboard", err)
 		return
@@ -100,7 +104,10 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 
 	// Auditoría Forense de Cierre de Caja
 	isCritical := closure.Difference != 0
-	expectedCash := closure.TotalCash - closure.TotalExpenses
+	expectedCash := closure.ExpectedCash
+	if expectedCash == 0 {
+		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
+	}
 	
 	details := fmt.Sprintf("Cierre de caja ID #%d realizado por %s", closure.ID, closure.ClosedByName)
 	human := fmt.Sprintf("El cajero %s realizó el cierre de caja. Balance: $%s real vs $%s esperado. Diferencia: $%s", 
@@ -195,7 +202,7 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
-		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses
+		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 
 	
@@ -332,7 +339,7 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	}
 
 	msg += "━━━━━━━━━━━━━━━━━━━━\n"
-	msg += "_Generado por Cerberus POS_"
+	msg += "_Generado por POS Pro_"
 	return msg
 }
 
@@ -380,6 +387,42 @@ func (h *DashboardHandler) DeleteClosure(c *gin.Context) {
 	})
 
 	// AVISO GLOBAL: Cierre eliminado (Actualiza historial)
+	go sse.GetSSEService().BroadcastDashboardUpdate()
+}
+
+func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de cierre inválido", err)
+		return
+	}
+
+	var updates map[string]interface{}
+	if err := c.ShouldBindJSON(&updates); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Cuerpo inválido", err)
+		return
+	}
+
+	err = h.service.UpdateClosure(uint(id), updates)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar cierre", err)
+		return
+	}
+
+	// Auditoría Forense: Edición de cierre
+	dniStr, nameStr := GetContextUser(c)
+	details := fmt.Sprintf("Cierre de caja ID #%d EDITADO por %s", id, nameStr)
+	human := fmt.Sprintf("El administrador %s editó el cierre de caja #%d.", nameStr, id)
+	updatesJSON, _ := json.Marshal(updates)
+	changes := fmt.Sprintf(`{"updatedClosureId": %d, "updatedBy": "%s", "changes": %s}`, id, nameStr, string(updatesJSON))
+
+	h.auditService.Log(dniStr, nameStr, "CLOSURE_UPDATE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), true)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("Cierre #%d actualizado correctamente", id),
+	})
+
 	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
@@ -467,7 +510,7 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 	// --- BLOQUES DE RESUMEN (AUDIT BOXES) ---
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
-		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses
+		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 
 	boxY := pdf.GetY()

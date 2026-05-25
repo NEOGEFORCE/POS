@@ -70,7 +70,7 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
             onOpenChange={onOpenChange}
             backdrop="blur"
             classNames={{
-                base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-[2.5rem]",
+                base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-[2.5rem]",
                 header: "border-b border-gray-100 dark:border-white/5 p-8",
                 body: "p-8",
                 footer: "border-t border-gray-100 dark:border-white/5 p-6 bg-gray-50/50 dark:bg-white/[0.02]"
@@ -81,12 +81,12 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                     <>
                         <ModalHeader className="flex flex-col gap-1">
                             <div className="flex items-center gap-4">
-                                <div className="h-12 w-12 bg-emerald-500/10 text-emerald-500 rounded-2xl flex items-center justify-center border border-emerald-500/20 shadow-inner">
+                                <div className="h-12 w-12 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl flex items-center justify-center border border-emerald-500/20 shadow-inner">
                                     <ShieldCheck size={24} />
                                 </div>
                                 <div className="flex flex-col">
-                                    <h3 className="font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-xl">Auditoría de <span className="text-emerald-500">Caja</span></h3>
-                                    <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Sincronización de Saldo Real</p>
+                                    <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Auditoría de <span className="text-zinc-900 dark:text-zinc-100">Caja</span></h3>
+                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Sincronización de Saldo Real</p>
                                 </div>
                             </div>
                         </ModalHeader>
@@ -94,18 +94,18 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                             <div className="space-y-6">
                                 <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10 flex gap-3">
                                     <AlertCircle className="text-amber-500 shrink-0" size={18} />
-                                    <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-relaxed italic">
-                                        Introduce el total de dinero físico y digital disponible actualmente. Esto reseteará la diferencia a <span className="font-black">$0</span> y establecerá un nuevo punto de partida.
+                                    <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-relaxed tracking-tight">
+                                        Introduce el total de dinero físico y digital disponible actualmente. Esto reseteará la diferencia a <span className="font-medium">$0</span> y establecerá un nuevo punto de partida.
                                     </p>
                                 </div>
 
                                 {/* CALCULADORA DE EFECTIVO DETALLADA */}
                                 <div className="space-y-4 bg-gray-50 dark:bg-white/[0.02] p-5 rounded-[2rem] border border-gray-100 dark:border-white/5">
-                                    <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic ml-1 mb-2 block">Conteo Físico Detallado</label>
+                                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-1 mb-2 block">Conteo Físico Detallado</label>
                                     
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                         <div className="space-y-1.5">
-                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Total Billetes</label>
+                                            <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-tight ml-1">Total Billetes</label>
                                             <Input
                                                 type="number"
                                                 placeholder="0"
@@ -113,15 +113,15 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                                 variant="flat"
                                                 value={bills}
                                                 onValueChange={setBills}
-                                                startContent={<span className="text-[10px] text-emerald-500 font-black">$</span>}
+                                                startContent={<span className="text-[10px] text-zinc-900 dark:text-zinc-100 font-medium">$</span>}
                                                 classNames={{
-                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
-                                                    input: "text-xs font-black italic tabular-nums"
+                                                    inputWrapper: "h-11 card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl",
+                                                    input: "text-xs font-medium tracking-tight tabular-nums"
                                                 }}
                                             />
                                         </div>
                                         <div className="space-y-1.5">
-                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Monedas 1k/500</label>
+                                            <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-tight ml-1">Monedas 1k/500</label>
                                             <Input
                                                 type="number"
                                                 placeholder="0"
@@ -129,15 +129,15 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                                 variant="flat"
                                                 value={coins1000}
                                                 onValueChange={setCoins1000}
-                                                startContent={<span className="text-[10px] text-amber-500 font-black">$</span>}
+                                                startContent={<span className="text-[10px] text-amber-500 font-medium">$</span>}
                                                 classNames={{
-                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
-                                                    input: "text-xs font-black italic tabular-nums"
+                                                    inputWrapper: "h-11 card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl",
+                                                    input: "text-xs font-medium tracking-tight tabular-nums"
                                                 }}
                                             />
                                         </div>
                                         <div className="space-y-1.5">
-                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Monedas 200</label>
+                                            <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-tight ml-1">Monedas 200</label>
                                             <Input
                                                 type="number"
                                                 placeholder="0"
@@ -145,15 +145,15 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                                 variant="flat"
                                                 value={coins200}
                                                 onValueChange={setCoins200}
-                                                startContent={<span className="text-[10px] text-zinc-400 font-black">$</span>}
+                                                startContent={<span className="text-[10px] text-zinc-500 dark:text-zinc-400 font-medium">$</span>}
                                                 classNames={{
-                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
-                                                    input: "text-xs font-black italic tabular-nums"
+                                                    inputWrapper: "h-11 card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl",
+                                                    input: "text-xs font-medium tracking-tight tabular-nums"
                                                 }}
                                             />
                                         </div>
                                         <div className="space-y-1.5">
-                                            <label className="text-[9px] font-black text-zinc-500 uppercase italic ml-1">Monedas 100</label>
+                                            <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-tight ml-1">Monedas 100</label>
                                             <Input
                                                 type="number"
                                                 placeholder="0"
@@ -161,18 +161,18 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                                 variant="flat"
                                                 value={coins100}
                                                 onValueChange={setCoins100}
-                                                startContent={<span className="text-[10px] text-zinc-500 font-black">$</span>}
+                                                startContent={<span className="text-[10px] text-zinc-500 font-medium">$</span>}
                                                 classNames={{
-                                                    inputWrapper: "h-11 bg-white dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-xl",
-                                                    input: "text-xs font-black italic tabular-nums"
+                                                    inputWrapper: "h-11 card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl",
+                                                    input: "text-xs font-medium tracking-tight tabular-nums"
                                                 }}
                                             />
                                         </div>
                                     </div>
                                     
-                                    <div className="flex items-center justify-between px-4 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl mt-2">
-                                        <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase italic">Total Efectivo Calculado</span>
-                                        <span className="text-lg font-black text-emerald-600 dark:text-emerald-400 italic">
+                                    <div className="flex items-center justify-between px-4 py-3 bg-white/5 border border-emerald-500/20 rounded-2xl mt-2">
+                                        <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-tight">Total Efectivo Calculado</span>
+                                        <span className="text-lg font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 tracking-tight">
                                             ${formatCurrency((parseFloat(bills)||0) + (parseFloat(coins1000)||0) + (parseFloat(coins200)||0) + (parseFloat(coins100)||0))}
                                         </span>
                                     </div>
@@ -180,42 +180,42 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
 
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     <div className="space-y-2">
-                                        <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic ml-1">Saldo Nequi</label>
+                                        <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-1">Saldo Nequi</label>
                                         <Input
                                             type="number"
                                             placeholder="0.00"
                                             variant="flat"
                                             value={nequi}
                                             onValueChange={setNequi}
-                                            startContent={<span className="text-purple-500 font-black">$</span>}
+                                            startContent={<span className="text-purple-500 font-medium">$</span>}
                                             classNames={{
-                                                inputWrapper: "h-14 bg-gray-100 dark:bg-white/5 border-2 border-transparent group-data-[focus=true]:border-purple-500 transition-all rounded-2xl px-4 shadow-inner",
-                                                input: "text-lg font-black italic tracking-tighter placeholder:text-gray-300 dark:placeholder:text-zinc-700"
+                                                inputWrapper: "h-14 bg-gray-100 dark:bg-[#18181b] border-2 border-transparent group-data-[focus=true]:border-purple-500 transition-all rounded-2xl px-4 shadow-inner",
+                                                input: "text-lg font-medium tracking-tight tracking-tighter placeholder:text-gray-300 dark:placeholder:text-zinc-700"
                                             }}
                                         />
                                     </div>
                                     <div className="space-y-2">
-                                        <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] italic ml-1">Saldo Daviplata</label>
+                                        <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-1">Saldo Daviplata</label>
                                         <Input
                                             type="number"
                                             placeholder="0.00"
                                             variant="flat"
                                             value={daviplata}
                                             onValueChange={setDaviplata}
-                                            startContent={<span className="text-rose-500 font-black">$</span>}
+                                            startContent={<span className="text-rose-500 font-medium">$</span>}
                                             classNames={{
-                                                inputWrapper: "h-14 bg-gray-100 dark:bg-white/5 border-2 border-transparent group-data-[focus=true]:border-rose-500 transition-all rounded-2xl px-4 shadow-inner",
-                                                input: "text-lg font-black italic tracking-tighter placeholder:text-gray-300 dark:placeholder:text-zinc-700"
+                                                inputWrapper: "h-14 bg-gray-100 dark:bg-[#18181b] border-2 border-transparent group-data-[focus=true]:border-rose-500 transition-all rounded-2xl px-4 shadow-inner",
+                                                input: "text-lg font-medium tracking-tight tracking-tighter placeholder:text-gray-300 dark:placeholder:text-zinc-700"
                                             }}
                                         />
                                     </div>
                                 </div>
 
                                 {(bills || coins1000 || coins200 || coins100 || nequi || daviplata) && (
-                                    <div className="flex items-center justify-between p-4 rounded-2xl bg-emerald-500/5 border border-emerald-500/10 animate-in fade-in zoom-in duration-300">
+                                    <div className="flex items-center justify-between p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10 animate-in fade-in zoom-in duration-300">
                                         <div className="flex flex-col">
-                                            <span className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase italic">Nuevo Saldo Total Combinado</span>
-                                            <span className="text-xl font-black text-gray-900 dark:text-white italic">
+                                            <span className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-tight">Nuevo Saldo Total Combinado</span>
+                                            <span className="text-xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight">
                                                 ${formatCurrency(
                                                     (parseFloat(bills)||0) + 
                                                     (parseFloat(coins1000)||0) + 
@@ -226,7 +226,7 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                                 )}
                                             </span>
                                         </div>
-                                        <TrendingUp className="text-emerald-500" size={24} />
+                                        <TrendingUp className="text-zinc-900 dark:text-zinc-100" size={24} />
                                     </div>
                                 )}
                             </div>
@@ -235,7 +235,7 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                             <Button 
                                 variant="light" 
                                 onPress={onClose}
-                                className="font-black uppercase text-[10px] tracking-widest rounded-xl px-6 h-12"
+                                className="font-medium uppercase text-[10px] tracking-widest rounded-2xl px-6 h-12"
                             >
                                 Cancelar
                             </Button>
@@ -243,7 +243,7 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                 color="success"
                                 onPress={handleConfirm}
                                 isLoading={isSubmitting}
-                                className="bg-emerald-500 text-white font-black uppercase text-[10px] tracking-widest rounded-xl px-8 h-12 shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+                                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[10px] tracking-widest rounded-2xl px-8 h-12 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all"
                             >
                                 <Calculator size={16} className="mr-2" />
                                 Ajustar Saldo

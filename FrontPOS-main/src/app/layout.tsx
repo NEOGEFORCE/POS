@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { AuthProvider } from '@/lib/auth';
 import { Toaster } from 'sileo';
-import { Lato, Raleway } from 'next/font/google';
+import { DM_Sans, DM_Mono } from 'next/font/google';
 
 // IMPORTANTE: Importamos el archivo puente que acabamos de crear
 import { Providers } from './providers';
@@ -10,25 +10,29 @@ import SWRegister from './sw-register';
 import { GlobalSyncProvider } from "@/components/shared/GlobalSyncProvider";
 import { NetworkMonitor } from "@/components/shared/NetworkMonitor";
 
-const lato = Lato({
+const dmSans = DM_Sans({
   subsets: ['latin'],
-  weight: ['400', '700'],
-  variable: '--font-lato',
+  weight: ['400', '500', '700'],
+  variable: '--font-dm-sans',
 });
 
-const raleway = Raleway({
+const dmMono = DM_Mono({
   subsets: ['latin'],
-  weight: ['400', '500', '600', '700'],
-  variable: '--font-raleway',
+  weight: ['300', '400', '500'],
+  variable: '--font-dm-mono',
 });
 
 export const metadata: Metadata = {
-  title: 'POS PRO',
+  title: 'POS Pro',
   description: 'Sistema de Punto de Venta Premium',
+  manifest: '/manifest.json',
+  other: {
+    'google': 'notranslate'
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: 'POS PRO',
+    title: 'POS Pro',
   },
 };
 
@@ -47,8 +51,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className={`${lato.variable} ${raleway.variable}`} suppressHydrationWarning>
-      <body suppressHydrationWarning className="font-body antialiased min-h-screen bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white transition-colors duration-300">
+    <html lang="es" className={`${dmSans.variable} ${dmMono.variable}`} suppressHydrationWarning>
+      <head>
+        <meta charSet="utf-8" />
+      </head>
+      <body suppressHydrationWarning className="font-body antialiased min-h-screen transition-colors duration-300 bg-[#f0f5f3] dark:bg-[#09090b]">
 
         {/* Envolvemos toda la app en nuestro Provider de Cliente */}
         <Providers>

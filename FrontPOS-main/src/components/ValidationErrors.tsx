@@ -21,11 +21,11 @@ const ValidationErrors = memo(function ValidationErrors({ errors, className = ''
         exit={{ opacity: 0, height: 0 }}
         className={`overflow-hidden ${className}`}
       >
-        <div className="bg-rose-500/5 border border-rose-500/20 rounded-xl p-2.5 space-y-1.5">
+        <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-2.5 space-y-1.5">
           {errors.map((err, i) => (
             <div key={`${err.field}-${i}`} className="flex items-start gap-2">
               <AlertTriangle size={11} className="text-rose-500 shrink-0 mt-0.5" />
-              <span className="text-[9px] font-black text-rose-600 dark:text-rose-400 uppercase tracking-widest italic leading-tight">
+              <span className="text-[9px] font-medium text-rose-600 dark:text-rose-400 uppercase tracking-widest tracking-tight leading-tight">
                 {err.message}
               </span>
             </div>

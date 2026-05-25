@@ -43,6 +43,9 @@ func NewTelegramService() *TelegramService {
 		return &TelegramService{active: false}
 	}
 
+	// Silenciar logs internos de la librería para evitar el spam de "Conflict"
+	// si el bot ya está corriendo en otra instancia.
+	tgbotapi.SetLogger(log.New(io.Discard, "", 0))
 	log.Printf("✅ Telegram Bot Initialized: %s", bot.Self.UserName)
 
 	return &TelegramService{
@@ -63,7 +66,29 @@ func (s *TelegramService) SendMarkdownAlert(message string) {
 
 		_, err := s.bot.Send(msg)
 		if err != nil {
-			log.Printf("❌ Failed to send Telegram alert: %v", err)
+			log.Printf("❌ Failed to send Telegram alert (Markdown): %v", err)
+			// Reintentar sin formato si falla
+			msg.ParseMode = ""
+			s.bot.Send(msg)
+		}
+	}()
+}
+
+func (s *TelegramService) SendHTMLAlert(message string) {
+	if !s.active {
+		return
+	}
+
+	go func() {
+		msg := tgbotapi.NewMessage(s.chatID, message)
+		msg.ParseMode = "HTML"
+
+		_, err := s.bot.Send(msg)
+		if err != nil {
+			log.Printf("❌ Failed to send Telegram alert (HTML): %v", err)
+			// Reintentar sin formato si falla
+			msg.ParseMode = ""
+			s.bot.Send(msg)
 		}
 	}()
 }
@@ -117,7 +142,7 @@ func (s *TelegramService) SendDocument(reader io.Reader, filename string, captio
 	return nil
 }
 // StartListener inicia el bucle de escucha de comandos de Telegram
-func (s *TelegramService) StartListener(invService *InventoryService, saleRepo ports.SaleRepository, dashService *DashboardService) {
+func (s *TelegramService) StartListener(invService *InventoryService, saleRepo ports.SaleRepository, dashService *DashboardService, prodService *ProductService) {
 	if !s.active {
 		return
 	}
@@ -144,13 +169,19 @@ func (s *TelegramService) StartListener(invService *InventoryService, saleRepo p
 
 			switch update.Message.Command() {
 			case "start":
-				msg.Text = "🚀 *Cerberus POS Bot Activo*\n\nComandos disponibles:\n/inventario - Reporte de bajo stock\n/topventas - Top 5 productos hoy\n/nomina - Resumen de gastos hoy"
+				msg.Text = "🚀 *POS Pro Bot Activo*\n\nComandos disponibles:\n/inventario - Reporte de bajo stock\n/vendido_today - Ventas de hoy\n/top_semana - Top 10 productos semana\n/buscar [nombre] - Consultar precio/stock\n/nomina - Resumen financiero\n/cambios_hoy - Auditoría de precios hoy"
 			case "inventario":
 				msg.Text = s.handleInventario(invService)
-			case "topventas":
-				msg.Text = s.handleTopVentas(saleRepo)
+			case "vendido_today":
+				msg.Text = s.handleVendidoToday(dashService)
+			case "top_semana":
+				msg.Text = s.handleTopSemana(saleRepo)
+			case "buscar":
+				msg.Text = s.handleBuscar(prodService, update.Message.CommandArguments())
 			case "nomina":
 				msg.Text = s.handleNomina(dashService)
+			case "cambios_hoy":
+				msg.Text = s.handleCambiosHoy(prodService)
 			default:
 				msg.Text = "Comando no reconocido. Usa /start para ver opciones."
 			}
@@ -215,8 +246,76 @@ func (s *TelegramService) handleTopVentas(saleRepo ports.SaleRepository) string 
 	return report
 }
 
+func (s *TelegramService) handleVendidoToday(dashService *DashboardService) string {
+	overview, err := dashService.GetOverview(context.Background(), "", "")
+	if err != nil {
+		return "❌ Error: " + err.Error()
+	}
+
+	report := "💰 *VENTAS DE HOY*\n\n"
+	report += fmt.Sprintf("💵 *Total Bruto:* $%s\n", fmt.Sprintf("%.0f", overview.TodaySalesAmount))
+	report += fmt.Sprintf("📊 *Transacciones:* %d\n", overview.TodaySalesCount)
+	report += fmt.Sprintf("📉 *Utilidad Neta:* $%s\n", fmt.Sprintf("%.0f", overview.TodayNetProfit))
+	
+	if overview.TodaySalesCount > 0 {
+		report += fmt.Sprintf("\n🎫 *Ticket Promedio:* $%s", fmt.Sprintf("%.0f", overview.TodaySalesAmount/float64(overview.TodaySalesCount)))
+	}
+
+	return report
+}
+
+func (s *TelegramService) handleTopSemana(saleRepo ports.SaleRepository) string {
+	loc, _ := time.LoadLocation("America/Bogota")
+	now := time.Now().In(loc)
+	startOfWeek := now.AddDate(0, 0, -7)
+	
+	top, err := saleRepo.GetTopSellingProducts(startOfWeek, now, 10)
+	if err != nil {
+		return "❌ Error: " + err.Error()
+	}
+
+	if len(top) == 0 {
+		return "📅 No hay ventas en los últimos 7 días."
+	}
+
+	report := "🏆 *TOP 10 SEMANAL*\n\n"
+	for i, item := range top {
+		report += fmt.Sprintf("%d. *%s*\n   Vendidos: %.0f | Total: $%s\n", i+1, item.Name, item.Quantity, fmt.Sprintf("%.0f", item.Total))
+	}
+
+	return report
+}
+
+func (s *TelegramService) handleBuscar(prodService *ProductService, query string) string {
+	if query == "" {
+		return "🔍 Por favor indica el nombre del producto. Ejemplo: `/buscar coca cola`"
+	}
+
+	product, err := prodService.GetProductByName(query)
+	if err != nil {
+		// Intentar por barcode si no es nombre
+		product, err = prodService.GetProduct(query)
+	}
+
+	if err != nil || product == nil {
+		return "❌ No encontré ningún producto que coincida con '" + query + "'"
+	}
+
+	report := fmt.Sprintf("🔎 *RESULTADO DE BÚSQUEDA*\n\n")
+	report += fmt.Sprintf("📦 *Producto:* %s\n", product.ProductName)
+	report += fmt.Sprintf("🏷️ *Código:* `%s`\n", product.Barcode)
+	report += fmt.Sprintf("💰 *Precio Venta:* $%s\n", fmt.Sprintf("%.0f", product.SalePrice))
+	report += fmt.Sprintf("📉 *Stock Actual:* %.2f\n", product.Quantity)
+	
+	if product.SupplierID != nil {
+		report += fmt.Sprintf("🚚 *ID Proveedor:* %d\n", *product.SupplierID)
+	}
+
+	return report
+}
+
 func (s *TelegramService) handleNomina(dashService *DashboardService) string {
-	overview, err := dashService.GetOverview(context.Background())
+	overview, err := dashService.GetOverview(context.Background(), "", "")
 	if err != nil {
 		return "❌ Error al obtener nómina/gastos: " + err.Error()
 	}
@@ -226,6 +325,31 @@ func (s *TelegramService) handleNomina(dashService *DashboardService) string {
 	report += fmt.Sprintf("🧾 *Gastos Caja:* $%s\n", fmt.Sprintf("%.2f", overview.TodayExpenses.Amount))
 	report += fmt.Sprintf("🏢 *Gastos Fondo:* $%s\n", fmt.Sprintf("%.2f", overview.VaultExpenses))
 	report += fmt.Sprintf("📉 *Utilidad Estimada:* $%s\n", fmt.Sprintf("%.2f", overview.TodayNetProfit))
+
+	return report
+}
+
+func (s *TelegramService) handleCambiosHoy(prodService *ProductService) string {
+	logs, err := prodService.GetPriceChangesToday()
+	if err != nil {
+		return "❌ Error al consultar cambios de precio: " + err.Error()
+	}
+
+	if len(logs) == 0 {
+		return "✅ *No se han registrado cambios de precio el día de hoy.* Todo está al día."
+	}
+
+	report := "📋 *REPORTE DE CAMBIOS - HOY*\n"
+	report += "Estos son los precios que se deben haber actualizado hoy:\n\n"
+
+	for _, log := range logs {
+		report += fmt.Sprintf("📍 *%s*: $%s (Era $%s)\n", 
+			log.ProductName, 
+			fmt.Sprintf("%.0f", log.NewPrice), 
+			fmt.Sprintf("%.0f", log.OldPrice))
+	}
+
+	report += "\n⚠️ *Si falta alguno en góndola, cámbialo ya.*"
 
 	return report
 }

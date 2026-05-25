@@ -43,7 +43,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                     barcode: item.barcode,
                     name: item.name,
                     stock: (
-                        <span className={`font-black ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>
+                        <span className={`font-medium ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>
                             {item.stock}
                         </span>
                     ),
@@ -53,7 +53,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                             className={isCritical
                                 ? 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400'
                                 : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'}
-                            classNames={{ content: "text-[9px] font-black uppercase tracking-widest" }}
+                            classNames={{ content: "text-[9px] font-medium uppercase tracking-widest" }}
                         >
                             {isCritical ? 'CRÍTICO' : 'BAJO'}
                         </Chip>
@@ -84,7 +84,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                      size="sm" 
                      variant="flat" 
                      color={item.type === 'IN' ? 'success' : 'danger'}
-                     className="font-black uppercase text-[8px]"
+                     className="font-medium uppercase text-[8px]"
                    >
                      {item.type}
                    </Chip>
@@ -143,18 +143,18 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
   const { columns, rows } = getTableContent();
 
   const KPICard = ({ label, value, icon: Icon, color, subValue }: any) => (
-    <Card className="border-none bg-gray-50 dark:bg-white/5 shadow-inner" radius="lg">
+    <Card className="border-none bg-gray-50 dark:bg-[#18181b] shadow-inner" radius="lg">
       <CardBody className="p-4 flex flex-row items-center gap-4">
-        <div className={`p-3 rounded-2xl ${color} bg-opacity-10 text-${color.split('-')[1]}-500 shadow-sm`}>
+        <div className={`p-3 rounded-2xl ${color} bg-opacity-10 text-${color.split('-')[1]}-500 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}>
           <Icon size={20} />
         </div>
         <div>
-          <p className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none mb-1">{label}</p>
-          <p className="text-lg font-black text-gray-900 dark:text-white tracking-tighter italic">
+          <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none mb-1">{label}</p>
+          <p className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter tracking-tight">
             {typeof value === 'number' ? `$${formatCurrency(value)}` : value}
           </p>
           {subValue && (
-            <p className="text-[8px] font-bold text-emerald-500 uppercase italic">{subValue}</p>
+            <p className="text-[8px] font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-tight">{subValue}</p>
           )}
         </div>
       </CardBody>
@@ -169,7 +169,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
       scrollBehavior="inside"
       backdrop="blur"
       classNames={{
-        base: "bg-white/95 dark:bg-zinc-950/95 backdrop-blur-2xl border border-white/20 rounded-[2.5rem] shadow-2xl",
+        base: "bg-white/95 dark:bg-zinc-950/95  border border-white/20 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
         header: "border-b border-gray-100 dark:border-white/5 pb-6",
         body: "py-6",
       }}
@@ -179,12 +179,12 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
           <>
             <ModalHeader className="flex flex-col gap-1">
               <div className="flex items-center gap-4">
-                <div className="p-3 rounded-2xl bg-emerald-500/10 text-emerald-500 shadow-inner">
+                <div className="p-3 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 shadow-inner">
                   <FileSearch size={24} />
                 </div>
                 <div>
-                  <h2 className="text-xl md:text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tighter italic">
-                    Vista <span className="text-emerald-500">Previa Ejecutiva</span>
+                  <h2 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter tracking-tight">
+                    Vista <span className="text-zinc-900 dark:text-zinc-100">Previa Ejecutiva</span>
                   </h2>
                   <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-[0.2em]">{title}</p>
                 </div>
@@ -198,7 +198,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                     label="Ingresos Totales" 
                     value={data.totalRevenue} 
                     icon={TrendingUp} 
-                    color="bg-emerald-500" 
+                    color="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5" 
                     subValue={`${data.totalRevenue > 0 ? '+100%' : '0%'} vs Ventas`}
                   />
                   <KPICard 
@@ -223,12 +223,12 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                 </div>
               )}
 
-              <div className="rounded-3xl border border-gray-100 dark:border-white/5 overflow-hidden shadow-sm">
+              <div className="rounded-2xl border border-gray-100 dark:border-white/5 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                 <Table 
                     aria-label="Preview Table"
                     removeWrapper
                     classNames={{
-                        th: "bg-gray-100/50 dark:bg-white/5 text-[10px] font-black uppercase tracking-widest text-gray-400 dark:text-zinc-500 py-5 italic",
+                        th: "bg-gray-100/50 dark:bg-[#18181b] text-[10px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400 py-5 tracking-tight",
                         td: "py-4 text-sm font-bold border-b border-gray-50 dark:border-white/5 dark:text-zinc-300",
                     }}
                 >

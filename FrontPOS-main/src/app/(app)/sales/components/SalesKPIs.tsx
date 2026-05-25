@@ -13,11 +13,11 @@ interface KPIProps {
 }
 
 const KPICard = React.memo(({ label, val, icon: Icon, color, desc }: KPIProps) => (
-    <div className="bg-white dark:bg-zinc-900/40 dark:backdrop-blur-md border border-gray-200 dark:border-white/10 rounded-2xl p-4 flex items-center gap-4 relative overflow-hidden group hover:shadow-md transition-all duration-500">
+    <div className="card-base border-none/40 dark: border border-gray-200 dark:border-white/10 rounded-2xl p-4 flex items-center gap-4 relative overflow-hidden group hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-500">
         {/* Contenedor del Icono con Glow */}
         <div className="relative flex-shrink-0 flex items-center justify-center w-12 h-12">
-            <div className={`absolute inset-0 bg-${color}-500/20 blur-xl rounded-full dark:block hidden group-hover:bg-${color}-500/30 transition-colors`}></div>
-            <div className={`relative bg-${color}-50 text-${color}-600 dark:bg-${color}-500/20 dark:text-${color}-400 p-2.5 rounded-xl shadow-sm transition-colors`}>
+            <div className={`absolute inset-0 bg-${color}-500/20 blur-xl rounded-2xl dark:block hidden group-hover:bg-${color}-500/30 transition-colors`}></div>
+            <div className={`relative bg-${color}-50 text-${color}-600 dark:bg-${color}-500/20 dark:text-${color}-400 p-2.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors`}>
                 <Icon className="w-6 h-6" />
             </div>
         </div>
@@ -26,7 +26,7 @@ const KPICard = React.memo(({ label, val, icon: Icon, color, desc }: KPIProps) =
             <span className="text-gray-500 dark:text-zinc-400 text-[10px] font-bold tracking-wider uppercase mb-0.5 leading-none">
                 {label}
             </span>
-            <span className="text-gray-900 dark:text-white font-bold italic text-2xl tracking-tighter tabular-nums leading-none mt-1">
+            <span className="text-zinc-900 dark:text-zinc-50 font-bold tracking-tight text-2xl tracking-tighter tabular-nums leading-none mt-1">
                 {val}
             </span>
         </div>

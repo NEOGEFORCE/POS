@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -50,7 +50,7 @@ function ResetPasswordForm() {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/reset-password`, {
+      const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/reset-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token, newPassword: password }),
@@ -82,17 +82,17 @@ function ResetPasswordForm() {
 
   if (isSuccess) {
     return (
-      <Card className="w-full max-w-md border-none rounded-[2.5rem] bg-white/80 dark:bg-zinc-950/60 backdrop-blur-3xl shadow-2xl p-8 text-center">
+      <Card className="w-full max-w-md border-none rounded-[2.5rem] card-base border-none dark:bg-zinc-950/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-8 text-center">
         <div className="flex justify-center mb-6">
-          <div className="h-20 w-20 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500">
+          <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100">
             <CheckCircle2 size={48} />
           </div>
         </div>
-        <h1 className="text-3xl font-black uppercase tracking-tighter text-gray-900 dark:text-white mb-4">¡Contraseña Lista!</h1>
+        <h1 className="text-3xl font-medium uppercase tracking-tighter text-zinc-900 dark:text-zinc-50 mb-4">¡Contraseña Lista!</h1>
         <p className="text-gray-500 dark:text-zinc-500 font-medium mb-8">Tu acceso ha sido restaurado. Serás redirigido al login en unos segundos...</p>
         <Button 
           color="primary" 
-          className="w-full h-14 font-black uppercase tracking-widest bg-emerald-500"
+          className="w-full h-14 font-medium uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5"
           onPress={() => router.push('/login')}
         >
           Ir al Login Ahora
@@ -102,15 +102,15 @@ function ResetPasswordForm() {
   }
 
   return (
-    <Card className="w-full max-w-md border border-gray-200 dark:border-white/5 rounded-[2.5rem] bg-white/90 dark:bg-zinc-950/70 backdrop-blur-3xl shadow-2xl p-2 sm:p-6 transition-all duration-500">
+    <Card className="w-full max-w-md border border-gray-200 dark:border-white/5 rounded-[2.5rem] card-base border-none dark:bg-zinc-950/70 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-2 sm:p-6 transition-all duration-500">
       <CardHeader className="flex-col items-center pb-0 pt-8">
-        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-[2rem] bg-gray-100 dark:bg-black text-emerald-500 border border-gray-200 dark:border-white/5 shadow-xl">
+        <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-[2rem] bg-gray-100 dark:bg-black text-zinc-900 dark:text-zinc-100 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
           <KeyRound size={40} />
         </div>
-        <h1 className="text-3xl font-black tracking-tighter text-gray-900 dark:text-white uppercase text-center">
+        <h1 className="text-3xl font-medium tracking-tighter text-zinc-900 dark:text-zinc-50 uppercase text-center">
           Nueva Contraseña
         </h1>
-        <p className="text-[10px] font-black uppercase text-gray-400 dark:text-zinc-500 tracking-[0.3em] mt-3">
+        <p className="text-[10px] font-medium uppercase text-zinc-500 dark:text-zinc-400 tracking-[0.3em] mt-3">
           Establece una clave segura
         </p>
       </CardHeader>
@@ -121,30 +121,30 @@ function ResetPasswordForm() {
             type={isVisible ? "text" : "password"}
             label="NUEVA CONTRASEÑA"
             labelPlacement="outside"
-            placeholder="••••••••"
+            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             isRequired
             value={password}
             onValueChange={setPassword}
             isDisabled={isLoading}
             classNames={{
-              label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 mb-2 ml-1",
-              inputWrapper: "h-16 bg-gray-50 dark:bg-zinc-900/50 border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 transition-all",
-              input: "font-black text-lg italic text-gray-900 dark:text-white"
+              label: "text-[10px] font-medium text-zinc-500 dark:text-zinc-400 mb-2 ml-1",
+              inputWrapper: "h-16 bg-gray-50 dark:bg-[#18181b]/50 border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 transition-all",
+              input: "font-medium text-lg tracking-tight text-zinc-900 dark:text-zinc-50"
             }}
           />
           <Input
             type={isVisible ? "text" : "password"}
             label="CONFIRMAR CONTRASEÑA"
             labelPlacement="outside"
-            placeholder="••••••••"
+            placeholder="â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢"
             isRequired
             value={confirmPassword}
             onValueChange={setConfirmPassword}
             isDisabled={isLoading}
             classNames={{
-              label: "text-[10px] font-black text-gray-400 dark:text-zinc-500 mb-2 ml-1",
-              inputWrapper: "h-16 bg-gray-50 dark:bg-zinc-900/50 border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 transition-all",
-              input: "font-black text-lg italic text-gray-900 dark:text-white"
+              label: "text-[10px] font-medium text-zinc-500 dark:text-zinc-400 mb-2 ml-1",
+              inputWrapper: "h-16 bg-gray-50 dark:bg-[#18181b]/50 border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 transition-all",
+              input: "font-medium text-lg tracking-tight text-zinc-900 dark:text-zinc-50"
             }}
           />
           
@@ -152,7 +152,7 @@ function ResetPasswordForm() {
             <button 
               type="button" 
               onClick={() => setIsVisible(!isVisible)}
-              className="text-[10px] font-black uppercase text-emerald-500 hover:text-emerald-600 transition-colors"
+              className="text-[10px] font-medium uppercase text-zinc-900 dark:text-zinc-100 hover:text-zinc-900 dark:text-zinc-100 transition-colors"
             >
               {isVisible ? "Ocultar" : "Mostrar"} Claves
             </button>
@@ -164,7 +164,7 @@ function ResetPasswordForm() {
             type="submit"
             color="primary"
             isLoading={isLoading}
-            className="w-full h-16 text-lg font-black bg-emerald-500 text-white dark:text-black rounded-2xl shadow-lg shadow-emerald-500/20"
+            className="w-full h-16 text-lg font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white dark:text-black rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
           >
             ACTUALIZAR ACCESO
           </Button>
@@ -178,7 +178,7 @@ export default function ResetPasswordPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#09090b] p-4 relative overflow-hidden transition-colors duration-500">
       {/* Background Decor */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/10 blur-[120px] rounded-full pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-white/5 blur-[120px] rounded-2xl pointer-events-none" />
       
       <div className="absolute top-4 right-4 animate-in fade-in slide-in-from-top-4 duration-1000">
         <ThemeToggle />
@@ -188,9 +188,11 @@ export default function ResetPasswordPage() {
          <ResetPasswordForm />
       </Suspense>
 
-      <div className="fixed bottom-8 text-[9px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em]">
+      <div className="fixed bottom-8 text-[9px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em]">
         Seguridad POS Surtifamiliar
       </div>
     </div>
   );
 }
+
+

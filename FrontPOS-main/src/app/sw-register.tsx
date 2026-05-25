@@ -4,16 +4,12 @@ import { useEffect } from 'react';
 
 export default function SWRegister() {
   useEffect(() => {
+    // DESTROY SERVICE WORKER IN DEV MODE TO AVOID CACHE CORRUPTION WITH NEXT.JS
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker
-          .register('/sw.js')
-          .then((registration) => {
-            console.log('SW Ultra-Instinto registrado con éxito:', registration.scope);
-          })
-          .catch((error) => {
-            console.error('Fallo al registrar SW Ultra-Instinto:', error);
-          });
+      navigator.serviceWorker.getRegistrations().then((registrations) => {
+        for (let registration of registrations) {
+          registration.unregister();
+        }
       });
     }
   }, []);

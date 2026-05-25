@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from 'react';
+import { mutate } from 'swr';
 import Cookies from 'js-cookie';
+import { broadcastRevalidate } from '@/lib/revalidate';
 import { Search, RotateCcw, CheckCircle2, AlertCircle, ShoppingCart, Camera, History, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { extractApiError } from '@/lib/api-error';
@@ -63,7 +65,7 @@ function ReturnsContent() {
 
 
     const paymentLabel = sale ? getPaymentDescription(sale) : 'EFECTIVO';
-    const paymentColor = sale ? getPaymentColor(sale.paymentMethod) : 'default';
+    const paymentColor = sale ? getPaymentColor(sale) : 'default';
 
     // --- TRADUCCIONES DE ESTADOS ---
     const getReturnTypeLabel = (type: string) => {
@@ -76,7 +78,7 @@ function ReturnsContent() {
     const fetchRecentSales = async () => {
         const token = Cookies.get('org-pos-token');
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=20`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/history?pageSize=20`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -94,7 +96,7 @@ function ReturnsContent() {
         setIsHistoryLoading(true);
         try {
             // Correct backend route is /returns/all for both list and history
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/returns/all`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/returns/all`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -113,7 +115,7 @@ function ReturnsContent() {
     const fetchAllProducts = async () => {
         const token = Cookies.get('org-pos-token');
         try {
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/all-products`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/products/all-products`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -142,7 +144,7 @@ function ReturnsContent() {
         try {
             if (isDateSearch) {
                 const pageSize = 10;
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?from=${searchDate}T00:00:00&to=${searchDate}T23:59:59&page=${page}&pageSize=${pageSize}`, {
+                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/history?from=${searchDate}T00:00:00&to=${searchDate}T23:59:59&page=${page}&pageSize=${pageSize}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
                 if (!res.ok) throw new Error('Error al buscar ventas por fecha');
@@ -159,7 +161,7 @@ function ReturnsContent() {
                     setIsResultsDialogOpen(true);
                 }
             } else {
-                let res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history/${searchId}`, {
+                let res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/history/${searchId}`, {
                     headers: { 'Authorization': `Bearer ${token}` }
                 });
 
@@ -174,7 +176,7 @@ function ReturnsContent() {
                     if (p) {
                         toast({ variant: 'success', title: 'SISTEMA', description: 'PRODUCTO DETECTADO' });
                         // Backend sales/history doesn't support barcode filter, so we fetch latest and filter locally
-                        const resByProd = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=50`, {
+                        const resByProd = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/history?pageSize=50`, {
                             headers: { 'Authorization': `Bearer ${token}` }
                         });
                         if (resByProd.ok) {
@@ -198,7 +200,7 @@ function ReturnsContent() {
                 }
             }
         } catch (err: any) {
-            toast({ variant: 'destructive', title: 'FALLO', description: err.message || 'ERROR DE BÚSQUEDA' });
+            toast({ variant: 'destructive', title: 'FALLO', description: err.message });
             setSale(null);
         } finally {
             setLoading(false);
@@ -228,7 +230,7 @@ function ReturnsContent() {
         const token = Cookies.get('org-pos-token');
         try {
             // We fetch last 100 sales and filter locally because backend doesn't support barcode query
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/history?pageSize=100`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/history?pageSize=100`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -456,7 +458,7 @@ function ReturnsContent() {
                 change: paymentData.change
             };
 
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/returns/create`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/returns/create`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(returnData)
@@ -468,10 +470,30 @@ function ReturnsContent() {
             }
 
             setLastChange(paymentData.change);
-            setShowSuccessScreen(true);
-            toast({ variant: 'success', title: 'ÉXITO', description: 'RETORNO PROCESADO' });
+            setReturnDialogOpen(false);
+            setShowSuccessScreen(false);
+            toast({ variant: 'success', description: '✅ Devolución procesada: Inventario y caja actualizados' });
+
+            // Auto-reset y revalidación inmediata
+            fetchRecentSales();
+            fetchRecentReturns();
+            setSale(null);
+            setSearchId('');
+            setReturningItems([]);
+            setExchangeItems([]);
+            setReturnReason('');
+            
+            // Emitir señales de sincronización y revalidación inmediata
+            broadcastRevalidate('PRODUCT_UPDATE');
+            broadcastRevalidate('STOCK_UPDATE');
+
+            // SWR asynchronous revalidation
+            mutate('/returns/all');
+            mutate('/api/returns/all');
+            mutate('/products/all-products');
+            mutate('/inventory/stock');
         } catch (err: any) {
-            toast({ variant: 'destructive', title: 'FALLO', description: err.message || 'ERROR AL PROCESAR' });
+            toast({ variant: 'destructive', title: 'FALLO', description: err.message });
         } finally {
             setSubmittingPayment(false);
         }
@@ -565,19 +587,19 @@ function ReturnsContent() {
     );
 
     return (
-        <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white overflow-hidden select-none transition-all duration-500">
+        <div className="flex flex-col h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 overflow-hidden select-none transition-all duration-500">
             {/* HEADER SECTION: FIXED (TOP) */}
-            <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200 dark:border-white/5 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md relative z-[150]">
+            <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200 dark:border-white/5 card-base border-none dark:bg-zinc-950/80 relative z-[150]">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="bg-rose-600 h-10 w-10 rounded-xl text-white shadow-lg shadow-rose-500/20 flex items-center justify-center transform -rotate-3">
+                        <div className="bg-rose-600 h-10 w-10 rounded-2xl text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 flex items-center justify-center transform -rotate-3">
                             <RotateCcw size={20} />
                         </div>
                         <div className="flex flex-col">
-                            <h1 className="text-[13px] font-black text-zinc-900 dark:text-white tracking-tighter uppercase italic leading-none">
+                            <h1 className="text-[13px] font-medium text-zinc-900 dark:text-white tracking-tighter uppercase tracking-tight leading-none">
                                 Gestión de <span className="text-rose-500">Devoluciones</span>
                             </h1>
-                            <p className="text-[8px] font-black text-zinc-500 uppercase tracking-[0.4em] italic mt-1 flex items-center gap-1">
+                            <p className="text-[8px] font-medium text-zinc-500 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                                 <History size={10} className="text-rose-500" /> Auditoría de Reintegros
                             </p>
                         </div>
@@ -587,7 +609,7 @@ function ReturnsContent() {
                         <Button
                             isIconOnly
                             variant="flat"
-                            className={`h-10 w-10 min-w-0 rounded-xl border transition-all ${isScannerOpen ? "bg-rose-500/20 text-rose-500 border-rose-500/50" : "bg-gray-100 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 border-gray-200 dark:border-white/5"}`}
+                            className={`h-10 w-10 min-w-0 rounded-2xl border transition-all ${isScannerOpen ? "bg-rose-500/20 text-rose-500 border-rose-500/50" : "bg-gray-100 dark:bg-[#18181b]/50 text-zinc-500 dark:text-zinc-400 border-gray-200 dark:border-white/5"}`}
                             onPress={() => setIsScannerOpen(!isScannerOpen)}
                         >
                             <Camera size={16} />
@@ -604,10 +626,10 @@ function ReturnsContent() {
                             onValueChange={setSearchId}
                             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
                             classNames={{
-                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/search:border-rose-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-rose-500/20 transition-all",
-                                input: "font-black text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest italic"
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl group-focus-within/search:border-rose-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-rose-500/20 transition-all",
+                                input: "font-medium text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest tracking-tight"
                             }}
-                            startContent={<FileText size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/search:text-rose-500" />}
+                            startContent={<FileText size={18} className="text-zinc-500 dark:text-zinc-400 group-focus-within/search:text-rose-500" />}
                         />
                     </div>
                     <div className="relative group/date">
@@ -621,8 +643,8 @@ function ReturnsContent() {
                                 if (val) handleSearch(true);
                             }}
                             classNames={{
-                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/date:border-rose-500/50 group-focus-within/date:ring-2 group-focus-within/date:ring-rose-500/20 transition-all",
-                                input: "font-black text-xs uppercase text-zinc-900 dark:text-white tracking-widest italic"
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl group-focus-within/date:border-rose-500/50 group-focus-within/date:ring-2 group-focus-within/date:ring-rose-500/20 transition-all",
+                                input: "font-medium text-xs uppercase text-zinc-900 dark:text-white tracking-widest tracking-tight"
                             }}
                         />
                     </div>
@@ -633,13 +655,13 @@ function ReturnsContent() {
                             value={productSearch}
                             onValueChange={setProductSearch}
                             classNames={{
-                                inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-sm rounded-xl group-focus-within/prod:border-rose-500/50 group-focus-within/prod:ring-2 group-focus-within/prod:ring-rose-500/20 transition-all",
-                                input: "font-black text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest italic"
+                                inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl group-focus-within/prod:border-rose-500/50 group-focus-within/prod:ring-2 group-focus-within/prod:ring-rose-500/20 transition-all",
+                                input: "font-medium text-xs uppercase text-zinc-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 tracking-widest tracking-tight"
                             }}
-                            startContent={<Search size={18} className="text-gray-400 dark:text-zinc-500 group-focus-within/prod:text-rose-500" />}
+                            startContent={<Search size={18} className="text-zinc-500 dark:text-zinc-400 group-focus-within/prod:text-rose-500" />}
                         />
                         {productSearch.length > 0 && products.length > 0 && (
-                            <div className="absolute z-[300] left-0 right-0 top-14 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl overflow-hidden backdrop-blur-3xl">
+                            <div className="absolute z-[300] left-0 right-0 top-14 card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden">
                                 {products.slice(0, 5).map(p => (
                                     <button
                                         key={p.barcode}
@@ -647,10 +669,10 @@ function ReturnsContent() {
                                         onClick={() => addProductToReturn(p)}
                                     >
                                         <div className="flex flex-col">
-                                            <span className="font-bold text-xs text-gray-900 dark:text-white uppercase group-hover:text-rose-500 transition-colors">{p.productName}</span>
-                                            <span className="text-[9px] text-gray-400 dark:text-zinc-500 font-mono">{p.barcode}</span>
+                                            <span className="font-bold text-xs text-zinc-900 dark:text-zinc-50 uppercase group-hover:text-rose-500 transition-colors">{p.productName}</span>
+                                            <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-mono">{p.barcode}</span>
                                         </div>
-                                        <span className="font-black text-rose-500 text-xs tabular-nums">${p.salePrice.toLocaleString()}</span>
+                                        <span className="font-medium text-rose-500 text-xs tabular-nums">${p.salePrice.toLocaleString()}</span>
                                     </button>
                                 ))}
                             </div>
@@ -671,27 +693,27 @@ function ReturnsContent() {
                 {/* Banner de Contexto de Venta Activa */}
                 {sale && (
                     <div className="flex items-center gap-4 p-4 bg-rose-500/10 border border-rose-500/20 rounded-2xl animate-in fade-in zoom-in-95 duration-300">
-                        <div className="h-12 w-12 rounded-xl bg-rose-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-rose-500/20">
+                        <div className="h-12 w-12 rounded-2xl bg-rose-500 flex items-center justify-center text-white shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20">
                             <CheckCircle2 size={24} />
                         </div>
                         <div className="flex-1 flex flex-col md:flex-row md:items-center justify-between gap-4">
                             <div>
                                 <div className="flex items-center gap-3 mb-2">
-                                    <span className="text-[10px] font-black text-rose-600 dark:text-rose-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
-                                    <Chip size="sm" variant="shadow" color={paymentColor as any} className="h-5 text-[8px] font-black uppercase tracking-widest px-2">
+                                    <span className="text-[10px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-[0.2em]">FACTURA ACTIVA</span>
+                                    <Chip size="sm" variant="shadow" color={paymentColor as any} className="h-5 text-[8px] font-medium uppercase tracking-widest px-2">
                                         PAGADO EN: {paymentLabel}
                                     </Chip>
                                 </div>
-                                <h2 className="text-xl font-black text-gray-900 dark:text-white uppercase leading-tight">
-                                    #{sale.id} · {sale.client?.name || 'CONSUMIDOR FINAL'}
+                                <h2 className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase leading-tight">
+                                    #{sale.id} Â· {sale.client?.name || 'CONSUMIDOR FINAL'}
                                 </h2>
                             </div>
                             <div className="flex items-center gap-8">
                                 <div className="text-right">
-                                    <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest mb-1">TOTAL VENTA</p>
-                                    <p className="text-lg font-black text-gray-900 dark:text-white tabular-nums leading-none tracking-tighter">${sale.total.toLocaleString()}</p>
+                                    <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mb-1">TOTAL VENTA</p>
+                                    <p className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tabular-nums leading-none tracking-tighter">${sale.total.toLocaleString()}</p>
                                 </div>
-                                <Button isIconOnly size="sm" variant="flat" color="danger" className="h-8 w-8 rounded-lg" onPress={() => setSale(null)}>X</Button>
+                                <Button isIconOnly size="sm" variant="flat" color="danger" className="h-8 w-8 rounded-2xl" onPress={() => setSale(null)}>X</Button>
                             </div>
                         </div>
                     </div>
@@ -700,19 +722,19 @@ function ReturnsContent() {
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 p-1">
                     {/* COLUMNA IZQUIERDA: LO QUE EL CLIENTE TRAE */}
                     <div className="space-y-2">
-                        <Card className="rounded-xl bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden min-h-[450px]">
+                        <Card className="rounded-2xl card-base border-none shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/5 overflow-hidden min-h-[450px]">
                             <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
-                                <h3 className="text-emerald-500 text-[12px] font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                                <h3 className="text-zinc-900 dark:text-zinc-100 text-[12px] font-medium uppercase tracking-[0.2em] flex items-center gap-2">
                                     <RotateCcw size={16} /> REINGRESANDO
                                 </h3>
-                                <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">Artículos para stock</p>
+                                <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none">Artículos para stock</p>
                             </CardHeader>
                             <CardBody className="p-0">
                                 {returningItems.length > 0 ? (
                                     <Table aria-label="Devoluciones" isHeaderSticky isCompact removeWrapper classNames={{
-                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-xs h-10 py-0.5 px-3 border-b border-white/5",
+                                        th: "bg-white dark:bg-zinc-950/80  text-zinc-500 dark:text-zinc-400 uppercase tracking-wider text-xs h-10 py-0.5 px-3 border-b border-zinc-200 dark:border-white/5",
                                         td: "px-3 py-0.5",
-                                        tr: "border-b border-white/5 hover:bg-rose-500/5 border-l-4 border-transparent hover:border-rose-500 transition-colors h-12"
+                                        tr: "border-b border-zinc-200 dark:border-white/5 hover:bg-rose-500/5 border-l-4 border-transparent hover:border-rose-500 transition-colors h-12"
                                     }}>
                                         <TableHeader>
                                             <TableColumn>PRODUCTO</TableColumn>
@@ -723,8 +745,8 @@ function ReturnsContent() {
                                             {returningItems.map((item) => (
                                                 <TableRow key={item.barcode}>
                                                     <TableCell>
-                                                        <div className="font-bold text-gray-900 dark:text-white text-[9px] uppercase leading-tight truncate max-w-[120px]">{item.productName}</div>
-                                                        <div className="text-[7px] text-gray-400 dark:text-zinc-600 font-mono font-bold italic">{item.barcode}</div>
+                                                        <div className="font-bold text-zinc-900 dark:text-zinc-50 text-[9px] uppercase leading-tight truncate max-w-[120px]">{item.productName}</div>
+                                                        <div className="text-[7px] text-gray-400 dark:text-zinc-600 font-mono font-bold tracking-tight">{item.barcode}</div>
                                                     </TableCell>
                                                     <TableCell>
                                                         <div className="flex items-center justify-center gap-1.5">
@@ -738,21 +760,21 @@ function ReturnsContent() {
                                                                     onValueChange={(val) => handleQtyChange(item.barcode, parseFloat(val) || 0)}
                                                                     className="w-20"
                                                                     classNames={{
-                                                                        inputWrapper: "h-6 bg-gray-100 dark:bg-zinc-800 border-none rounded-md px-1 min-h-unit-5",
-                                                                        input: "text-[10px] font-black tabular-nums text-center"
+                                                                        inputWrapper: "h-6 bg-gray-100 dark:bg-zinc-800 border-none rounded-2xl px-1 min-h-unit-5",
+                                                                        input: "text-[10px] font-medium tabular-nums text-center"
                                                                     }}
                                                                 />
                                                             ) : (
                                                                 <>
-                                                                    <Button isIconOnly size="sm" variant="flat" className="h-5 w-5 bg-gray-100 dark:bg-zinc-800 text-gray-500 rounded-md min-w-unit-5" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) - 1)}>-</Button>
-                                                                    <span className="font-black text-[10px] tabular-nums min-w-[0.8rem] text-center">{item.returnQty}</span>
-                                                                    <Button isIconOnly size="sm" variant="flat" className="h-5 w-5 bg-gray-100 dark:bg-zinc-800 text-gray-500 rounded-md min-w-unit-5" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) + 1)}>+</Button>
+                                                                    <Button isIconOnly size="sm" variant="flat" className="h-5 w-5 bg-gray-100 dark:bg-zinc-800 text-gray-500 rounded-2xl min-w-unit-5" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) - 1)}>-</Button>
+                                                                    <span className="font-medium text-[10px] tabular-nums min-w-[0.8rem] text-center">{item.returnQty}</span>
+                                                                    <Button isIconOnly size="sm" variant="flat" className="h-5 w-5 bg-gray-100 dark:bg-zinc-800 text-gray-500 rounded-2xl min-w-unit-5" onClick={() => handleQtyChange(item.barcode, (item.returnQty || 0) + 1)}>+</Button>
                                                                 </>
                                                             )}
                                                         </div>
                                                     </TableCell>
                                                     <TableCell className="text-right">
-                                                        <div className="font-black text-gray-900 dark:text-white text-[10px] tabular-nums tracking-tighter italic">
+                                                        <div className="font-medium text-zinc-900 dark:text-zinc-50 text-[10px] tabular-nums tracking-tighter tracking-tight">
                                                             ${(item.unitPrice * (item.returnQty || 0)).toLocaleString()}
                                                         </div>
                                                     </TableCell>
@@ -761,18 +783,18 @@ function ReturnsContent() {
                                         </TableBody>
                                     </Table>
                                 ) : (
-                                    <div className="flex flex-col items-center justify-center py-20 opacity-20 italic font-black text-gray-400 uppercase tracking-[0.4em] text-center">
+                                    <div className="flex flex-col items-center justify-center py-20 opacity-20 tracking-tight font-medium text-gray-400 uppercase tracking-[0.4em] text-center">
                                         <RotateCcw size={64} className="mb-4" />
                                         <span>Buscando Devolución</span>
                                     </div>
                                 )}
                             </CardBody>
                             {returningItems.length > 0 && (
-                                <div className="p-3 bg-gray-50/50 dark:bg-zinc-900/30 border-t border-gray-100 dark:border-white/5">
+                                <div className="p-3 bg-gray-50/50 dark:bg-[#18181b]/30 border-t border-gray-100 dark:border-white/5">
                                     <div className="flex justify-between items-end">
                                         <div>
-                                            <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL REINGRESO</p>
-                                            <p className="text-xl font-black text-rose-500 tracking-tighter italic leading-none tabular-nums">${totalReturned.toLocaleString()}</p>
+                                            <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL REINGRESO</p>
+                                            <p className="text-xl font-medium text-rose-500 tracking-tighter tracking-tight leading-none tabular-nums">${totalReturned.toLocaleString()}</p>
                                         </div>
                                     </div>
                                 </div>
@@ -782,19 +804,19 @@ function ReturnsContent() {
 
                     {/* COLUMNA DERECHA: LO QUE EL CLIENTE SE LLEVA / REEMBOLSO */}
                     <div className="space-y-2">
-                        <Card className={`rounded-xl bg-white dark:bg-zinc-900 border transition-all shadow-xl shadow-black/5 overflow-hidden min-h-[450px] ${returnType === 'EXCHANGE' ? 'border-blue-500/10' : 'border-rose-500/10'}`}>
+                        <Card className={`rounded-2xl card-base border-none border transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/5 overflow-hidden min-h-[450px] ${returnType === 'EXCHANGE' ? 'border-blue-500/10' : 'border-rose-500/10'}`}>
                             <CardHeader className="px-4 py-3 flex flex-col gap-1 items-start bg-gray-50/30 dark:bg-zinc-800/20 border-b border-gray-100 dark:border-white/5">
-                                <h3 className={`text-[12px] font-black uppercase tracking-[0.2em] flex items-center gap-2 ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-rose-500'}`}>
+                                <h3 className={`text-[12px] font-medium uppercase tracking-[0.2em] flex items-center gap-2 ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-rose-500'}`}>
                                     {returnType === 'EXCHANGE' ? <ShoppingCart size={16} /> : <RotateCcw size={16} className="rotate-180" />}
                                     {returnType === 'EXCHANGE' ? "PRODUCTOS QUE SE LLEVA" : "REEMBOLSO DINERO / SALDO"}
                                 </h3>
-                                <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none">
+                                <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none">
                                     {returnType === 'EXCHANGE' ? "Salida de inventario nuevo" : "Dinero a entregar al cliente"}
                                 </p>
                             </CardHeader>
                             <CardBody className="p-2 space-y-2">
                                 <div className="space-y-1">
-                                    <label className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.2em] pl-1 block italic">Gestión</label>
+                                    <label className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.2em] pl-1 block tracking-tight">Gestión</label>
                                     <Select
                                         size="sm"
                                         aria-label="Tipo de retorno"
@@ -805,20 +827,20 @@ function ReturnsContent() {
                                         selectorIcon={<ChevronDown size={14} />}
                                         popoverProps={{
                                             classNames: {
-                                                content: "bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-2xl rounded-2xl p-2",
+                                                content: "card-base border-none border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl p-2",
                                             }
                                         }}
                                         classNames={{
-                                            trigger: "h-9 bg-gray-100 dark:bg-zinc-800 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm px-3 min-h-unit-8 pr-10",
-                                            value: "text-[10px] font-black uppercase italic",
+                                            trigger: "h-9 bg-gray-100 dark:bg-zinc-800 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] px-3 min-h-unit-8 pr-10",
+                                            value: "text-[10px] font-medium uppercase tracking-tight",
                                             selectorIcon: "absolute right-3 text-gray-500",
-                                            popoverContent: "bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 shadow-2xl rounded-xl"
+                                            popoverContent: "card-base border-none border border-gray-200 dark:border-zinc-800 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl"
                                         }}
                                         renderValue={(items) => {
                                             return items.map((item) => (
                                                 <div key={item.key} className="flex items-center gap-2">
                                                     {item.key === 'REFUND' ? <Banknote size={14} className="text-rose-500" /> : <RefreshCw size={14} className="text-blue-500" />}
-                                                    <span className="text-[10px] font-black italic">{item.textValue}</span>
+                                                    <span className="text-[10px] font-medium tracking-tight">{item.textValue}</span>
                                                 </div>
                                             ));
                                         }}
@@ -826,30 +848,30 @@ function ReturnsContent() {
                                         <SelectItem
                                             key="REFUND"
                                             textValue="Reembolso de Dinero"
-                                            className="group p-2 rounded-xl hover:bg-rose-500/10 transition-colors"
+                                            className="group p-2 rounded-2xl hover:bg-rose-500/10 transition-colors"
                                         >
                                             <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-lg bg-rose-100 dark:bg-rose-500/10 flex items-center justify-center text-rose-600 dark:text-rose-500">
+                                                <div className="h-8 w-8 rounded-2xl bg-rose-100 dark:bg-rose-500/10 flex items-center justify-center text-rose-600 dark:text-rose-500">
                                                     <Banknote size={16} />
                                                 </div>
                                                 <div className="flex flex-col">
-                                                    <span className="font-black uppercase text-[10px] dark:text-white italic">Reembolso</span>
-                                                    <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 tracking-widest leading-none">PAGO EN EFECTIVO</span>
+                                                    <span className="font-medium uppercase text-[10px] dark:text-white tracking-tight">Reembolso</span>
+                                                    <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 tracking-widest leading-none">PAGO EN EFECTIVO</span>
                                                 </div>
                                             </div>
                                         </SelectItem>
                                         <SelectItem
                                             key="EXCHANGE"
                                             textValue="Cambio por Artículo"
-                                            className="group p-2 rounded-xl hover:bg-blue-500/10 transition-colors"
+                                            className="group p-2 rounded-2xl hover:bg-blue-500/10 transition-colors"
                                         >
                                             <div className="flex items-center gap-3">
-                                                <div className="h-8 w-8 rounded-lg bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-500">
+                                                <div className="h-8 w-8 rounded-2xl bg-blue-100 dark:bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-500">
                                                     <RefreshCw size={16} />
                                                 </div>
                                                 <div className="flex flex-col">
-                                                    <span className="font-black uppercase text-[10px] dark:text-white italic">Cambio</span>
-                                                    <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 tracking-widest leading-none">NUEVO PRODUCTO</span>
+                                                    <span className="font-medium uppercase text-[10px] dark:text-white tracking-tight">Cambio</span>
+                                                    <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 tracking-widest leading-none">NUEVO PRODUCTO</span>
                                                 </div>
                                             </div>
                                         </SelectItem>
@@ -868,21 +890,21 @@ function ReturnsContent() {
                                                 onValueChange={setExchangeSearch}
                                                 classNames={{
                                                     label: "hidden",
-                                                    inputWrapper: "h-7 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-500/10 rounded-md font-bold text-[9px] uppercase min-h-unit-6"
+                                                    inputWrapper: "h-7 bg-blue-50/50 dark:bg-blue-900/10 border border-blue-500/10 rounded-2xl font-bold text-[9px] uppercase min-h-unit-6"
                                                 }}
                                                 startContent={<Search size={14} className="text-blue-500/50" />}
                                             />
                                             {exchangeSearch.length > 2 && exchangeProducts.length > 0 && (
-                                                <div className="absolute z-[300] left-0 right-0 top-8 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl shadow-2xl p-1 max-h-48 overflow-y-auto custom-scrollbar">
+                                                <div className="absolute z-[300] left-0 right-0 top-8 card-base border-none border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-1 max-h-48 overflow-y-auto custom-scrollbar">
                                                     {exchangeProducts.map(p => (
-                                                        <button key={p.barcode} className="w-full p-2 text-left hover:bg-blue-500/10 rounded-lg flex justify-between items-center group transition-colors border-b border-gray-100 dark:border-white/5 last:border-none" onClick={() => { addProductToReturn(p, true); setExchangeSearch(''); }}>
+                                                        <button key={p.barcode} className="w-full p-2 text-left hover:bg-blue-500/10 rounded-2xl flex justify-between items-center group transition-colors border-b border-gray-100 dark:border-white/5 last:border-none" onClick={() => { addProductToReturn(p, true); setExchangeSearch(''); }}>
                                                             <div className="flex flex-col">
-                                                                <span className="font-bold text-[10px] uppercase text-gray-900 dark:text-white leading-tight">{p.productName}</span>
-                                                                <span className="text-[8px] text-gray-400 dark:text-zinc-500 font-mono font-bold">{p.barcode}</span>
+                                                                <span className="font-bold text-[10px] uppercase text-zinc-900 dark:text-zinc-50 leading-tight">{p.productName}</span>
+                                                                <span className="text-[8px] text-zinc-500 dark:text-zinc-400 font-mono font-bold">{p.barcode}</span>
                                                             </div>
                                                             <div className="text-right">
-                                                                <span className="font-black text-blue-500 text-[10px] tabular-nums">${p.salePrice.toLocaleString()}</span>
-                                                                <p className="text-[7px] text-gray-400 uppercase font-black tracking-widest">STK: {p.quantity}</p>
+                                                                <span className="font-medium text-blue-500 text-[10px] tabular-nums">${p.salePrice.toLocaleString()}</span>
+                                                                <p className="text-[7px] text-gray-400 uppercase font-medium tracking-widest">STK: {p.quantity}</p>
                                                             </div>
                                                         </button>
                                                     ))}
@@ -891,13 +913,13 @@ function ReturnsContent() {
                                         </div>
 
                                         <div className="rounded-2xl border border-gray-100 dark:border-white/5 overflow-hidden">
-                                            <Table isCompact removeWrapper aria-label="Items Cambio" classNames={{ th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-8 px-4 border-b border-white/5", td: "px-4 py-1", tr: "border-b border-white/5 hover:bg-blue-500/5 transition-colors" }}>
+                                            <Table isCompact removeWrapper aria-label="Items Cambio" classNames={{ th: "bg-white dark:bg-zinc-950/80  text-zinc-500 dark:text-zinc-400 uppercase tracking-wider text-[8px] h-8 px-4 border-b border-zinc-200 dark:border-white/5", td: "px-4 py-1", tr: "border-b border-zinc-200 dark:border-white/5 hover:bg-blue-500/5 transition-colors" }}>
                                                 <TableHeader>
                                                     <TableColumn>PRODUCTO</TableColumn>
                                                     <TableColumn align="center">CANT</TableColumn>
                                                     <TableColumn align="end">SUBTOTAL</TableColumn>
                                                 </TableHeader>
-                                                <TableBody emptyContent={<div className="text-center py-10 text-[10px] uppercase font-black text-gray-300 italic">No hay productos añadidos para el cambio</div>}>
+                                                <TableBody emptyContent={<div className="text-center py-10 text-[10px] uppercase font-medium text-gray-300 tracking-tight">No hay productos añadidos para el cambio</div>}>
                                                     {exchangeItems.map(item => (
                                                         <TableRow key={item.barcode}>
                                                             <TableCell className="text-[10px] font-bold uppercase leading-tight">{item.productName}</TableCell>
@@ -913,20 +935,20 @@ function ReturnsContent() {
                                                                             onValueChange={(val) => handleQtyChange(item.barcode, parseFloat(val) || 0, true)}
                                                                             className="w-16"
                                                                             classNames={{
-                                                                                inputWrapper: "h-6 bg-blue-50/50 dark:bg-blue-900/10 border-none rounded-md px-1 min-h-unit-5",
-                                                                                input: "text-[10px] font-black tabular-nums text-center text-blue-500"
+                                                                                inputWrapper: "h-6 bg-blue-50/50 dark:bg-blue-900/10 border-none rounded-2xl px-1 min-h-unit-5",
+                                                                                input: "text-[10px] font-medium tabular-nums text-center text-blue-500"
                                                                             }}
                                                                         />
                                                                     ) : (
                                                                         <>
-                                                                            <Button isIconOnly size="sm" variant="flat" className="h-6 w-6 rounded-md" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) - 1, true)}>-</Button>
-                                                                            <span className="text-xs font-black tabular-nums">{item.cartQuantity}</span>
-                                                                            <Button isIconOnly size="sm" variant="flat" className="h-6 w-6 rounded-md" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) + 1, true)}>+</Button>
+                                                                            <Button isIconOnly size="sm" variant="flat" className="h-6 w-6 rounded-2xl" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) - 1, true)}>-</Button>
+                                                                            <span className="text-xs font-medium tabular-nums">{item.cartQuantity}</span>
+                                                                            <Button isIconOnly size="sm" variant="flat" className="h-6 w-6 rounded-2xl" onClick={() => handleQtyChange(item.barcode, (item.cartQuantity || 0) + 1, true)}>+</Button>
                                                                         </>
                                                                     )}
                                                                 </div>
                                                             </TableCell>
-                                                            <TableCell className="text-right text-[10px] font-black italic tabular-nums">${(item.unitPrice * (item.cartQuantity || 0)).toLocaleString()}</TableCell>
+                                                            <TableCell className="text-right text-[10px] font-medium tracking-tight tabular-nums">${(item.unitPrice * (item.cartQuantity || 0)).toLocaleString()}</TableCell>
                                                         </TableRow>
                                                     ))}
                                                 </TableBody>
@@ -937,11 +959,11 @@ function ReturnsContent() {
 
                                 {returnType === 'REFUND' && (
                                     <div className="h-full flex flex-col items-center justify-center space-y-4 py-10 bg-rose-500/5 rounded-[2.5rem] border border-dashed border-rose-500/20 animate-in fade-in duration-500">
-                                        <div className="h-16 w-16 rounded-3xl bg-rose-500/10 flex items-center justify-center text-rose-500">
+                                        <div className="h-16 w-16 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-500">
                                             <RotateCcw size={32} />
                                         </div>
                                         <div className="text-center">
-                                            <p className="text-xs font-black uppercase text-gray-900 dark:text-white tracking-widest italic">MODALIDAD DE REEMBOLSO ACTIVA</p>
+                                            <p className="text-xs font-medium uppercase text-zinc-900 dark:text-zinc-50 tracking-widest tracking-tight">MODALIDAD DE REEMBOLSO ACTIVA</p>
                                             <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-widest mt-1 max-w-[200px] mx-auto">El valor de los items retornados se reintegrará al pool de caja.</p>
                                         </div>
                                     </div>
@@ -950,8 +972,8 @@ function ReturnsContent() {
                             <CardFooter className="px-4 py-3 border-t border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-transparent">
                                 <div className="w-full flex justify-between items-end">
                                     <div>
-                                        <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL SALIDA / CAMBIO</p>
-                                        <p className={`text-xl font-black tracking-tighter italic leading-none tabular-nums ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-emerald-500/50'}`}>
+                                        <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-widest mb-1">TOTAL SALIDA / CAMBIO</p>
+                                        <p className={`text-xl font-medium tracking-tighter tracking-tight leading-none tabular-nums ${returnType === 'EXCHANGE' ? 'text-blue-500' : 'text-zinc-900 dark:text-zinc-100/50'}`}>
                                             ${totalExchange.toLocaleString()}
                                         </p>
                                     </div>
@@ -969,18 +991,18 @@ function ReturnsContent() {
                             {/* COLUMNA IZQUIERDA: VENTAS PARA GESTIÓN */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3 pl-1">
-                                    <div className="h-6 w-6 rounded-lg bg-emerald-500/10 flex items-center justify-center text-emerald-500 shadow-inner">
+                                    <div className="h-6 w-6 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 shadow-inner">
                                         <History size={14} />
                                     </div>
-                                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 dark:text-zinc-500">Ventas para Gestión</h3>
+                                    <h3 className="text-[10px] font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">Ventas para Gestión</h3>
                                     <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
 
-                                <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
+                                <Card className="rounded-[1.5rem] card-base border-none border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/5 overflow-hidden">
                                     <Table isCompact removeWrapper aria-label="Ventas Recientes" classNames={{
-                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5",
+                                        th: "bg-white dark:bg-zinc-950/80  text-zinc-500 dark:text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-zinc-200 dark:border-white/5",
                                         td: "py-2 px-4 whitespace-nowrap",
-                                        tr: "border-b border-white/5 hover:bg-emerald-500/5 transition-colors cursor-pointer group border-l-4 border-transparent hover:border-emerald-500"
+                                        tr: "border-b border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors cursor-pointer group border-l-4 border-transparent hover:border-emerald-500"
                                     }}>
                                         <TableHeader>
                                             <TableColumn>FACTURA</TableColumn>
@@ -993,23 +1015,23 @@ function ReturnsContent() {
                                                 <TableRow key={s.id} onClick={() => loadSale(s)}>
                                                     <TableCell>
                                                         <div className="flex flex-col">
-                                                            <span className="font-black text-[10px] dark:text-white">#{s.id}</span>
+                                                            <span className="font-medium text-[10px] dark:text-white">#{s.id}</span>
                                                             <span className="text-[7px] font-bold text-gray-400 uppercase">{new Date(s.date).toLocaleDateString('es-CO')}</span>
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
-                                                        <span className="text-[9px] font-black uppercase italic dark:text-zinc-300 max-w-[120px] truncate block">
+                                                        <span className="text-[9px] font-medium uppercase tracking-tight dark:text-zinc-300 max-w-[120px] truncate block">
                                                             {s.client?.name || 'CONSU. FINAL'}
                                                         </span>
                                                     </TableCell>
                                                     <TableCell>
-                                                        <span className="text-[11px] font-black italic tabular-nums dark:text-white">
+                                                        <span className="text-[11px] font-medium tracking-tight tabular-nums dark:text-white">
                                                             ${s.total.toLocaleString()}
                                                         </span>
                                                     </TableCell>
                                                     <TableCell>
                                                         <div className="flex justify-center">
-                                                            <Button size="sm" variant="flat" className="h-6 px-3 rounded-md font-black text-[9px] uppercase tracking-widest bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1.5 shrink-0">
+                                                            <Button size="sm" variant="flat" className="h-6 px-3 rounded-2xl font-medium text-[9px] uppercase tracking-widest bg-white/5 text-emerald-600 dark:text-zinc-300 hover:bg-emerald-500 hover:text-white transition-all flex items-center gap-1.5 shrink-0">
                                                                 GESTIONAR <ChevronRight size={12} className="shrink-0" />
                                                             </Button>
                                                         </div>
@@ -1024,58 +1046,97 @@ function ReturnsContent() {
                             {/* COLUMNA DERECHA: AUDITORÍA DEVOLUCIONES */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3 pl-1">
-                                    <div className="h-6 w-6 rounded-lg bg-rose-500/10 flex items-center justify-center text-rose-500 shadow-inner">
+                                    <div className="h-6 w-6 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-500 shadow-inner">
                                         <RotateCcw size={14} className="rotate-180" />
                                     </div>
-                                    <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-gray-400 dark:text-zinc-500">Auditoría Devoluciones</h3>
+                                    <h3 className="text-[10px] font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">Auditoría Devoluciones</h3>
                                     <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
 
-                                <Card className="rounded-[1.5rem] bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-xl shadow-black/5 overflow-hidden">
-                                    <Table isCompact removeWrapper aria-label="Devoluciones Recientes" classNames={{
-                                        th: "bg-zinc-950/80 backdrop-blur-md text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-white/5",
+                                <Card className="rounded-[1.5rem] card-base border-none border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/5 overflow-hidden">
+                                    <div className="overflow-x-auto w-full">
+                                        <Table isCompact removeWrapper aria-label="Devoluciones Recientes" classNames={{
+                                        th: "bg-white dark:bg-zinc-950/80  text-zinc-500 dark:text-zinc-400 uppercase tracking-wider text-[8px] h-10 py-1 px-4 border-b border-zinc-200 dark:border-white/5",
                                         td: "py-2 px-4 whitespace-nowrap",
-                                        tr: "border-b border-white/5 hover:bg-rose-500/5 transition-colors cursor-default group border-l-4 border-transparent hover:border-rose-500"
+                                        tr: "border-b border-zinc-200 dark:border-white/5 hover:bg-rose-500/5 transition-colors cursor-default group border-l-4 border-transparent hover:border-rose-500"
                                     }}>
                                         <TableHeader>
-                                            <TableColumn>TICKET</TableColumn>
-                                            <TableColumn>ORIGEN / PRODUCTOS</TableColumn>
-                                            <TableColumn align="center">MODALIDAD</TableColumn>
-                                            <TableColumn align="end">VALOR</TableColumn>
+                                            <TableColumn>FECHA/HORA</TableColumn>
+                                            <TableColumn>TICKET/FACTURA</TableColumn>
+                                            <TableColumn>PRODUCTO</TableColumn>
+                                            <TableColumn align="center">CANTIDAD</TableColumn>
+                                            <TableColumn align="end">TOTAL REEMBOLSADO</TableColumn>
+                                            <TableColumn>MOTIVO</TableColumn>
+                                            <TableColumn>USUARIO</TableColumn>
                                         </TableHeader>
-                                        <TableBody emptyContent={isHistoryLoading ? <Spinner size="sm" color="danger" /> : "SIN DEVOLUCIONES"}>
-                                            {recentReturns.slice(0, 10).map((r: any) => (
+                                        <TableBody emptyContent={isHistoryLoading ? <Spinner size="sm" color="danger" /> : (
+                                            <div className="flex flex-col items-center justify-center py-12 opacity-30">
+                                                <RotateCcw size={40} className="mb-3 text-rose-400" />
+                                                <span className="text-[10px] font-medium uppercase tracking-[0.3em] text-gray-400 tracking-tight">Sin devoluciones registradas</span>
+                                            </div>
+                                        )}>
+                                            {recentReturns.slice(0, 15).map((r: any) => (
                                                 <TableRow key={r.id}>
                                                     <TableCell>
+                                                        <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-400 uppercase leading-none">{formatShortDateTime(r.date || r.createdAt)}</span>
+                                                    </TableCell>
+                                                    <TableCell>
                                                         <div className="flex flex-col">
-                                                            <span className="font-black text-[10px] dark:text-white">#{r.id}</span>
-                                                            <span className="text-[7px] font-bold text-gray-400 uppercase leading-none">{formatShortDateTime(r.date || r.createdAt)}</span>
+                                                            <span className="font-medium text-[10px] dark:text-white">#{r.id}</span>
+                                                            <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight">INV #{r.saleId || r.sale_id}</span>
                                                         </div>
                                                     </TableCell>
                                                     <TableCell>
                                                         <div className="flex flex-col">
-                                                            <span className="text-[9px] font-black text-emerald-500 uppercase italic">INV #{r.saleId || r.sale_id}</span>
-                                                            {(r.details || r.items)?.length > 0 && (
-                                                                <span className="text-[7px] text-gray-400 dark:text-zinc-600 truncate max-w-[120px] font-bold uppercase tracking-tighter">
-                                                                    {(r.details || r.items).map((d: any) => `${d.quantity}x ${d.productName || d.product?.productName || '...'}`).join(', ')}
-                                                                </span>
+                                                            {(r.details || []).length > 0 ? (
+                                                                (r.details || []).map((d: any, idx: number) => (
+                                                                    <span key={idx} className="text-[9px] text-gray-700 dark:text-zinc-300 font-bold uppercase leading-tight truncate max-w-[150px]">
+                                                                        {d.product?.productName || d.productName || '...'}
+                                                                    </span>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-[8px] text-gray-400 tracking-tight">—</span>
                                                             )}
                                                         </div>
                                                     </TableCell>
-                                                    <TableCell>
-                                                        <Chip size="sm" variant="flat" className={`h-4 text-[7px] font-black uppercase tracking-widest ${r.returnType === 'EXCHANGE' ? 'bg-blue-100 text-blue-600' : 'bg-emerald-100 text-emerald-600'}`}>
-                                                            {getReturnTypeLabel(r.returnType || 'REFUND')}
-                                                        </Chip>
+                                                    <TableCell align="center">
+                                                        <div className="flex flex-col items-center">
+                                                            {(r.details || []).length > 0 ? (
+                                                                (r.details || []).map((d: any, idx: number) => (
+                                                                    <span key={idx} className="text-[9px] text-gray-600 dark:text-zinc-400 font-mono font-bold leading-tight">
+                                                                        {d.quantity}
+                                                                    </span>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-[8px] text-gray-400 tracking-tight">—</span>
+                                                            )}
+                                                        </div>
+                                                    </TableCell>
+                                                    <TableCell align="right">
+                                                        <div className="flex flex-col items-end gap-1">
+                                                            <span className="text-[11px] font-medium tracking-tight tabular-nums dark:text-white">
+                                                                ${(r.totalReturned || r.amount || 0).toLocaleString()}
+                                                            </span>
+                                                            <Chip size="sm" variant="flat" className={`h-4 text-[7px] font-medium uppercase tracking-widest ${r.returnType === 'EXCHANGE' ? 'bg-blue-100 text-blue-600 dark:bg-blue-500/20 dark:text-blue-400' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:text-zinc-300'}`}>
+                                                                {getReturnTypeLabel(r.returnType || 'REFUND')}
+                                                            </Chip>
+                                                        </div>
                                                     </TableCell>
                                                     <TableCell>
-                                                        <span className="text-[11px] font-black italic tabular-nums dark:text-white">
-                                                            ${(r.totalReturned || r.amount || 0).toLocaleString()}
+                                                        <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-400 uppercase truncate max-w-[100px] block">
+                                                            {r.reason || '—'}
+                                                        </span>
+                                                    </TableCell>
+                                                    <TableCell>
+                                                        <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-400 uppercase truncate max-w-[100px] block">
+                                                            {r.employee?.name || r.employeeDni || '—'}
                                                         </span>
                                                     </TableCell>
                                                 </TableRow>
                                             ))}
                                         </TableBody>
                                     </Table>
+                                    </div>
                                 </Card>
                             </div>
 
@@ -1086,36 +1147,36 @@ function ReturnsContent() {
                 {/* BARRA INFERIOR DE ACCIÓN (FIXED) */}
                 {(returningItems.length > 0 || exchangeItems.length > 0) && (
                     <div className="fixed bottom-0 left-0 right-0 z-40 animate-in slide-in-from-bottom-full duration-500 px-2 pb-2">
-                        <div className="bg-white/80 dark:bg-zinc-950/90 backdrop-blur-2xl p-2 border border-gray-200 dark:border-white/10 flex items-center justify-between max-w-7xl mx-auto w-full rounded-xl shadow-2xl transition-all">
+                        <div className="card-base border-none dark:bg-zinc-950/90 p-2 border border-gray-200 dark:border-white/10 flex items-center justify-between max-w-7xl mx-auto w-full rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all">
                             <div className="flex items-center gap-6 pl-4">
                                 <div className="flex flex-col">
-                                    <span className={`text-[8px] font-black uppercase tracking-[0.2em] mb-1 flex items-center gap-2 ${balance >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                        <div className={`h-1.5 w-1.5 rounded-full animate-pulse ${balance >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                                    <span className={`text-[8px] font-medium uppercase tracking-[0.2em] mb-1 flex items-center gap-2 ${balance >= 0 ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>
+                                        <div className={`h-1.5 w-1.5 rounded-2xl animate-pulse ${balance >= 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' : 'bg-rose-500'}`} />
                                         {balance >= 0 ? "REINTEGRO" : "EXCEDENTE"}
                                     </span>
-                                    <div className={`text-2xl font-black tabular-nums tracking-tighter leading-none ${balance >= 0 ? 'text-gray-900 dark:text-white' : 'text-rose-500'} italic`}>
+                                    <div className={`text-2xl font-medium tabular-nums tracking-tighter leading-none ${balance >= 0 ? 'text-zinc-900 dark:text-zinc-50' : 'text-rose-500'} tracking-tight`}>
                                         {balance >= 0 ? `$${balance.toLocaleString()}` : `-$${Math.abs(balance).toLocaleString()}`}
                                     </div>
                                 </div>
 
                                 <div className="hidden md:flex flex-col gap-0.5 border-l border-gray-100 dark:border-white/5 pl-6">
-                                    <p className="text-[7px] font-black text-gray-400 uppercase tracking-widest">Resumen</p>
+                                    <p className="text-[7px] font-medium text-gray-400 uppercase tracking-widest">Resumen</p>
                                     <div className="flex gap-3">
                                         <div className="flex items-center gap-1.5">
-                                            <div className="h-1 w-1 rounded-full bg-emerald-500" />
-                                            <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">+{totalReturned.toLocaleString()}</span>
+                                            <div className="h-1 w-1 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5" />
+                                            <span className="text-[9px] font-extrabold text-gray-500 tracking-tight tabular-nums">+{totalReturned.toLocaleString()}</span>
                                         </div>
                                         <div className="flex items-center gap-1.5">
-                                            <div className="h-1 w-1 rounded-full bg-blue-500" />
-                                            <span className="text-[9px] font-extrabold text-gray-500 italic tabular-nums">-{totalExchange.toLocaleString()}</span>
+                                            <div className="h-1 w-1 rounded-2xl bg-blue-500" />
+                                            <span className="text-[9px] font-extrabold text-gray-500 tracking-tight tabular-nums">-{totalExchange.toLocaleString()}</span>
                                         </div>
                                     </div>
                                 </div>
                             </div>
 
                             <Button
-                                className={`h-14 px-10 text-xs font-black rounded-lg shadow-2xl transition-all hover:scale-[1.02] active:scale-95 ${balance >= 0
-                                    ? "bg-emerald-600 text-white shadow-emerald-500/20"
+                                className={`h-14 px-10 text-xs font-medium rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all hover:scale-[1.02] active:scale-95 ${balance >= 0
+                                    ? "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white "
                                     : "bg-rose-600 text-white shadow-rose-500/20"
                                     }`}
                                 onPress={() => setReturnDialogOpen(true)}
@@ -1146,12 +1207,12 @@ function ReturnsContent() {
                 />
 
                 {/* MODAL: RESULTADOS BÚSQUEDA */}
-                <Modal isOpen={isResultsDialogOpen} onOpenChange={setIsResultsDialogOpen} backdrop="blur" size="4xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-2xl", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
+                <Modal isOpen={isResultsDialogOpen} onOpenChange={setIsResultsDialogOpen} backdrop="blur" size="4xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
                     <ModalContent>
                         {(onClose) => (
                             <>
                                 <ModalHeader className="flex flex-col gap-1">
-                                    <h2 className="text-2xl font-black text-gray-900 dark:text-white uppercase tracking-tight flex items-center gap-3">
+                                    <h2 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight flex items-center gap-3">
                                         <History className="h-6 w-6 text-rose-600 dark:text-rose-500" /> Resultados
                                     </h2>
                                     <p className="text-gray-500 dark:text-zinc-500 font-bold uppercase tracking-widest text-[10px] mt-1">
@@ -1159,8 +1220,8 @@ function ReturnsContent() {
                                     </p>
                                 </ModalHeader>
                                 <ModalBody>
-                                    <div className="rounded-[2rem] border border-gray-200 dark:border-white/5 overflow-hidden shadow-sm">
-                                        <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-zinc-900 text-gray-500 dark:text-zinc-400 font-black uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-emerald-500/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
+                                    <div className="rounded-[2rem] border border-gray-200 dark:border-white/5 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                        <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-[#18181b] text-gray-500 dark:text-zinc-400 font-medium uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
                                             <TableHeader>
                                                 <TableColumn>ID</TableColumn>
                                                 <TableColumn>CLIENTE</TableColumn>
@@ -1170,14 +1231,14 @@ function ReturnsContent() {
                                             <TableBody>
                                                 {searchResults.map((s) => (
                                                     <TableRow key={s.id} onClick={() => loadSale(s)}>
-                                                        <TableCell className="font-black text-sm text-gray-400 dark:text-zinc-500 group-hover:text-emerald-500 transition-colors">#{s.id}</TableCell>
+                                                        <TableCell className="font-medium text-sm text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:text-zinc-100 transition-colors">#{s.id}</TableCell>
                                                         <TableCell>
-                                                             <div className="font-bold text-sm text-gray-900 dark:text-white uppercase leading-none mb-1">{s.client?.name || 'Consumidor Final'}</div>
-                                                             <div className="text-[10px] text-gray-400 dark:text-zinc-500 font-bold uppercase tracking-widest leading-none">
+                                                             <div className="font-bold text-sm text-zinc-900 dark:text-zinc-50 uppercase leading-none mb-1">{s.client?.name || 'Consumidor Final'}</div>
+                                                             <div className="text-[10px] text-zinc-500 dark:text-zinc-400 font-bold uppercase tracking-widest leading-none">
                                                                 {formatShortDateTime(s.date)}
                                                              </div>
                                                         </TableCell>
-                                                        <TableCell className="font-black text-base text-gray-900 dark:text-white tabular-nums">${s.total.toLocaleString()}</TableCell>
+                                                        <TableCell className="font-medium text-base text-zinc-900 dark:text-zinc-50 tabular-nums">${s.total.toLocaleString()}</TableCell>
                                                         <TableCell>
                                                             <Button size="sm" variant="flat" className="font-bold text-[9px] uppercase tracking-widest bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 group-hover:bg-gray-900 group-hover:text-white dark:group-hover:bg-white dark:group-hover:text-black transition-all" onPress={() => loadSale(s)}>
                                                                 Gestionar
@@ -1191,7 +1252,7 @@ function ReturnsContent() {
 
                                     {searchResultsTotal > 10 && (
                                         <div className="flex justify-between items-center mt-6">
-                                            <span className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest hidden sm:block">
+                                            <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest hidden sm:block">
                                                 Total: {searchResultsTotal}
                                             </span>
                                             <Pagination
@@ -1203,10 +1264,10 @@ function ReturnsContent() {
                                                 onChange={(page) => handleSearch(true, page)}
                                                 classNames={{
                                                     wrapper: "gap-2",
-                                                    item: "w-10 h-10 min-w-10 rounded-xl font-black text-xs bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5",
-                                                    cursor: "bg-rose-600 dark:bg-rose-500 text-white shadow-lg shadow-rose-500/30",
-                                                    next: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5",
-                                                    prev: "bg-white dark:bg-zinc-900 rounded-xl border border-gray-200 dark:border-white/5"
+                                                    item: "w-10 h-10 min-w-10 rounded-2xl font-medium text-xs card-base border-none",
+                                                    cursor: "bg-rose-600 dark:bg-rose-500 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/30",
+                                                    next: "card-base border-none rounded-2xl border border-gray-200 dark:border-white/5",
+                                                    prev: "card-base border-none rounded-2xl border border-gray-200 dark:border-white/5"
                                                 }}
                                             />
                                         </div>
@@ -1224,10 +1285,10 @@ function ReturnsContent() {
 
                 {/* SCANNER OVERLAY (Este se mantiene oscuro por diseño de UI de cámaras) */}
                 {isScannerOpen && (
-                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
-                        <div className="relative w-full max-w-2xl aspect-video bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-white/10 shadow-2xl">
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90">
+                        <div className="relative w-full max-w-2xl aspect-video bg-white dark:bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-zinc-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                             <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 pointer-events-none">
-                                <h2 className="text-white font-black uppercase tracking-widest text-sm flex items-center gap-2">
+                                <h2 className="text-white font-medium uppercase tracking-widest text-sm flex items-center gap-2">
                                     <Camera className="h-5 w-5 text-rose-500" /> Escáner Activo
                                 </h2>
                             </div>
@@ -1248,7 +1309,7 @@ function ReturnsContent() {
                             <Button
                                 isIconOnly
                                 variant="flat"
-                                className="absolute top-6 right-6 h-10 w-10 rounded-xl bg-black/50 hover:bg-rose-500 text-white border border-white/10 backdrop-blur-md transition-all z-20"
+                                className="absolute top-6 right-6 h-10 w-10 rounded-2xl bg-[#18181b] hover:bg-rose-500 text-white border border-zinc-200 dark:border-white/10 transition-all z-20"
                                 onPress={() => setIsScannerOpen(false)}
                             >
                                 X
@@ -1290,3 +1351,5 @@ export default function ReturnsPage() {
         </Suspense>
     );
 }
+
+

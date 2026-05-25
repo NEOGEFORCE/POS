@@ -28,6 +28,8 @@ type CashierClosure struct {
 	TotalOtherTransfer float64     `json:"totalOtherTransfer"`
 	NetBalance      float64        `json:"netBalance"`
 	ExpectedCash    float64        `json:"expectedCash"`
+	ActiveShiftName string         `gorm:"-" json:"activeShiftName"`
+	ActiveShiftDNI  string         `gorm:"-" json:"activeShiftDni"`
 	CashBills       float64        `json:"cashBills"`
 	Coins200        float64        `json:"coins200"`
 	Coins100        float64        `json:"coins100"`

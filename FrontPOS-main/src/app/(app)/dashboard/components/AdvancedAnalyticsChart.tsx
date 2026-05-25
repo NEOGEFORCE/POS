@@ -33,16 +33,16 @@ export default function AdvancedAnalyticsChart({ data }: AdvancedAnalyticsChartP
     const CustomTooltip = ({ active, payload, label }: any) => {
         if (active && payload && payload.length) {
             return (
-                <div className="bg-white/90 dark:bg-zinc-900/90 backdrop-blur-xl border border-gray-200 dark:border-white/10 p-4 rounded-2xl shadow-xl">
-                    <p className="text-[10px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-2">{label}</p>
+                <div className="card-base border-none dark:bg-[#18181b]/90 border border-gray-200 dark:border-white/10 p-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                    <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-2">{label}</p>
                     <div className="space-y-1.5">
                         {payload.map((entry: any, i: number) => (
                             <div key={i} className="flex items-center gap-3 justify-between">
                                 <div className="flex items-center gap-2">
-                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
+                                    <div className="w-2 h-2 rounded-2xl" style={{ backgroundColor: entry.color }} />
                                     <span className="text-xs font-bold text-gray-700 dark:text-zinc-300">{entry.name}</span>
                                 </div>
-                                <span className="text-xs font-black text-gray-900 dark:text-white">
+                                <span className="text-xs font-medium text-zinc-900 dark:text-zinc-50">
                                     ${entry.value.toLocaleString()}
                                 </span>
                             </div>
@@ -55,27 +55,27 @@ export default function AdvancedAnalyticsChart({ data }: AdvancedAnalyticsChartP
     };
 
     return (
-        <Card className="bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-xl overflow-hidden" radius="lg">
+        <Card className="card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden" radius="lg">
             <CardBody className="p-4 md:p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                     <div className="flex items-center gap-3">
-                        <div className="p-2.5 bg-emerald-500/10 rounded-2xl">
-                            <TrendingUp className="h-6 w-6 text-emerald-500" />
+                        <div className="p-2.5 bg-white/5 rounded-2xl">
+                            <TrendingUp className="h-6 w-6 text-zinc-900 dark:text-zinc-100" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-black text-gray-900 dark:text-white uppercase tracking-tighter">Análisis Comparativo</h3>
-                            <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest">Ingresos vs Egresos Mensuales</p>
+                            <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Análisis Comparativo</h3>
+                            <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Ingresos vs Egresos Mensuales</p>
                         </div>
                     </div>
                     
                     <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
-                            <ArrowUpRight size={14} className="text-emerald-500" />
-                            <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase">Ventas</span>
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10">
+                            <ArrowUpRight size={14} className="text-zinc-900 dark:text-zinc-100" />
+                            <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase">Ventas</span>
                         </div>
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-violet-500/5 border border-violet-500/10">
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-violet-500/5 border border-violet-500/10">
                             <ArrowDownRight size={14} className="text-violet-500" />
-                            <span className="text-[10px] font-black text-violet-600 dark:text-violet-500 uppercase">Gastos</span>
+                            <span className="text-[10px] font-medium text-violet-600 dark:text-violet-500 uppercase">Gastos</span>
                         </div>
                     </div>
                 </div>

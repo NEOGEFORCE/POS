@@ -25,7 +25,7 @@ const AnalyticalUserCard = ({
     chartData?: any[],
     progress?: number
 }) => (
-    <div className="relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden shadow-emerald-500/5 transition-all hover:scale-[1.02] hover:border-emerald-500/20">
+    <div className="relative group flex-1 card-base border-none dark:bg-[#18181b]/50 p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden shadow-emerald-500/5 transition-all hover:scale-[1.02] hover:border-emerald-500/20">
         {/* Background Sparkline */}
         {chartData && (
             <div className="absolute inset-x-0 bottom-0 h-6 sm:h-10 opacity-30 dark:opacity-20 pointer-events-none">
@@ -52,28 +52,28 @@ const AnalyticalUserCard = ({
 
         <div className="relative z-10">
             <div className="flex justify-between items-start mb-2 sm:mb-3">
-                <div className={`p-1.5 sm:p-2 rounded-xl bg-opacity-10 text-white shadow-inner`} style={{ backgroundColor: `${color}20`, color: color }}>
+                <div className={`p-1.5 sm:p-2 rounded-2xl bg-opacity-10 text-white shadow-inner`} style={{ backgroundColor: `${color}20`, color: color }}>
                     <Icon size={16} className="sm:size-4" />
                 </div>
                 <div className="text-right">
-                    <span className="text-[8px] sm:text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none italic block mb-0.5">
+                    <span className="text-[8px] sm:text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none tracking-tight block mb-0.5">
                         {label}
                     </span>
-                    <span className="text-lg sm:text-xl font-black text-gray-900 dark:text-white italic leading-none tracking-tighter tabular-nums">
+                    <span className="text-lg sm:text-xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight leading-none tracking-tighter tabular-nums">
                         {value}
                     </span>
                 </div>
             </div>
 
             <div className="flex flex-col gap-1 sm:gap-2">
-                <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-black uppercase tracking-wider">
-                    <span className="text-gray-400 dark:text-zinc-500 truncate max-w-[60px] sm:max-w-none">{subValue}</span>
+                <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-medium uppercase tracking-wider">
+                    <span className="text-zinc-500 dark:text-zinc-400 truncate max-w-[60px] sm:max-w-none">{subValue}</span>
                     {progress !== undefined && <span style={{ color: color }}>{progress}%</span>}
                 </div>
                 {progress !== undefined && (
-                    <div className="h-0.5 sm:h-1 w-full bg-gray-100 dark:bg-white/5 rounded-full overflow-hidden shadow-inner">
+                    <div className="h-0.5 sm:h-1 w-full bg-gray-100 dark:bg-[#18181b] rounded-2xl overflow-hidden shadow-inner">
                         <div 
-                            className="h-full rounded-full transition-all duration-1000 ease-out"
+                            className="h-full rounded-2xl transition-all duration-1000 ease-out"
                             style={{ width: `${progress}%`, backgroundColor: color }}
                         />
                     </div>

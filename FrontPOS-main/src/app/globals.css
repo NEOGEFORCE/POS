@@ -3,95 +3,89 @@
 @tailwind utilities;
 
 @layer base {
-
-  /* =========================================
-     LIGHT MODE (Tonos limpios y corporativos)
-     ========================================= */
+  /* ── MODO OSCURO (default) ── */
   :root {
-    --background: 0 0% 98%;
-    /* Un gris súper claro, más elegante que blanco puro */
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-
-    /* Emerald 600 - Verde vibrante pero legible en fondos claros */
-    --primary: 152 76% 36%;
-    --primary-foreground: 0 0% 100%;
-
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 152 76% 36%;
-    --radius: 0.5rem;
-    /* Bordes más compactos y profesionales */
-
-    /* Sombras Premium para Light Mode */
-    --card-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.04), 0 4px 6px -4px rgba(0, 0, 0, 0.02);
-    --card-shadow-hover: 0 20px 40px -12px rgba(0, 0, 0, 0.08), 0 8px 12px -6px rgba(0, 0, 0, 0.04);
+    --bg-app:        #0a0f0d;
+    --bg-page:       #0a0f0d;
+    --bg-sidebar:    #0d1412;
+    --bg-card:       #111a17;
+    --bg-card-hover: #162320;
+    --bg-elevated:   #1c2e29;
+    --border:        rgba(255, 255, 255, 0.06);
+    --border-strong: rgba(255, 255, 255, 0.11);
+    --text-primary:  #e8f0ee;
+    --text-secondary:#7a9490;
+    --text-muted:    #3d5450;
+    
+    --accent:        #10b981;
+    --accent-hover:  #059669;
+    --accent-soft:   rgba(16, 185, 129, 0.10);
+    --accent-border: rgba(16, 185, 129, 0.20);
+    
+    --success:       #10b981;
+    --danger:        #ef4444;
+    --warning:       #f59e0b;
+    --shadow-card:   0 1px 3px rgba(0,0,0,0.5), 0 8px 32px rgba(0,0,0,0.35);
   }
 
-  /* =========================================
-     DARK MODE (Estilo Executer / Terminal Pro)
-     ========================================= */
-  .dark {
-    --background: 240 10% 3.9%;
-    /* #09090b - Negro Profundo Premium */
-    --foreground: 0 0% 98%;
-    --card: 240 5% 8%;
-    /* Un tono sutilmente más claro que el fondo para crear relieve */
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
+  /* ── MODO CLARO ── */
+  [data-theme='light'], .light {
+    --bg-app:        #f0f5f3;
+    --bg-page:       #f0f5f3;
+    --bg-sidebar:    #ffffff;
+    --bg-card:       #ffffff;
+    --bg-card-hover: #f5faf8;
+    --bg-elevated:   #edf4f1;
+    --border:        rgba(0, 0, 0, 0.07);
+    --border-strong: rgba(0, 0, 0, 0.13);
+    --text-primary:  #0a1f1a;
+    --text-secondary:#4d7870;
+    --text-muted:    #8aada8;
 
-    /* Emerald 500 - Verde Neón Brillante */
-    --primary: 142 71% 45%;
-    --primary-foreground: 144.9 80.4% 10%;
+    --accent:        #059669;
+    --accent-hover:  #047857;
+    --accent-soft:   rgba(5, 150, 105, 0.08);
+    --accent-border: rgba(5, 150, 105, 0.18);
 
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 142 71% 45%;
+    --success:       #059669;
+    --danger:        #dc2626;
+    --warning:       #d97706;
+    --shadow-card:   0 1px 3px rgba(0,0,0,0.05), 0 4px 16px rgba(0,0,0,0.05);
+  }
 
-    /* Sombras Premium para Dark Mode (Efecto Resplandor) */
-    --card-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.4);
-    --card-shadow-hover: 0 20px 40px -12px rgba(0, 0, 0, 0.8);
+  * {
+    border-color: var(--border);
+  }
+
+  *:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--accent-border);
+    border-radius: 8px;
+  }
+
+  body { 
+    @apply antialiased font-body; 
+    background-color: var(--bg-app);
+    color: var(--text-primary);
+  }
+  
+  h1, h2, h3, h4, h5, h6 { 
+    color: var(--text-primary);
+    @apply font-medium tracking-tight font-headline; 
+  }
+  
+  p { 
+    color: var(--text-secondary);
   }
 }
 
-@layer base {
-  * {
-    @apply border-border;
+@layer components {
+  .card-base {
+    @apply bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/[0.06] rounded-2xl shadow-sm dark:shadow-[0_0_0_1px_rgba(255,255,255,0.02),_0_8px_32px_rgba(0,0,0,0.5)];
   }
-
-  /* Transición global para que el cambio de tema sea un "fade" suave */
-  body {
-    @apply bg-background text-foreground font-body antialiased transition-colors duration-500 ease-in-out;
-  }
-
-  h1,
-  h2,
-  h3,
-  h4,
-  h5,
-  h6 {
-    @apply font-headline tracking-tight;
-    /* tracking-tight junta un poco las letras (muy premium) */
+  
+  .card-featured {
+    @apply bg-white dark:bg-zinc-900/80 border border-zinc-200 dark:border-white/[0.08] rounded-2xl shadow-md dark:shadow-[0_0_0_1px_rgba(255,255,255,0.04),_0_16px_48px_rgba(0,0,0,0.6)];
   }
 }
 
@@ -101,31 +95,14 @@
      ========================================= */
 
   /* SCROLLBAR PREMIUM (Zero Friction Aesthetic) */
-  .custom-scrollbar::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { 
+    background: rgba(255,255,255,0.08); 
+    border-radius: 99px; 
   }
-
-  .custom-scrollbar::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted-foreground) / 0.2);
-    border-radius: 10px;
-    transition: all 0.3s ease;
-  }
-
-  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--primary) / 0.5);
-  }
-
-  .dark .custom-scrollbar::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted-foreground) / 0.1);
-  }
-
-  .dark .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--primary) / 0.4);
+  ::-webkit-scrollbar-thumb:hover { 
+    background: rgba(255,255,255,0.15); 
   }
 
   /* SCROLLBAR OCULTA (Zero Friction - Sin barra visible) */
@@ -186,12 +163,18 @@
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     box-shadow: var(--card-shadow);
     border: 1px solid hsl(var(--border) / 0.5);
+    border-radius: var(--radius);
   }
 
   .premium-card:hover {
     transform: translateY(-2px);
     box-shadow: var(--card-shadow-hover);
     border-color: hsl(var(--primary) / 0.3);
+  }
+
+  /* Transición global para todos los elementos interactivos */
+  button, a, input, select, textarea, [role="button"], [role="tab"] {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   /* Sidebar polish */
@@ -257,10 +240,16 @@
   /* Estilo Global para el contenedor de Input de HeroUI */
   [data-slot="input-wrapper"],
   .heroui-input-wrapper {
-    background-color: transparent !important;
-    backdrop-filter: blur(10px);
+    background-color: hsl(var(--card)) !important;
     transition: all 0.3s ease;
     border: 1px solid hsl(var(--border) / 0.5) !important;
+  }
+
+  /* LEY DE MAYÚSCULAS ESTRICTA */
+  input[type="text"], 
+  input[type="search"],
+  [data-slot="input"] {
+    text-transform: uppercase !important;
   }
 
   .dark [data-slot="input-wrapper"],
@@ -338,4 +327,37 @@
   [data-sileo-viewport] {
     z-index: 99999 !important;
   }
+}
+/* FORZAR VISIBILIDAD DE INPUTS EN MODO OSCURO */
+.dark input, .dark textarea, .dark select, 
+.dark [data-slot="input-wrapper"] {
+  background-color: #121214 !important; /* Gris ultra oscuro para destacar del fondo */
+  border: 1px solid rgba(255, 255, 255, 0.15) !important; /* Borde sutil visible */
+  color: #ffffff !important;
+  border-radius: 0.5rem !important;
+  transition: all 0.2s ease;
+}
+
+.dark input:focus, .dark textarea:focus, .dark select:focus,
+.dark [data-slot="input-wrapper"]:focus-within {
+  border-color: rgba(255, 255, 255, 0.5) !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.2) !important;
+  background-color: #18181b !important;
+}
+
+/* Evitar el doble borde y fondo en los inputs que estn DENTRO de un HeroUI wrapper */
+.dark [data-slot="input-wrapper"] input,
+.dark [data-slot="input-wrapper"] textarea,
+.dark [data-slot="input-wrapper"] select,
+.dark [data-slot="input"] {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+.dark [data-slot="input-wrapper"] input:focus,
+.dark [data-slot="input-wrapper"] textarea:focus,
+.dark [data-slot="input-wrapper"] select:focus,
+.dark [data-slot="input"]:focus {
+  border: none !important;
+  box-shadow: none !important;
 }

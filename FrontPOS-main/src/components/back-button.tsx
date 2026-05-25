@@ -28,7 +28,7 @@ export function BackButton({
             color={color}
             isIconOnly={!showText}
             onPress={() => router.back()}
-            className={`font-black uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-sm rounded-xl py-0 ${
+            className={`font-medium uppercase tracking-widest transition-all hover:scale-105 active:scale-95 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl py-0 ${
                 variant === "flat" && color === "default" ? "bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 border border-divider dark:border-white/5" : ""
             } ${className}`}
         >

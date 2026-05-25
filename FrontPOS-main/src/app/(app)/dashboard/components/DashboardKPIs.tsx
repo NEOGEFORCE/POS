@@ -29,7 +29,7 @@ const formatCurrencyWithColor = (value: number, label?: string) => {
     }
     
     return (
-        <span className="text-emerald-500 font-bold">
+        <span className="text-zinc-900 dark:text-zinc-100 font-bold">
             ${formatted}
         </span>
     );
@@ -46,7 +46,7 @@ function KpiCard({
     return (
         <div 
             onClick={onClick}
-            className={`relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden transition-all hover:scale-[1.01] ${onClick ? 'cursor-pointer active:scale-95' : ''} ${isAudit ? 'md:col-span-2' : ''}`}
+            className={`relative group flex-1 ${isAudit ? 'card-featured' : 'card-base'} overflow-hidden transition-all duration-150 hover:scale-[1.01] ${onClick ? 'cursor-pointer active:scale-[0.98]' : ''} ${isAudit ? 'md:col-span-2' : ''}`}
         >
 
 
@@ -55,21 +55,21 @@ function KpiCard({
                 {!hideHeader && (
                     <div className={`${isAudit ? 'p-6 pb-4 bg-gradient-to-br from-zinc-500/5 to-transparent' : 'mb-4'} flex justify-between items-start`}>
                         {!isAudit && (
-                            <div className={`p-2.5 rounded-xl bg-opacity-10 shadow-inner shrink-0`} style={{ backgroundColor: `${color}20`, color: color }}>
-                                <Icon size={20} />
+                            <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-white/8 text-zinc-500 dark:text-zinc-400 shrink-0">
+                                <Icon size={18} />
                             </div>
                         )}
                         
                         <div className={`flex flex-col ${isAudit ? 'items-start w-full' : 'items-end overflow-hidden'}`}>
                             <div className="flex items-center justify-between w-full gap-2">
-                                <span className={`font-black uppercase tracking-widest leading-none mb-2 italic ${isAudit ? 'text-[11px] text-zinc-500' : 'text-[10px] text-gray-500 dark:text-zinc-400 truncate flex-1'}`}>
+                                <span className={`uppercase tracking-widest leading-none mb-2 ${isAudit ? 'text-[11px] font-medium text-zinc-500' : 'text-[11px] font-medium text-zinc-500 truncate flex-1'}`}>
                                     {label}
                                 </span>
                                 {topAction && <div className="mb-2">{topAction}</div>}
                             </div>
                             
                             <div className={`flex items-center gap-3 ${isAudit ? 'w-full justify-between' : ''}`}>
-                                <span className={`font-black italic leading-none tracking-tighter tabular-nums truncate pr-1 ${isAudit ? 'text-2xl sm:text-3xl lg:text-4xl text-white' : 'text-lg sm:text-xl lg:text-2xl text-gray-900 dark:text-white'}`}>
+                                <span className={`font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono'] truncate pr-1 ${isAudit ? 'text-4xl sm:text-5xl lg:text-6xl text-zinc-900 dark:text-zinc-100' : 'text-3xl'}`}>
                                     {isCurrency && typeof value === 'number' ? formatCurrencyWithColor(Math.round(value)) : value}
                                 </span>
                                 {!isAudit && badge && <div>{badge}</div>}
@@ -79,12 +79,12 @@ function KpiCard({
                 )}
 
                 {/* Sub/Breakdown Content */}
-                <div className={`${isAudit ? (hideHeader ? 'h-full flex items-center px-6 py-8' : 'px-6 py-4 border-y border-white/5 bg-zinc-800/30') : 'mt-auto'}`}>
-                    <div className={`${isAudit ? 'w-full' : 'text-[10px] font-bold uppercase tracking-wider'}`}>
+                <div className={`${isAudit ? (hideHeader ? 'h-full flex items-center px-6 py-8' : 'px-6 py-4 border-y border-zinc-200 dark:border-white/5 bg-zinc-100 dark:bg-zinc-800/30') : 'mt-auto'}`}>
+                    <div className={`${isAudit ? 'w-full' : 'text-xs text-zinc-600 mt-1'}`}>
                         <div className="break-words" style={{ color: subColor || undefined }}>{sub}</div>
                         {onClick && !isAudit && (
-                            <div className="text-[8px] font-black text-rose-500 flex items-center gap-1 mt-2 animate-pulse justify-end">
-                                VER DETALLES <ChevronRight size={10} />
+                            <div className="text-[10px] font-medium text-zinc-500 flex items-center gap-1 mt-2 justify-end transition-all duration-150 group-hover:text-zinc-300">
+                                VER DETALLES <ChevronRight size={12} />
                             </div>
                         )}
                     </div>
@@ -92,7 +92,7 @@ function KpiCard({
 
                 {/* Audit Footer */}
                 {isAudit && footer && (
-                    <div className="mt-auto p-4 bg-zinc-950/50 flex justify-between items-center border-t border-white/10">
+                    <div className="mt-auto p-4 bg-white dark:bg-zinc-950/50 flex justify-between items-center border-t border-zinc-200 dark:border-white/10">
                         {footer}
                     </div>
                 )}
@@ -121,7 +121,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
     const handleResetProfit = async () => {
         setIsResetting(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/reset-profit`, {
+            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/reset-profit`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -147,7 +147,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
     const handleResetExpectedBalance = async () => {
         setIsResettingExpected(true);
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/reset-expected-balance`, {
+            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/reset-expected-balance`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -172,7 +172,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
 
     const handleAdjustBalance = async (balances: any) => {
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/adjust-initial-balance`, {
+            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/adjust-initial-balance`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -204,20 +204,20 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                         <span className="text-[10px] text-gray-500 dark:text-zinc-400">{data.shiftSalesCount || 0} transacciones</span>
                         <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1">
                             <div className="flex items-center gap-1">
-                                <Coins size={10} className="text-emerald-500" />
-                                <span className="text-[8.5px] font-black uppercase text-zinc-400">EFE: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.EFECTIVO || 0)}</span></span>
+                                <Coins size={10} className="text-zinc-900 dark:text-zinc-100" />
+                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">EFE: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.EFECTIVO || 0)}</span></span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <Smartphone size={10} className="text-purple-500" />
-                                <span className="text-[8.5px] font-black uppercase text-zinc-400">NEQUI: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.NEQUI || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">NEQUI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.NEQUI || 0)}</span></span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <Smartphone size={10} className="text-rose-500" />
-                                <span className="text-[8.5px] font-black uppercase text-zinc-400">DAVI: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.DAVIPLATA || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">DAVI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.DAVIPLATA || 0)}</span></span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <Wallet size={10} className="text-blue-500" />
-                                <span className="text-[8.5px] font-black uppercase text-zinc-400">FIADOS: <span className="text-white">${formatCurrency(data.shiftSalesByMethod?.FIADO || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">FIADOS: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.FIADO || 0)}</span></span>
                             </div>
                         </div>
                     </div>
@@ -238,47 +238,47 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                 <div className="flex flex-col gap-0 w-full">
                                     {/* CABECERA DINÁMICA DE 2 COLUMNAS */}
                                     <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent grid grid-cols-2 gap-8 items-start">
-                                        <div className="flex flex-col items-start border-r border-white/5 pr-4">
-                                            <span className="font-black uppercase tracking-widest leading-none mb-3 italic text-[11px] text-zinc-500">
+                                        <div className="flex flex-col items-start border-r border-zinc-200 dark:border-white/5 pr-4">
+                                            <span className="font-medium uppercase tracking-widest leading-none mb-3 tracking-tight text-[11px] text-zinc-500">
                                                 EFECTIVO REAL EN MANO (ACUMULADO)
                                             </span>
                                             <div className="flex items-center gap-3">
-                                                <span className="font-black italic leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-white">
+                                                <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
                                                     {formatCurrencyWithColor(Math.round(data.globalHistoricalReal || 0))}
                                                 </span>
                                             </div>
 
 
-                                            <span className="text-[9px] text-zinc-600 font-bold italic mt-3 uppercase tracking-tight">Suma de cierres - Egresos de Fondo</span>
+                                            <span className="text-[9px] text-zinc-600 font-bold tracking-tight mt-3 uppercase tracking-tight">Suma de cierres - Egresos de Fondo</span>
                                         </div>
 
                                         <div className="flex flex-col items-end pl-4">
                                             <div className="flex items-center gap-2 mb-3">
                                                 <button 
                                                     onClick={(e) => { e.stopPropagation(); setIsResetExpectedModalOpen(true); }}
-                                                    className="p-1 hover:bg-white/10 rounded-md text-zinc-600 hover:text-rose-500 transition-all active:scale-90"
+                                                    className="p-1 hover:bg-zinc-100 dark:bg-zinc-800 rounded-2xl text-zinc-600 hover:text-rose-500 transition-all active:scale-90"
                                                     title="Reiniciar Saldo Esperado"
                                                 >
                                                     <RotateCcw size={10} />
                                                 </button>
-                                                <span className="font-black uppercase tracking-widest leading-none italic text-[11px] text-zinc-500 text-right">
+                                                <span className="font-medium uppercase tracking-widest leading-none tracking-tight text-[11px] text-zinc-500 text-right">
                                                     SALDO ESPERADO TOTAL (SISTEMA)
                                                 </span>
                                             </div>
                                             <div className="flex items-center gap-3 justify-end">
-                                                <span className="font-black italic leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-white">
+                                                <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
                                                     {formatCurrencyWithColor(Math.round(data.globalHistoricalExpected || 0))}
                                                 </span>
                                             </div>
-                                            <span className="text-[9px] text-zinc-600 font-bold italic mt-2 uppercase tracking-tight text-right">Cálculo teórico histórico total</span>
+                                            <span className="text-[9px] text-zinc-600 font-bold tracking-tight mt-2 uppercase tracking-tight text-right">Cálculo teórico histórico total</span>
                                         </div>
                                     </div>
 
                                     {/* SECCIÓN INFERIOR DE DETALLES DEL TURNO */}
-                                    <div className="px-6 py-6 border-t border-white/5 bg-zinc-900/20">
+                                    <div className="px-6 py-6 border-t border-zinc-200 dark:border-white/5 bg-[#18181b]/20">
                                         <div className="flex flex-col">
                                             <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Diferencia Global</span>
-                                            <span className={`text-sm font-black italic ${(data.globalDifference >= 0) ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                            <span className={`text-sm font-medium tracking-tight ${(data.globalDifference >= 0) ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>
                                                 ${formatCurrency(Math.abs(Math.round(data.globalDifference || 0)))} 
                                                 {(data.globalDifference >= 0) ? ' (SOBRANTE)' : ' (FALTANTE)'}
                                             </span>
@@ -291,24 +291,24 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                             footer={
                                 <>
                                     <div className="flex flex-col">
-                                        <span className="text-[9px] text-zinc-500 font-black italic uppercase tracking-widest leading-none">
+                                        <span className="text-[9px] text-zinc-500 font-medium tracking-tight uppercase tracking-widest leading-none">
                                             Billeteras Digitales (Total)
                                         </span>
                                             <div className="flex items-center gap-3 mt-1.5">
-                                                <div className="flex items-center gap-1.5 bg-purple-500/10 px-2 py-0.5 rounded-lg border border-purple-500/20">
+                                                <div className="flex items-center gap-1.5 bg-purple-500/10 px-2 py-0.5 rounded-2xl border border-purple-500/20">
                                                     <Smartphone size={10} className="text-purple-500" />
-                                                    <span className="text-[10px] font-black text-white">NEQUI: ${formatCurrency(data.realCashFlow?.nequi || 0)}</span>
+                                                    <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100">NEQUI: ${formatCurrency(data.realCashFlow?.nequi || 0)}</span>
                                                 </div>
-                                                <div className="flex items-center gap-1.5 bg-rose-500/10 px-2 py-0.5 rounded-lg border border-rose-500/20">
+                                                <div className="flex items-center gap-1.5 bg-rose-500/10 px-2 py-0.5 rounded-2xl border border-rose-500/20">
                                                     <Smartphone size={10} className="text-rose-500" />
-                                                    <span className="text-[10px] font-black text-white">DAVIPLATA: ${formatCurrency(data.realCashFlow?.daviplata || 0)}</span>
+                                                    <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100">DAVIPLATA: ${formatCurrency(data.realCashFlow?.daviplata || 0)}</span>
                                                 </div>
                                             </div>
                                     </div>
                                     <div className="flex flex-col items-end gap-1.5">
                                         <button 
                                             onClick={() => setIsAuditModalOpen(true)}
-                                            className="h-8 px-3 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded-lg font-black uppercase text-[8px] italic tracking-widest flex items-center gap-2 transition-all active:scale-95 shadow-lg shadow-blue-500/10"
+                                            className="h-8 px-3 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded-2xl font-medium uppercase text-[8px] tracking-tight tracking-widest flex items-center gap-2 transition-all active:scale-95 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-blue-500/10"
                                         >
                                             <PlusCircle size={10} /> Ajustar Fondo
                                         </button>
@@ -323,7 +323,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                             onOpenChange={setIsResetExpectedModalOpen}
                             backdrop="blur"
                             classNames={{
-                                base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-[2.5rem]",
+                                base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-[2.5rem]",
                             }}
                         >
                             <ModalContent>
@@ -335,25 +335,25 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                                     <RotateCcw size={24} />
                                                 </div>
                                                 <div className="flex flex-col">
-                                                    <h3 className="font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-xl">Reiniciar <span className="text-amber-500">Saldo Sistema</span></h3>
-                                                    <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Punto de Partida Teórico</p>
+                                                    <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Reiniciar <span className="text-amber-500">Saldo Sistema</span></h3>
+                                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Teórico</p>
                                                 </div>
                                             </div>
                                         </ModalHeader>
                                         <ModalBody className="p-8 pt-2">
-                                            <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 italic leading-relaxed">
+                                            <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 tracking-tight leading-relaxed">
                                                 ¿Estás seguro de que deseas reiniciar el saldo esperado del sistema? Esto ignorará todos los registros teóricos previos y comenzará a calcular la diferencia desde cero basándose en las nuevas operaciones.
                                                 <br /><br />
-                                                <span className="text-amber-600 dark:text-amber-500 font-black uppercase text-[10px] tracking-widest">⚠️ Ideal para cuando terminas el montaje inicial de productos.</span>
+                                                <span className="text-amber-600 dark:text-amber-500 font-medium uppercase text-[10px] tracking-widest">âš ï¸ Ideal para cuando terminas el montaje inicial de productos.</span>
                                             </p>
                                         </ModalBody>
                                         <ModalFooter className="p-6 bg-gray-50/50 dark:bg-white/[0.02] border-t border-gray-100 dark:border-white/5">
-                                            <Button variant="light" onPress={onClose} className="font-black uppercase text-[10px] tracking-widest">Cancelar</Button>
+                                            <Button variant="light" onPress={onClose} className="font-medium uppercase text-[10px] tracking-widest">Cancelar</Button>
                                             <Button 
                                                 color="warning" 
                                                 onPress={handleResetExpectedBalance} 
                                                 isLoading={isResettingExpected}
-                                                className="bg-amber-500 text-white font-black uppercase text-[10px] tracking-widest px-8 rounded-xl"
+                                                className="bg-amber-500 text-white font-medium uppercase text-[10px] tracking-widest px-8 rounded-2xl"
                                             >
                                                 Confirmar Reinicio
                                             </Button>
@@ -379,7 +379,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 topAction={
                     <button 
                         onClick={(e) => { e.stopPropagation(); setIsResetProfitModalOpen(true); }}
-                        className="p-1.5 hover:bg-rose-500/10 rounded-lg text-zinc-500 hover:text-rose-500 transition-all active:scale-90 group/btn"
+                        className="p-1.5 hover:bg-rose-500/10 rounded-2xl text-zinc-500 hover:text-rose-500 transition-all active:scale-90 group/btn"
                         title="Reiniciar Conteo de Utilidad"
                     >
                         <RotateCcw size={14} className="group-hover/btn:rotate-[-45deg] transition-transform" />
@@ -393,7 +393,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 onOpenChange={setIsResetProfitModalOpen}
                 backdrop="blur"
                 classNames={{
-                    base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-[2.5rem]",
+                    base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-[2.5rem]",
                 }}
             >
                 <ModalContent>
@@ -405,25 +405,25 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                         <RotateCcw size={24} />
                                     </div>
                                     <div className="flex flex-col">
-                                        <h3 className="font-black text-gray-900 dark:text-white uppercase italic tracking-tighter text-xl">Reiniciar <span className="text-rose-500">Utilidad</span></h3>
-                                        <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic">Punto de Partida Maestro</p>
+                                        <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Reiniciar <span className="text-rose-500">Utilidad</span></h3>
+                                        <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Maestro</p>
                                     </div>
                                 </div>
                             </ModalHeader>
                             <ModalBody className="p-8 pt-2">
-                                <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 italic leading-relaxed">
+                                <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 tracking-tight leading-relaxed">
                                     ¿Estás seguro de que deseas reiniciar el conteo de utilidad? Esta acción establecerá la fecha actual como el nuevo punto de inicio para el cálculo de ganancias, ignorando datos previos.
                                     <br /><br />
-                                    <span className="text-rose-500 font-black uppercase text-[10px] tracking-widest">⚠️ Esta acción no se puede deshacer.</span>
+                                    <span className="text-rose-500 font-medium uppercase text-[10px] tracking-widest">âš ï¸ Esta acción no se puede deshacer.</span>
                                 </p>
                             </ModalBody>
                             <ModalFooter className="p-6 bg-gray-50/50 dark:bg-white/[0.02] border-t border-gray-100 dark:border-white/5">
-                                <Button variant="light" onPress={onClose} className="font-black uppercase text-[10px] tracking-widest">Cancelar</Button>
+                                <Button variant="light" onPress={onClose} className="font-medium uppercase text-[10px] tracking-widest">Cancelar</Button>
                                 <Button 
                                     color="danger" 
                                     onPress={handleResetProfit} 
                                     isLoading={isResetting}
-                                    className="bg-rose-500 text-white font-black uppercase text-[10px] tracking-widest px-8 rounded-xl"
+                                    className="bg-rose-500 text-white font-medium uppercase text-[10px] tracking-widest px-8 rounded-2xl"
                                 >
                                     Confirmar Reinicio
                                 </Button>
@@ -455,17 +455,17 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 icon={Package}
                 sub={
                     <div className="grid grid-cols-2 gap-8 items-center">
-                        <div className="flex flex-col border-r border-white/5 pr-4">
-                            <span className="text-[10px] text-emerald-500 font-black italic uppercase leading-none mb-1">Capital Invertido</span>
+                        <div className="flex flex-col border-r border-zinc-200 dark:border-white/5 pr-4">
+                            <span className="text-[10px] text-zinc-900 dark:text-zinc-100 font-medium tracking-tight uppercase leading-none mb-1">Capital Invertido</span>
                             <span className="text-[8px] text-zinc-500 font-bold uppercase mb-2">(Stock × Compra)</span>
-                            <span className="text-lg sm:text-xl lg:text-2xl font-black text-white tabular-nums tracking-tighter truncate">
+                            <span className="text-lg sm:text-xl lg:text-2xl font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tighter truncate">
                                 ${formatCurrency(Math.round(data.inventoryCostValue || 0))}
                             </span>
                         </div>
                         <div className="flex flex-col pl-4">
-                            <span className="text-[10px] text-purple-500 font-black italic uppercase leading-none mb-1">Valor de Venta</span>
+                            <span className="text-[10px] text-purple-500 font-medium tracking-tight uppercase leading-none mb-1">Valor de Venta</span>
                             <span className="text-[8px] text-zinc-500 font-bold uppercase mb-2">(Stock × Venta)</span>
-                            <span className="text-lg sm:text-xl lg:text-2xl font-black text-white tabular-nums tracking-tighter truncate">
+                            <span className="text-lg sm:text-xl lg:text-2xl font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tighter truncate">
                                 ${formatCurrency(Math.round(data.inventoryRetailValue || 0))}
                             </span>
                         </div>
@@ -488,3 +488,5 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
         </div>
     );
 }
+
+

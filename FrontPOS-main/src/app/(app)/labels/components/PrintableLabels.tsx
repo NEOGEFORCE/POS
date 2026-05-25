@@ -20,7 +20,7 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
             {/* Indicador de Línea de Corte (Solo Informativo) */}
             <div className="flex items-center gap-2 mb-4 opacity-30 border-b border-dashed border-black pb-2">
                 <Scissors size={14} className="text-black" />
-                <span className="text-[10px] font-black uppercase tracking-widest text-black italic">Formato de Impresión Central - Corte por las líneas continuas</span>
+                <span className="text-[10px] font-medium uppercase tracking-widest text-black tracking-tight">Formato de Impresión Central - Corte por las líneas continuas</span>
             </div>
 
             <div className="grid grid-cols-2 gap-x-2 gap-y-2 justify-items-center">
@@ -32,23 +32,23 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
                         >
                             {/* Franja Superior de Marca/Categoría */}
                             <div className="bg-black text-white p-2 flex justify-between items-center">
-                                <span className="text-[8px] font-black tracking-[0.4em] uppercase italic">AUTENTICIDAD GARANTIZADA</span>
-                                <span className="text-[8px] font-black tracking-widest uppercase">#{item.product.barcode.slice(-6)}</span>
+                                <span className="text-[8px] font-medium tracking-[0.4em] uppercase tracking-tight">AUTENTICIDAD GARANTIZADA</span>
+                                <span className="text-[8px] font-medium tracking-widest uppercase">#{item.product.barcode.slice(-6)}</span>
                             </div>
 
                             <div className="flex-1 flex flex-col p-3 justify-between">
                                 {/* Nombre del Producto */}
                                 <div className="border-b-2 border-black/10 pb-2">
-                                    <h1 className="text-[18px] font-extrabold uppercase leading-[1.1] line-clamp-2 italic tracking-tighter text-black">
+                                    <h1 className="text-[18px] font-extrabold uppercase leading-[1.1] line-clamp-2 tracking-tight tracking-tighter text-black">
                                         {item.product.productName}
                                     </h1>
                                 </div>
 
                                 {/* Precio Protagonista */}
                                 <div className="flex items-baseline justify-center py-1">
-                                    <span className="text-2xl font-black mr-1 mt-auto text-black italic">$</span>
+                                    <span className="text-2xl font-medium mr-1 mt-auto text-black tracking-tight">$</span>
                                     <span 
-                                        className="text-7xl font-black tracking-tighter leading-none text-black italic" 
+                                        className="text-7xl font-medium tracking-tighter leading-none text-black tracking-tight" 
                                         style={{ fontSize: String(formatCurrency(item.product.salePrice)).length > 6 ? '3.8rem' : '5rem' }}
                                     >
                                         {formatCurrency(item.product.salePrice)}
@@ -58,12 +58,12 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
                                 {/* Footer con Código de Barras Visual */}
                                 <div className="flex items-end justify-between pt-2 border-t-4 border-black border-double">
                                     <div className="flex flex-col">
-                                        <span className="text-[7px] font-black text-black/40 uppercase tracking-widest leading-none mb-1">CÓDIGO DE ACCESO</span>
-                                        <span className="text-[12px] font-black tracking-[0.3em] font-mono text-black leading-none">{item.product.barcode}</span>
+                                        <span className="text-[7px] font-medium text-black/40 uppercase tracking-widest leading-none mb-1">CÓDIGO DE ACCESO</span>
+                                        <span className="text-[12px] font-medium tracking-[0.3em] font-mono text-black leading-none">{item.product.barcode}</span>
                                     </div>
                                     <div className="flex flex-col items-end">
-                                        <span className="text-[20px] font-black italic tracking-tighter leading-none text-black">PVP.</span>
-                                        <span className="text-[6px] font-black uppercase text-black/40">IVA INCLUIDO</span>
+                                        <span className="text-[20px] font-medium tracking-tight tracking-tighter leading-none text-black">PVP.</span>
+                                        <span className="text-[6px] font-medium uppercase text-black/40">IVA INCLUIDO</span>
                                     </div>
                                 </div>
                             </div>

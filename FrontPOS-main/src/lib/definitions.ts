@@ -52,6 +52,7 @@ export type Product = {
   iva?: number;
   icui?: number;
   ibua?: number;
+  discount?: number;
   isActive?: boolean;
   netProfit?: number;
   alternateCodes?: string;
@@ -96,6 +97,7 @@ export type Sale = {
   change: number;
   client?: Customer;
   details: SaleDetail[];
+  debtPending?: number;
 };
 
 export type SaleDetail = {
@@ -211,4 +213,19 @@ export type SavingsOpportunity = {
   bestSupplier: string;
   potentialSave: number;
   stock: number;
+};
+export type StockMovement = {
+  id?: number;
+  date: string;
+  barcode: string;
+  name?: string; 
+  quantity: number;
+  type: 'IN' | 'OUT';
+  reason: string;
+  employeeDni?: string;
+  employeeName?: string;
+  referenceId?: string;
+  ref?: string; // Alias usado en algunos reportes
+  metadata?: string;
+  product?: Product;
 };

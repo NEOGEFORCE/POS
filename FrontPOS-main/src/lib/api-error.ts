@@ -1,6 +1,7 @@
 /**
  * Error personalizado de API que conserva status HTTP y datos del backend
  */
+import { API_URL } from './constants';
 export class ApiError extends Error {
   status: number;
   data?: any;
@@ -146,48 +147,43 @@ export async function extractApiError(res: Response, fallback: string): Promise<
   try {
     const data = await res.json();
     
-    // Formato 1: Estructurado { error: { code, message, details, fields } }
-    if (data?.error && typeof data.error === 'object') {
-      const { message, details, fields } = data.error;
-      
-      // Si hay errores de campos específicos (en 'fields' o 'metadata'), construir un mensaje detallado
-      const errorContext = fields || data.error.metadata;
-      if (errorContext && typeof errorContext === 'object' && Object.keys(errorContext).length > 0) {
+    // Prioridad 1: Nueva estructura global {"success": false, "message": "..."}
+    if (data?.success === false && typeof data.message === 'string') {
+      const translated = translateError(data.message);
+      return translated || data.message.toUpperCase();
+    }
+
+    // Prioridad 2: Estructura de campos detallados { error: { fields: { ... } } }
+    if (data?.error?.fields || data?.error?.metadata) {
+      const errorContext = data.error.fields || data.error.metadata;
+      if (errorContext && typeof errorContext === 'object') {
         const fieldMsgs = Object.entries(errorContext).map(([key, msg]) => {
           const friendlyField = humanizeFieldName(key);
-          const friendlyMsg = typeof msg === 'string' ? (translateError(msg) || msg) : 'Dato inválido o faltante';
+          const friendlyMsg = typeof msg === 'string' ? (translateError(msg) || msg) : 'Dato inválido';
           return `${friendlyField}: ${friendlyMsg}`;
         });
-        if (fieldMsgs.length > 0) {
-            return `REVISA LO SIGUIENTE:\n${fieldMsgs.join('\n')}`.toUpperCase();
-        }
+        if (fieldMsgs.length > 0) return `REVISA: ${fieldMsgs.join(' | ')}`.toUpperCase();
       }
-
-      // Intentar traducir los detalles técnicos primero (más específicos)
-      if (details) {
-        const translated = translateError(details);
-        if (translated) return translated;
-      }
+    }
+    
+    // Prioridad 3: Formato estructurado legacy { error: { message, details } }
+    if (data?.error && typeof data.error === 'object') {
+      const { message, details } = data.error;
+      const translatedDetails = details ? translateError(details) : null;
+      if (translatedDetails) return translatedDetails;
       
-      // Si el message del backend ya es descriptivo, usarlo
-      if (message && message !== fallback && !message.toLowerCase().includes("formato de datos")) {
-        const translated = translateError(message);
-        return translated || message.toUpperCase();
-      }
+      const translatedMsg = message ? translateError(message) : null;
+      if (translatedMsg) return translatedMsg;
 
+      if (message) return message.toUpperCase();
       if (details) return details.toUpperCase();
     }
     
-    // Formato 2: Simple { error: "string" }
-    if (data?.error && typeof data.error === 'string') {
-      const translated = translateError(data.error);
-      return translated || data.error.toUpperCase();
-    }
-
-    // Formato 3: { message: "string" } (algunos endpoints legacy)
-    if (data?.message && typeof data.message === 'string') {
-      const translated = translateError(data.message);
-      return translated || data.message.toUpperCase();
+    // Formato 4: Simple { error: "string" } o { message: "string" }
+    const directMsg = data?.error || data?.message;
+    if (typeof directMsg === 'string') {
+      const translated = translateError(directMsg);
+      return translated || directMsg.toUpperCase();
     }
     
   } catch {
@@ -238,7 +234,7 @@ export async function apiFetch<T = any>(
 
   let res: Response;
   try {
-    res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${path}`, {
+    res = await fetch(`${API_URL}${path}`, {
       ...fetchOptions,
       headers,
     });

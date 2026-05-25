@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -20,13 +21,10 @@ import (
 // minStock >= 12 -> 3, minStock >= 4 -> 2, minStock <= 3 -> 1
 // Esta es la ÚNICA fuente de verdad para el semáforo de stock en todo el sistema
 func GetCriticalThreshold(minStock int) int {
-	if minStock >= 12 {
-		return 3
+	if minStock <= 0 {
+		return 1
 	}
-	if minStock >= 4 {
-		return 2
-	}
-	return 1
+	return int(math.Ceil(float64(minStock) * 0.20))
 }
 
 type DashboardService struct {
@@ -215,7 +213,7 @@ type StockMovementReportItem struct {
 	Ref      string    `json:"ref"`
 }
 
-func (s *DashboardService) GetOverview(ctx context.Context) (*DashboardOverview, error) {
+func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string, endDateStr string) (*DashboardOverview, error) {
 	// CACHÉ L1: Retorno instantáneo si existe en RAM (Barrera HFT)
 	if cached, found := cache.CacheManager.Get(cache.CacheKeyDashboardOverview); found {
 		if overview, ok := cached.(*DashboardOverview); ok {
@@ -266,6 +264,25 @@ func (s *DashboardService) GetOverview(ctx context.Context) (*DashboardOverview,
 	sevenDaysAgo := nowUTC.AddDate(0, 0, -7)
 	currentMonthStart := time.Date(nowUTC.Year(), nowUTC.Month(), 1, 0, 0, 0, 0, time.UTC)
 	nextMonthStart := currentMonthStart.AddDate(0, 1, 0)
+
+	// Inyectar filtro por fechas si fue provisto
+	if startDateStr != "" {
+		if t, err := time.Parse(time.RFC3339, startDateStr); err == nil {
+			dayStart = t
+			shiftStartDate = t
+		} else if t, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			dayStart = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, loc)
+			shiftStartDate = dayStart
+		}
+	}
+	
+	if endDateStr != "" {
+		if t, err := time.Parse(time.RFC3339, endDateStr); err == nil {
+			nowUTC = t
+		} else if t, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			nowUTC = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, loc)
+		}
+	}
 
 	g.Go(func() error {
 		lastClosure, _ = s.closureRepo.GetLast()
@@ -675,12 +692,13 @@ func (s *DashboardService) GetOverview(ctx context.Context) (*DashboardOverview,
 		minStock := int(p.MinStock)
 		if minStock <= 0 { minStock = 5 }
 		threshold := GetCriticalThreshold(minStock)
+		warningThreshold := int(math.Ceil(float64(minStock) * 0.50))
 		if int(p.Quantity) <= threshold {
 			criticalCount++
 			lowStockProducts = append(lowStockProducts, LowStockItem{
 				Barcode: p.Barcode, Name: p.ProductName, Stock: p.Quantity, MinStock: float64(minStock), Threshold: threshold, Status: StockCritical,
 			})
-		} else if int(p.Quantity) <= minStock {
+		} else if int(p.Quantity) <= warningThreshold {
 			warningCount++
 			lowStockProducts = append(lowStockProducts, LowStockItem{
 				Barcode: p.Barcode, Name: p.ProductName, Stock: p.Quantity, MinStock: float64(minStock), Threshold: threshold, Status: StockWarning,
@@ -801,6 +819,10 @@ func (s *DashboardService) GetOverview(ctx context.Context) (*DashboardOverview,
 	cache.CacheManager.Set(cache.CacheKeyDashboardOverview, result, 60*time.Second)
 
 	return result, nil
+}
+
+func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}) error {
+	return s.closureRepo.Update(id, updates)
 }
 
 func (s *DashboardService) getSavingsOpportunitiesCached() ([]ports.SavingsOpportunity, error) {
@@ -965,6 +987,8 @@ type CashierClosure struct {
 	CreditPayments       []models.CreditPayment `json:"creditPayments"`
 	CreditsIssued        []models.Sale          `json:"creditsIssued"` // NUEVO: Listado de fiados
 	ExpensesDetail       string                 `json:"expensesDetail"`
+	ActiveShiftName      string                 `json:"activeShiftName"`
+	ActiveShiftDNI       string                 `json:"activeShiftDni"`
 }
 
 func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
@@ -1159,6 +1183,11 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	}
 
 	closure.ExpectedCash = closure.OpeningCash + closure.TotalCash - cashExpenses - cashReturns
+
+	if activeShift != nil {
+		closure.ActiveShiftName = activeShift.CashierName
+		closure.ActiveShiftDNI = activeShift.CashierDNI
+	}
 
 	return &closure, nil
 }
@@ -1656,5 +1685,111 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 		Employee:  activeShift.CashierName,
 		Movements: movements,
 		Totals:    totals,
+	}, nil
+}
+type CashFlowDailyDetail struct {
+	Date     string  `json:"date"`
+	Income   float64 `json:"income"`
+	Expense  float64 `json:"expense"`
+	Balance  float64 `json:"balance"`
+}
+
+type CashFlowReport struct {
+	From         time.Time             `json:"from"`
+	To           time.Time             `json:"to"`
+	TotalIncome  float64               `json:"totalIncome"`
+	TotalExpense float64               `json:"totalExpense"`
+	TotalBalance float64               `json:"totalBalance"`
+	DailyDetails []CashFlowDailyDetail `json:"dailyDetails"`
+}
+
+func (s *DashboardService) GetCashFlowReport(from, to time.Time) (*CashFlowReport, error) {
+	endDate := to
+	if to.Hour() == 0 && to.Minute() == 0 {
+		endDate = to.Add(24*time.Hour - time.Second)
+	}
+
+	g, _ := errgroup.WithContext(context.Background())
+
+	var sales []models.Sale
+	var expenses []models.Expense
+	var payments []models.CreditPayment
+
+	g.Go(func() error {
+		var err error
+		sales, err = s.saleRepo.GetByDateRange(from, endDate)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		expenses, err = s.expenseRepo.GetByDateRange(from, endDate)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		payments, err = s.creditRepo.GetByDateRange(from, endDate)
+		return err
+	})
+
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	dailyMap := make(map[string]*CashFlowDailyDetail)
+
+	getOrCreateDay := func(date string) *CashFlowDailyDetail {
+		if d, exists := dailyMap[date]; exists {
+			return d
+		}
+		d := &CashFlowDailyDetail{Date: date}
+		dailyMap[date] = d
+		return d
+	}
+
+	var totalIncome, totalExpense float64
+
+	for _, sale := range sales {
+		status := strings.ToUpper(sale.Status)
+		if status == "PAID" {
+			dayStr := sale.SaleDate.Format("2006-01-02")
+			d := getOrCreateDay(dayStr)
+			d.Income += sale.TotalAmount
+			totalIncome += sale.TotalAmount
+		}
+	}
+
+	for _, p := range payments {
+		dayStr := p.PaymentDate.Format("2006-01-02")
+		d := getOrCreateDay(dayStr)
+		d.Income += p.TotalPaid
+		totalIncome += p.TotalPaid
+	}
+
+	for _, e := range expenses {
+		dayStr := e.Date.Format("2006-01-02")
+		d := getOrCreateDay(dayStr)
+		amount := e.Amount + e.TaxAmount
+		d.Expense += amount
+		totalExpense += amount
+	}
+
+	var dailyList []CashFlowDailyDetail
+	for _, d := range dailyMap {
+		d.Balance = d.Income - d.Expense
+		dailyList = append(dailyList, *d)
+	}
+
+	// Sort dailyList by date ascending
+	sort.Slice(dailyList, func(i, j int) bool {
+		return dailyList[i].Date < dailyList[j].Date
+	})
+
+	return &CashFlowReport{
+		From:         from,
+		To:           to,
+		TotalIncome:  totalIncome,
+		TotalExpense: totalExpense,
+		TotalBalance: totalIncome - totalExpense,
+		DailyDetails: dailyList,
 	}, nil
 }

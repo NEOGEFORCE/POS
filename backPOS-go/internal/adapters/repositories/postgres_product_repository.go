@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"fmt"
+	"math"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
@@ -14,7 +15,7 @@ import (
 )
 
 type PostgresProductRepository struct {
-	db *gorm.DB
+	db               *gorm.DB
 }
 
 func NewPostgresProductRepository(db *gorm.DB) *PostgresProductRepository {
@@ -110,16 +111,22 @@ func (r *PostgresProductRepository) GetAllWithLimit(limit int) ([]models.Product
 	return products, err
 }
 
-func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search string) ([]models.Product, int64, error) {
+func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search string, supplierID int) ([]models.Product, int64, error) {
 	var products []models.Product
 	var total int64
 
-	query := r.db.Model(&models.Product{}).Preload("Category").Where("products.\"isActive\" = ?", true)
+	query := r.db.Model(&models.Product{}).Where("\"isActive\" = ?", true)
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Joins("LEFT JOIN categories ON categories.id = products.\"categoryId\"").
 			Where("products.barcode ILIKE ? OR unaccent(products.\"productName\") ILIKE unaccent(?) OR products.\"alternate_codes\" ILIKE ? OR unaccent(categories.name) ILIKE unaccent(?)", 
 				searchTerm, searchTerm, searchTerm, searchTerm)
+	}
+
+	if supplierID > 0 {
+		query = query.Joins("LEFT JOIN product_suppliers ON product_suppliers.product_barcode = products.barcode").
+			Where("products.\"supplierId\" = ? OR product_suppliers.supplier_id = ?", supplierID, supplierID).
+			Distinct("products.barcode")
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -185,23 +192,28 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 		query := `UPDATE products SET 
 			barcode = $1, "productName" = $2, quantity = $3, "isWeighted" = $4, 
 			"purchasePrice" = $5, "salePrice" = $6, "categoryId" = $7, "supplierId" = $8, 
-			iva = $9, icui = $10, ibua = $11, "marginPercentage" = $12, "imageUrl" = $13, 
-			"minStock" = $14, "isActive" = $15, "isPack" = $16, "packMultiplier" = $17, 
-			"baseProductBarcode" = $18, alternate_codes = $19, "alternateCodes" = $20, 
-			"updatedByDni" = $21, "updatedByName" = $22
-			WHERE barcode = $23`
+			iva = $9, icui = $10, ibua = $11, discount = $12, "marginPercentage" = $13, "imageUrl" = $14, 
+			"minStock" = $15, "isActive" = $16, "isPack" = $17, "packMultiplier" = $18, 
+			"baseProductBarcode" = $19, alternate_codes = $20, "alternateCodes" = $21, 
+			"updatedByDni" = $22, "updatedByName" = $23, order_multiple = $24
+			WHERE barcode = $25`
 
 		result := r.db.Exec(query,
 			product.Barcode, product.ProductName, product.Quantity, product.IsWeighted,
 			product.PurchasePrice, product.SalePrice, catID, suppID,
-			product.Iva, product.Icui, product.Ibua, product.MarginPercentage, product.ImageUrl,
+			product.Iva, product.Icui, product.Ibua, product.Discount, product.MarginPercentage, product.ImageUrl,
 			product.MinStock, product.IsActive, product.IsPack, product.PackMultiplier,
 			baseBc, product.AlternateCodes, product.AlternateCodes,
-			product.UpdatedByDNI, product.UpdatedByName,
+			product.UpdatedByDNI, product.UpdatedByName, product.OrderMultiple,
 			barcode,
 		)
 		if result.Error != nil {
 			return fmt.Errorf("error actualizando producto: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			fmt.Printf("[WARNING] No rows updated for barcode: %s (Original: %s)\n", product.Barcode, barcode)
+		} else {
+			fmt.Printf("[SUCCESS] Product updated and barcode changed from %s to %s\n", barcode, product.Barcode)
 		}
 
 		// Paso 5: Re-insertar las asociaciones con el nuevo barcode
@@ -215,23 +227,28 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 		query := `UPDATE products SET 
 			"productName" = $1, quantity = $2, "isWeighted" = $3, 
 			"purchasePrice" = $4, "salePrice" = $5, "categoryId" = $6, "supplierId" = $7, 
-			iva = $8, icui = $9, ibua = $10, "marginPercentage" = $11, "imageUrl" = $12, 
-			"minStock" = $13, "isActive" = $14, "isPack" = $15, "packMultiplier" = $16, 
-			"baseProductBarcode" = $17, alternate_codes = $18, "alternateCodes" = $19, 
-			"updatedByDni" = $20, "updatedByName" = $21
-			WHERE barcode = $22`
+			iva = $8, icui = $9, ibua = $10, discount = $11, "marginPercentage" = $12, "imageUrl" = $13, 
+			"minStock" = $14, "isActive" = $15, "isPack" = $16, "packMultiplier" = $17, 
+			"baseProductBarcode" = $18, alternate_codes = $19, "alternateCodes" = $20, 
+			"updatedByDni" = $21, "updatedByName" = $22, order_multiple = $23
+			WHERE barcode = $24`
 
 		result := r.db.Exec(query,
 			product.ProductName, product.Quantity, product.IsWeighted,
 			product.PurchasePrice, product.SalePrice, catID, suppID,
-			product.Iva, product.Icui, product.Ibua, product.MarginPercentage, product.ImageUrl,
+			product.Iva, product.Icui, product.Ibua, product.Discount, product.MarginPercentage, product.ImageUrl,
 			product.MinStock, product.IsActive, product.IsPack, product.PackMultiplier,
 			baseBc, product.AlternateCodes, product.AlternateCodes,
-			product.UpdatedByDNI, product.UpdatedByName,
+			product.UpdatedByDNI, product.UpdatedByName, product.OrderMultiple,
 			barcode,
 		)
 		if result.Error != nil {
 			return fmt.Errorf("error actualizando producto: %w", result.Error)
+		}
+		if result.RowsAffected == 0 {
+			fmt.Printf("[WARNING] No rows updated for barcode: %s\n", barcode)
+		} else {
+			fmt.Printf("[SUCCESS] Product updated: %s\n", barcode)
 		}
 	}
 
@@ -307,4 +324,116 @@ func (r *PostgresProductRepository) GetBySupplier(supplierID uint) ([]models.Pro
 		supplierID, supplierID,
 	).Find(&products).Error
 	return products, err
+}
+func (r *PostgresProductRepository) UpdateSupplierFrequency(supplierID uint, days int) error {
+	return r.db.Model(&models.Supplier{}).Where("id = ?", supplierID).Update("visit_frequency_days", days).Error
+}
+
+func (r *PostgresProductRepository) GetDailySalesAverage(barcode string, days int) (float64, error) {
+	var totalSold float64
+	query := `SELECT COALESCE(SUM(quantity), 0) FROM sale_details 
+	          JOIN sales ON sale_details.sale_id = sales.sale_id 
+	          WHERE sale_details.barcode = ? AND sales.sale_date > ?`
+	
+	since := time.Now().AddDate(0, 0, -days)
+	err := r.db.Raw(query, barcode, since).Scan(&totalSold).Error
+	if err != nil {
+		return 0, err
+	}
+	
+	avg := totalSold / float64(days)
+	return math.Round(avg*100) / 100, nil
+}
+
+func (r *PostgresProductRepository) GetPriceChangesToday() ([]models.PriceLog, error) {
+	var logs []models.PriceLog
+	// Start of today in Unix timestamp (seconds)
+	now := time.Now()
+	startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location()).Unix()
+	
+	err := r.db.Where("created_at >= ?", startOfDay).Order("created_at DESC").Find(&logs).Error
+	return logs, err
+}
+
+func (r *PostgresProductRepository) RecordPriceChange(tx interface{}, barcode string, oldPrice, newPrice float64) error {
+	var db *gorm.DB
+	if tx != nil {
+		db = tx.(*gorm.DB)
+	} else {
+		db = r.db
+	}
+
+	var productName string
+	var product models.Product
+	if err := db.Select("\"productName\"").Where("barcode = ?", barcode).First(&product).Error; err == nil {
+		productName = product.ProductName
+	}
+
+	log := models.PriceLog{
+		ProductBarcode: barcode,
+		ProductName:    productName,
+		OldPrice:       oldPrice,
+		NewPrice:       newPrice,
+	}
+
+	if err := db.Create(&log).Error; err != nil {
+		return fmt.Errorf("fallo al crear log de precio: %w", err)
+	}
+	return nil
+}
+
+func (r *PostgresProductRepository) GetPendingTransitQuantities() (map[string]float64, map[string]string, error) {
+	quantities := make(map[string]float64)
+	suppliers := make(map[string]string)
+
+	type TransitRow struct {
+		Barcode      string  `gorm:"column:barcode"`
+		Quantity     float64 `gorm:"column:total_qty"`
+		SupplierName string  `gorm:"column:supplier_name"`
+	}
+
+	var rows []TransitRow
+
+	err := r.db.Table("expected_order_items i").
+		Select("i.barcode, SUM(i.expected_quantity) as total_qty, MAX(s.name) as supplier_name").
+		Joins("JOIN expected_orders o ON o.id = i.expected_order_id").
+		Joins("LEFT JOIN suppliers s ON s.id = o.supplier_id").
+		Where("o.status = ?", "PENDING").
+		Group("i.barcode").
+		Scan(&rows).Error
+
+	if err != nil {
+		return nil, nil, err
+	}
+
+	for _, row := range rows {
+		quantities[row.Barcode] = row.Quantity
+		suppliers[row.Barcode] = row.SupplierName
+	}
+
+	return quantities, suppliers, nil
+}
+
+func (r *PostgresProductRepository) SaveShrinkage(shrinkage *models.Shrinkage, shiftID *uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(shrinkage).Error; err != nil {
+			return err
+		}
+
+		expense := models.Expense{
+			Description:   fmt.Sprintf("MERMA (%s) - Prod: %s", shrinkage.Reason, shrinkage.ProductID),
+			Amount:        shrinkage.CostAtTime * shrinkage.Quantity,
+			Date:          time.Now(),
+			PaymentSource: "MERMA",
+			Category:      "PÉRDIDA OPERATIVA",
+			Status:        "PAID",
+			CreatedByDNI:  shrinkage.UserID,
+		}
+
+		if err := tx.Create(&expense).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
 }

@@ -136,22 +136,57 @@ func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
 			_ = s.repo.UpdateStatus(o.ID, "RECEIVED")
 		}
 	}
+
+	// SPRINT: Auto-aprendizaje de Días de Visita (Delivery Days)
+	// Registrar el día de la semana actual si no está en la lista de días de entrega del proveedor
+	currentDayName := time.Now().Weekday().String() // Ej: "Monday", "Tuesday"
+	// Mapeo simple a español para consistencia
+	dayMap := map[string]string{
+		"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", 
+		"Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo",
+	}
+	if translated, ok := dayMap[currentDayName]; ok {
+		currentDayName = translated
+	}
+
+	supplier, err := s.repo.GetSupplierByID(supplierID)
+	if err == nil && supplier != nil {
+		// Actualizar el campo DeliveryDay del proveedor con el día actual
+		if !strings.Contains(supplier.DeliveryDay, currentDayName) {
+			newDeliveryDay := currentDayName
+			if supplier.DeliveryDay != "" {
+				newDeliveryDay = supplier.DeliveryDay + ", " + currentDayName
+			}
+			_ = s.repo.UpdateSupplierDeliveryDays(supplierID, newDeliveryDay)
+			log.Printf("[ExpectedOrderService] Auto-aprendizaje: Proveedor %d ahora entrega en: %s", supplierID, newDeliveryDay)
+		}
+	}
 	
 	return nil
 }
 
 // CreateExpectedOrderFromRequest crea un pedido esperado desde un request
 // Maneja la lógica de supplierId = 0 (nuevo proveedor)
-func (s *ExpectedOrderService) CreateExpectedOrderFromRequest(supplierId uint, supplierName string, expectedDate time.Time, totalEstimated float64, itemCount int, createdByDNI string, createdByName string) (*models.ExpectedOrder, error) {
+func (s *ExpectedOrderService) CreateExpectedOrderFromRequest(supplierId uint, supplierName string, expectedDate time.Time, totalEstimated float64, itemCount int, createdByDNI interface{}, createdByName interface{}, items []models.ExpectedOrderItem) (*models.ExpectedOrder, error) {
+	dni := ""
+	name := ""
+	if createdByDNI != nil {
+		dni = createdByDNI.(string)
+	}
+	if createdByName != nil {
+		name = createdByName.(string)
+	}
+
 	order := &models.ExpectedOrder{
 		SupplierID:     supplierId,
 		SupplierName:   supplierName,
 		ExpectedDate:   expectedDate,
 		TotalEstimated: totalEstimated,
 		ItemCount:      itemCount,
+		Items:          items,
 		Status:         "PENDING",
-		CreatedByDNI:   createdByDNI,
-		CreatedByName:  createdByName,
+		CreatedByDNI:   dni,
+		CreatedByName:  name,
 	}
 	
 	if err := s.CreateExpectedOrder(order); err != nil {

@@ -44,6 +44,7 @@ import Cookies from 'js-cookie';
 import { useAuth } from '@/lib/auth';
 import ExpenseFormModal from '@/app/(app)/expenses/components/ExpenseFormModal';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 interface CashierClosure {
     id: string;
@@ -102,12 +103,16 @@ export default function CashierClosurePage() {
     const [showDetailedAudit, setShowDetailedAudit] = useState(false);
     const [isRealExpenseModalOpen, setIsRealExpenseModalOpen] = useState(false);
 
+    // --- ESTADO CONFIRMACIÓN EGRESOS ---
+    const [isDeleteExpenseConfirmOpen, setIsDeleteExpenseConfirmOpen] = useState(false);
+    const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
+
 
     const handleAdminVerify = async () => {
         setIsVerifying(true);
         setAuthError('');
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/login`, {
+            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: adminUser, password: adminPass }),
@@ -172,7 +177,7 @@ export default function CashierClosurePage() {
         setIsFetchingDetailed(true);
         try {
             const token = Cookies.get('org-pos-token');
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/detailed-report`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/detailed-report`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -274,13 +279,13 @@ export default function CashierClosurePage() {
     // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja física)
     const totalEgresosEfectivo = dbCashExpenses;
 
-    // 4. EFECTIVO ESPERADO (Entradas - Salidas)
-    const theoreticalBalance = efectivoEnCaja - totalEgresosEfectivo;
-    const expectedCash = Math.max(0, theoreticalBalance);
-    
     // Variables de apoyo para la UI
     const totalDevoluciones = currentClosure?.totalReturns ?? 0;
     const devolucionesCount = currentClosure?.returnsCount ?? 0;
+
+    // 4. EFECTIVO ESPERADO (Entradas - Salidas)
+    const theoreticalBalance = efectivoEnCaja - totalEgresosEfectivo - totalDevoluciones;
+    const expectedCash = currentClosure?.expectedCash ?? Math.max(0, theoreticalBalance);
     
     const actualCash = parseFloat(actualCashInput) || 0;
     
@@ -404,7 +409,7 @@ export default function CashierClosurePage() {
     };
 
     const billConfigs = {
-        '100000': { label: '100k', color: 'bg-emerald-50 border-emerald-200 text-emerald-700 dark:bg-emerald-500/5 dark:border-emerald-500/20 dark:text-emerald-400', iconColor: 'bg-emerald-500' },
+        '100000': { label: '100k', color: 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-200 text-zinc-900 dark:text-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:border-emerald-500/20 dark:text-zinc-300', iconColor: 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' },
         '50000': { label: '50k', color: 'bg-rose-50 border-rose-200 text-rose-700 dark:bg-rose-500/5 dark:border-rose-500/20 dark:text-rose-400', iconColor: 'bg-rose-500' },
         '20000': { label: '20k', color: 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-500/5 dark:border-amber-500/20 dark:text-amber-400', iconColor: 'bg-amber-500' },
         '10000': { label: '10k', color: 'bg-red-50 border-red-200 text-red-700 dark:bg-red-500/5 dark:border-red-500/20 dark:text-red-400', iconColor: 'bg-red-500' },
@@ -413,9 +418,9 @@ export default function CashierClosurePage() {
     };
 
     const coinConfigs = {
-        '500/1000': { label: '500/1000', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-500 dark:text-zinc-300' },
-        '200': { label: '200', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-600 dark:text-zinc-400' },
-        '100': { label: '100', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-zinc-900 dark:border-zinc-700 dark:text-zinc-500' },
+        '500/1000': { label: '500/1000', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-[#18181b] dark:border-zinc-500 dark:text-zinc-300' },
+        '200': { label: '200', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-[#18181b] dark:border-zinc-600 dark:text-zinc-400' },
+        '100': { label: '100', color: 'bg-gray-100 border-gray-200 text-gray-700 dark:bg-[#18181b] dark:border-zinc-700 dark:text-zinc-500' },
     };
 
     const resetCalculator = () => {
@@ -466,12 +471,17 @@ export default function CashierClosurePage() {
     };
 
     const handleDeleteDBExpense = async (id: number) => {
-        if (!window.confirm('¿ESTÁS SEGURO DE ELIMINAR ESTE EGRESO DE LA BASE DE DATOS?')) return;
+        setExpenseToDelete(id);
+        setIsDeleteExpenseConfirmOpen(true);
+    };
+
+    const confirmDeleteExpense = async () => {
+        if (!expenseToDelete) return;
         const token = Cookies.get('org-pos-token');
         if (!token) return;
 
         try {
-            await apiFetch(`/expenses/delete/${id}`, {
+            await apiFetch(`/expenses/delete/${expenseToDelete}`, {
                 method: 'DELETE',
                 fallbackError: 'FALLO AL ELIMINAR EGRESO'
             }, token);
@@ -481,6 +491,8 @@ export default function CashierClosurePage() {
             fetchCurrent();
         } catch (err: any) {
             toast({ variant: "destructive", title: "ERROR", description: err.message });
+        } finally {
+            setExpenseToDelete(null);
         }
     };
 
@@ -490,29 +502,29 @@ export default function CashierClosurePage() {
     if (loading) {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white rounded-[2rem] border border-black/5 dark:border-white/5 m-2 md:m-4">
-                <Skeleton className="h-12 w-12 rounded-full bg-zinc-200 dark:bg-zinc-800" />
-                <p className="text-[10px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-widest animate-pulse">Sincronizando Auditoría...</p>
+                <Skeleton className="h-12 w-12 rounded-2xl bg-zinc-200 dark:bg-zinc-800" />
+                <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-widest animate-pulse">Sincronizando Auditoría...</p>
             </div>
         );
     }
 
     return (
-        <div className="flex flex-col w-full bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white p-1 md:p-3 pt-0 md:pt-0 gap-3 md:gap-4 pb-10">
+        <div className="flex flex-col w-full bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 p-1 md:p-3 pt-0 md:pt-0 gap-3 md:gap-4 pb-10">
 
 
             
             {/* HEADER COMPACTO */}
             <div className="flex items-center justify-between shrink-0 px-2">
                 <div className="flex items-center gap-3">
-                    <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                    <div className="h-10 w-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <Calculator className="text-zinc-950" size={24} />
                     </div>
                     <div>
-                        <h1 className="text-lg font-black uppercase tracking-tighter">Cierre de Caja</h1>
+                        <h1 className="text-lg font-medium uppercase tracking-tighter">Cierre de Caja</h1>
                         <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
                             {currentClosure ? (
                                 <>
-                                    <span className="text-emerald-700 dark:text-emerald-500 flex items-center gap-1">
+                                    <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 flex items-center gap-1">
                                         <TrendingUp size={10} /> INICIO: {formatShortDateTime(currentClosure.startDate)}
                                     </span>
                                     <span className="text-gray-300 dark:text-zinc-700">|</span>
@@ -528,7 +540,7 @@ export default function CashierClosurePage() {
                     <Button 
                         variant="flat"
                         onPress={fetchCurrent}
-                        className="bg-zinc-800 text-white font-black text-[10px] uppercase tracking-widest px-3 md:px-4 min-w-0"
+                        className="bg-zinc-100 dark:bg-zinc-800 text-white font-medium text-[10px] uppercase tracking-widest px-3 md:px-4 min-w-0"
                         startContent={<RefreshCw size={14} className={loading ? 'animate-spin' : ''} />}
                     >
                         <span className="hidden md:inline">Sincronizar Datos</span>
@@ -544,29 +556,29 @@ export default function CashierClosurePage() {
                 <div className="flex-1 flex flex-col lg:min-h-0 gap-4 lg:overflow-y-auto scrollbar-hide">
                     
                     {/* 1. BALANCE TICKET (SIEMPRE VISIBLE) */}
-                    <section className="shrink-0 bg-white dark:bg-emerald-500/5 rounded-3xl border border-gray-200 dark:border-emerald-500/10 p-4 md:p-8 shadow-sm">
+                    <section className="shrink-0 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl border border-gray-200 dark:border-emerald-500/10 p-4 md:p-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <div className="flex flex-col items-center justify-center relative z-10">
                             <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2">
                                 {theoreticalBalance < 0 ? 'Déficit de Operación (Ventas < Gastos)' : 'Efectivo Final Esperado'}
                             </span>
-                            <span className={`text-5xl md:text-7xl font-black tabular-nums tracking-tighter drop-shadow-sm ${theoreticalBalance < 0 ? 'text-rose-500' : 'text-gray-900 dark:text-white'}`}>
+                            <span className={`text-5xl md:text-7xl font-medium tabular-nums tracking-tighter drop-shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${theoreticalBalance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-50'}`}>
                                 ${formatCurrency(expectedCash)}
                             </span>
                         </div>
                         <div className="flex flex-col gap-1 md:gap-2 mt-6 max-w-md mx-auto">
                             <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
                                 <span className="text-[9px] font-bold text-gray-600 dark:text-zinc-500 uppercase tracking-widest">Entradas Efectivo</span>
-                                <span className="text-md font-black text-emerald-700 dark:text-emerald-500">+{formatCurrency(efectivoEnCaja)}</span>
+                                <span className="text-md font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100">+{formatCurrency(efectivoEnCaja)}</span>
                             </div>
                             <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
                                 <span className="text-[9px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Efectivo</span>
-                                <span className="text-md font-black text-rose-700 dark:text-rose-500">-{formatCurrency(totalEgresosEfectivo)}</span>
+                                <span className="text-md font-medium text-rose-700 dark:text-rose-500">-{formatCurrency(totalEgresosEfectivo)}</span>
                             </div>
                         </div>
                     </section>
 
                     {/* 2. EGRESOS DEL TURNO (SIEMPRE VISIBLE PARA PERMITIR CUADRE) */}
-                    <section className="bg-white dark:bg-zinc-900/40 border border-gray-200 dark:border-white/5 rounded-3xl p-4 md:p-6 shadow-sm">
+                    <section className="card-base border-none/40 border border-gray-200 dark:border-white/5 rounded-2xl p-4 md:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <div className="flex items-center justify-between border-b border-gray-200 dark:border-white/5 pb-2 mb-4">
                             <div className="flex items-center gap-2">
                                 <TrendingDown size={14} className="text-rose-700 dark:text-rose-500" />
@@ -577,7 +589,7 @@ export default function CashierClosurePage() {
                                     size="sm" 
                                     variant="solid" 
                                     onPress={() => setIsRealExpenseModalOpen(true)}
-                                    className="h-10 text-[10px] font-black uppercase tracking-widest bg-rose-600 text-white rounded-xl shadow-lg shadow-rose-500/20 px-6 transition-all active:scale-95"
+                                    className="h-10 text-[10px] font-medium uppercase tracking-widest bg-rose-600 text-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 px-6 transition-all active:scale-95"
                                     startContent={<ReceiptText size={16} />}
                                 >
                                     REGISTRAR EGRESO GENERAL
@@ -590,12 +602,12 @@ export default function CashierClosurePage() {
                             {currentClosure?.expenses?.map((exp, idx) => (
                                 <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
                                     <div className="flex flex-col">
-                                        <span className="text-[9px] font-black text-gray-400 uppercase">{exp.category}</span>
-                                        <span className="text-xs font-bold text-gray-900 dark:text-white uppercase">{exp.description}</span>
+                                        <span className="text-[9px] font-medium text-gray-400 uppercase">{exp.category}</span>
+                                        <span className="text-xs font-bold text-zinc-900 dark:text-zinc-50 uppercase">{exp.description}</span>
                                     </div>
                                     <div className="flex items-center gap-3">
                                         <div className="text-right">
-                                            <span className="text-sm font-black text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
+                                            <span className="text-sm font-medium text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
                                             <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
                                         </div>
                                         {isAdmin && (
@@ -604,7 +616,7 @@ export default function CashierClosurePage() {
                                                 size="sm" 
                                                 variant="light" 
                                                 onPress={() => handleDeleteDBExpense(exp.id)}
-                                                className="text-rose-500 hover:bg-rose-500/10 rounded-full"
+                                                className="text-rose-500 hover:bg-rose-500/10 rounded-2xl"
                                             >
                                                 <Trash2 size={14} />
                                             </Button>
@@ -625,17 +637,17 @@ export default function CashierClosurePage() {
                                     <h3 className="text-[9px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Digitales</h3>
                                 </div>
                                 <div className="grid grid-cols-3 gap-2">
-                                    <div className="p-4 rounded-3xl bg-blue-50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-500/10 flex flex-col gap-1 items-center text-center">
-                                        <span className="text-[9px] font-black text-blue-700 dark:text-blue-400 uppercase">Nequi</span>
-                                        <span className="text-lg font-black text-blue-800 dark:text-white">${formatCurrency(currentClosure?.totalNequi ?? 0)}</span>
+                                    <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-500/10 flex flex-col gap-1 items-center text-center">
+                                        <span className="text-[9px] font-medium text-blue-700 dark:text-blue-400 uppercase">Nequi</span>
+                                        <span className="text-lg font-medium text-blue-800 dark:text-white">${formatCurrency(currentClosure?.totalNequi ?? 0)}</span>
                                     </div>
-                                    <div className="p-4 rounded-3xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/10 flex flex-col gap-1 items-center text-center">
-                                        <span className="text-[9px] font-black text-purple-700 dark:text-purple-400 uppercase">Daviplata</span>
-                                        <span className="text-lg font-black text-purple-800 dark:text-white">${formatCurrency(currentClosure?.totalDaviplata ?? 0)}</span>
+                                    <div className="p-4 rounded-2xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/10 flex flex-col gap-1 items-center text-center">
+                                        <span className="text-[9px] font-medium text-purple-700 dark:text-purple-400 uppercase">Daviplata</span>
+                                        <span className="text-lg font-medium text-purple-800 dark:text-white">${formatCurrency(currentClosure?.totalDaviplata ?? 0)}</span>
                                     </div>
-                                    <div className="p-4 rounded-3xl bg-gray-100 dark:bg-zinc-500/5 border border-gray-200 dark:border-zinc-500/10 flex flex-col gap-1 items-center text-center">
-                                        <span className="text-[9px] font-black text-gray-600 dark:text-zinc-500 uppercase">Otros</span>
-                                        <span className="text-lg font-black text-gray-900 dark:text-white">${formatCurrency((currentClosure?.totalBancolombia ?? 0) + (currentClosure?.totalOtherTransfer ?? 0))}</span>
+                                    <div className="p-4 rounded-2xl bg-gray-100 dark:bg-zinc-500/5 border border-gray-200 dark:border-zinc-500/10 flex flex-col gap-1 items-center text-center">
+                                        <span className="text-[9px] font-medium text-gray-600 dark:text-zinc-500 uppercase">Otros</span>
+                                        <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50">${formatCurrency((currentClosure?.totalBancolombia ?? 0) + (currentClosure?.totalOtherTransfer ?? 0))}</span>
                                     </div>
                                 </div>
                             </section>
@@ -646,7 +658,7 @@ export default function CashierClosurePage() {
                                     <Briefcase size={14} className="text-gray-500 dark:text-zinc-500" />
                                     <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Créditos y Abonos</h3>
                                 </div>
-                                <div className="bg-white dark:bg-zinc-900/40 border border-gray-200 dark:border-white/10 rounded-2xl p-4 md:p-6">
+                                <div className="card-base border-none/40 border border-gray-200 dark:border-white/10 rounded-2xl p-4 md:p-6">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div className="space-y-2">
                                             <span className="text-[10px] font-bold text-blue-700 dark:text-blue-400 uppercase tracking-wider">Fiados Emitidos (${formatCurrency(currentClosure?.totalCreditIssued ?? 0)})</span>
@@ -654,18 +666,18 @@ export default function CashierClosurePage() {
                                                 {currentClosure?.creditsIssued?.map((sale, idx) => (
                                                     <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
                                                         <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{sale.client?.name || 'Cliente'}</span>
-                                                        <span className="text-blue-700 dark:text-blue-400 font-black">${formatCurrency(sale.creditAmount)}</span>
+                                                        <span className="text-blue-700 dark:text-blue-400 font-medium">${formatCurrency(sale.creditAmount)}</span>
                                                     </div>
                                                 ))}
                                             </div>
                                         </div>
                                         <div className="space-y-2">
-                                            <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">Abonos Recibidos (${formatCurrency(currentClosure?.totalCreditCollected ?? 0)})</span>
+                                            <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-wider">Abonos Recibidos (${formatCurrency(currentClosure?.totalCreditCollected ?? 0)})</span>
                                             <div className="space-y-1">
                                                 {currentClosure?.creditPayments?.map((p, idx) => (
                                                     <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
                                                         <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
-                                                        <span className="text-emerald-700 dark:text-emerald-400 font-black">${formatCurrency(p.totalPaid)}</span>
+                                                        <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 font-medium">${formatCurrency(p.totalPaid)}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -675,26 +687,26 @@ export default function CashierClosurePage() {
                             </section>
                         </div>
                     ) : (
-                        <div className="p-6 bg-white dark:bg-zinc-900/40 border border-gray-200 dark:border-white/5 rounded-3xl text-center">
-                            <Lock size={20} className="mx-auto text-zinc-400 mb-2" />
-                            <p className="text-[9px] font-black text-zinc-500 uppercase tracking-widest">Auditoría de Ventas restringida a Administradores</p>
+                        <div className="p-6 card-base border-none/40 border border-gray-200 dark:border-white/5 rounded-2xl text-center">
+                            <Lock size={20} className="mx-auto text-zinc-500 dark:text-zinc-400 mb-2" />
+                            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest">Auditoría de Ventas restringida a Administradores</p>
                         </div>
                     )}
                 </div>
 
                 {/* BLOQUE DERECHO: INTERACCIÓN CAJERO (SCROLLABLE) */}
-                <div className="bg-white border border-gray-200 dark:bg-zinc-900/60 dark:border-white/5 rounded-2xl p-5 md:p-6 flex flex-col gap-4 shadow-sm dark:shadow-2xl relative overflow-hidden">
+                <div className="bg-white border border-gray-200 dark:bg-[#18181b]/60 dark:border-white/5 rounded-2xl p-5 md:p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden">
                     
                     <div className="flex-1 flex flex-col gap-6">
                         <div className="flex flex-col gap-4">
                             <div className="flex items-center gap-2 px-1">
-                                <div className="h-4 w-1 bg-emerald-500 rounded-full" />
-                                <h4 className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-[0.2em]">Conteo de Efectivo</h4>
+                                <div className="h-4 w-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl" />
+                                <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-[0.2em]">Conteo de Efectivo</h4>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
                                 {Object.entries(billConfigs).map(([val, config]) => (
-                                    <div key={val} className={`flex items-center gap-2 p-2 rounded-xl border transition-all duration-300 ${config.color}`}>
-                                        <div className={`h-6 w-6 rounded-lg ${config.iconColor} flex items-center justify-center text-[10px] font-black text-zinc-950 shrink-0`}>
+                                    <div key={val} className={`flex items-center gap-2 p-2 rounded-2xl border transition-all duration-300 ${config.color}`}>
+                                        <div className={`h-6 w-6 rounded-2xl ${config.iconColor} flex items-center justify-center text-[10px] font-medium text-zinc-950 shrink-0`}>
                                             {config.label}
                                         </div>
                                         <Input
@@ -705,7 +717,7 @@ export default function CashierClosurePage() {
                                             onValueChange={(v) => setBills({ ...bills, [val]: sanitizeNumber(v).toString() })}
                                             classNames={{
                                                 inputWrapper: "h-7 bg-transparent border-none p-0 min-h-unit-0",
-                                                input: "font-black text-right text-xs text-gray-900 dark:text-white pr-1"
+                                                input: "font-medium text-right text-xs text-zinc-900 dark:text-zinc-50 pr-1"
                                             }}
                                         />
                                     </div>
@@ -713,7 +725,7 @@ export default function CashierClosurePage() {
                             </div>
                             <div className="grid grid-cols-3 gap-2">
                                 {Object.entries(coinConfigs).map(([val, config]) => (
-                                    <div key={val} className={`flex flex-col gap-1 p-2 rounded-xl border border-gray-200 dark:border-white/10 bg-white dark:bg-zinc-950/40 shadow-sm dark:shadow-none`}>
+                                    <div key={val} className={`flex flex-col gap-1 p-2 rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-zinc-950/40 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-none`}>
                                         <span className="text-[8px] font-bold text-gray-600 dark:text-zinc-500 uppercase text-center">{config.label}</span>
                                         <Input
                                             type="text"
@@ -723,7 +735,7 @@ export default function CashierClosurePage() {
                                             onValueChange={(v) => setCoins({ ...coins, [val]: sanitizeNumber(v).toString() })}
                                             classNames={{
                                                 inputWrapper: "h-7 bg-transparent border-none p-0 min-h-unit-0",
-                                                input: "font-black text-right text-xs text-gray-900 dark:text-zinc-300 pr-1"
+                                                input: "font-medium text-right text-xs text-gray-900 dark:text-zinc-300 pr-1"
                                             }}
                                         />
                                     </div>
@@ -735,14 +747,14 @@ export default function CashierClosurePage() {
                         <div className="flex flex-col gap-4">
                             <div className="flex items-center justify-between px-1">
                                 <div className="flex items-center gap-2">
-                                    <div className="h-4 w-1 bg-amber-500 rounded-full" />
-                                    <h4 className="text-[10px] font-black text-gray-900 dark:text-white uppercase tracking-[0.2em]">Total Manual</h4>
+                                    <div className="h-4 w-1 bg-amber-500 rounded-2xl" />
+                                    <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-[0.2em]">Total Manual</h4>
                                 </div>
                                 <Button 
                                     size="sm" 
                                     variant="bordered" 
                                     onPress={resetCalculator} 
-                                    className="font-black text-[9px] uppercase tracking-[0.2em] px-4 h-9 border-rose-500/30 text-rose-500 hover:bg-rose-500 hover:text-white transition-all shadow-lg shadow-rose-500/5 rounded-xl"
+                                    className="font-medium text-[9px] uppercase tracking-[0.2em] px-4 h-9 border-rose-500/30 text-rose-500 hover:bg-rose-500 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/5 rounded-2xl"
                                     startContent={<History size={12} />}
                                 >
                                     BORRAR CONTEO
@@ -756,8 +768,8 @@ export default function CashierClosurePage() {
                                 value={actualCashInput ? `$ ${formatCurrency(actualCashInput)}` : ''}
                                 onValueChange={(v) => setActualCashInput(sanitizeNumber(v).toString())}
                                 classNames={{
-                                    input: "text-3xl font-black text-center text-gray-900 dark:text-white font-mono",
-                                    inputWrapper: "bg-gray-100 dark:bg-emerald-950/10 border-2 border-gray-200 dark:border-emerald-500/30 h-20 rounded-2xl shadow-sm dark:shadow-xl"
+                                    input: "text-3xl font-medium text-center text-zinc-900 dark:text-zinc-50 font-mono",
+                                    inputWrapper: "bg-gray-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-2 border-gray-200 dark:border-emerald-500/30 h-20 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                                 }}
                             />
                         </div>
@@ -766,25 +778,25 @@ export default function CashierClosurePage() {
                     {/* FOOTER DE ACCIÓN */}
                     <div className="shrink-0 pt-2 flex flex-col gap-3 border-t border-black/5 dark:border-white/5">
                         <div className={`flex items-center justify-between p-4 rounded-2xl border transition-all duration-500 ${
-                            status === 'BALANCED' ? 'bg-emerald-50 border-emerald-200 text-emerald-800 dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-500' :
+                            status === 'BALANCED' ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-200 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:border-emerald-500/20 dark:text-zinc-100' :
                             status === 'SHORTAGE' ? 'bg-rose-100 border-rose-300 text-rose-800 dark:bg-rose-500/10 dark:border-rose-500/20 dark:text-rose-500' :
-                            'bg-emerald-100 border-emerald-300 text-emerald-800 dark:bg-emerald-500/10 dark:border-emerald-500/20 dark:text-emerald-500'
+                            'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-300 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:border-emerald-500/20 dark:text-zinc-100'
                         }`}>
                             <div className="flex flex-col">
-                                <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Situación de Caja</span>
-                                <span className="text-sm font-black uppercase flex items-center gap-2">
+                                <span className="text-[10px] font-medium uppercase tracking-[0.2em] opacity-60">Situación de Caja</span>
+                                <span className="text-sm font-medium uppercase flex items-center gap-2">
                                     {status === 'PENDING' ? 'ESPERANDO CONTEO' : 
                                      status === 'BALANCED' ? 'CAJA CUADRADA' : 
                                      status === 'SHORTAGE' ? 'FALTANTE' : 'SOBRANTE'}
                                 </span>
                             </div>
-                            <span className="text-xl font-black font-mono">${formatCurrency(Math.abs(difference))}</span>
+                            <span className="text-xl font-medium font-mono">${formatCurrency(Math.abs(difference))}</span>
                         </div>
 
                         {isAuthorized && adminAuthorizer && (
-                            <div className="bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 p-3 rounded-xl flex items-center gap-3">
-                                <ShieldCheck className="text-emerald-700 dark:text-emerald-500" size={16} />
-                                <span className="text-[10px] font-black text-emerald-700 dark:text-emerald-500 uppercase tracking-tighter">Autorizado por: {adminAuthorizer}</span>
+                            <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 border border-emerald-200 dark:border-emerald-500/30 p-3 rounded-2xl flex items-center gap-3">
+                                <ShieldCheck className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-100" size={16} />
+                                <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-tighter">Autorizado por: {adminAuthorizer}</span>
                             </div>
                         )}
 
@@ -793,7 +805,7 @@ export default function CashierClosurePage() {
                                 onPress={handleSendPartial}
                                 isLoading={isSendingPartial}
                                 variant="bordered"
-                                className="h-16 rounded-2xl border-gray-200 dark:border-white/10 font-black text-gray-400 dark:text-zinc-400 uppercase tracking-widest text-[10px] hover:bg-gray-50 dark:hover:bg-white/5"
+                                className="h-16 rounded-2xl border-gray-200 dark:border-white/10 font-medium text-gray-400 dark:text-zinc-400 uppercase tracking-widest text-[10px] hover:bg-gray-50 dark:hover:bg-[#18181b]"
                             >
                                 <Send size={14} className="mr-1" />
                                 Parcial (SMS)
@@ -802,7 +814,7 @@ export default function CashierClosurePage() {
                                 onPress={handleFetchDetailedReport}
                                 isLoading={isFetchingDetailed}
                                 variant="bordered"
-                                className="h-16 rounded-2xl border-gray-200 dark:border-white/10 font-black text-gray-400 dark:text-zinc-400 uppercase tracking-widest text-[10px] hover:bg-gray-50 dark:hover:bg-white/5"
+                                className="h-16 rounded-2xl border-gray-200 dark:border-white/10 font-medium text-gray-400 dark:text-zinc-400 uppercase tracking-widest text-[10px] hover:bg-gray-50 dark:hover:bg-[#18181b]"
                             >
                                 <ReceiptText size={14} className="mr-1" />
                                 Detallado
@@ -810,8 +822,8 @@ export default function CashierClosurePage() {
                             <Button
                                 onPress={handleCloseRegister}
                                 isDisabled={status === 'PENDING' || isSubmitting}
-                                className={`flex-1 h-16 rounded-2xl font-black text-xl uppercase tracking-widest italic shadow-2xl transition-all ${
-                                    (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-emerald-600 hover:bg-emerald-500'
+                                className={`flex-1 h-16 rounded-2xl font-medium text-xl uppercase tracking-widest tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
+                                    (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5'
                                 } text-white`}
                             >
                                 {isSubmitting ? 'PROCESANDO...' : (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'AUTORIZAR' : 'CERRAR CAJA'}
@@ -829,11 +841,11 @@ export default function CashierClosurePage() {
                 backdrop="blur" 
                 placement="center"
                 classNames={{
-                    base: "bg-white dark:bg-zinc-900/60 backdrop-blur-xl border border-black/10 dark:border-white/10 rounded-3xl shadow-2xl shadow-black/40 max-w-md mx-4",
+                    base: "card-base border-none/60  border border-black/10 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/40 max-w-md mx-4",
                     header: "border-none pt-8 px-8",
                     body: "py-2 px-8",
                     footer: "border-none pb-8 px-8 gap-4",
-                    closeButton: "hover:bg-black/5 dark:hover:bg-white/5 active:bg-black/10 dark:active:bg-white/10 text-zinc-400 transition-colors right-4 top-4"
+                    closeButton: "hover:bg-black/5 dark:hover:bg-[#18181b] active:bg-black/10 dark:active:bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors right-4 top-4"
                 }}
             >
                 <ModalContent>
@@ -841,12 +853,12 @@ export default function CashierClosurePage() {
                         <>
                             <ModalHeader>
                                 <div className="flex items-center gap-6">
-                                    <div className="h-14 w-14 rounded-full bg-rose-50 dark:bg-rose-500/10 flex items-center justify-center border border-rose-600/20 dark:border-rose-500/20 shadow-[0_0_20px_rgba(225,29,72,0.1)]">
+                                    <div className="h-14 w-14 rounded-2xl bg-rose-50 dark:bg-rose-500/10 flex items-center justify-center border border-rose-600/20 dark:border-rose-500/20 shadow-[0_0_20px_rgba(225,29,72,0.1)]">
                                         <Lock size={28} className="text-rose-600 dark:text-rose-500 drop-shadow-[0_0_8px_rgba(225,29,72,0.5)]" />
                                     </div>
                                     <div>
-                                        <span className="text-rose-600 dark:text-rose-500 text-[10px] font-black uppercase tracking-[0.3em] block mb-1">SEGURIDAD</span>
-                                        <h2 className="text-xl font-black text-zinc-900 dark:text-white uppercase tracking-wider leading-none">AUTORIZAR</h2>
+                                        <span className="text-rose-600 dark:text-rose-500 text-[10px] font-medium uppercase tracking-[0.3em] block mb-1">SEGURIDAD</span>
+                                        <h2 className="text-xl font-medium text-zinc-900 dark:text-white uppercase tracking-wider leading-none">AUTORIZAR</h2>
                                     </div>
                                 </div>
                             </ModalHeader>
@@ -859,7 +871,7 @@ export default function CashierClosurePage() {
                                         variant="bordered" 
                                         classNames={{ 
                                             label: "text-zinc-500 font-bold text-[10px] tracking-widest", 
-                                            inputWrapper: "border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 rounded-xl h-14",
+                                            inputWrapper: "border-black/10 dark:border-white/10 bg-black/5 dark:bg-[#18181b] rounded-2xl h-14",
                                             input: "font-bold text-zinc-900 dark:text-white"
                                         }} 
                                     />
@@ -871,12 +883,12 @@ export default function CashierClosurePage() {
                                         variant="bordered" 
                                         classNames={{ 
                                             label: "text-zinc-500 font-bold text-[10px] tracking-widest", 
-                                            inputWrapper: "border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 rounded-xl h-14",
+                                            inputWrapper: "border-black/10 dark:border-white/10 bg-black/5 dark:bg-[#18181b] rounded-2xl h-14",
                                             input: "font-bold text-zinc-900 dark:text-white"
                                         }} 
                                     />
                                     {authError && (
-                                        <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-600/20 dark:border-rose-500/20 p-2 rounded-lg">
+                                        <div className="bg-rose-50 dark:bg-rose-500/10 border border-rose-600/20 dark:border-rose-500/20 p-2 rounded-2xl">
                                             <p className="text-[10px] text-rose-600 dark:text-rose-500 font-bold uppercase text-center tracking-widest">{authError}</p>
                                         </div>
                                     )}
@@ -886,7 +898,7 @@ export default function CashierClosurePage() {
                                 <Button 
                                     onPress={handleAdminVerify} 
                                     isLoading={isVerifying} 
-                                    className="w-full bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-[0.2em] h-14 rounded-xl transition-all duration-300 shadow-lg shadow-rose-500/20 active:scale-95 mt-2"
+                                    className="w-full bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs uppercase tracking-[0.2em] h-14 rounded-2xl transition-all duration-300 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 active:scale-95 mt-2"
                                 >
                                     VERIFICAR CREDENCIALES
                                 </Button>
@@ -904,11 +916,11 @@ export default function CashierClosurePage() {
                 placement="center"
                 hideCloseButton={false}
                 classNames={{
-                    base: "bg-zinc-900/60 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl shadow-black/40 max-w-md mx-4",
+                    base: "bg-[#18181b]/60  border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/40 max-w-md mx-4",
                     header: "border-none pt-8 px-8",
                     body: "py-2 px-8",
                     footer: "border-none pb-8 px-8 gap-4",
-                    closeButton: "hover:bg-white/5 active:bg-white/10 text-zinc-400 transition-colors right-4 top-4"
+                    closeButton: "hover:bg-[#18181b] active:bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors right-4 top-4"
                 }}
 
             >
@@ -917,15 +929,15 @@ export default function CashierClosurePage() {
                         <>
                             <ModalHeader>
                                 <div className="flex items-center gap-6">
-                                    <div className="h-14 w-14 rounded-full bg-rose-500/10 flex items-center justify-center border border-rose-500/20 shadow-[0_0_20px_rgba(225,29,72,0.1)]">
+                                    <div className="h-14 w-14 rounded-2xl bg-rose-500/10 flex items-center justify-center border border-rose-500/20 shadow-[0_0_20px_rgba(225,29,72,0.1)]">
                                         <AlertTriangle size={28} className="text-rose-500 drop-shadow-[0_0_8px_rgba(225,29,72,0.5)]" />
                                     </div>
-                                    <h2 className="text-xl font-black text-white uppercase tracking-wider">¿BORRAR CONTEO?</h2>
+                                    <h2 className="text-xl font-medium text-white uppercase tracking-wider">¿BORRAR CONTEO?</h2>
                                 </div>
                             </ModalHeader>
                             <ModalBody>
                                 <div className="space-y-4">
-                                    <p className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest leading-relaxed">
+                                    <p className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed">
                                         ESTÁS A PUNTO DE BORRAR TODOS LOS BILLETES Y MONEDAS QUE HAS INGRESADO. 
                                         <span className="block mt-2 text-rose-500/80">ESTA ACCIÓN NO SE PUEDE DESHACER.</span>
                                     </p>
@@ -935,13 +947,13 @@ export default function CashierClosurePage() {
                                 <Button 
                                     variant="light" 
                                     onPress={onClose}
-                                    className="font-black text-xs uppercase tracking-widest text-zinc-500 hover:text-white transition-all px-6 h-12"
+                                    className="font-medium text-xs uppercase tracking-widest text-zinc-500 hover:text-white transition-all px-6 h-12"
                                 >
                                     CANCELAR
                                 </Button>
                                 <Button 
                                     onPress={() => { confirmReset(); onClose(); }}
-                                    className="bg-rose-600 hover:bg-rose-500 text-white font-black text-xs uppercase tracking-[0.1em] px-10 h-12 rounded-xl transition-all duration-300 shadow-lg shadow-rose-500/20 active:scale-95"
+                                    className="bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs uppercase tracking-[0.1em] px-10 h-12 rounded-2xl transition-all duration-300 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 active:scale-95"
                                 >
                                     SÍ, BORRAR TODO
                                 </Button>
@@ -957,6 +969,16 @@ export default function CashierClosurePage() {
                 onSave={handleSaveRealExpense}
             />
 
+            <ConfirmDialog 
+                isOpen={isDeleteExpenseConfirmOpen}
+                onOpenChange={setIsDeleteExpenseConfirmOpen}
+                title="Eliminar Egreso"
+                description="¿ESTÁS SEGURO DE ELIMINAR ESTE EGRESO DE LA BASE DE DATOS? ESTA ACCIÓN NO SE PUEDE DESHACER."
+                onConfirm={confirmDeleteExpense}
+                type="danger"
+                confirmText="SÍ, ELIMINAR"
+            />
+
             {/* MODAL REPORTE DETALLADO (TICKET TÉRMICO) */}
             <Modal 
                 isOpen={isDetailedOpen} 
@@ -965,18 +987,18 @@ export default function CashierClosurePage() {
                 scrollBehavior="inside"
                 backdrop="blur"
             >
-                <ModalContent className="bg-white dark:bg-zinc-900">
+                <ModalContent className="card-base border-none">
                     {(onClose) => (
                         <>
                             <ModalHeader className="flex flex-col gap-1">
-                                <span className="text-xl font-black italic uppercase tracking-tighter text-zinc-900 dark:text-white">Reporte Detallado de Turno</span>
-                                <span className="text-[10px] text-zinc-500 uppercase font-black">Control de Auditoría Interna</span>
+                                <span className="text-xl font-medium tracking-tight uppercase tracking-tighter text-zinc-900 dark:text-white">Reporte Detallado de Turno</span>
+                                <span className="text-[10px] text-zinc-500 uppercase font-medium">Control de Auditoría Interna</span>
                             </ModalHeader>
                             <ModalBody>
                                 <div className="bg-white p-6 rounded-2xl border-2 border-dashed border-zinc-200 font-mono text-zinc-900">
                                     <div className="text-center mb-6 space-y-1">
-                                        <h2 className="text-lg font-black uppercase italic">CERBERUS POS</h2>
-                                        <p className="text-[10px] uppercase font-black text-zinc-500">Comprobante de Movimientos</p>
+                                        <h2 className="text-lg font-medium uppercase tracking-tight">POS PRO</h2>
+                                        <p className="text-[10px] uppercase font-medium text-zinc-500">Comprobante de Movimientos</p>
                                         <div className="h-px bg-zinc-200 my-2" />
                                         <p className="text-[9px] uppercase">Cajero: {detailedReport?.employee || '---'}</p>
                                         <p className="text-[9px] uppercase">Inicio: {detailedReport?.startTime ? formatDateTime(detailedReport.startTime) : '---'}</p>
@@ -984,7 +1006,7 @@ export default function CashierClosurePage() {
                                     </div>
 
                                     <div className="space-y-3">
-                                        <div className="grid grid-cols-4 text-[9px] font-black uppercase border-b border-zinc-200 pb-2">
+                                        <div className="grid grid-cols-4 text-[9px] font-medium uppercase border-b border-zinc-200 pb-2">
                                             <div className="col-span-1">HORA</div>
                                             <div className="col-span-1">TIPO</div>
                                             <div className="col-span-1">MÉTODO</div>
@@ -993,22 +1015,22 @@ export default function CashierClosurePage() {
 
                                         {(detailedReport?.movements || []).map((m: any, i: number) => (
                                             <div key={i} className="grid grid-cols-4 text-[10px] leading-tight mb-2">
-                                                <div className="col-span-1 text-zinc-500 font-black italic">
+                                                <div className="col-span-1 text-zinc-500 font-medium tracking-tight">
                                                     {formatTime(m.time)}
                                                 </div>
-                                                <div className="col-span-1 font-black">
-                                                    <span className={m.type === 'VENTA' ? 'text-emerald-600' : m.type === 'GASTO' ? 'text-rose-600' : 'text-blue-600'}>
+                                                <div className="col-span-1 font-medium">
+                                                    <span className={m.type === 'VENTA' ? 'text-zinc-900 dark:text-zinc-100' : m.type === 'GASTO' ? 'text-rose-600' : 'text-blue-600'}>
                                                         {m.type}
                                                     </span>
                                                 </div>
-                                                <div className="col-span-1 text-[9px] text-zinc-400 font-black">
+                                                <div className="col-span-1 text-[9px] text-zinc-500 dark:text-zinc-400 font-medium">
                                                     {m.method}
                                                 </div>
-                                                <div className={`col-span-1 text-right font-black ${m.type === 'GASTO' ? 'text-rose-600' : 'text-zinc-900'}`}>
+                                                <div className={`col-span-1 text-right font-medium ${m.type === 'GASTO' ? 'text-rose-600' : 'text-zinc-900'}`}>
                                                     {m.type === 'GASTO' ? '-' : ''}${formatCurrency(m.amount)}
                                                 </div>
                                                 {m.description && (
-                                                    <div className="col-span-4 text-[8px] text-zinc-400 uppercase italic">
+                                                    <div className="col-span-4 text-[8px] text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">
                                                         {m.description}
                                                     </div>
                                                 )}
@@ -1018,9 +1040,9 @@ export default function CashierClosurePage() {
                                         <div className="h-px bg-zinc-200 my-4 border-dashed border-t" />
                                         
                                         <div className="space-y-1">
-                                            <p className="text-[10px] font-black uppercase italic text-zinc-400">Balance por Método:</p>
+                                            <p className="text-[10px] font-medium uppercase tracking-tight text-zinc-500 dark:text-zinc-400">Balance por Método:</p>
                                             {Object.entries(detailedReport?.totals || {}).map(([method, total]) => (
-                                                <div key={method} className="flex justify-between text-[11px] font-black uppercase">
+                                                <div key={method} className="flex justify-between text-[11px] font-medium uppercase">
                                                     <span>{method}</span>
                                                     <span className={(total as number) < 0 ? 'text-rose-600' : ''}>
                                                         ${formatCurrency(total as number)}
@@ -1031,15 +1053,15 @@ export default function CashierClosurePage() {
                                     </div>
 
                                     <div className="mt-8 text-center border-t border-zinc-200 pt-4 opacity-50">
-                                        <p className="text-[8px] font-black uppercase tracking-widest">--- FIN DEL REPORTE ---</p>
+                                        <p className="text-[8px] font-medium uppercase tracking-widest">--- FIN DEL REPORTE ---</p>
                                     </div>
                                 </div>
                             </ModalBody>
                             <ModalFooter>
-                                <Button variant="flat" onPress={onClose} className="font-black uppercase italic text-[10px]">Cerrar</Button>
+                                <Button variant="flat" onPress={onClose} className="font-medium uppercase tracking-tight text-[10px]">Cerrar</Button>
                                 <Button 
                                     color="primary" 
-                                    className="font-black uppercase italic text-[10px]"
+                                    className="font-medium uppercase tracking-tight text-[10px]"
                                     onPress={() => window.print()}
                                 >
                                     Imprimir Ticket
@@ -1052,4 +1074,6 @@ export default function CashierClosurePage() {
         </div>
     );
 }
+
+
 

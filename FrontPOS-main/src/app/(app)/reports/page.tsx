@@ -27,21 +27,21 @@ const GenerateReportModal = nextDynamic(() => import("./components/GenerateRepor
 const ClosuresHistory = nextDynamic(() => import("./components/ClosuresHistory"));
 
 const MetricCard = memo(({ label, value, subValue, trend }: any) => (
-  <div className="bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-5 rounded-[2.5rem] border border-gray-200 dark:border-white/5 shadow-xl relative overflow-hidden group hover:border-emerald-500/30 transition-all">
-    <div className="absolute inset-x-0 bottom-0 h-10 opacity-20 pointer-events-none">
+  <div className="card-base p-6 relative group hover:border-zinc-200 dark:border-white/10 transition-all duration-150">
+    <div className="absolute inset-x-0 bottom-0 h-10 opacity-10 pointer-events-none">
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={[{ val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }]}>
-          <Area type="monotone" dataKey="val" stroke="#10b981" fill="#10b981" fillOpacity={0.2} strokeWidth={2} />
+          <Area type="monotone" dataKey="val" stroke="#3f3f46" fill="#3f3f46" fillOpacity={0.2} strokeWidth={2} />
         </AreaChart>
       </ResponsiveContainer>
     </div>
     <div className="relative z-10">
-      <span className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-1 block italic">{label}</span>
+      <span className="text-[11px] font-medium tracking-widest uppercase text-zinc-500 block mb-2">{label}</span>
       <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-black text-gray-900 dark:text-white tracking-tighter italic">{value}</span>
-        <span className="text-xs font-black text-emerald-500">{trend}</span>
+        <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">{value}</span>
+        <span className="text-xs font-medium text-zinc-500">{trend}</span>
       </div>
-      <p className="text-[9px] font-bold text-gray-400 mt-2 uppercase tracking-widest">{subValue}</p>
+      <p className="text-xs text-zinc-600 mt-1">{subValue}</p>
     </div>
   </div>
 ));
@@ -69,10 +69,12 @@ export default function ReportsPage() {
   const handleDownload = async (type: string, customOptions?: any) => {
     setLoadingReport(type);
     try {
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
       switch (type) {
         case 'box-closure': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/closures?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
+          const res = await fetch(`${baseUrl}/cashier-history?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
           const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte de cierres");
           generatePDFReport({
             title: 'Reporte de Cierres de Caja',
             subtitle: `Rango: ${dateFrom} - ${dateTo}`,
@@ -89,56 +91,243 @@ export default function ReportsPage() {
               expected: `$${formatCurrency(item.expectedCash)}`,
               real: `$${formatCurrency(item.totalCashReal)}`,
               diff: `$${formatCurrency(item.difference)}`
-            }))
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
           });
           break;
         }
-        case 'inventory-valuation': {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/dashboard/reports/inventory-valuation`, { headers: getHeaders() });
+        case 'cashflow': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/cashflow?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
           const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte de flujo de caja");
+          
           generatePDFReport({
-            title: 'Valoración de Inventario',
-            subtitle: `Estado Actual del Almacén`,
-            filename: customOptions?.reportName || 'Valoracion_Stock',
+            title: 'Flujo de Caja (Ingresos y Egresos)',
+            subtitle: `Rango: ${dateFrom} - ${dateTo} | Ingresos Totales: $${formatCurrency(data.totalIncome)} | Egresos Totales: $${formatCurrency(data.totalExpense)} | Saldo Total: $${formatCurrency(data.totalBalance)}`,
+            filename: customOptions?.reportName || 'Flujo_Caja',
             columns: [
-              { header: 'Categoría', dataKey: 'category' },
-              { header: 'Items', dataKey: 'count' },
-              { header: 'Valor Costo', dataKey: 'totalCost' }
+              { header: 'Fecha', dataKey: 'date' },
+              { header: 'Ingresos', dataKey: 'income' },
+              { header: 'Egresos', dataKey: 'expense' },
+              { header: 'Saldo Diario', dataKey: 'balance' }
             ],
-            data: (data.categories || []).map((c: any) => ({
-              category: c.name,
-              count: c.productCount,
-              totalCost: `$${formatCurrency(c.totalCostValue)}`
-            }))
+            data: (data.dailyDetails || []).map((item: any) => ({
+              date: item.date,
+              income: `$${formatCurrency(item.income)}`,
+              expense: `$${formatCurrency(item.expense)}`,
+              balance: `$${formatCurrency(item.balance)}`
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
           });
           break;
         }
+        case 'inventory': {
+          const res = await fetch(`${baseUrl}/products/inventory`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte de inventario");
+          generatePDFReport({
+            title: 'Inventario Actual',
+            subtitle: `Reporte de Stock`,
+            filename: customOptions?.reportName || 'Inventario',
+            columns: [
+              { header: 'Producto', dataKey: 'name' },
+              { header: 'Stock', dataKey: 'stock' },
+              { header: 'Costo', dataKey: 'cost' },
+              { header: 'Venta', dataKey: 'price' }
+            ],
+            data: (data || []).map((p: any) => ({
+              name: p.name || p.nombre,
+              stock: p.stock !== undefined ? p.stock : (p.cantidad || 0),
+              cost: `$${formatCurrency(p.costPrice || p.precioCosto || 0)}`,
+              price: `$${formatCurrency(p.salePrice || p.precioVenta || 0)}`
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'pnl': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/pnl?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte PnL");
+          generatePDFReport({
+            title: 'Estado de Resultados (P&L)',
+            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
+            filename: customOptions?.reportName || 'PnL',
+            columns: [
+              { header: 'Concepto', dataKey: 'concept' },
+              { header: 'Valor', dataKey: 'value' }
+            ],
+            data: [
+              { concept: 'Ingresos Brutos', value: `$${formatCurrency(data.totalRevenue)}` },
+              { concept: 'Costo de Mercancía', value: `$${formatCurrency(data.totalCogs)}` },
+              { concept: 'Beneficio Bruto', value: `$${formatCurrency(data.grossProfit)}` },
+              { concept: 'Gastos Operativos', value: `$${formatCurrency(data.totalExpenses)}` },
+              { concept: 'Beneficio Neto', value: `$${formatCurrency(data.netProfit)}` },
+              { concept: 'Margen (%)', value: `${(data.marginPercentage || 0).toFixed(2)}%` },
+            ],
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'ranking': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/ranking?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar ranking");
+          generatePDFReport({
+            title: 'Ranking de Productos',
+            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
+            filename: customOptions?.reportName || 'Ranking_Productos',
+            columns: [
+              { header: 'Producto', dataKey: 'name' },
+              { header: 'Cant. Vendida', dataKey: 'quantity' },
+              { header: 'Total Generado', dataKey: 'total' }
+            ],
+            data: (data || []).map((item: any) => ({
+              name: item.name || item.productName || item.nombre,
+              quantity: item.quantity || item.cantidad || 0,
+              total: `$${formatCurrency(item.totalRevenue || item.total || 0)}`
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'vault-audit': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/vault-audit`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar auditoría");
+          generatePDFReport({
+            title: 'Auditoría de Bóveda',
+            subtitle: `Generado hoy`,
+            filename: customOptions?.reportName || 'Boveda',
+            columns: [
+              { header: 'Detalle', dataKey: 'detail' },
+              { header: 'Monto', dataKey: 'amount' }
+            ],
+            data: Object.entries(data).map(([k, v]) => ({
+              detail: k,
+              amount: typeof v === 'number' ? `$${formatCurrency(v)}` : String(v)
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'global-credit': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/global-debt`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar cartera");
+          generatePDFReport({
+            title: 'Cartera Global',
+            subtitle: `Deudas Activas`,
+            filename: customOptions?.reportName || 'Cartera',
+            columns: [
+              { header: 'Cliente', dataKey: 'client' },
+              { header: 'Deuda', dataKey: 'debt' },
+            ],
+            data: (data || []).map((c: any) => ({
+              client: c.name || c.cliente || c.ClientName || 'Desconocido',
+              debt: `$${formatCurrency(c.totalDebt || c.deuda || c.Debt || 0)}`
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'voids-audit': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/voids?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar anulaciones");
+          generatePDFReport({
+            title: 'Anulaciones',
+            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
+            filename: customOptions?.reportName || 'Anulaciones',
+            columns: [
+              { header: 'Fecha', dataKey: 'date' },
+              { header: 'Empleado', dataKey: 'employee' },
+              { header: 'Monto', dataKey: 'amount' }
+            ],
+            data: (data || []).map((a: any) => ({
+              date: new Date(a.date || a.fecha || a.CreatedAt).toLocaleString(),
+              employee: a.employeeName || a.empleado || a.Employee || 'Desconocido',
+              amount: `$${formatCurrency(a.amount || a.monto || a.TotalAmount || 0)}`
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'payments': {
+          const res = await fetch(`${baseUrl}/dashboard/reports/movements?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar ventas/pagos");
+          generatePDFReport({
+            title: 'Movimientos (Ventas/Pagos)',
+            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
+            filename: customOptions?.reportName || 'Movimientos',
+            columns: [
+              { header: 'Fecha', dataKey: 'date' },
+              { header: 'Tipo', dataKey: 'type' },
+              { header: 'Producto', dataKey: 'name' },
+              { header: 'Cant.', dataKey: 'qty' }
+            ],
+            data: (data || []).map((m: any) => ({
+              date: new Date(m.date || m.CreatedAt).toLocaleString(),
+              type: m.type || m.MovementType || 'Desconocido',
+              name: m.name || m.ProductName || m.barcode || 'N/A',
+              qty: m.quantity || m.Quantity || 0
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        case 'savings': {
+          const res = await fetch(`${baseUrl}/inventory/savings-opportunities`, { headers: getHeaders() });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || "Fallo al generar ahorros");
+          generatePDFReport({
+            title: 'Ahorros y Costos',
+            subtitle: `Oportunidades de Optimización`,
+            filename: customOptions?.reportName || 'Ahorros',
+            columns: [
+              { header: 'Producto', dataKey: 'name' },
+              { header: 'Proveedor', dataKey: 'supplier' },
+              { header: 'Mejor Precio', dataKey: 'price' }
+            ],
+            data: (data || []).map((s: any) => ({
+              name: s.productName || s.name || s.ProductName,
+              supplier: s.supplierName || s.supplier || s.SupplierName,
+              price: `$${formatCurrency(s.bestPrice || s.price || s.BestPrice || 0)}`
+            })),
+            sendToTelegram: customOptions?.sendToTelegram
+          });
+          break;
+        }
+        default:
+          toast({ title: 'Atención', description: 'El reporte seleccionado aún no está implementado.', variant: 'default' });
+          return;
       }
-      toast({ title: "ÉXITO", description: "REPORTE GENERADO CORRECTAMENTE", variant: "success" });
-    } catch (error) {
+      toast({ title: 'ÉXITO', description: 'REPORTE GENERADO CORRECTAMENTE', variant: 'success' });
+    } catch (error: any) {
       console.error(error);
-      toast({ title: "ERROR", description: "FALLO AL GENERAR REPORTE", variant: "destructive" });
+      toast({ title: 'ERROR', description: error.message || 'FALLO AL GENERAR REPORTE', variant: 'destructive' });
     } finally {
       setLoadingReport(null);
     }
   };
 
   return (
-    <div className="flex flex-col w-full h-full max-w-[1600px] mx-auto bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col w-full h-full max-w-[1600px] mx-auto bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
       
       {/* HEADER */}
-      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-500 h-10 w-10 rounded-xl text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3 shrink-0">
+            <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 h-10 w-10 rounded-2xl text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center transform -rotate-3 shrink-0">
               <BarChart3 size={20} />
             </div>
             <div className="flex flex-col">
-              <h1 className="text-[13px] font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
-                Central de <span className="text-emerald-500">Reportes</span>
+              <h1 className="text-[13px] font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter uppercase tracking-tight leading-none">
+                Central de <span className="text-zinc-900 dark:text-zinc-100">Reportes</span>
               </h1>
-              <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic mt-1 flex items-center gap-1">
-                <Target size={10} className="text-emerald-500" /> Business Intelligence V4.0
+              <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
+                <Target size={10} className="text-zinc-900 dark:text-zinc-100" /> Business Intelligence V4.0
               </p>
             </div>
           </div>
@@ -147,13 +336,13 @@ export default function ReportsPage() {
             <Button
               variant="flat"
               onPress={() => setDateRangeOpen(true)}
-              className="h-10 px-4 bg-white/80 dark:bg-white/5 text-gray-900 dark:text-white font-black uppercase text-[10px] rounded-xl border border-gray-200 dark:border-white/10 italic tracking-widest shadow-sm transition-all active:scale-95"
+              className="bg-transparent text-zinc-500 dark:text-zinc-400 text-sm font-medium border border-white/[0.08] rounded-xl px-4 h-10 hover:bg-zinc-100 dark:bg-zinc-800 hover:text-zinc-200 transition-all duration-150"
             >
-              <Calendar size={14} className="mr-1.5 text-emerald-500" /> Rango de Fechas
+              <Calendar size={14} className="mr-1.5" /> Rango de Fechas
             </Button>
             <Button
               onPress={() => setIsGenerateModalOpen(true)}
-              className="h-10 px-6 bg-emerald-500 text-white font-black uppercase text-[10px] rounded-xl shadow-lg shadow-emerald-500/20 italic tracking-widest active:scale-95"
+              className="bg-transparent text-zinc-500 dark:text-zinc-400 text-sm font-medium border border-white/[0.08] rounded-xl px-4 h-10 hover:bg-zinc-100 dark:bg-zinc-800 hover:text-zinc-200 transition-all duration-150"
             >
               <Zap size={14} className="mr-1.5" /> Generador Maestro
             </Button>
@@ -178,24 +367,25 @@ export default function ReportsPage() {
             </div>
 
             <aside className="sticky top-0 flex flex-col gap-6 pb-10 xl:pb-0">
-               <Card className="bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200 dark:border-white/5 text-gray-900 dark:text-white rounded-[2.5rem] shadow-2xl p-6 md:p-8 border-none">
+               <Card className="card-base p-6 md:p-8">
                   <div className="flex flex-col gap-6 text-center">
-                    <h3 className="text-2xl font-black italic uppercase tracking-tighter">Acceso <span className="opacity-40">Rápido</span></h3>
+                    <h3 className="text-2xl font-medium tracking-tight uppercase tracking-tighter">Acceso <span className="opacity-40">Rápido</span></h3>
                     <Tabs
                       aria-label="Quick Report Type"
                       color="success"
                       selectedKey={quickCategory}
                       onSelectionChange={(k) => setQuickCategory(String(k))}
-                      classNames={{ tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-xl w-full", cursor: "bg-emerald-500", tabContent: "font-black text-[10px] uppercase italic tracking-widest" }}
+                      classNames={{ tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-2xl w-full", cursor: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5", tabContent: "font-medium text-[10px] uppercase tracking-tight tracking-widest" }}
                     >
                       <Tab key="box-closure" title="Caja" />
                       <Tab key="payments" title="Ventas" />
                       <Tab key="inventory" title="Stock" />
+                      <Tab key="cashflow" title="Flujo" />
                     </Tabs>
                     <Button
                       onPress={() => handleDownload(quickCategory)}
                       isLoading={loadingReport === quickCategory}
-                      className="w-full h-14 bg-emerald-500 text-white font-black uppercase text-[12px] rounded-[1.5rem] shadow-xl shadow-emerald-500/20 italic tracking-[0.2em] transition-all hover:scale-[1.02] active:scale-95"
+                      className="w-full h-10 bg-zinc-50 text-zinc-950 font-medium text-sm rounded-xl px-4 hover:bg-zinc-200 transition-colors duration-150"
                     >
                       DESCARGAR REPORTE
                     </Button>
@@ -224,3 +414,5 @@ export default function ReportsPage() {
     </div>
   );
 }
+
+

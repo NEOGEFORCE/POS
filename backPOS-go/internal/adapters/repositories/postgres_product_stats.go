@@ -44,27 +44,41 @@ func (r *PostgresProductRepository) GetSavingsOpportunities() ([]ports.SavingsOp
 	var opportunities []ports.SavingsOpportunity
 
 	query := `
-		WITH RankedSuppliers AS (
+		WITH SupplierStats AS (
 			SELECT
-				p.barcode,
-				p."productName" as product_name,
-				p."purchasePrice" as current_price,
-				p."quantity" as stock,
-				ps."purchasePrice" as best_price,
-				s.name as best_supplier,
-				(p."purchasePrice" - ps."purchasePrice") * p."quantity" as potential_save,
-				ROW_NUMBER() OVER(PARTITION BY p.barcode ORDER BY ps."purchasePrice" ASC) as rn
-			FROM products p
-			JOIN product_suppliers ps ON p.barcode = ps."productBarcode"
-			JOIN suppliers s ON ps."supplierId" = s.id
-			WHERE ps."purchasePrice" < p."purchasePrice"
-			AND p."quantity" > 0
-			AND COALESCE(p."isWeighted", false) = false
+				product_barcode,
+				COUNT(supplier_id) as supplier_count,
+				MIN("purchasePrice") as min_price,
+				MAX("purchasePrice") as max_price
+			FROM product_suppliers
+			WHERE "purchasePrice" > 0
+			GROUP BY product_barcode
+			HAVING COUNT(supplier_id) >= 2
+		),
+		BestWorst AS (
+			SELECT 
+				ss.product_barcode,
+				ss.min_price,
+				ss.max_price,
+				(SELECT s.name FROM product_suppliers ps JOIN suppliers s ON ps.supplier_id = s.id WHERE ps.product_barcode = ss.product_barcode AND ps."purchasePrice" = ss.min_price LIMIT 1) as best_supplier,
+				(SELECT s.name FROM product_suppliers ps JOIN suppliers s ON ps.supplier_id = s.id WHERE ps.product_barcode = ss.product_barcode AND ps."purchasePrice" = ss.max_price LIMIT 1) as worst_supplier
+			FROM SupplierStats ss
+			WHERE ss.max_price > ss.min_price
 		)
-		SELECT barcode, product_name, current_price, stock, best_price, best_supplier, potential_save
-		FROM RankedSuppliers
-		WHERE rn = 1
-		ORDER BY potential_save DESC
+		SELECT 
+			p.barcode, 
+			p."productName", 
+			p."purchasePrice", 
+			p.quantity, 
+			bw.min_price, 
+			bw.best_supplier, 
+			bw.max_price, 
+			bw.worst_supplier,
+			(bw.max_price - bw.min_price) as potential_save
+		FROM products p
+		JOIN BestWorst bw ON p.barcode = bw.product_barcode
+		WHERE p."isActive" = true
+		ORDER BY (bw.max_price - bw.min_price) DESC
 		LIMIT 20
 	`
 
@@ -76,7 +90,7 @@ func (r *PostgresProductRepository) GetSavingsOpportunities() ([]ports.SavingsOp
 
 	for rows.Next() {
 		var o ports.SavingsOpportunity
-		if err := rows.Scan(&o.Barcode, &o.ProductName, &o.CurrentPrice, &o.Stock, &o.BestPrice, &o.BestSupplier, &o.PotentialSave); err != nil {
+		if err := rows.Scan(&o.Barcode, &o.ProductName, &o.CurrentPrice, &o.Stock, &o.BestPrice, &o.BestSupplier, &o.WorstPrice, &o.WorstSupplier, &o.PotentialSave); err != nil {
 			return nil, err
 		}
 		opportunities = append(opportunities, o)
@@ -109,22 +123,35 @@ func (r *PostgresProductRepository) GetProductsWithBestSupplier(supplierID *uint
 		Select(`products.*, 
 			bs.best_supplier_id, 
 			bs.best_supplier_name, 
-			bs.lowest_price`).
+			bs.lowest_price,
+			ws.worst_supplier_name,
+			ws.worst_price,
+			bs.visit_frequency_days`).
 		Joins(`LEFT JOIN (
 			SELECT 
 				ps.product_barcode, 
 				ps.supplier_id as best_supplier_id, 
 				s.name as best_supplier_name, 
 				ps."purchasePrice" as lowest_price,
+				s.visit_frequency_days,
 				ROW_NUMBER() OVER(PARTITION BY ps.product_barcode ORDER BY ps."purchasePrice" ASC) as rn
 			FROM product_suppliers ps
 			JOIN suppliers s ON ps.supplier_id = s.id
 		) bs ON products.barcode = bs.product_barcode AND bs.rn = 1`).
+		Joins(`LEFT JOIN (
+			SELECT 
+				ps.product_barcode, 
+				s.name as worst_supplier_name, 
+				ps."purchasePrice" as worst_price,
+				ROW_NUMBER() OVER(PARTITION BY ps.product_barcode ORDER BY ps."purchasePrice" DESC) as rn
+			FROM product_suppliers ps
+			JOIN suppliers s ON ps.supplier_id = s.id
+		) ws ON products.barcode = ws.product_barcode AND ws.rn = 1`).
 		Where("products.\"isActive\" = ?", true)
 
 	if supplierID != nil {
 		query = query.Where(`(
-			products.barcode IN (SELECT "productBarcode" FROM product_suppliers WHERE "supplierId" = ?) 
+			products.barcode IN (SELECT product_barcode FROM product_suppliers WHERE supplier_id = ?) 
 			OR products."supplierId" = ?
 		)`, *supplierID, *supplierID)
 	}

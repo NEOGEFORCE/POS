@@ -22,7 +22,7 @@ func (r *auditRepository) Create(log *models.AuditLog) error {
 
 func (r *auditRepository) GetAll() ([]models.AuditLog, error) {
 	var logs []models.AuditLog
-	err := r.db.Order("created_at desc").Limit(100).Find(&logs).Error // Limite de seguridad
+	err := r.db.Order("created_at desc").Limit(2000).Find(&logs).Error // Límite de seguridad
 	return logs, err
 }
 

@@ -63,14 +63,14 @@ const CategoryTable = memo(({
             case "identity":
                 return (
                     <div className="flex items-center gap-4 py-0.5">
-                        <div className="h-10 w-10 shrink-0 bg-emerald-500/10 text-emerald-500 flex items-center justify-center rounded-xl border border-emerald-500/20 shadow-sm transform -rotate-2 group-hover:rotate-0 transition-transform">
+                        <div className="h-10 w-10 shrink-0 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-2 group-hover:rotate-0 transition-transform">
                             <LayoutGrid size={20} strokeWidth={2.5} />
                         </div>
                         <div className="flex flex-col min-w-0">
-                            <span className="text-xs md:text-sm font-black text-gray-900 dark:text-white uppercase leading-tight italic truncate max-w-[200px] group-hover:text-emerald-500 transition-colors">
+                            <span className="text-xs md:text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase leading-tight tracking-tight truncate max-w-[200px] group-hover:text-zinc-900 dark:text-zinc-100 transition-colors">
                                 {category.name}
                             </span>
-                            <span className="text-[7px] text-emerald-500 font-black tracking-widest uppercase mt-0.5">
+                            <span className="text-[7px] text-zinc-900 dark:text-zinc-100 font-medium tracking-widest uppercase mt-0.5">
                                 ID: #{category.id}
                             </span>
                         </div>
@@ -79,34 +79,34 @@ const CategoryTable = memo(({
             case "stock":
                 return (
                     <div className="flex justify-center">
-                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-gray-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 shadow-sm group-hover:border-emerald-500/30 transition-all">
-                            <Layers size={10} className="text-emerald-500" />
-                            <span className="text-[11px] font-black text-gray-900 dark:text-white tabular-nums tracking-widest">{category.productCount || 0}</span>
-                            <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase mt-0.5">REFS</span>
+                        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-gray-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] group-hover:border-emerald-500/30 transition-all">
+                            <Layers size={10} className="text-zinc-900 dark:text-zinc-100" />
+                            <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 tabular-nums tracking-widest">{category.productCount || 0}</span>
+                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase mt-0.5">REFS</span>
                         </div>
                     </div>
                 );
             case "actions":
-                if (!isAdmin) return <div className="flex justify-end pr-4"><span className="text-[7px] font-black text-gray-400 uppercase tracking-widest italic opacity-50">Solo Lectura</span></div>;
+                if (!isAdmin) return <div className="flex justify-end pr-4"><span className="text-[7px] font-medium text-gray-400 uppercase tracking-widest tracking-tight opacity-50">Solo Lectura</span></div>;
                 return (
                     <div className="flex justify-end gap-1.5 md:gap-2 px-1">
-                        <Tooltip content="EDITAR CATEGORÍA" delay={0} placement="top" classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-emerald-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
+                        <Tooltip content="EDITAR CATEGORÍA" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button 
                                 isIconOnly 
                                 size="sm" 
                                 variant="flat" 
-                                className="h-9 w-9 bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500 hover:text-white rounded-xl transition-all border border-emerald-500/20" 
+                                className="h-9 w-9 bg-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white rounded-2xl transition-all border border-emerald-500/20" 
                                 onPress={() => onEdit(category)}
                             >
                                 <Edit size={14} />
                             </Button>
                         </Tooltip>
-                        <Tooltip content="ELIMINAR" delay={0} placement="top-end" color="danger" classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
+                        <Tooltip content="ELIMINAR" delay={0} placement="top-end" color="danger" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button 
                                 isIconOnly 
                                 size="sm" 
                                 variant="flat" 
-                                className="h-9 w-9 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-xl transition-all border border-rose-500/20" 
+                                className="h-9 w-9 bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white rounded-2xl transition-all border border-rose-500/20" 
                                 onPress={() => onDelete(String(category.id))}
                             >
                                 <Trash2 size={14} />
@@ -120,7 +120,7 @@ const CategoryTable = memo(({
     }, [isAdmin, onEdit, onDelete]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-colors">
+        <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
             
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 {!isMobile ? (
@@ -132,9 +132,9 @@ const CategoryTable = memo(({
                             classNames={{ 
                                 base: "flex-1 overflow-hidden",
                                 wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
-                                th: "bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
+                                th: "bg-gray-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
                                 td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-6", 
-                                tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-pointer group h-10" 
+                                tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-pointer group h-10" 
                             }}
                         >
                             <TableHeader>
@@ -172,23 +172,23 @@ const CategoryTable = memo(({
                             />
                         ) : (
                             categories.map((c) => (
-                                <div key={c.id} className="p-3.5 rounded-2xl border bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 shadow-sm flex items-center justify-between gap-3 transform active:scale-[0.98] transition-all shrink-0">
+                                <div key={c.id} className="p-3.5 rounded-2xl border card-base border-none border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-between gap-3 transform active:scale-[0.98] transition-all shrink-0">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-10 w-10 bg-emerald-500 text-white flex items-center justify-center rounded-xl shadow-lg shadow-emerald-500/10 shrink-0 transform -rotate-1">
+                                        <div className="h-10 w-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10 shrink-0 transform -rotate-1">
                                             <LayoutGrid size={18} strokeWidth={2.5} />
                                         </div>
                                         <div className="flex flex-col min-w-0">
-                                            <span className="text-[11px] font-black text-gray-900 dark:text-white uppercase italic leading-none truncate pr-2">
+                                            <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-none truncate pr-2">
                                                 {c.name}
                                             </span>
                                             <div className="flex items-center gap-2 mt-1.5">
-                                                <span className="text-[7px] text-emerald-500 font-black tracking-widest uppercase leading-none opacity-80">
+                                                <span className="text-[7px] text-zinc-900 dark:text-zinc-100 font-medium tracking-widest uppercase leading-none opacity-80">
                                                     ID: #{c.id}
                                                 </span>
                                                 <span className="text-[6px] text-gray-300 dark:text-zinc-700">|</span>
                                                 <div className="flex items-center gap-1">
                                                     <Layers size={8} className="text-gray-400" />
-                                                    <span className="text-[8px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-tighter">
+                                                    <span className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-tighter">
                                                         {c.productCount || 0} REFS
                                                     </span>
                                                 </div>
@@ -203,7 +203,7 @@ const CategoryTable = memo(({
                                                     isIconOnly
                                                     size="sm" 
                                                     variant="flat" 
-                                                    className="h-9 w-9 bg-emerald-500/5 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all rounded-xl"
+                                                    className="h-9 w-9 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all rounded-2xl"
                                                     onPress={() => onEdit(c)}
                                                 >
                                                     <Edit size={14} />
@@ -212,14 +212,14 @@ const CategoryTable = memo(({
                                                     isIconOnly
                                                     size="sm" 
                                                     variant="flat" 
-                                                    className="h-9 w-9 bg-rose-500/5 text-rose-500 hover:text-white hover:bg-rose-500 transition-all rounded-xl"
+                                                    className="h-9 w-9 bg-rose-500/5 text-rose-500 hover:text-white hover:bg-rose-500 transition-all rounded-2xl"
                                                     onPress={() => onDelete(String(c.id))}
                                                 >
                                                     <Trash2 size={14} />
                                                 </Button>
                                             </>
                                         ) : (
-                                            <div className="h-8 w-8 bg-gray-50/50 dark:bg-white/5 rounded-full flex items-center justify-center text-gray-300 dark:text-zinc-700">
+                                            <div className="h-8 w-8 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl flex items-center justify-center text-gray-300 dark:text-zinc-700">
                                                 <Edit size={12} className="opacity-20" />
                                             </div>
                                         )}
@@ -233,25 +233,25 @@ const CategoryTable = memo(({
 
             {/* PAGINACIÓN FIJA - SYNCED WITH SUPPLIERS/USERS */}
             {totalFiltered > 0 && (
-                <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 backdrop-blur-md z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
-                    <div className="flex items-center gap-2 font-black">
+                <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
+                    <div className="flex items-center gap-2 font-medium">
                         <Button
                             isIconOnly
                             size="sm"
                             variant="flat"
                             onClick={() => onPageChange(Math.max(1, currentPage - 1))}
                             isDisabled={currentPage === 1}
-                            className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                            className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                         >
                             <ChevronLeft size={18} />
                         </Button>
                         
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-gray-400 dark:text-zinc-500 uppercase font-black tracking-tighter">MOSTRANDO</span>
-                            <p className="text-[10px] text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-1">
-                                <span className="italic font-black text-emerald-500">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span> 
+                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
+                                <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span> 
                                 <span className="opacity-20 text-[8px]">DE</span> 
-                                <span className="italic font-black">{totalFiltered}</span>
+                                <span className="tracking-tight font-medium">{totalFiltered}</span>
                             </p>
                         </div>
 
@@ -261,7 +261,7 @@ const CategoryTable = memo(({
                             variant="flat"
                             onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
                             isDisabled={currentPage === totalPages || totalPages === 0}
-                            className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                            className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                         >
                             <ChevronRight size={18} />
                         </Button>
@@ -272,7 +272,7 @@ const CategoryTable = memo(({
                             <select 
                                 value={pageSize} 
                                 onChange={(e) => onPageSizeChange(Number(e.target.value))} 
-                                className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-2 pr-6 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none"
+                                className="h-8 card-base border-none text-zinc-900 dark:text-zinc-50 text-[10px] font-medium uppercase tracking-widest px-2 pr-6 outline-none rounded-2xl border border-gray-200 dark:border-white/10 cursor-pointer shadow-[0_8px_30px_rgb(0,0,0,0.12)] appearance-none"
                             >
                                 {[10, 20, 50, 10000].map(n => <option key={n} value={n}>{n === 10000 ? 'TODOS' : n}</option>)}
                             </select>

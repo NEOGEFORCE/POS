@@ -51,3 +51,11 @@ func (r *PostgresStockMovementRepository) GetByDateRange(from, to time.Time) ([]
 	err := query.Order("date DESC").Find(&movements).Error
 	return movements, err
 }
+func (r *PostgresStockMovementRepository) GetLastMovementByBarcodeAndReason(barcode string, reason string) (*models.StockMovement, error) {
+	var movement models.StockMovement
+	err := r.db.Where("barcode = ? AND reason = ?", barcode, reason).Order("date DESC").First(&movement).Error
+	if err != nil {
+		return nil, err
+	}
+	return &movement, nil
+}

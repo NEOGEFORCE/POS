@@ -11,7 +11,7 @@ interface ReportButtonsProps {
 
 export default function ReportButtons({ onOpenRange }: ReportButtonsProps) {
     return (
-        <div className="bg-white dark:bg-zinc-900/40 backdrop-blur-xl border border-gray-200 dark:border-white/5 rounded-3xl p-4 md:p-6 shadow-sm transition-all duration-500 animate-in fade-in slide-in-from-bottom-4">
+        <div className="card-base border-none/40 border border-gray-200 dark:border-white/5 rounded-2xl p-4 md:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-500 animate-in fade-in slide-in-from-bottom-4">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div className="flex items-center gap-4">
                     {/* Header removal: redundant with main dashboard header */}
@@ -23,7 +23,7 @@ export default function ReportButtons({ onOpenRange }: ReportButtonsProps) {
                         href="/reports"
                         variant="flat"
                         startContent={<LayoutGrid size={20} strokeWidth={2.5} />}
-                        className="bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-emerald-500 hover:text-white dark:hover:bg-emerald-500 dark:hover:text-black transition-all h-12 flex-1 sm:flex-none px-6"
+                        className="bg-gray-100 dark:bg-[#18181b] text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-all h-12 flex-1 sm:flex-none px-6"
                     >
                         Vista Supervisor
                     </Button>
@@ -32,7 +32,7 @@ export default function ReportButtons({ onOpenRange }: ReportButtonsProps) {
                         onPress={onOpenRange}
                         variant="flat"
                         startContent={<Calendar size={20} strokeWidth={2.5} />}
-                        className="bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-xl hover:bg-emerald-500 hover:text-white dark:hover:bg-emerald-500 dark:hover:text-black transition-all h-12 flex-1 sm:flex-none px-6"
+                        className="bg-gray-100 dark:bg-[#18181b] text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-all h-12 flex-1 sm:flex-none px-6"
                     >
                         Rango de Fecha
                     </Button>

@@ -109,3 +109,7 @@ func (r *closureRepository) Delete(id uint) error {
 	return r.db.Unscoped().Delete(&models.CashierClosure{}, id).Error
 }
 
+func (r *closureRepository) Update(id uint, updates map[string]interface{}) error {
+	return r.db.Model(&models.CashierClosure{}).Where("id = ?", id).Updates(updates).Error
+}
+

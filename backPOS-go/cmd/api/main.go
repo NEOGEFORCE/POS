@@ -48,15 +48,17 @@ func main() {
 	orderRepo := repositories.NewPostgresPurchaseOrderRepository(repositories.DB)
 	expectedOrderRepo := repositories.NewPostgresExpectedOrderRepository(repositories.DB)
 	reportRepo := repositories.NewPostgresReportRepository(repositories.DB)
+	restockRepo := repositories.NewPostgresRestockRepository(repositories.DB)
 
 	// Initialize Services
 	emailService := services.NewEmailService()
 	printService := services.NewPrintService()
 	auditService := services.NewAuditService(auditRepo)
 	expectedOrderService := services.NewExpectedOrderService(expectedOrderRepo)
-	productService := services.NewProductService(productRepo, movementRepo, expectedOrderService)
-
 	telegramService := services.NewTelegramService()
+	productService := services.NewProductService(productRepo, movementRepo, expectedOrderService, telegramService)
+	restockService := services.NewRestockService(restockRepo)
+
 	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo, telegramService)
 	authService := services.NewAuthService(adminRepo, emailService, auditService)
 	categoryService := services.NewCategoryService(categoryRepo)
@@ -72,6 +74,7 @@ func main() {
 
 	// Initialize Handlers
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService)
+	restockHandler := handlers.NewRestockHandler(restockService, inventoryService)
 	saleHandler := handlers.NewSaleHandler(saleService, auditService)
 	authHandler := handlers.NewAuthHandler(authService)
 	categoryHandler := handlers.NewCategoryHandler(categoryService, auditService)
@@ -93,7 +96,15 @@ func main() {
 	cronManager.Start()
 
 	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
-	telegramService.StartListener(inventoryService, saleRepo, dashboardService)
+	telegramService.StartListener(inventoryService, saleRepo, dashboardService, productService)
+
+	// Mantenimiento: Blindaje de datos existentes (Limpieza de tildes)
+	go func() {
+		log.Println("🧹 Iniciando limpieza de tildes en datos existentes...")
+		if count, err := productService.SanitizeAllNames(); err == nil && count > 0 {
+			log.Printf("✅ Limpieza automática completada: %d productos actualizados.", count)
+		}
+	}()
 
 	r := gin.New()
 	r.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -101,7 +112,11 @@ func main() {
 	r.SetTrustedProxies(nil) // Silence proxy warning
 
 	log.Printf("-----------------------------------------")
-	log.Printf("🚀 EXECUTER POS SERVER IS STARTING...")
+	log.Printf("🚀 POS PRO - SERVER STARTUP")
+	log.Printf("-----------------------------------------")
+	log.Printf("📡 RED: IP ESTATICA REQUERIDA (Resiliencia POS)")
+	log.Printf("🔗 ACCESO: http://%s:8080 (O su IP Local)", os.Getenv("SERVER_IP"))
+	log.Printf("🛠️  MODO: RESILIENCIA OFFLINE ACTIVADA")
 	log.Printf("-----------------------------------------")
 
 	// CORS Middleware - Strict Origin Policy
@@ -236,6 +251,7 @@ func main() {
 				productManage.PUT("/products/update-products/:barcode", productHandler.Update)
 				productManage.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
 				productManage.POST("/products/open-bulk/:barcode", productHandler.OpenBulk)
+				productManage.PATCH("/products/update-min-stock/:barcode", productHandler.UpdateMinStock)
 			}
 
 			// Products Administration (Solo Admin)
@@ -249,6 +265,16 @@ func main() {
 				productAdmin.POST("/products/receive-stock", productHandler.ReceiveStock)
 				productAdmin.POST("/products/bulk-receive", productHandler.BulkReceive)
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
+				productAdmin.DELETE("/products/reception/:ref", productHandler.DeleteReception)
+				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
+
+				// Smart Restock API
+				productAdmin.GET("/inventory/restock/suggestions", restockHandler.GetSuggestions)
+				productAdmin.GET("/inventory/restock/critical", restockHandler.GetCritical)
+				productAdmin.GET("/inventory/restock/purchase-list", restockHandler.GetPurchaseList)
+				productAdmin.POST("/inventory/restock/purchase-list", restockHandler.AddToPurchaseList)
+				productAdmin.DELETE("/inventory/restock/purchase-list/:id", restockHandler.RemoveFromPurchaseList)
+				productAdmin.POST("/inventory/restock/confirm", restockHandler.ConfirmOrder)
 
 				// Report History
 				productAdmin.GET("/reports/history", reportHandler.GetHistory)
@@ -354,6 +380,7 @@ func main() {
 				dashboard.POST("/telegram-report-partial", middlewares.RoleMiddleware("empleado"), dashboardHandler.SendPartialReport)
 				dashboard.GET("/cashier-history", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetClosuresHistory)
 				dashboard.DELETE("/cashier-history/:id", middlewares.RoleMiddleware("admin"), dashboardHandler.DeleteClosure)
+				dashboard.PUT("/cashier-history/:id", middlewares.RoleMiddleware("admin"), dashboardHandler.UpdateClosure)
 				dashboard.GET("/detailed-report", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetDetailedReport)
 				
 				// Analytical Reports
@@ -362,6 +389,7 @@ func main() {
 				dashboard.GET("/reports/clients-vip", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetVIPClientsReport)
 				dashboard.GET("/reports/voids", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetVoidsReport)
 				dashboard.GET("/reports/pnl", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetPnLReport)
+				dashboard.GET("/reports/cashflow", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetCashFlowReport)
 				dashboard.GET("/reports/movements", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetInventoryMovements)
 				dashboard.GET("/reports/vault-audit", middlewares.RoleMiddleware("admin"), dashboardHandler.GetVaultAudit)
 				dashboard.GET("/reports/global-debt", middlewares.RoleMiddleware("admin"), dashboardHandler.GetGlobalDebt)
@@ -395,6 +423,7 @@ func main() {
 			protected.GET("/inventory/global-restock", orderHandler.GetGlobalRestockSuggestions) // Radar Global
 			protected.POST("/inventory/orders", orderHandler.CreateOrder)
 			protected.GET("/inventory/orders", orderHandler.GetAllOrders)
+			protected.POST("/inventory/shrinkage", productHandler.RegisterShrinkage)
 			protected.POST("/telegram/send-delivery-summary", orderHandler.SendDeliverySummaryToTelegram)
 			protected.GET("/inventory/savings-opportunities", productHandler.GetSavingsOpportunities)
 

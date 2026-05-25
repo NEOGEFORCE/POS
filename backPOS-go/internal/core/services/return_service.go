@@ -30,6 +30,8 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 
 	// 2. Procesar detalles y calcular ajustes de stock
 	stockAdjustments := make(map[string]float64)
+	var movements []*models.StockMovement
+
 	for _, detail := range ret.Details {
 		// Preload product with BaseProduct to handle Pack logic
 		product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "BaseProduct")
@@ -37,7 +39,7 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 			return errors.New("producto no encontrado: " + detail.Barcode)
 		}
 
-		movementType := "IN"
+		movementType := "RETURN_RESTOCK"
 		reason := "RETURN"
 		if detail.IsExchange {
 			movementType = "OUT"
@@ -68,12 +70,12 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 				Barcode:      targetBarcode,
 				Quantity:     math.Abs(baseAdjustQty),
 				Type:         movementType,
-				Reason:       "PACK_" + reason,
+				Reason:       "PACK_RETURN_RESTOCK",
 				ReferenceID:  fmt.Sprintf("RET-%d-%s", ret.SaleID, time.Now().Format("20060102")),
 				EmployeeDNI:  employeeDNI,
 				EmployeeName: employeeName,
 			}
-			_ = s.movementRepo.Save(baseMovement)
+			movements = append(movements, baseMovement)
 		} else {
 			// Comportamiento normal
 			if detail.IsExchange && product.Quantity < detail.Quantity && !product.IsWeighted {
@@ -93,20 +95,15 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 			EmployeeDNI:  employeeDNI,
 			EmployeeName: employeeName,
 		}
-		_ = s.movementRepo.Save(movement)
+		movements = append(movements, movement)
 	}
 
-	if len(stockAdjustments) > 0 {
-		if err := s.productRepo.BatchAdjustQuantities(stockAdjustments); err != nil {
-			fmt.Printf("ERROR ACTUALIZANDO STOCK EN DEVOLUCIÓN: %v\n", err)
-		}
-	}
-
-	// 3. Guardar devolución
-	if err := s.returnRepo.Create(ret); err != nil {
+	// 3. Guardar devolución con transacción ACID síncrona
+	if err := s.returnRepo.CreateWithTransaction(ret, employeeDNI, employeeName, stockAdjustments, movements); err != nil {
 		return err
 	}
 
+	// Invalida cache de dashboard e inicia broadcast asíncrono
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 	sse.GetSSEService().BroadcastDashboardUpdate()
 

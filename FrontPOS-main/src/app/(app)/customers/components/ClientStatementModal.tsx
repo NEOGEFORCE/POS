@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import {
     Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-    Button, Spinner, Card, CardBody, Chip, Divider, ScrollShadow
+    Button, Spinner, Card, CardBody, Chip, Divider, ScrollShadow, Tabs, Tab
 } from "@heroui/react";
 import { 
     FileText, 
@@ -14,7 +14,10 @@ import {
     CreditCard, 
     History,
     AlertCircle,
-    CheckCircle2
+    CheckCircle2,
+    BookOpen,
+    Receipt,
+    Wallet
 } from 'lucide-react';
 import { Customer, Sale, CreditPayment } from '@/lib/definitions';
 import { apiFetch } from '@/lib/api-error';
@@ -24,6 +27,8 @@ interface StatementData {
     client: Customer;
     pending: Sale[];
     payments: CreditPayment[];
+    historySales?: Sale[];
+    historyPayments?: CreditPayment[];
 }
 
 interface Props {
@@ -35,6 +40,7 @@ interface Props {
 export default function ClientStatementModal({ isOpen, onOpenChange, customer }: Props) {
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<StatementData | null>(null);
+    const [activeTab, setActiveTab] = useState("saldo");
 
     const loadStatement = async () => {
         if (!customer) return;
@@ -55,8 +61,102 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
     useEffect(() => {
         if (isOpen && customer) {
             loadStatement();
+            setActiveTab("saldo");
         }
     }, [isOpen, customer]);
+
+    // Libro Mayor: merge historySales + historyPayments cronológicamente
+    const libroMayorEntries = useMemo(() => {
+        if (!data) return [];
+        const entries: { date: Date; type: 'VENTA' | 'ABONO'; amount: number; detail: string; balance: number; id: number | string }[] = [];
+
+        const allSales = data.historySales || [];
+        const allPayments = data.historyPayments || [];
+
+        // Unificar todas las entradas
+        allSales.forEach(s => {
+            entries.push({
+                date: new Date(s.date),
+                type: 'VENTA',
+                amount: s.creditAmount || s.debtPending || 0,
+                detail: s.details?.map(d => d.product?.productName || d.barcode).join(', ') || `Factura #${s.id}`,
+                balance: 0,
+                id: s.id
+            });
+        });
+
+        allPayments.forEach(p => {
+            entries.push({
+                date: new Date(p.paymentDate),
+                type: 'ABONO',
+                amount: p.totalPaid,
+                detail: p.amountCash > 0 ? 'Efectivo' : p.transferSource || 'Transferencia',
+                balance: 0,
+                id: p.id
+            });
+        });
+
+        // Ordenar cronológicamente (más antiguo primero)
+        entries.sort((a, b) => a.date.getTime() - b.date.getTime());
+
+        // Calcular saldo acumulado (running balance)
+        let runningBalance = 0;
+        entries.forEach(e => {
+            if (e.type === 'VENTA') {
+                runningBalance += e.amount;
+            } else {
+                runningBalance -= e.amount;
+            }
+            e.balance = Math.max(0, runningBalance);
+        });
+
+        return entries;
+    }, [data]);
+
+    // Calcular facturas pendientes cronológicas reales basado en el pool de abonos
+    const dynamicPendingInvoices = useMemo(() => {
+        if (!data) return [];
+        let remainingPayments = data.historyPayments?.reduce((sum, p) => sum + p.totalPaid, 0) || 0;
+        
+        // Clonar y ordenar facturas desde la más antigua a la más nueva
+        const salesOldestFirst = [...(data.historySales || [])].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        
+        const pending: Sale[] = [];
+        for (const sale of salesOldestFirst) {
+            // Asumimos que solo las ventas a CRÉDITO entran acá, si paymentMethod existiera. Si no, usamos creditAmount > 0
+            const saleTotal = sale.creditAmount || sale.debtPending || 0;
+            if (saleTotal <= 0) continue; // Si la venta no fue a crédito, saltar
+            
+            if (remainingPayments >= saleTotal) {
+                // Totalmente pagada
+                remainingPayments -= saleTotal;
+            } else {
+                // Parcial o totalmente pendiente
+                const currentDebt = saleTotal - remainingPayments;
+                remainingPayments = 0;
+                if (currentDebt > 0) {
+                    pending.push({
+                        ...sale,
+                        debtPending: currentDebt
+                    });
+                }
+            }
+        }
+        
+        // Devolver ordenadas de la más reciente a la más antigua para mostrar
+        return pending.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }, [data]);
+
+    // Total abonado historial
+    const totalAbonado = useMemo(() => {
+        if (!data?.historyPayments) return 0;
+        return data.historyPayments.reduce((sum, p) => sum + p.totalPaid, 0);
+    }, [data]);
+
+    const totalFiado = useMemo(() => {
+        if (!data?.historySales) return 0;
+        return data.historySales.reduce((sum, s) => sum + (s.creditAmount || 0), 0);
+    }, [data]);
 
     const handlePrint = () => {
         if (!data) return;
@@ -78,13 +178,14 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                         td { padding: 12px; border-bottom: 1px solid #eee; font-size: 12px; }
                         .text-right { text-align: right; }
                         .total { font-weight: 800; font-size: 16px; color: #e11d48; }
+                        .abono { color: #059669; }
                         .footer { margin-top: 50px; font-size: 10px; color: #999; text-align: center; }
                         @media print { .no-print { display: none; } }
                     </style>
                 </head>
                 <body>
                     <div class="header">
-                        <h1>ESTADO DE CUENTA</h1>
+                        <h1>LIBRO MAYOR - ESTADO DE CUENTA</h1>
                         <p>GENERADO EL ${new Date().toLocaleDateString()}</p>
                     </div>
                     <div class="info">
@@ -109,7 +210,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                             </tr>
                         </thead>
                         <tbody>
-                            ${data.pending.map(s => `
+                            ${dynamicPendingInvoices.map(s => `
                                 <tr>
                                     <td style="vertical-align: top;">
                                         <strong>${new Date(s.date).toLocaleDateString()}</strong><br>
@@ -124,34 +225,37 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                         `).join('') || 'Sin detalle'}
                                     </td>
                                     <td class="text-right total" style="vertical-align: top;">
-                                        $${s.creditAmount.toLocaleString()}
+                                        $${(s.debtPending ?? s.creditAmount).toLocaleString()}
                                     </td>
                                 </tr>
                             `).join('')}
-                            ${data.pending.length === 0 ? '<tr><td colspan="3" style="text-align:center">No hay facturas pendientes</td></tr>' : ''}
+                            ${dynamicPendingInvoices.length === 0 ? '<tr><td colspan="3" style="text-align:center">No hay facturas pendientes</td></tr>' : ''}
                         </tbody>
                     </table>
 
-                    <div class="section-title">Historial de Abonos</div>
+                    <div class="section-title">Libro Mayor (Historial Completo)</div>
                     <table>
                         <thead>
                             <tr>
                                 <th>Fecha</th>
-                                <th>Referencia</th>
-                                <th>Método</th>
-                                <th class="text-right">Monto</th>
+                                <th>Tipo</th>
+                                <th>Detalle</th>
+                                <th class="text-right">Débito</th>
+                                <th class="text-right">Crédito</th>
+                                <th class="text-right">Saldo</th>
                             </tr>
                         </thead>
                         <tbody>
-                            ${data.payments.map(p => `
+                            ${libroMayorEntries.map(e => `
                                 <tr>
-                                    <td>${new Date(p.paymentDate).toLocaleDateString()}</td>
-                                    <td>RECIBO-${p.id}</td>
-                                    <td>${p.amountCash > 0 ? 'Efectivo' : p.transferSource || 'Transferencia'}</td>
-                                    <td class="text-right">$${p.totalPaid.toLocaleString()}</td>
+                                    <td>${e.date.toLocaleDateString()}</td>
+                                    <td>${e.type === 'VENTA' ? '📤 Venta' : '💰 Abono'}</td>
+                                    <td>${e.detail}</td>
+                                    <td class="text-right total">${e.type === 'VENTA' ? '$' + e.amount.toLocaleString() : ''}</td>
+                                    <td class="text-right abono">${e.type === 'ABONO' ? '$' + e.amount.toLocaleString() : ''}</td>
+                                    <td class="text-right"><strong>$${e.balance.toLocaleString()}</strong></td>
                                 </tr>
                             `).join('')}
-                            ${data.payments.length === 0 ? '<tr><td colspan="4" style="text-align:center">No se registran abonos recientes</td></tr>' : ''}
                         </tbody>
                     </table>
 
@@ -172,12 +276,12 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
         <Modal 
             isOpen={isOpen} 
             onOpenChange={onOpenChange}
-            size="4xl"
+            size="5xl"
             backdrop="blur"
             classNames={{
-                base: "bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 shadow-2xl rounded-[32px]",
+                base: "bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-[32px]",
                 header: "border-b border-gray-200 dark:border-white/5 pb-4",
-                body: "py-6",
+                body: "py-4",
                 footer: "border-t border-gray-200 dark:border-white/5 pt-4"
             }}
         >
@@ -186,12 +290,12 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                     <>
                         <ModalHeader className="flex flex-col gap-1">
                             <div className="flex items-center gap-3">
-                                <div className="h-10 w-10 rounded-2xl bg-emerald-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
-                                    <FileText size={22} />
+                                <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                    <BookOpen size={22} />
                                 </div>
                                 <div className="flex flex-col">
-                                    <h2 className="text-lg font-black uppercase italic tracking-tight">Estado de Cuenta</h2>
-                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">Reporte Financiero Consolidado</p>
+                                    <h2 className="text-lg font-medium uppercase tracking-tight tracking-tight">Libro Mayor</h2>
+                                    <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest leading-none">Estado de Cuenta Integral</p>
                                 </div>
                             </div>
                         </ModalHeader>
@@ -201,150 +305,237 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                     <Spinner color="success" size="lg" />
                                 </div>
                             ) : data ? (
-                                <div className="grid grid-cols-1 md:grid-cols-12 gap-6 h-full">
-                                    {/* Sidebar: Información Cliente */}
-                                    <div className="md:col-span-4 flex flex-col gap-4">
-                                        <Card className="bg-white dark:bg-zinc-900 border border-gray-100 dark:border-white/5 shadow-sm rounded-3xl">
-                                            <CardBody className="p-5 flex flex-col gap-4">
-                                                <div className="flex flex-col">
-                                                    <span className="text-[8px] font-black text-emerald-500 uppercase tracking-[0.2em] mb-1">Cliente</span>
-                                                    <h3 className="text-md font-black uppercase italic truncate">{data.client.name}</h3>
-                                                    <span className="text-[9px] font-bold text-gray-400">CC: {data.client.dni}</span>
-                                                </div>
-                                                
-                                                <Divider className="opacity-50" />
-
-                                                <div className="flex flex-col gap-3">
-                                                    <div className="flex items-center justify-between">
-                                                        <span className="text-[9px] font-black uppercase text-gray-400">Límite Crédito</span>
-                                                        <span className="text-[10px] font-black">$ {data.client.creditLimit.toLocaleString()}</span>
-                                                    </div>
-                                                    <div className="p-4 rounded-2xl bg-rose-500/5 border border-rose-500/10 flex flex-col gap-1">
-                                                        <span className="text-[8px] font-black text-rose-500 uppercase tracking-widest">Saldo Pendiente</span>
-                                                        <span className="text-xl font-black text-rose-600 dark:text-rose-400 italic">
-                                                            $ {data.client.currentCredit.toLocaleString()}
-                                                        </span>
-                                                    </div>
-                                                </div>
-
-                                                <div className="flex flex-col gap-2 mt-2">
-                                                    <div className="flex items-center gap-2 text-[9px] font-bold text-gray-500">
-                                                        <CreditCard size={12} className="text-emerald-500" />
-                                                        <span>Último movimiento: {data.client.lastPurchaseDate ? new Date(data.client.lastPurchaseDate).toLocaleDateString() : 'N/A'}</span>
-                                                    </div>
-                                                </div>
-                                            </CardBody>
-                                        </Card>
-
-                                        <div className="p-5 rounded-3xl bg-emerald-500/5 border border-emerald-500/10 flex flex-col gap-2">
-                                            <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400">
-                                                <AlertCircle size={14} />
-                                                <span className="text-[9px] font-black uppercase italic tracking-widest">Aviso de Cobranza</span>
-                                            </div>
-                                            <p className="text-[10px] text-gray-500 font-medium leading-relaxed italic">
-                                                Este reporte incluye todas las facturas a crédito que no han sido canceladas en su totalidad.
+                                <div className="flex flex-col gap-4">
+                                    {/* Info del cliente compacta */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div className="p-3 rounded-2xl card-base border-none border border-gray-100 dark:border-white/5">
+                                            <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.2em]">Cliente</span>
+                                            <p className="text-sm font-medium uppercase truncate">{data.client.name}</p>
+                                            <span className="text-[9px] text-gray-400">CC: {data.client.dni}</span>
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-rose-500/5 border border-rose-500/10">
+                                            <span className="text-[8px] font-medium text-rose-500 uppercase tracking-[0.2em]">Deuda Actual</span>
+                                            <p className="text-lg font-medium text-rose-600 dark:text-rose-400 tracking-tight">
+                                                $ {data.client.currentCredit.toLocaleString()}
+                                            </p>
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-blue-500/5 border border-blue-500/10">
+                                            <span className="text-[8px] font-medium text-blue-500 uppercase tracking-[0.2em]">Límite Crédito</span>
+                                            <p className="text-lg font-medium text-blue-600 dark:text-blue-400">
+                                                $ {data.client.creditLimit.toLocaleString()}
+                                            </p>
+                                        </div>
+                                        <div className="p-3 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10">
+                                            <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.2em]">Total Abonado</span>
+                                            <p className="text-lg font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300">
+                                                $ {totalAbonado.toLocaleString()}
                                             </p>
                                         </div>
                                     </div>
 
-                                    {/* Main Content: Tablas */}
-                                    <div className="md:col-span-8 flex flex-col gap-6">
-                                        <div className="flex flex-col h-[200px]">
-                                            <div className="flex items-center gap-2 mb-3 px-1">
-                                                <ArrowUpRight size={14} className="text-rose-500" />
-                                                <span className="text-[10px] font-black uppercase tracking-widest italic">Facturas Pendientes</span>
-                                                <Chip size="sm" className="bg-rose-500 text-white font-black text-[9px] h-5">{data.pending.length}</Chip>
+                                    {/* Tabs */}
+                                    <Tabs 
+                                        selectedKey={activeTab} 
+                                        onSelectionChange={(key) => setActiveTab(String(key))}
+                                        variant="underlined"
+                                        classNames={{
+                                            tabList: "gap-4 w-full relative rounded-none p-0 border-b border-gray-200 dark:border-white/5",
+                                            cursor: "w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5",
+                                            tab: "max-w-fit px-0 h-10",
+                                            tabContent: "group-data-[selected=true]:text-zinc-900 dark:text-zinc-100 text-[10px] font-medium uppercase tracking-widest"
+                                        }}
+                                    >
+                                        {/* TAB 1: Saldo Actual */}
+                                        <Tab key="saldo" title={
+                                            <div className="flex items-center gap-2">
+                                                <Wallet size={14} />
+                                                <span>Saldo Actual</span>
+                                                {dynamicPendingInvoices.length > 0 && (
+                                                    <Chip size="sm" className="bg-rose-500 text-white font-medium text-[8px] h-4 min-w-4">{dynamicPendingInvoices.length}</Chip>
+                                                )}
                                             </div>
-                                            <ScrollShadow className="flex-1 rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-zinc-900/50">
-                                                <div className="p-0">
+                                        }>
+                                            <div className="flex flex-col gap-4 pt-2">
+                                                {/* Facturas Pendientes */}
+                                                <div className="flex items-center gap-2 px-1">
+                                                    <ArrowUpRight size={14} className="text-rose-500" />
+                                                    <span className="text-[10px] font-medium uppercase tracking-widest tracking-tight">Facturas Pendientes</span>
+                                                    <Chip size="sm" className="bg-rose-500 text-white font-medium text-[9px] h-5">{dynamicPendingInvoices.length}</Chip>
+                                                </div>
+                                                <ScrollShadow className="max-h-[250px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
                                                     <table className="w-full text-left text-[11px] border-separate border-spacing-0">
-                                                        <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-sm">
+                                                        <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                             <tr>
-                                                                <th className="px-4 py-3 font-black text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
-                                                                <th className="px-4 py-3 font-black text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Factura</th>
-                                                                <th className="px-4 py-3 font-black text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Saldo</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Factura</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Venta Original</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Saldo Pendiente</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {data.pending.map((s) => (
-                                                                <React.Fragment key={s.id}>
-                                                                    <tr className="hover:bg-rose-500/5 transition-colors group">
-                                                                        <td className="px-4 py-3 font-bold tabular-nums align-top">
-                                                                            <div className="flex flex-col">
-                                                                                <span>{new Date(s.date).toLocaleDateString()}</span>
-                                                                                <span className="text-[9px] text-gray-400 font-medium tracking-tighter">#{s.id}</span>
-                                                                            </div>
-                                                                        </td>
-                                                                        <td className="px-4 py-3 align-top max-w-[200px]">
-                                                                            <div className="flex flex-col gap-1">
-                                                                                {s.details?.map((d, i) => (
-                                                                                    <div key={i} className="flex justify-between items-center gap-2 border-b border-gray-100 dark:border-white/5 last:border-0 pb-1">
-                                                                                        <span className="text-[10px] font-black uppercase text-gray-600 dark:text-zinc-400 truncate">
-                                                                                            {d.product?.productName || d.barcode}
-                                                                                        </span>
-                                                                                        <span className="text-[9px] font-bold text-emerald-500 shrink-0">
-                                                                                            x{d.quantity}
-                                                                                        </span>
-                                                                                    </div>
-                                                                                ))}
-                                                                            </div>
-                                                                        </td>
-                                                                        <td className="px-4 py-3 text-right font-black text-rose-500 group-hover:scale-105 transition-transform origin-right align-top">
-                                                                            $ {s.creditAmount.toLocaleString()}
-                                                                        </td>
-                                                                    </tr>
-                                                                </React.Fragment>
+                                                            {dynamicPendingInvoices.map((s) => (
+                                                                <tr key={s.id} className="hover:bg-rose-500/5 transition-colors group">
+                                                                    <td className="px-4 py-3 font-bold tabular-nums align-top">
+                                                                        <div className="flex flex-col">
+                                                                            <span>{new Date(s.date).toLocaleDateString()}</span>
+                                                                            <span className="text-[9px] text-gray-400 font-medium tracking-tighter">#{s.id}</span>
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="px-4 py-3 align-top max-w-[200px]">
+                                                                        <div className="flex flex-col gap-1">
+                                                                            {s.details?.map((d, i) => (
+                                                                                <div key={i} className="flex justify-between items-center gap-2 border-b border-gray-100 dark:border-white/5 last:border-0 pb-1">
+                                                                                    <span className="text-[10px] font-medium uppercase text-gray-600 dark:text-zinc-400 truncate">
+                                                                                        {d.product?.productName || d.barcode}
+                                                                                    </span>
+                                                                                    <span className="text-[9px] font-bold text-zinc-900 dark:text-zinc-100 shrink-0">
+                                                                                        x{d.quantity}
+                                                                                    </span>
+                                                                                </div>
+                                                                            ))}
+                                                                        </div>
+                                                                    </td>
+                                                                    <td className="px-4 py-3 align-top text-[10px] font-bold text-gray-500 tabular-nums">
+                                                                        $ {(s.creditAmount || 0).toLocaleString()}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-right font-medium text-rose-500 group-hover:scale-105 transition-transform origin-right align-top">
+                                                                        $ {(s.debtPending ?? s.creditAmount).toLocaleString()}
+                                                                    </td>
+                                                                </tr>
                                                             ))}
-                                                            {data.pending.length === 0 && (
+                                                            {dynamicPendingInvoices.length === 0 && (
                                                                 <tr>
-                                                                    <td colSpan={3} className="px-4 py-8 text-center text-gray-400 italic">No hay deudas activas</td>
+                                                                    <td colSpan={4} className="px-4 py-8 text-center text-gray-400 tracking-tight">
+                                                                        <CheckCircle2 size={20} className="inline mr-2 text-zinc-900 dark:text-zinc-100" />
+                                                                        No hay deudas activas — Cliente al día
+                                                                    </td>
                                                                 </tr>
                                                             )}
                                                         </tbody>
                                                     </table>
-                                                </div>
-                                            </ScrollShadow>
-                                        </div>
+                                                </ScrollShadow>
 
-                                        <div className="flex flex-col h-[200px]">
-                                            <div className="flex items-center gap-2 mb-3 px-1">
-                                                <History size={14} className="text-emerald-500" />
-                                                <span className="text-[10px] font-black uppercase tracking-widest italic">Historial de Abonos</span>
-                                                <Chip size="sm" className="bg-emerald-500 text-white font-black text-[9px] h-5">{data.payments.length}</Chip>
-                                            </div>
-                                            <ScrollShadow className="flex-1 rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-zinc-900/50">
-                                                <div className="p-0">
+                                                {/* Abonos del ciclo actual */}
+                                                <div className="flex items-center gap-2 px-1 mt-2">
+                                                    <ArrowDownLeft size={14} className="text-zinc-900 dark:text-zinc-100" />
+                                                    <span className="text-[10px] font-medium uppercase tracking-widest tracking-tight">Abonos del Ciclo</span>
+                                                    <Chip size="sm" className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] h-5">{data.payments.length}</Chip>
+                                                </div>
+                                                <ScrollShadow className="max-h-[180px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
                                                     <table className="w-full text-left text-[11px] border-separate border-spacing-0">
-                                                        <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-sm">
+                                                        <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                             <tr>
-                                                                <th className="px-4 py-3 font-black text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
-                                                                <th className="px-4 py-3 font-black text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Método</th>
-                                                                <th className="px-4 py-3 font-black text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Monto</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Método</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Monto</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
                                                             {data.payments.map((p) => (
-                                                                <tr key={p.id} className="hover:bg-emerald-500/5 transition-colors group">
+                                                                <tr key={p.id} className="hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors group">
                                                                     <td className="px-4 py-3 font-bold tabular-nums">{new Date(p.paymentDate).toLocaleDateString()}</td>
-                                                                    <td className="px-4 py-3 font-black text-emerald-500 uppercase text-[9px]">
+                                                                    <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100 uppercase text-[9px]">
                                                                         {p.amountCash > 0 ? 'Efectivo' : p.transferSource || 'Transf.'}
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-right font-black text-emerald-600 group-hover:scale-105 transition-transform origin-right">
+                                                                    <td className="px-4 py-3 text-right font-medium text-zinc-900 dark:text-zinc-100 group-hover:scale-105 transition-transform origin-right">
                                                                         $ {p.totalPaid.toLocaleString()}
                                                                     </td>
                                                                 </tr>
                                                             ))}
                                                             {data.payments.length === 0 && (
                                                                 <tr>
-                                                                    <td colSpan={3} className="px-4 py-8 text-center text-gray-400 italic">No se registran abonos</td>
+                                                                    <td colSpan={3} className="px-4 py-8 text-center text-gray-400 tracking-tight">No se registran abonos en este ciclo</td>
                                                                 </tr>
                                                             )}
                                                         </tbody>
                                                     </table>
+                                                </ScrollShadow>
+                                            </div>
+                                        </Tab>
+
+                                        {/* TAB 2: Libro Mayor (Historial Completo) */}
+                                        <Tab key="libromayor" title={
+                                            <div className="flex items-center gap-2">
+                                                <BookOpen size={14} />
+                                                <span>Libro Mayor</span>
+                                                <Chip size="sm" className="bg-purple-500 text-white font-medium text-[8px] h-4 min-w-4">{libroMayorEntries.length}</Chip>
+                                            </div>
+                                        }>
+                                            <div className="flex flex-col gap-4 pt-2">
+                                                {/* Resumen del historial */}
+                                                <div className="grid grid-cols-3 gap-3">
+                                                    <div className="p-3 rounded-2xl bg-rose-500/5 border border-rose-500/10 text-center">
+                                                        <span className="text-[8px] font-medium text-rose-500 uppercase tracking-widest">Total Fiado</span>
+                                                        <p className="text-sm font-medium text-rose-600 dark:text-rose-400">$ {totalFiado.toLocaleString()}</p>
+                                                    </div>
+                                                    <div className="p-3 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10 text-center">
+                                                        <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">Total Abonado</span>
+                                                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300">$ {totalAbonado.toLocaleString()}</p>
+                                                    </div>
+                                                    <div className="p-3 rounded-2xl bg-amber-500/5 border border-amber-500/10 text-center">
+                                                        <span className="text-[8px] font-medium text-amber-500 uppercase tracking-widest">Movimientos</span>
+                                                        <p className="text-sm font-medium text-amber-600 dark:text-amber-400">{libroMayorEntries.length}</p>
+                                                    </div>
                                                 </div>
-                                            </ScrollShadow>
-                                        </div>
-                                    </div>
+
+                                                {/* Tabla cronológica tipo Libro Mayor */}
+                                                <ScrollShadow className="max-h-[350px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
+                                                    <table className="w-full text-left text-[11px] border-separate border-spacing-0">
+                                                        <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                                            <tr>
+                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
+                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Tipo</th>
+                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Detalle</th>
+                                                                <th className="px-3 py-3 font-medium text-rose-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Débito</th>
+                                                                <th className="px-3 py-3 font-medium text-zinc-300 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Crédito</th>
+                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Saldo</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {libroMayorEntries.map((entry, idx) => (
+                                                                <tr key={`${entry.type}-${entry.id}-${idx}`} className={`transition-colors ${entry.type === 'VENTA' ? 'hover:bg-rose-500/5' : 'hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5'}`}>
+                                                                    <td className="px-3 py-2.5 font-bold tabular-nums text-[10px]">
+                                                                        {entry.date.toLocaleDateString()}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5">
+                                                                        <Chip 
+                                                                            size="sm" 
+                                                                            className={`font-medium text-[8px] h-5 ${
+                                                                                entry.type === 'VENTA' 
+                                                                                    ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' 
+                                                                                    : 'bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20'
+                                                                            }`}
+                                                                        >
+                                                                            {entry.type === 'VENTA' ? '📤 Fiado' : '💰 Abono'}
+                                                                        </Chip>
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-[10px] font-bold text-gray-600 dark:text-zinc-400 truncate max-w-[180px]">
+                                                                        {entry.detail}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-right font-medium text-rose-500 tabular-nums">
+                                                                        {entry.type === 'VENTA' ? `$ ${entry.amount.toLocaleString()}` : ''}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-right font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">
+                                                                        {entry.type === 'ABONO' ? `$ ${entry.amount.toLocaleString()}` : ''}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-right font-medium tabular-nums text-[10px]">
+                                                                        $ {entry.balance.toLocaleString()}
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                            {libroMayorEntries.length === 0 && (
+                                                                <tr>
+                                                                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400 tracking-tight">
+                                                                        No hay movimientos registrados
+                                                                    </td>
+                                                                </tr>
+                                                            )}
+                                                        </tbody>
+                                                    </table>
+                                                </ScrollShadow>
+                                            </div>
+                                        </Tab>
+                                    </Tabs>
                                 </div>
                             ) : null}
                         </ModalBody>
@@ -352,7 +543,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                             <Button 
                                 variant="light" 
                                 onPress={onClose}
-                                className="font-black uppercase text-[10px] tracking-widest px-8 rounded-2xl italic"
+                                className="font-medium uppercase text-[10px] tracking-widest px-8 rounded-2xl tracking-tight"
                             >
                                 Cerrar
                             </Button>
@@ -360,7 +551,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                 color="success"
                                 onPress={handlePrint}
                                 isDisabled={!data}
-                                className="h-12 bg-emerald-500 text-white font-black uppercase text-[10px] tracking-[0.2em] italic px-10 rounded-2xl shadow-xl shadow-emerald-500/30 flex items-center gap-2"
+                                className="h-12 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[10px] tracking-[0.2em] tracking-tight px-10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center gap-2"
                             >
                                 <Printer size={16} />
                                 Imprimir Reporte

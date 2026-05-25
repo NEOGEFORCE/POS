@@ -6,6 +6,11 @@ import (
 	"gorm.io/gorm"
 )
 
+type PaymentMethodBreakdown struct {
+	Method string  `json:"method"`
+	Amount float64 `json:"amount"`
+}
+
 type Sale struct {
 	SaleID         uint           `gorm:"primaryKey;autoIncrement;column:saleId" json:"id"`
 	SaleDate       time.Time      `gorm:"default:now();not null;index;column:saleDate" json:"date"`
@@ -16,13 +21,17 @@ type Sale struct {
 	AmountPaid     float64        `gorm:"type:decimal(10,2);column:amountPaid" json:"amountPaid"`
 	CashAmount     float64        `gorm:"type:decimal(10,2);column:cashAmount" json:"cashAmount"`
 	TransferAmount float64        `gorm:"type:decimal(10,2);column:transferAmount" json:"transferAmount"`
+	TransferNequi  float64        `gorm:"type:decimal(10,2);default:0;column:transferNequi" json:"transferNequi"`
+	TransferDaviplata float64     `gorm:"type:decimal(10,2);default:0;column:transferDaviplata" json:"transferDaviplata"`
 	TransferSource string         `gorm:"index;column:transferSource" json:"transferSource"`
 	CreditAmount   float64        `gorm:"type:decimal(10,2);column:creditAmount" json:"creditAmount"`
 	DebtPending    float64        `gorm:"type:decimal(10,2);column:debtPending" json:"debtPending"`
 	Change         float64        `gorm:"type:decimal(10,2);column:change" json:"change"`
+	MultiplePayments []PaymentMethodBreakdown `gorm:"-" json:"multiplePayments,omitempty"`
 	Status         string         `gorm:"type:varchar(20);default:'PAID';column:status" json:"status"`
 	DeletedReason  string         `gorm:"column:deletedReason" json:"deletedReason,omitempty"`
 	DeletedByDNI   string         `gorm:"column:deletedByDni" json:"deletedByDni,omitempty"`
+	DianReady      bool           `gorm:"default:false;column:dian_ready" json:"dianReady"`
 	Client         Client         `gorm:"foreignKey:ClientDNI;references:DNI" json:"client,omitempty"`
 	Employee       Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`
 	SaleDetails    []SaleDetail   `gorm:"foreignKey:SaleID" json:"details,omitempty"`

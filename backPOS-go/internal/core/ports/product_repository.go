@@ -26,15 +26,20 @@ type SavingsOpportunity struct {
 	CurrentPrice  float64 `json:"currentPrice"`
 	BestPrice     float64 `json:"bestPrice"`
 	BestSupplier  string  `json:"bestSupplier"`
+	WorstPrice    float64 `json:"worstPrice"`
+	WorstSupplier string  `json:"worstSupplier"`
 	PotentialSave float64 `json:"potentialSave"`
 	Stock         float64 `json:"stock"`
 }
 
 type ProductRestockInfo struct {
 	models.Product
-	BestSupplierID   uint    `json:"bestSupplierId"`
-	BestSupplierName string  `json:"bestSupplierName"`
-	LowestPrice      float64 `json:"lowestPrice"`
+	BestSupplierID     uint    `json:"bestSupplierId"`
+	BestSupplierName   string  `json:"bestSupplierName"`
+	LowestPrice        float64 `json:"lowestPrice"`
+	WorstPrice         float64 `json:"worstPrice"`
+	WorstSupplierName   string  `json:"worstSupplierName"`
+	VisitFrequencyDays int     `json:"visitFrequencyDays"`
 }
 
 type ReceiveEntry struct {
@@ -49,7 +54,9 @@ type ReceiveEntry struct {
 	IvaPct           float64 `json:"ivaPct"`
 	IcuiPct          float64 `json:"icuiPct"`
 	IbuaPct          float64 `json:"ibuaPct"`
+	DiscountPct      float64 `json:"discountPct"`
 	Discount         float64 `json:"discount"`
+	ActualPhysicalStock *float64 `json:"actualPhysicalStock"`
 }
 
 type ProductRepository interface {
@@ -60,7 +67,7 @@ type ProductRepository interface {
 	GetByBarcodeWithPreloads(barcode string, preloads ...string) (*models.Product, error)
 	GetAll() ([]models.Product, error)
 	GetAllWithLimit(limit int) ([]models.Product, error)
-	GetPaginated(page, pageSize int, search string) ([]models.Product, int64, error)
+	GetPaginated(page, pageSize int, search string, supplierID int) ([]models.Product, int64, error)
 	Update(barcode string, product *models.Product) error
 	Delete(barcode string) error
 	UpdateQuantity(barcode string, newQuantity float64) error
@@ -74,12 +81,20 @@ type ProductRepository interface {
 	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
 	GetBySupplier(supplierID uint) ([]models.Product, error)
 	SyncSuppliers(productBarcode string, supplierIDs []uint) error
-	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string) error
+	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) ([]string, error)
 	GetSavingsOpportunities() ([]SavingsOpportunity, error)
 	GetAllWithLowStock() ([]models.Product, error)
 	GetProductsWithBestSupplier(supplierID *uint) ([]ProductRestockInfo, error)
+	GetPendingTransitQuantities() (map[string]float64, map[string]string, error)
 	GetGlobalInventoryValue() (float64, error)
 	GetGlobalInventoryRetailValue() (float64, error)
+	UpdateSupplierFrequency(supplierID uint, days int) error
+	GetDailySalesAverage(barcode string, days int) (float64, error)
+	GetPriceChangesToday() ([]models.PriceLog, error)
+	RecordPriceChange(tx interface{}, barcode string, oldPrice, newPrice float64) error
+	DeleteReception(receptionID string) error
+	SanitizeAllNames() (int64, error)
+	SaveShrinkage(shrinkage *models.Shrinkage, shiftID *uint) error
 }
 
 type SupplierOrderMethodRepository interface {

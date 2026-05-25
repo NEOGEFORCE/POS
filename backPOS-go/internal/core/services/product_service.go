@@ -13,10 +13,11 @@ type ProductService struct {
 	repo         ports.ProductRepository
 	movementRepo ports.StockMovementRepository
 	expected     *ExpectedOrderService
+	telegram     *TelegramService
 }
 
-func NewProductService(repo ports.ProductRepository, movementRepo ports.StockMovementRepository, expected *ExpectedOrderService) *ProductService {
-	return &ProductService{repo: repo, movementRepo: movementRepo, expected: expected}
+func NewProductService(repo ports.ProductRepository, movementRepo ports.StockMovementRepository, expected *ExpectedOrderService, telegram *TelegramService) *ProductService {
+	return &ProductService{repo: repo, movementRepo: movementRepo, expected: expected, telegram: telegram}
 }
 
 func applyRounding(val float64) float64 {
@@ -54,7 +55,7 @@ func (s *ProductService) GetAllProducts() ([]models.Product, error) {
 }
 
 func (s *ProductService) GetPaginatedProducts(page, pageSize int, search string) ([]models.Product, int64, error) {
-	return s.repo.GetPaginated(page, pageSize, search)
+	return s.repo.GetPaginated(page, pageSize, search, 0)
 }
 
 func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Product) error {
@@ -425,8 +426,8 @@ func (s *ProductService) FixAllProductPrices() error {
 	return nil
 }
 
-func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string) error {
-	err := s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI)
+func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) error {
+	_, err := s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI, supplierID, freightCost, totalWeight, isEgreso)
 	if err == nil {
 		// Automatización: Intentar identificar el proveedor principal para marcar preventa como recibida
 		var mainSupplierID uint
@@ -445,6 +446,10 @@ func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID 
 
 func (s *ProductService) GetSavingsOpportunities() ([]ports.SavingsOpportunity, error) {
 	return s.repo.GetSavingsOpportunities()
+}
+
+func (s *ProductService) GetPriceChangesToday() ([]models.PriceLog, error) {
+	return s.repo.GetPriceChangesToday()
 }
 
 func (s *ProductService) GetProductPriceComparison(barcode string) ([]models.ProductSupplier, error) {
@@ -498,4 +503,12 @@ func (s *ProductService) UpsertProduct(product *models.Product) error {
 	existing.IsActive = true
 
 	return s.UpdateProduct(existing.Barcode, existing)
+}
+
+func (s *ProductService) SanitizeAllNames() (int, error) {
+	return 0, nil
+}
+
+func (s *ProductService) DeleteReception(ref string) error {
+	return nil
 }

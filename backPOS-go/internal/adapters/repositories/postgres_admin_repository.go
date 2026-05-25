@@ -102,15 +102,15 @@ func (r *PostgresAdminRepository) PurgeDataBefore(date string) (int64, error) {
 	// Pero GORM a menudo tiene ON DELETE CASCADE si está configurado en la DB.
 	// Por seguridad borramos manualmente.
 	
-	// 1. Sale items (vinculados a sales)
-	res := tx.Exec("DELETE FROM sale_items WHERE sale_id IN (SELECT id FROM sales WHERE created_at < ?)", date)
+	// 1. Sale details (vinculados a sales)
+	res := tx.Exec("DELETE FROM sale_details WHERE \"saleId\" IN (SELECT \"saleId\" FROM sales WHERE \"saleDate\" < ?)", date)
 	if res.Error != nil {
 		tx.Rollback()
 		return 0, res.Error
 	}
 
 	// 2. Sales
-	res = tx.Exec("DELETE FROM sales WHERE created_at < ?", date)
+	res = tx.Exec("DELETE FROM sales WHERE \"saleDate\" < ?", date)
 	if res.Error != nil {
 		tx.Rollback()
 		return 0, res.Error
@@ -118,7 +118,7 @@ func (r *PostgresAdminRepository) PurgeDataBefore(date string) (int64, error) {
 	totalDeleted += res.RowsAffected
 
 	// 3. Stock Movements
-	res = tx.Exec("DELETE FROM stock_movements WHERE created_at < ?", date)
+	res = tx.Exec("DELETE FROM stock_movements WHERE \"date\" < ?", date)
 	if res.Error != nil {
 		tx.Rollback()
 		return 0, res.Error
@@ -126,7 +126,7 @@ func (r *PostgresAdminRepository) PurgeDataBefore(date string) (int64, error) {
 	totalDeleted += res.RowsAffected
 
 	// 4. Expenses
-	res = tx.Exec("DELETE FROM expense_transactions WHERE created_at < ?", date)
+	res = tx.Exec("DELETE FROM expenses WHERE \"date\" < ?", date)
 	if res.Error != nil {
 		tx.Rollback()
 		return 0, res.Error

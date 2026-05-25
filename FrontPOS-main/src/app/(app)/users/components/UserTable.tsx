@@ -62,25 +62,25 @@ const UserTable = memo(({
                             <Avatar
                                 size="sm"
                                 name={nameDisplay}
-                                className={`transition-all border-2 ${isSuperAdmin ? 'border-black dark:border-white shadow-lg' : 'border-emerald-500/20'}`}
-                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-emerald-500/10", name: isSuperAdmin ? "text-white dark:text-black font-black" : "text-emerald-500 font-black text-[10px]" }}
+                                className={`transition-all border-2 ${isSuperAdmin ? 'border-black dark:border-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'border-emerald-500/20'}`}
+                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-white/5", name: isSuperAdmin ? "text-white dark:text-black font-medium" : "text-zinc-900 dark:text-zinc-100 font-medium text-[10px]" }}
                             />
                             {isSuperAdmin && (
-                                <div className="absolute -bottom-1 -right-1 bg-black dark:bg-white text-white dark:text-black rounded-full p-1 shadow-xl border border-white dark:border-zinc-950 z-20 scale-90">
+                                <div className="absolute -bottom-1 -right-1 bg-black dark:bg-white text-white dark:text-black rounded-2xl p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white dark:border-zinc-950 z-20 scale-90">
                                     <ShieldCheck size={8} />
                                 </div>
                             )}
                         </div>
                         <div className="flex flex-col items-start">
-                            <span className="text-[11px] font-black text-gray-900 dark:text-white uppercase italic leading-tight">{nameDisplay}</span>
-                            <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-tight">DNI: {u.dni}</span>
+                            <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight">{nameDisplay}</span>
+                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight">DNI: {u.dni}</span>
                         </div>
                     </div>
                 );
             case "role":
                 return (
                     <div className="flex flex-col items-center">
-                        <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase tracking-widest ${isSuperAdmin ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400'
+                        <span className={`text-[9px] font-medium px-2 py-0.5 rounded-2xl uppercase tracking-widest ${isSuperAdmin ? 'bg-black text-white dark:bg-white dark:text-black' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:text-zinc-300'
                             }`}>
                             {roleDisplay}
                         </span>
@@ -96,12 +96,12 @@ const UserTable = memo(({
                 return (
                     <div className="flex flex-col items-center">
                         <div className="flex items-center gap-1.5">
-                            <div className={`h-1.5 w-1.5 rounded-full ${isOnline ? 'bg-emerald-500 animate-pulse' : 'bg-gray-400'}`} />
-                            <span className={`text-[9px] font-black uppercase tracking-widest italic ${isOnline ? 'text-emerald-500' : 'text-gray-400'}`}>
+                            <div className={`h-1.5 w-1.5 rounded-2xl ${isOnline ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 animate-pulse' : 'bg-gray-400'}`} />
+                            <span className={`text-[9px] font-medium uppercase tracking-widest tracking-tight ${isOnline ? 'text-zinc-900 dark:text-zinc-100' : 'text-gray-400'}`}>
                                 {isOnline ? "EN LÍNEA" : "DESCONECTADO"}
                             </span>
                         </div>
-                        <span className="text-[7px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-tighter">
+                        <span className="text-[7px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
                             {lastLoginDate ? formatDateTime(lastLoginDate) : "SIN REGISTRO"}
                         </span>
                     </div>
@@ -109,18 +109,18 @@ const UserTable = memo(({
             case "actions":
                 return (
                     <div className="flex items-center justify-end gap-1 px-1">
-                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-black text-[9px] uppercase tracking-widest bg-emerald-500 text-white py-1 px-2 rounded-none shadow-xl" }}>
-                            <Button isIconOnly size="sm" variant="flat" className="bg-emerald-500/5 text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all rounded-lg" onPress={() => onEdit(u)}>
+                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                            <Button isIconOnly size="sm" variant="flat" className="bg-emerald-500/5 text-zinc-900 dark:text-zinc-100 hover:bg-emerald-500 hover:text-white transition-all rounded-2xl" onPress={() => onEdit(u)}>
                                 <Edit size={14} />
                             </Button>
                         </Tooltip>
-                        <Tooltip content={isSuperAdmin ? "INAMOVIBLE" : "RESETEAR CLAVE"} delay={0} closeDelay={0} showArrow classNames={{ content: `font-black text-[9px] uppercase tracking-widest drop-shadow-xl py-1 px-2 rounded-none shadow-xl ${isSuperAdmin ? 'bg-slate-900 text-white' : 'bg-amber-500 text-white'}` }}>
-                            <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-white transition-all rounded-lg ${isSuperAdmin ? 'opacity-10 grayscale cursor-not-allowed' : ''}`} onPress={() => onResetPassword(u)}>
+                        <Tooltip content={isSuperAdmin ? "INAMOVIBLE" : "RESETEAR CLAVE"} delay={0} closeDelay={0} showArrow classNames={{ content: `font-medium text-[9px] uppercase tracking-widest drop-shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${isSuperAdmin ? 'bg-slate-900 text-white' : 'bg-amber-500 text-white'}` }}>
+                            <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`bg-amber-500/10 text-amber-500 hover:bg-amber-500 hover:text-white transition-all rounded-2xl ${isSuperAdmin ? 'opacity-10 grayscale cursor-not-allowed' : ''}`} onPress={() => onResetPassword(u)}>
                                 <Zap size={14} />
                             </Button>
                         </Tooltip>
-                        <Tooltip content={isSuperAdmin ? "INAMOVIBLE" : "ELIMINAR"} delay={0} closeDelay={0} showArrow classNames={{ content: `font-black text-[9px] uppercase tracking-widest py-1 px-2 rounded-none shadow-xl ${isSuperAdmin ? 'bg-slate-900 text-white' : 'bg-rose-500 text-white'}` }} placement="top-end">
-                            <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-all rounded-lg ${isSuperAdmin ? 'opacity-10 grayscale cursor-not-allowed' : ''}`} onPress={() => onDelete(u.dni)}>
+                        <Tooltip content={isSuperAdmin ? "INAMOVIBLE" : "ELIMINAR"} delay={0} closeDelay={0} showArrow classNames={{ content: `font-medium text-[9px] uppercase tracking-widest py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${isSuperAdmin ? 'bg-slate-900 text-white' : 'bg-rose-500 text-white'}` }} placement="top-end">
+                            <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`bg-rose-500/10 text-rose-500 hover:bg-rose-500 hover:text-white transition-all rounded-2xl ${isSuperAdmin ? 'opacity-10 grayscale cursor-not-allowed' : ''}`} onPress={() => onDelete(u.dni)}>
                                 <Trash2 size={14} />
                             </Button>
                         </Tooltip>
@@ -132,7 +132,7 @@ const UserTable = memo(({
     }, [onEdit, onDelete, onResetPassword]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white/50 dark:bg-zinc-900/30 backdrop-blur-sm border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-2xl shadow-emerald-500/5 transition-all">
+        <div className="flex-1 min-h-0 bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
             {/* ÁREA DE CONTENIDO PRINCIPAL */}
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
                 {/* VISTA DESKTOP */}
@@ -145,9 +145,9 @@ const UserTable = memo(({
                         classNames={{
                             base: "flex-1 overflow-hidden",
                             wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
-                            th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-sm",
+                            th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
                             td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5",
-                            tr: "hover:bg-emerald-500/5 dark:hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 h-10 relative z-0"
+                            tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 h-10 relative z-0"
                         }}
                     >
                         <TableHeader columns={COLUMNS}>
@@ -173,34 +173,34 @@ const UserTable = memo(({
 
                 {/* VISTA MÓVIL CON SCROLL INTERNO (TARJETAS) */}
                 {isMobile && (
-                    <div className="flex-1 min-h-0 overflow-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-black/20">
+                    <div className="flex-1 min-h-0 overflow-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b]">
                         {users?.map((u) => {
                             const isSuperAdmin = (u.role || (u as any).Role || u.Role || '').toLowerCase() === 'superadmin';
                             const roleDisplay = u.role || (u as any).Role || u.Role || 'EMPLEADO';
                             const nameDisplay = u.name || (u as any).Name || u.Name || 'SIN NOMBRE';
 
                             return (
-                                <div key={u.id || u.dni} className={`p-4 rounded-xl border transition-all flex items-center justify-between shrink-0 ${u.is_active ? 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 shadow-sm' : 'bg-white dark:bg-zinc-900 border-emerald-500/20 shadow-sm border-dashed'}`}>
+                                <div key={u.id || u.dni} className={`p-4 rounded-2xl border transition-all flex items-center justify-between shrink-0 ${u.is_active ? 'card-base border-none border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'card-base border-none border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-dashed'}`}>
                                     <div className="flex items-center gap-3">
                                         <div className="relative">
                                             <Avatar
                                                 size="sm"
                                                 name={nameDisplay}
-                                                className={`h-10 w-10 border ${isSuperAdmin ? 'border-black dark:border-white shadow-lg' : 'border-emerald-500/20'}`}
-                                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-emerald-500/10", name: isSuperAdmin ? "text-white dark:text-black font-black text-[10px]" : "text-emerald-500 font-black text-[10px]" }}
+                                                className={`h-10 w-10 border ${isSuperAdmin ? 'border-black dark:border-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'border-emerald-500/20'}`}
+                                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-white/5", name: isSuperAdmin ? "text-white dark:text-black font-medium text-[10px]" : "text-zinc-900 dark:text-zinc-100 font-medium text-[10px]" }}
                                             />
                                             {isSuperAdmin && (
-                                                <div className="absolute -bottom-1 -right-1 bg-black dark:bg-white text-white dark:text-black rounded-full p-1 shadow-xl border border-white dark:border-zinc-950 z-20 scale-90">
+                                                <div className="absolute -bottom-1 -right-1 bg-black dark:bg-white text-white dark:text-black rounded-2xl p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white dark:border-zinc-950 z-20 scale-90">
                                                     <ShieldCheck size={8} />
                                                 </div>
                                             )}
                                         </div>
                                         <div className="flex flex-col">
-                                            <span className="text-[11px] font-black text-gray-900 dark:text-white uppercase italic truncate max-w-[120px] leading-tight">{nameDisplay}</span>
+                                            <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight truncate max-w-[120px] leading-tight">{nameDisplay}</span>
                                             <div className="flex items-center gap-1.5 mt-0.5">
-                                                <span className={`text-[7px] font-black uppercase tracking-widest leading-tight ${isSuperAdmin ? 'text-black dark:text-white' : 'text-emerald-500'}`}>{roleDisplay}</span>
+                                                <span className={`text-[7px] font-medium uppercase tracking-widest leading-tight ${isSuperAdmin ? 'text-black dark:text-white' : 'text-zinc-900 dark:text-zinc-100'}`}>{roleDisplay}</span>
                                                 <span className="text-[6px] font-bold text-gray-300 dark:text-zinc-600">|</span>
-                                                <span className="text-[6px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-tighter">
+                                                <span className="text-[6px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
                                                     {(() => {
                                                         const lastLoginStr = u.last_login || u.lastLogin;
                                                         const lastLoginDate = lastLoginStr ? new Date(lastLoginStr) : null;
@@ -214,9 +214,9 @@ const UserTable = memo(({
                                         </div>
                                     </div>
                                     <div className="flex gap-1">
-                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 rounded-lg" onPress={() => onEdit(u)}><Edit size={12} /></Button>
-                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-amber-500/10 text-amber-500 rounded-lg ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onResetPassword(u)}><Zap size={12} /></Button>
-                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onDelete(u.dni)}><Trash2 size={12} /></Button>
+                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-gray-100 dark:bg-zinc-800 rounded-2xl" onPress={() => onEdit(u)}><Edit size={12} /></Button>
+                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-amber-500/10 text-amber-500 rounded-2xl ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onResetPassword(u)}><Zap size={12} /></Button>
+                                        <Button isIconOnly size="sm" variant="flat" isDisabled={isSuperAdmin} className={`h-8 w-8 bg-rose-500/10 text-rose-500 rounded-2xl ${isSuperAdmin ? 'opacity-20 grayscale' : ''}`} onPress={() => onDelete(u.dni)}><Trash2 size={12} /></Button>
                                     </div>
                                 </div>
                             );
@@ -227,26 +227,26 @@ const UserTable = memo(({
 
             {/* PAGINACIÓN FIJA - SIEMPRE AL FINAL */}
             {totalRecords > 0 && (
-                <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 backdrop-blur-md z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
+                <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
 
-                    <div className="flex items-center gap-2 font-black">
+                    <div className="flex items-center gap-2 font-medium">
                         <Button
                             isIconOnly
                             size="sm"
                             variant="flat"
                             onClick={() => onPageChange(Math.max(1, currentPage - 1))}
                             isDisabled={currentPage === 1}
-                            className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                            className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                         >
                             <ChevronLeft size={18} />
                         </Button>
 
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-gray-400 dark:text-zinc-500 uppercase font-black tracking-tighter">MOSTRANDO</span>
-                            <p className="text-[10px] text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-1">
-                                <span className="italic font-black text-emerald-500">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalRecords)}</span>
+                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
+                                <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalRecords)}</span>
                                 <span className="opacity-20 text-[8px]">DE</span>
-                                <span className="italic font-black">{totalRecords}</span>
+                                <span className="tracking-tight font-medium">{totalRecords}</span>
                             </p>
                         </div>
 
@@ -256,7 +256,7 @@ const UserTable = memo(({
                             variant="flat"
                             onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
                             isDisabled={currentPage === totalPages || totalPages === 0}
-                            className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                            className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                         >
                             <ChevronRight size={18} />
                         </Button>
@@ -267,7 +267,7 @@ const UserTable = memo(({
                             <select
                                 value={pageSize}
                                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
-                                className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-2 pr-6 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none"
+                                className="h-8 card-base border-none text-zinc-900 dark:text-zinc-50 text-[10px] font-medium uppercase tracking-widest px-2 pr-6 outline-none rounded-2xl border border-gray-200 dark:border-white/10 cursor-pointer shadow-[0_8px_30px_rgb(0,0,0,0.12)] appearance-none"
                             >
                                 {[10, 20, 50, 10000].map(n => <option key={n} value={n}>{n === 10000 ? 'TODOS' : n}</option>)}
                             </select>

@@ -35,7 +35,7 @@ export default function ManualWeightModal({
             backdrop="blur" 
             classNames={{ 
                 base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2rem]", 
-                backdrop: "bg-black/60 backdrop-blur-md" 
+                backdrop: "bg-[#18181b] " 
             }}
         >
             <ModalContent>
@@ -46,15 +46,15 @@ export default function ManualWeightModal({
                                 <Weight size={24} />
                             </div>
                             <div className="flex flex-col min-w-0">
-                                <span className="text-xl font-black text-gray-900 dark:text-white uppercase italic tracking-tighter leading-none">{manualWeightProduct?.productName || 'PRODUCTO'}</span>
-                                <span className="text-[9px] font-black text-sky-500 uppercase tracking-[0.3em] mt-2 not-italic">Módulo de Pesaje Manual Maestro</span>
+                                <span className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">{manualWeightProduct?.productName || 'PRODUCTO'}</span>
+                                <span className="text-[9px] font-medium text-sky-500 uppercase tracking-[0.3em] mt-2 not-tracking-tight">Módulo de Pesaje Manual Maestro</span>
                             </div>
                             <Button 
                                 isIconOnly 
                                 size="sm" 
                                 variant="flat" 
                                 onPress={onClose} 
-                                className="ml-auto text-gray-400 hover:text-rose-500 bg-gray-50 dark:bg-zinc-900 rounded-xl h-10 w-10 transition-colors"
+                                className="ml-auto text-gray-400 hover:text-rose-500 bg-gray-50 dark:bg-[#18181b] rounded-2xl h-10 w-10 transition-colors"
                             >
                                 <Check size={18} />
                             </Button>
@@ -71,12 +71,12 @@ export default function ManualWeightModal({
                                     placeholder="0.000"
                                     endContent={
                                         <div className="flex items-center gap-2 text-gray-400 dark:text-gray-500 select-none pointer-events-none">
-                                            <span className="font-black italic text-xl">KG</span>
+                                            <span className="font-medium tracking-tight text-xl">KG</span>
                                         </div>
                                     }
                                     classNames={{
-                                        input: "text-center text-6xl font-black text-gray-900 dark:text-white h-24 tabular-nums",
-                                        inputWrapper: "bg-gray-50 dark:bg-zinc-900 h-32 rounded-[2rem] border-2 border-sky-500 shadow-[0_0_30px_rgba(14,165,233,0.15)] px-8"
+                                        input: "text-center text-6xl font-medium text-zinc-900 dark:text-zinc-50 h-24 tabular-nums",
+                                        inputWrapper: "bg-gray-50 dark:bg-[#18181b] h-32 rounded-[2rem] border-2 border-sky-500 shadow-[0_0_30px_rgba(14,165,233,0.15)] px-8"
                                     }}
                                 />
                             </div>
@@ -85,7 +85,7 @@ export default function ManualWeightModal({
                                 {[0.25, 0.5, 1.0, 2.0].map(w => (
                                     <Button
                                         key={w}
-                                        className="h-14 font-black rounded-xl bg-white dark:bg-zinc-900 text-gray-700 dark:text-gray-300 hover:bg-sky-500 hover:text-white border border-gray-200 dark:border-white/5 shadow-sm transition-all uppercase italic tracking-widest text-[10px]"
+                                        className="h-14 font-medium rounded-2xl card-base border-none text-gray-700 dark:text-gray-300 hover:bg-sky-500 hover:text-white border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all uppercase tracking-tight tracking-widest text-[10px]"
                                         onPress={() => setManualWeightValue(w.toFixed(3))}
                                     >
                                         {w}kg
@@ -99,7 +99,7 @@ export default function ManualWeightModal({
                                 </div>
                             )}
                             <Button
-                                className="w-full h-16 rounded-[2rem] font-black uppercase tracking-widest text-base bg-emerald-600 hover:bg-emerald-500 text-white shadow-xl shadow-emerald-500/20 transition-all active:scale-95 italic"
+                                className="w-full h-16 rounded-[2rem] font-medium uppercase tracking-widest text-base bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-95 tracking-tight"
                                 onPress={() => {
                                     const result = validateManualWeight(manualWeightValue);
                                     if (!result.isValid) {

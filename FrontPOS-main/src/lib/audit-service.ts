@@ -1,4 +1,4 @@
-import Cookies from 'js-cookie';
+﻿import Cookies from 'js-cookie';
 
 export type AuditAction = 
     | 'CART_ITEM_REMOVE' 
@@ -22,7 +22,7 @@ export async function registerAuditLog(action: AuditAction, module: string, deta
         };
 
         // Intentamos enviar al backend
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/audit-logs/register`, {
+        const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/admin/audit-logs/register`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -41,3 +41,5 @@ export async function registerAuditLog(action: AuditAction, module: string, deta
         console.error("Audit log failed:", error);
     }
 }
+
+

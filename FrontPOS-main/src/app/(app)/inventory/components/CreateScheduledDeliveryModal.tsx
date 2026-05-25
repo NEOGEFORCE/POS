@@ -72,7 +72,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
       backdrop="blur"
       size="md"
       classNames={{
-        base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl",
+        base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
         header: "border-b border-gray-100 dark:border-white/5",
         footer: "border-t border-gray-100 dark:border-white/5"
       }}
@@ -81,11 +81,11 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
         {(onClose) => (
           <>
             <ModalHeader className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-amber-500 text-white flex items-center justify-center shadow-lg shadow-amber-500/20">
+              <div className="h-10 w-10 rounded-2xl bg-amber-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-amber-500/20">
                 <Truck size={20} />
               </div>
               <div className="flex flex-col">
-                <h3 className="text-lg font-black uppercase italic tracking-tighter text-gray-900 dark:text-white">Programar <span className="text-amber-500">Entrega</span></h3>
+                <h3 className="text-lg font-medium uppercase tracking-tight tracking-tighter text-zinc-900 dark:text-zinc-50">Programar <span className="text-amber-500">Entrega</span></h3>
                 <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Nueva Preventa Logística</p>
               </div>
             </ModalHeader>
@@ -93,7 +93,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
               
               {/* PROVEEDOR */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Proveedor / Marca</label>
+                <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Proveedor / Marca</label>
                 <Autocomplete
                   placeholder="Buscar proveedor..."
                   variant="flat"
@@ -126,25 +126,25 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
               <div className="grid grid-cols-2 gap-4">
                 {/* VALOR ESTIMADO */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Valor Estimado</label>
+                  <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Valor Estimado</label>
                   <Input
                     type="text"
                     inputMode="decimal"
                     placeholder="Monto aproximado"
                     variant="flat"
-                    startContent={<DollarSign size={16} className="text-emerald-500" />}
+                    startContent={<DollarSign size={16} className="text-zinc-900 dark:text-zinc-100" />}
                     value={formData.totalEstimated}
                     onValueChange={(v) => setFormData({ ...formData, totalEstimated: v })}
                     classNames={{
-                        inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-transparent focus-within:border-emerald-500 transition-all",
-                        input: "font-black text-emerald-500 text-sm"
+                        inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-transparent focus-within:border-emerald-500 transition-all",
+                        input: "font-medium text-zinc-900 dark:text-zinc-100 text-sm"
                     }}
                   />
                 </div>
 
                 {/* FECHA DE ENTREGA */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Fecha Programada</label>
+                  <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Fecha Programada</label>
                   <Input
                     type="date"
                     variant="flat"
@@ -152,17 +152,17 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
                     value={formData.expectedDate}
                     onChange={(e) => setFormData({ ...formData, expectedDate: e.target.value })}
                     classNames={{
-                        inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-transparent focus-within:border-amber-500 transition-all",
-                        input: "font-black text-sm uppercase"
+                        inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-transparent focus-within:border-amber-500 transition-all",
+                        input: "font-medium text-sm uppercase"
                     }}
                   />
                 </div>
               </div>
 
               {/* ESTADO INFO */}
-              <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-xl flex items-center gap-3">
-                <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                <p className="text-[10px] font-black text-amber-600 dark:text-amber-500 uppercase tracking-wider italic">
+              <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-2xl flex items-center gap-3">
+                <div className="h-2 w-2 rounded-2xl bg-amber-500 animate-pulse" />
+                <p className="text-[10px] font-medium text-amber-600 dark:text-amber-500 uppercase tracking-wider tracking-tight">
                   Estado Inicial: <span className="underline">EN CAMINO</span>
                 </p>
               </div>
@@ -172,12 +172,12 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
               <Button 
                 variant="light" 
                 onPress={onClose} 
-                className="font-black text-[10px] uppercase tracking-widest text-gray-500 hover:text-gray-900 h-10"
+                className="font-medium text-[10px] uppercase tracking-widest text-gray-500 hover:text-gray-900 h-10"
               >
                 Cancelar
               </Button>
               <Button 
-                className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-950 font-black text-[10px] uppercase tracking-widest shadow-xl h-10 px-6"
+                className="bg-[#18181b] dark:bg-white text-white dark:text-zinc-950 font-medium text-[10px] uppercase tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-10 px-6"
                 startContent={<Save size={16} />}
                 isLoading={isSubmitting}
                 onPress={handleSave}

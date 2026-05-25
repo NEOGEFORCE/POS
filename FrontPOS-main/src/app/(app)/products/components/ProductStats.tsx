@@ -68,10 +68,10 @@ const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock
       {kpis.map((k, i) => (
         <div 
           key={i} 
-          className={`relative overflow-hidden group border p-2 px-3 rounded-lg flex flex-col justify-between shadow-sm transition-all active:scale-95 cursor-pointer h-[66px] ${
+          className={`relative overflow-hidden group border p-2 px-3 rounded-2xl flex flex-col justify-between shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-95 cursor-pointer h-[66px] ${
             k.alert 
-              ? 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 hover:border-rose-500/30' 
-              : 'bg-white dark:bg-zinc-900 border-gray-200 dark:border-white/5 hover:border-emerald-500/30'
+              ? 'card-base border-none border-gray-200 dark:border-white/5 hover:border-rose-500/30' 
+              : 'card-base border-none border-gray-200 dark:border-white/5 hover:border-emerald-500/30'
           }`}
         >
           {/* Fondo Sparkline */}
@@ -85,19 +85,19 @@ const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock
 
           <div className="flex justify-between items-start z-10">
              <div className="flex flex-col">
-                <span className="text-[8px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mb-0.5 italic">{k.label}</span>
-                <span className="text-base md:text-xl font-black tabular-nums tracking-tighter leading-none text-gray-900 dark:text-white italic">
+                <span className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mb-0.5 tracking-tight">{k.label}</span>
+                <span className="text-base md:text-xl font-medium tabular-nums tracking-tighter leading-none text-zinc-900 dark:text-zinc-50 tracking-tight">
                   {k.val}
                 </span>
              </div>
-             <div className="p-1 rounded-md" style={{ backgroundColor: `${k.color}20`, color: k.color }}>
+             <div className="p-1 rounded-2xl" style={{ backgroundColor: `${k.color}20`, color: k.color }}>
                 <k.icon size={14} />
              </div>
           </div>
 
           <div className="flex items-center gap-1 mt-auto z-10">
-             <div className="h-1 w-1 rounded-full animate-pulse" style={{ backgroundColor: k.color }} />
-             <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-widest italic leading-none">{k.desc}</p>
+             <div className="h-1 w-1 rounded-2xl animate-pulse" style={{ backgroundColor: k.color }} />
+             <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-widest tracking-tight leading-none">{k.desc}</p>
           </div>
         </div>
       ))}

@@ -13,9 +13,11 @@ type APIError struct {
 	Metadata any    `json:"metadata,omitempty"`
 }
 
-// ErrorResponse envuelve el APIError en un objeto "error" para fácil lectura
+// ErrorResponse envuelve el APIError y añade campos de éxito globales
 type ErrorResponse struct {
-	Error APIError `json:"error"`
+	Success bool     `json:"success"`
+	Message string   `json:"message"`
+	Error   APIError `json:"error"`
 }
 
 // SendError centraliza la respuesta de errores en el backend
@@ -32,6 +34,8 @@ func SendError(c *gin.Context, status int, code, message string, errOrMeta any) 
 	}
 
 	c.JSON(status, ErrorResponse{
+		Success: false,
+		Message: message,
 		Error: APIError{
 			Code:     code,
 			Message:  message,
@@ -58,6 +62,16 @@ func parseDate(s string) (time.Time, error) {
 	}
 	// Try full format first
 	t, err := time.Parse("2006-01-02 15:04:05", s)
+	if err == nil {
+		return t, nil
+	}
+	// Try datetime-local format from frontend
+	t, err = time.Parse("2006-01-02T15:04", s)
+	if err == nil {
+		return t, nil
+	}
+	// Try ISO format with seconds
+	t, err = time.Parse("2006-01-02T15:04:05", s)
 	if err == nil {
 		return t, nil
 	}

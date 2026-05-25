@@ -13,6 +13,7 @@ type Product struct {
 	Iva              float64    `gorm:"type:decimal(10,2);default:0;column:iva" json:"iva"`
 	Icui             float64    `gorm:"type:decimal(10,2);default:0;column:icui" json:"icui"`
 	Ibua             float64    `gorm:"type:decimal(10,2);default:0;column:ibua" json:"ibua"`
+	Discount         float64    `gorm:"type:decimal(10,2);default:0;column:discount" json:"discount"`
 	MarginPercentage float64    `gorm:"type:decimal(10,4);default:0;column:marginPercentage" json:"marginPercentage"`
 	SalePrice        float64    `gorm:"type:decimal(10,2);not null;column:salePrice" json:"salePrice"`
 	CategoryID       uint       `gorm:"index;column:categoryId;constraint:OnDelete:SET NULL;" json:"categoryId"`
@@ -28,6 +29,7 @@ type Product struct {
 	UpdatedBy        Employee   `gorm:"foreignKey:UpdatedByDNI;references:DNI" json:"updatedByEmployee,omitempty"`
 	ImageUrl         string     `gorm:"type:text;column:imageUrl" json:"imageUrl"`
 	MinStock         float64    `gorm:"type:decimal(10,2);default:0;column:minStock" json:"minStock"`
+	MinShelfStock    float64    `gorm:"type:decimal(10,2);default:0;column:min_shelf_stock" json:"minShelfStock"`
 	IsActive         bool       `gorm:"default:true;column:isActive" json:"isActive"`
 	AlternateCodes   string     `gorm:"type:text;column:alternate_codes;default:''" json:"alternateCodes"`
 
@@ -56,4 +58,18 @@ type ProductSupplier struct {
 
 func (ProductSupplier) TableName() string {
 	return "product_suppliers"
+}
+
+type PriceLog struct {
+	ID             uint    `gorm:"primaryKey" json:"id"`
+	ProductBarcode string  `gorm:"index;column:product_barcode" json:"productBarcode"`
+	ProductName    string  `gorm:"column:product_name" json:"productName"`
+	OldPrice       float64 `gorm:"type:decimal(10,2);column:old_price" json:"oldPrice"`
+	NewPrice       float64 `gorm:"type:decimal(10,2);column:new_price" json:"newPrice"`
+	CreatedAt      int64   `gorm:"autoCreateTime;column:created_at" json:"createdAt"`
+	Product        Product `gorm:"foreignKey:ProductBarcode;references:Barcode" json:"-"`
+}
+
+func (PriceLog) TableName() string {
+	return "price_logs"
 }

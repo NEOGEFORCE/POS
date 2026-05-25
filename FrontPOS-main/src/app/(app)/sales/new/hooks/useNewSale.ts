@@ -3,7 +3,7 @@ import { useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
 import { Product, Customer, Category } from '@/lib/definitions';
-import { applyRounding, isProductWeighted, formatDateTime } from "@/lib/utils";
+import { applyRounding, isProductWeighted, formatDateTime, normalizeText } from "@/lib/utils";
 import { ScaleBridge } from '@/lib/scaleBridge';
 import { useScale } from '@/hooks/useScale';
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
@@ -130,6 +130,7 @@ export function useNewSale() {
     // Ultra-Instinto: Web Worker & Offline DB
     const workerRef = useRef<Worker | null>(null);
     const [isOffline, setIsOffline] = useState(false);
+    const [syncQueueCount, setSyncQueueCount] = useState(0);
     const [workerFilteredProducts, setWorkerFilteredProducts] = useState<Product[]>([]);
 
     const { weight: scaleWeight, isScaleOnline, isReloading: isScaleReloading, reload: reloadScale } = useScale();
@@ -356,6 +357,7 @@ export function useNewSale() {
     const syncOfflineQueue = async () => {
         const { getSyncQueue, removeFromSyncQueue } = await import('@/lib/offline-db');
         const queue = await getSyncQueue();
+        setSyncQueueCount(queue.length);
         if (queue.length === 0) return;
 
         toast({ title: "SINCRONIZANDO", description: `SUBIENDO ${queue.length} VENTAS PENDIENTES...` });
@@ -363,12 +365,15 @@ export function useNewSale() {
         for (const sale of queue) {
             try {
                 const token = Cookies.get('org-pos-token');
-                const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/register`, {
+                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`, {
                     method: 'POST', 
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, 
                     body: JSON.stringify(sale.payload) // Nota: payload es donde está la data de la venta
                 });
-                if (res.ok) await removeFromSyncQueue(sale.id);
+                if (res.ok) {
+                    await removeFromSyncQueue(sale.id);
+                    setSyncQueueCount(prev => Math.max(0, prev - 1));
+                }
             } catch (err) {
                 console.error("Sync failed for", sale.id, err);
             }
@@ -376,11 +381,45 @@ export function useNewSale() {
         toast({ variant: "success", title: "SINCRO COMPLETA", description: "TODO AL DÍA" });
     };
 
+    // Actualizar conteo de cola al montar y cada vez que cambia el estado offline
+    useEffect(() => {
+        const updateCount = async () => {
+            const { getSyncQueue } = await import('@/lib/offline-db');
+            const queue = await getSyncQueue();
+            setSyncQueueCount(queue.length);
+        };
+        updateCount();
+    }, [isOffline]);
+
+    // NUEVO: Servicio de fondo para auto-reintento de cola offline
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+
+        const handleOnline = () => {
+            setIsOffline(false);
+            syncOfflineQueue(); // Auto-sincronizar al volver la red
+        };
+
+        const handleOffline = () => {
+            setIsOffline(true);
+        };
+
+        setIsOffline(!navigator.onLine);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+        };
+    }, []);
+
     // Computed Values (Optimized via useMemo)
     const currentCart = useMemo(() => carts[activeCartKey] || [], [carts, activeCartKey]);
     
     const sortedCart = useMemo(() => {
-        return [...currentCart].sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
+        return [...currentCart];
     }, [currentCart]);
 
     const total = useMemo(() => {
@@ -542,6 +581,25 @@ export function useNewSale() {
         returnFocusToScanner();
     }, [selectedItemId, returnFocusToScanner]);
 
+    const updateCartItem = useCallback((cartItemId: string, quantity: number, salePrice: number) => {
+        setCarts(prev => {
+            const currentKey = activeCartKeyRef.current;
+            const current = [...(prev[currentKey] || [])];
+            const idx = current.findIndex(item => item.cartItemId === cartItemId);
+            if (idx === -1) return prev;
+
+            const item = current[idx];
+            if (quantity <= 0) {
+                const filtered = current.filter(i => i.cartItemId !== cartItemId);
+                if (selectedItemId === cartItemId) setSelectedItemId(null);
+                return { ...prev, [currentKey]: filtered };
+            }
+            current[idx] = { ...item, cartQuantity: quantity, salePrice: salePrice };
+            return { ...prev, [currentKey]: current };
+        });
+        returnFocusToScanner();
+    }, [selectedItemId, returnFocusToScanner]);
+
     const setCartItemQuantity = useCallback((cartItemId: string, quantity: number) => {
         setCarts(prev => {
             const currentKey = activeCartKeyRef.current;
@@ -572,7 +630,7 @@ export function useNewSale() {
 
     const addMiscItem = useCallback((priceStr: string) => {
         if (scaleWeight < 0) {
-            toast({ variant: "destructive", title: "GRAMERA", description: "⚠️ Ponga la gramera en 0 o positivo" });
+            toast({ variant: "destructive", title: "GRAMERA", description: "âš ï¸  Ponga la gramera en 0 o positivo" });
             return;
         }
         const price = parseFloat(priceStr);
@@ -581,7 +639,7 @@ export function useNewSale() {
         const miscProduct: CartItem = { 
             barcode: '0000', 
             cartItemId: cartItemId,
-            productName: `VENTA RÁPIDA ($${price.toLocaleString()})`, 
+            productName: `${normalizeText("VENTA RAPIDA")} ($${price.toLocaleString()})`, 
             salePrice: price, 
             quantity: 999999, 
             purchasePrice: price * 0.8, // 20% de Rentabilidad
@@ -608,7 +666,7 @@ export function useNewSale() {
     const addToCart = useCallback(async (p: Product) => {
         try {
             if (scaleWeight < -0.0001) {
-                toast({ variant: "destructive", title: "GRAMERA", description: "⚠️ Ponga la gramera en 0 o positivo" });
+                toast({ variant: "destructive", title: "GRAMERA", description: "âš ï¸ Ponga la gramera en 0 o positivo" });
                 return;
             }
 
@@ -639,8 +697,13 @@ export function useNewSale() {
                     setCarts(prev => {
                         const current = [...(prev[currentKey] || [])];
                         const idx = current.findIndex(item => item.cartItemId === p.barcode);
-                        if (idx > -1) current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + freshWeight }; 
-                        else current.push({ ...p, cartQuantity: freshWeight, cartItemId: p.barcode });
+                        if (idx > -1) {
+                            const updatedItem = { ...current[idx], cartQuantity: current[idx].cartQuantity + freshWeight };
+                            current.splice(idx, 1);
+                            current.push(updatedItem);
+                        } else {
+                            current.push({ ...p, cartQuantity: freshWeight, cartItemId: p.barcode });
+                        }
                         return { ...prev, [currentKey]: current };
                     }); 
                     setSelectedItemId(p.barcode); 
@@ -667,7 +730,9 @@ export function useNewSale() {
                         });
                         return prev;
                     }
-                    current[idx] = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
+                    const updatedItem = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
+                    current.splice(idx, 1);
+                    current.push(updatedItem);
                 } else {
                     current.push({ ...p, cartQuantity: 1, cartItemId: p.barcode });
                 }
@@ -677,7 +742,16 @@ export function useNewSale() {
             setSelectedItemId(p.barcode); 
             setSearchQuery(''); 
             setScannerBuffer('');
-            returnFocusToScanner();
+            
+            // --- FORZAR FOCO EN EL INPUT DE CANTIDAD (FASE 3) ---
+            setTimeout(() => {
+                const input = document.getElementById(`qty-input-${p.barcode}`) as HTMLInputElement;
+                if (input) {
+                    input.focus();
+                    input.select();
+                }
+            }, 50);
+            // Eliminado returnFocusToScanner() para que el autoFocus del input de cantidad surta efecto
         } catch (error: any) {
             console.error("Error en addToCart:", error);
             toast({ variant: "destructive", title: "ERROR INESPERADO", description: error?.message || "No se pudo seleccionar el producto." });
@@ -750,6 +824,8 @@ export function useNewSale() {
                         title: "BALANZA DETECTADA", 
                         description: `${p.productName}: ${calculatedWeight.toFixed(3)}kg añadidos` 
                     });
+                    // Autofocus en el carrito: necesitamos reconstruir el ID para seleccionarlo
+                    // como dependemos del estado, usamos el mismo barcode temporal (para heuristic no se suele editar la cantidad, pero por si acaso)
                     returnFocusToScanner();
                     return;
                 }
@@ -793,10 +869,10 @@ export function useNewSale() {
             setFeedbackCode(finalCode); 
             setIsFeedbackError(true); 
             toast({ variant: "destructive", title: "SISTEMA", description: `CÓDIGO ${finalCode} NO ENCONTRADO` });
+            returnFocusToScanner();
         }
         setScannerBuffer('');
         setSearchQuery('');
-        returnFocusToScanner();
     }, [products, addToCart, toast, returnFocusToScanner, setScannerBuffer]);
 
     const handleScaleSync = useCallback(() => {
@@ -832,6 +908,8 @@ export function useNewSale() {
         cash: number;
         transfer: number;
         transferSource: string;
+        transferNequi?: number;
+        transferDaviplata?: number;
         credit: number;
         totalPaid: number;
         change: number;
@@ -880,12 +958,14 @@ export function useNewSale() {
         submittingRef.current = true;
         setSubmitting(true);
         const token = Cookies.get('org-pos-token');
-        const { cash, transfer, transferSource, credit, totalPaid, change } = paymentData;
+        const { cash, transfer, transferSource, transferNequi = 0, transferDaviplata = 0, credit, totalPaid, change } = paymentData;
 
         // --- INTELIGENCIA DE CATEGORIZACIÓN (Sin "MIXTO") ---
         const paymentMethods: string[] = [];
         if (cash > 0) paymentMethods.push("EFECTIVO");
-        if (transfer > 0) paymentMethods.push(transferSource?.toUpperCase() || "TRANSFERENCIA");
+        if (transferNequi > 0) paymentMethods.push("NEQUI");
+        if (transferDaviplata > 0) paymentMethods.push("DAVIPLATA");
+        if (transfer > 0 && transferNequi === 0 && transferDaviplata === 0) paymentMethods.push(transferSource?.toUpperCase() || "TRANSFERENCIA");
         if (credit > 0) paymentMethods.push("FIADO");
         
         // Si no hay montos (error?), default a EFECTIVO
@@ -907,6 +987,8 @@ export function useNewSale() {
             amountPaid: totalPaid,
             cashAmount: cash,
             transferAmount: transfer,
+            transferNequi: transferNequi,
+            transferDaviplata: transferDaviplata,
             transferSource: transfer > 0 ? transferSource : '',
             creditAmount: credit,
             change: change,
@@ -934,7 +1016,7 @@ export function useNewSale() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 segundos de espera máx. (MEGA-SPRINT)
 
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sales/register`, {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`, {
                 method: 'POST', 
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, 
                 body: JSON.stringify(saleData),
@@ -946,14 +1028,12 @@ export function useNewSale() {
                 toast({ variant: 'success', title: 'VENTA REGISTRADA', description: 'TRANSACCIÓN COMPLETADA CON ÉXITO' });
                 finalizeLocalSale(itemsToPay, saleData, change);
             } else {
-                // ERROR DEL SERVIDOR: No vamos a offline porque es un error de validación (ej: falta cupo)
                 const errorMsg = await extractApiError(res, "ERROR AL REGISTRAR VENTA");
-                toast({ variant: "destructive", title: "ERROR DEL SERVIDOR", description: errorMsg });
+                toast({ variant: "destructive", title: "ERROR DEL SERVIDOR", description: errorMsg, duration: 10000 });
                 setSubmitting(false);
                 return;
             }
         } catch (err: any) {
-            // ERROR DE RED O TIMEOUT: Solo aquí activamos el modo offline (Ultra-Instinto)
             const isTimeout = err.name === 'AbortError';
             const isNetworkError = err instanceof TypeError || err.name === 'TypeError' || err.message?.includes('fetch') || isTimeout;
             
@@ -969,7 +1049,7 @@ export function useNewSale() {
                 
                 finalizeLocalSale(itemsToPay, saleData, change);
             } else {
-                toast({ variant: "destructive", title: "ERROR INESPERADO", description: err.message || "CONSULTE AL ADMINISTRADOR" });
+                toast({ variant: "destructive", title: "ERROR INESPERADO", description: err.message || "CONSULTE AL ADMINISTRADOR", duration: 10000 });
                 setSubmitting(false);
             }
         } finally {
@@ -1151,6 +1231,8 @@ export function useNewSale() {
         selectedItemId, setSelectedItemId,
         feedbackCode, isFeedbackError,
         isOffline, // Exportamos estado de red
+        syncQueueCount,
+        syncOfflineQueue,
         
         // Modal States
         isPaymentDialogOpen, setIsPaymentDialogOpen,
@@ -1182,7 +1264,8 @@ export function useNewSale() {
         
         // Handlers
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart, confirmDeleteCart,
-        updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity,
+        updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity, updateCartItem,
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight
     };
 }
+

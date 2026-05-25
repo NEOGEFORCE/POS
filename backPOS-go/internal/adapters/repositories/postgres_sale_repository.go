@@ -637,10 +637,10 @@ func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (m
 			WHERE status IN ('PAID', 'CREDIT') AND deleted_at IS NULL AND "saleDate" >= ? AND "saleDate" <= ?
 			UNION ALL
 			SELECT "amountCash" as amount FROM credit_payments 
-			WHERE "createdAt" >= ? AND "createdAt" <= ?
+			WHERE "paymentDate" >= ? AND "paymentDate" <= ?
 		) as combined_cash
 	`
-	r.db.Raw(cashQuery, from, to, from, to).Scan(&totalCash)
+ r.db.Raw(cashQuery, from, to, from, to).Scan(&totalCash)
 	results["EFECTIVO"] = totalCash
 
 	// 2. Fiados (Monto de deuda emitido)
@@ -662,7 +662,7 @@ func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (m
 			WHERE status IN ('PAID', 'CREDIT') AND "transferAmount" > 0 AND deleted_at IS NULL AND "saleDate" >= ? AND "saleDate" <= ?
 			UNION ALL
 			SELECT "transferSource" as source, "amountTransfer" as amount FROM credit_payments 
-			WHERE "amountTransfer" > 0 AND "createdAt" >= ? AND "createdAt" <= ?
+			WHERE "amountTransfer" > 0 AND "paymentDate" >= ? AND "paymentDate" <= ?
 		) as combined_transfers
 		GROUP BY 1
 	`
@@ -687,3 +687,14 @@ func (r *PostgresSaleRepository) GetPendingByClient(clientDNI string) ([]models.
 		Find(&sales).Error
 	return sales, err
 }
+
+func (r *PostgresSaleRepository) GetCreditHistoryByClient(clientDNI string) ([]models.Sale, error) {
+	var sales []models.Sale
+	// Traer todas las ventas donde creditAmount > 0 (sin importar el estado de debtPending)
+	err := r.db.Preload("SaleDetails").Preload("SaleDetails.Product").
+		Where("\"clientDni\" = ? AND \"creditAmount\" > 0", clientDNI).
+		Order("\"saleDate\" ASC").
+		Find(&sales).Error
+	return sales, err
+}
+

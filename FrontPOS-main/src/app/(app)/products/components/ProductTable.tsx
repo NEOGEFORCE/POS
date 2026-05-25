@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { Product } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
-import { getStockStatus, formatStock, isProductWeighted } from '@/lib/utils';
+import { calculateStockHealth, formatStock, isProductWeighted } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconPackage } from '@tabler/icons-react';
 
@@ -60,6 +60,29 @@ const ProductTable = memo(({
     const isAdmin = role === "admin" || role === "administrador" || role === "superadmin";
     const canEdit = isAdmin || role === "empleado";
 
+    const sortedProducts = React.useMemo(() => {
+        if (!products) return [];
+        return [...products].sort((a, b) => {
+            const healthA = calculateStockHealth(a.quantity, a.minStock || 1);
+            const healthB = calculateStockHealth(b.quantity, b.minStock || 1);
+            
+            // 1. Salud (Rojo < Amarillo < Verde)
+            const wA = healthA === 'CRITICAL' ? 0 : healthA === 'WARNING' ? 1 : 2;
+            const wB = healthB === 'CRITICAL' ? 0 : healthB === 'WARNING' ? 1 : 2;
+            if (wA !== wB) return wA - wB;
+
+            // 2. Urgencia: Cantidad faltante vs meta (MinStock - Cantidad)
+            const diffA = (a.minStock || 0) - a.quantity;
+            const diffB = (b.minStock || 0) - b.quantity;
+            if (diffB !== diffA) return diffB - diffA;
+
+            // 3. Rotación (Promedio de venta diaria)
+            const rotA = (a as any).avgSoldPerDay || 0;
+            const rotB = (b as any).avgSoldPerDay || 0;
+            return rotB - rotA;
+        });
+    }, [products]);
+
     useEffect(() => {
         const mql = window.matchMedia("(max-width: 768px)");
         const onChange = () => setIsMobile(mql.matches);
@@ -69,24 +92,26 @@ const ProductTable = memo(({
     }, []);
 
     const renderCell = useCallback((product: Product, columnKey: React.Key) => {
-        // Semáforo dinámico v2.0
-        const minStock = product.minStock || 0;
+        const minStock = product.minStock || 1;
         const quantity = product.quantity;
-        const weighted = isProductWeighted(product);
-        const status = getStockStatus(quantity, minStock);
+        const health = calculateStockHealth(quantity, minStock);
 
-        // Determinar clase CSS según estado
-        const stockStatusClass = !weighted && status === 'CRITICAL'
+        const isCritical = health === 'CRITICAL';
+        const isWarning = health === 'WARNING';
+
+        const stockStatusClass = isCritical
             ? 'bg-rose-500/10 border-rose-500/40 text-rose-500 animate-pulse'
-            : !weighted && status === 'REORDER'
-                ? 'bg-amber-500/10 border-amber-500/40 text-amber-500 font-black'
-                : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500';
+            : isWarning
+                ? 'bg-amber-500/10 border-amber-500/40 text-amber-500 font-medium'
+                : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-500/20 text-zinc-900 dark:text-zinc-100';
+
+        const indicatorColor = isCritical ? 'bg-rose-500' : isWarning ? 'bg-amber-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5';
 
         switch (String(columnKey)) {
             case "identity":
                 return (
                     <div className="flex items-center gap-3 py-1">
-                        <div className="h-9 w-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center border border-emerald-500/20 shadow-sm shrink-0 overflow-hidden">
+                        <div className="h-9 w-9 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 overflow-hidden">
                             {product.imageUrl ? (
                                 <img src={product.imageUrl} className="h-full w-full object-cover" alt="" />
                             ) : (
@@ -94,10 +119,10 @@ const ProductTable = memo(({
                             )}
                         </div>
                         <div className="flex flex-col min-w-0">
-                            <span className="text-[10px] font-black text-gray-900 dark:text-white uppercase italic leading-tight truncate max-w-[180px]">
+                            <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate max-w-[180px]">
                                 {product.productName}
                             </span>
-                            <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-tight">BARCODE: {product.barcode}</span>
+                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight">BARCODE: {product.barcode}</span>
                         </div>
                     </div>
                 );
@@ -105,7 +130,7 @@ const ProductTable = memo(({
                 return (
                     <div className="flex items-center justify-center w-full min-w-[9rem]">
                         <div
-                            className={`inline-flex items-center gap-0.5 sm:gap-1 rounded-xl border transition-all ${stockStatusClass}`}
+                            className={`inline-flex items-center gap-0.5 sm:gap-1 rounded-2xl border transition-all ${stockStatusClass}`}
                         >
                             {isAdmin && (
                                 <Button
@@ -113,24 +138,23 @@ const ProductTable = memo(({
                                     size="sm"
                                     variant="light"
                                     radius="lg"
-                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-white/10"
-                                    aria-label="Disminuir cantidad"
+                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-zinc-100 dark:bg-zinc-800"
                                     onPress={() => onQuickUpdate(product.barcode, -1)}
                                 >
                                     <Minus className="h-4 w-4" strokeWidth={2.5} />
                                 </Button>
                             )}
-                            <span className="min-w-[2.75rem] px-1 text-center text-[11px] font-black italic tabular-nums leading-none">
+                            <div className="flex items-center gap-1.5 min-w-[2.75rem] px-2 text-center text-[11px] font-medium tracking-tight tabular-nums leading-none">
+                                <div className={`h-1.5 w-1.5 rounded-2xl ${indicatorColor} shadow-[0_8px_30px_rgb(0,0,0,0.12)]`} />
                                 {formatStock(product.quantity, (product as any).isPack, isProductWeighted(product))}
-                            </span>
+                            </div>
                             {isAdmin && (
                                 <Button
                                     isIconOnly
                                     size="sm"
                                     variant="light"
                                     radius="lg"
-                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-white/10"
-                                    aria-label="Aumentar cantidad"
+                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-zinc-100 dark:bg-zinc-800"
                                     onPress={() => onQuickUpdate(product.barcode, 1)}
                                 >
                                     <Plus className="h-4 w-4" strokeWidth={2.5} />
@@ -144,45 +168,52 @@ const ProductTable = memo(({
                     <div className="flex flex-col leading-tight">
                         {isAdmin && (
                             <div className="flex items-center gap-1.5">
-                                <span className="text-[7px] font-black text-gray-400 uppercase italic">COSTO</span>
-                                <span className="text-[9px] font-black text-gray-500 italic tabular-nums">${formatCOP(product.purchasePrice)}</span>
+                                <span className="text-[7px] font-medium text-gray-400 uppercase tracking-tight">COSTO</span>
+                                <span className="text-[9px] font-medium text-gray-500 tracking-tight tabular-nums">${formatCOP(product.purchasePrice)}</span>
                             </div>
                         )}
                         <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[7px] font-black text-emerald-500 uppercase italic">VENTA</span>
-                            <span className="text-[10px] font-black text-emerald-600 italic tabular-nums">${formatCOP(product.salePrice)}</span>
+                            <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight">VENTA</span>
+                            <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 tracking-tight tabular-nums">${formatCOP(product.salePrice)}</span>
                         </div>
                     </div>
                 );
             case "margin":
-                if (!isAdmin) return <div className="text-[10px] font-black text-gray-300 italic">---</div>;
-                const isHighMargin = product.marginPercentage > 35;
+                if (!isAdmin) return <div className="text-[10px] font-medium text-gray-300 tracking-tight">---</div>;
+                const safeCost = parseFloat(String(product.purchasePrice)) || 0;
+                const safePvp = parseFloat(String(product.salePrice)) || 0;
+                
+                let calculatedMargin = 100;
+                if (safeCost > 0) {
+                    calculatedMargin = ((safePvp / safeCost) - 1) * 100;
+                }
+                const isHighMargin = calculatedMargin > 35;
                 return (
                     <div className="flex flex-col items-center gap-1">
-                        <div className="inline-flex items-center px-2 py-1 rounded-lg bg-gray-50/50 dark:bg-black/30 border border-gray-100 dark:border-white/5">
-                            <span className="text-[10px] font-black text-emerald-500 italic tabular-nums">{product.marginPercentage?.toFixed(1)}%</span>
+                        <div className="inline-flex items-center px-2 py-1 rounded-2xl bg-gray-50/50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5">
+                            <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 tracking-tight tabular-nums">{(calculatedMargin || 0).toFixed(2)}%</span>
                         </div>
                         {isHighMargin && (
-                            <span className="text-[7px] font-black text-emerald-500 uppercase tracking-tighter animate-pulse">
+                            <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tighter animate-pulse">
                                 ↑ Margen Alto
                             </span>
                         )}
                     </div>
                 );
             case "actions":
-                if (!canEdit) return <span className="text-[7px] font-black text-gray-400 uppercase italic opacity-30">Lectura</span>;
+                if (!canEdit) return <span className="text-[7px] font-medium text-gray-400 uppercase tracking-tight opacity-30">Lectura</span>;
                 return (
                     <div className="flex items-center justify-end gap-1 px-1">
                         {onOpenBulk && (
-                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-amber-500/5 text-amber-500 rounded-lg hover:bg-amber-500 hover:text-white transition-all shadow-sm" onPress={() => onOpenBulk(product)}>
+                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-amber-500/5 text-amber-500 rounded-2xl hover:bg-amber-500 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)]" onPress={() => onOpenBulk(product)}>
                                 <Package size={14} />
                             </Button>
                         )}
-                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg hover:bg-emerald-500 hover:text-white transition-all shadow-sm" onPress={() => onEdit(product)}>
+                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-zinc-900 dark:text-zinc-100 rounded-2xl hover:bg-emerald-500 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)]" onPress={() => onEdit(product)}>
                             <Edit size={14} />
                         </Button>
                         {isAdmin && (
-                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-lg hover:bg-rose-500 hover:text-white transition-all shadow-sm" onPress={() => onDelete(product.barcode)}>
+                            <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-2xl hover:bg-rose-500 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)]" onPress={() => onDelete(product.barcode)}>
                                 <Trash2 size={14} />
                             </Button>
                         )}
@@ -194,7 +225,7 @@ const ProductTable = memo(({
     }, [isAdmin, onEdit, onDelete, onQuickUpdate, formatCOP]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-sm transition-colors">
+        <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
                 {!isMobile ? (
                     <div className="flex-1 overflow-auto overscroll-contain custom-scrollbar min-h-0 w-full">
@@ -205,9 +236,9 @@ const ProductTable = memo(({
                             aria-label="Directorio Maestro Productos"
                             classNames={{
                                 base: "min-w-[720px]",
-                                th: "bg-gray-50/80 dark:bg-zinc-950/80 backdrop-blur-md text-gray-400 dark:text-zinc-500 font-black uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
+                                th: "bg-gray-50/80 dark:bg-zinc-950/80  text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
                                 td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-4",
-                                tr: "hover:bg-emerald-500/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-emerald-500/10 cursor-default group h-10",
+                                tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-default group h-10",
                             }}
                         >
                             <TableHeader columns={COLUMNS}>
@@ -218,7 +249,7 @@ const ProductTable = memo(({
                                 )}
                             </TableHeader>
                             <TableBody
-                                items={products}
+                                items={sortedProducts}
                                 emptyContent={
                                     <EmptyState
                                         title="Sin productos registrados"
@@ -236,16 +267,14 @@ const ProductTable = memo(({
                         </Table>
                     </div>
                 ) : (
-                    <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-black/20">
-                        {products.length > 0 ? (
-                            products.map((p) => {
-                                // ... existing product card logic ...
-                                const minStock = p.minStock || 0;
-                                const weightedP = isProductWeighted(p);
-                                const status = getStockStatus(p.quantity, minStock);
+                    <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b]">
+                        {sortedProducts.length > 0 ? (
+                            sortedProducts.map((p) => {
+                                const minStock = p.minStock || 1;
+                                const health = calculateStockHealth(p.quantity, minStock);
                                 
-                                const isCritical = !weightedP && status === 'CRITICAL';
-                                const isWarning = !weightedP && status === 'REORDER';
+                                const isCritical = health === 'CRITICAL';
+                                const isWarning = health === 'WARNING';
 
                                 const cardBorderClass = isCritical
                                     ? "border-rose-500/40 bg-rose-500/5 shadow-rose-500/5"
@@ -257,29 +286,29 @@ const ProductTable = memo(({
                                     ? 'bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.4)] animate-pulse'
                                     : isWarning
                                         ? 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.4)]'
-                                        : 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]';
+                                        : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 shadow-[0_0_10px_rgba(16,185,129,0.4)]';
 
                                 const quantityBoxClass = isCritical
                                     ? 'bg-rose-500/10 border-rose-500/30 text-rose-500'
                                     : isWarning
                                         ? 'bg-amber-500/10 border-amber-500/30 text-amber-500'
-                                        : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-500';
+                                        : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-500/20 text-zinc-900 dark:text-zinc-100';
 
                                 return (
-                                    <div key={p.barcode} className={`relative flex flex-col gap-2 p-2.5 rounded-xl border border-gray-200 dark:border-white/10 shadow-sm bg-white dark:bg-[#18181b] w-full shrink-0 ${cardBorderClass} transition-transform active:scale-[0.98]`}>
+                                    <div key={p.barcode} className={`relative flex flex-col gap-2 p-2.5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] card-base border-none w-full shrink-0 ${cardBorderClass} transition-transform active:scale-[0.98]`}>
                                         <div className={`absolute top-2.5 left-0 w-1 h-8 rounded-r-full z-20 ${indicatorClass}`} />
                                         
                                         <div className="flex items-center gap-2">
-                                            <div className="h-9 w-9 rounded-lg bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 flex items-center justify-center text-emerald-500 shrink-0 shadow-inner overflow-hidden">
+                                            <div className="h-9 w-9 rounded-2xl bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 flex items-center justify-center text-zinc-900 dark:text-zinc-100 shrink-0 shadow-inner overflow-hidden">
                                                 {p.imageUrl ? <img src={p.imageUrl} className="h-full w-full object-cover" alt="" /> : <Package size={16} />}
                                             </div>
                                             <div className="flex-1 min-w-0">
-                                                <h3 className="text-[11px] font-black text-gray-900 dark:text-zinc-100 uppercase tracking-tighter italic leading-none truncate">{p.productName}</h3>
+                                                <h3 className="text-[11px] font-medium text-gray-900 dark:text-zinc-100 uppercase tracking-tighter tracking-tight leading-none truncate">{p.productName}</h3>
                                                 <span className="text-[7px] text-gray-400 font-bold tracking-widest mt-1 block uppercase leading-none">{p.barcode}</span>
                                             </div>
                                             <div className="flex flex-col items-end shrink-0 leading-none">
-                                                <span className="text-[12px] font-black text-emerald-500 italic tabular-nums">${formatCOP(p.salePrice)}</span>
-                                                <span className="text-[6px] font-bold text-gray-400 uppercase tracking-widest mt-0.5 italic">PVP</span>
+                                                <span className="text-[12px] font-medium text-zinc-900 dark:text-zinc-100 tracking-tight tabular-nums">${formatCOP(p.salePrice)}</span>
+                                                <span className="text-[6px] font-bold text-gray-400 uppercase tracking-widest mt-0.5 tracking-tight">PVP</span>
                                             </div>
                                         </div>
 
@@ -291,29 +320,29 @@ const ProductTable = memo(({
                                                             isIconOnly
                                                             radius="lg"
                                                             variant="flat"
-                                                            className="h-8 w-8 min-w-8 shrink-0 bg-gray-100 dark:bg-zinc-800 text-emerald-600 dark:text-emerald-400 border border-gray-200 dark:border-white/10 active:scale-90"
+                                                            className="h-8 w-8 min-w-8 shrink-0 bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 border border-gray-200 dark:border-white/10 active:scale-90"
                                                             onPress={() => onQuickUpdate(p.barcode, -1)}
                                                         >
                                                             <Minus size={14} strokeWidth={3} />
                                                         </Button>
-                                                        <div className={`flex-1 flex items-center justify-center gap-1 h-8 rounded-lg border ${quantityBoxClass}`}>
-                                                            <span className="text-[12px] font-black italic tabular-nums leading-none">{formatStock(p.quantity, (p as any).isPack, isProductWeighted(p))}</span>
-                                                            <span className="text-[6px] font-black opacity-70 uppercase tracking-tighter">{isProductWeighted(p) ? 'KG' : 'UN'}</span>
+                                                        <div className={`flex-1 flex items-center justify-center gap-1 h-8 rounded-2xl border ${quantityBoxClass}`}>
+                                                            <span className="text-[12px] font-medium tracking-tight tabular-nums leading-none">{formatStock(p.quantity, (p as any).isPack, isProductWeighted(p))}</span>
+                                                            <span className="text-[6px] font-medium opacity-70 uppercase tracking-tighter">{isProductWeighted(p) ? 'KG' : 'UN'}</span>
                                                         </div>
                                                         <Button
                                                             isIconOnly
                                                             radius="lg"
                                                             variant="flat"
-                                                            className="h-8 w-8 min-w-8 shrink-0 bg-emerald-500 text-white border border-emerald-600/30 shadow-sm active:scale-90"
+                                                            className="h-8 w-8 min-w-8 shrink-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white border border-emerald-600/30 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                                                             onPress={() => onQuickUpdate(p.barcode, 1)}
                                                         >
                                                             <Plus size={14} strokeWidth={3} />
                                                         </Button>
                                                     </div>
                                                 ) : (
-                                                    <div className={`flex items-center justify-center gap-1.5 h-8 px-3 rounded-lg border w-full ${quantityBoxClass}`}>
-                                                        <span className="text-[12px] font-black italic tabular-nums">{formatStock(p.quantity, (p as any).isPack, isProductWeighted(p))}</span>
-                                                        <span className="text-[7px] font-black opacity-60 uppercase tracking-widest">{isProductWeighted(p) ? 'KG' : 'UN'}</span>
+                                                    <div className={`flex items-center justify-center gap-1.5 h-8 px-3 rounded-2xl border w-full ${quantityBoxClass}`}>
+                                                        <span className="text-[12px] font-medium tracking-tight tabular-nums">{formatStock(p.quantity, (p as any).isPack, isProductWeighted(p))}</span>
+                                                        <span className="text-[7px] font-medium opacity-60 uppercase tracking-widest">{isProductWeighted(p) ? 'KG' : 'UN'}</span>
                                                     </div>
                                                 )}
                                             </div>
@@ -321,11 +350,11 @@ const ProductTable = memo(({
                                             {canEdit && (
                                                 <div className="flex gap-1 shrink-0">
                                                     {onOpenBulk && (
-                                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-amber-500/10 text-amber-500 rounded-lg border border-amber-500/10" onPress={() => onOpenBulk(p)}><Package size={12} /></Button>
+                                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-amber-500/10 text-amber-500 rounded-2xl border border-amber-500/10" onPress={() => onOpenBulk(p)}><Package size={12} /></Button>
                                                     )}
-                                                    <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-emerald-500 rounded-lg border border-emerald-500/10" onPress={() => onEdit(p)}><Edit size={12} /></Button>
+                                                    <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-zinc-900 dark:text-zinc-100 rounded-2xl border border-emerald-500/10" onPress={() => onEdit(p)}><Edit size={12} /></Button>
                                                     {isAdmin && (
-                                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-500 rounded-lg border border-rose-500/10" onPress={() => onDelete(p.barcode)}><Trash2 size={12} /></Button>
+                                                        <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-500 rounded-2xl border border-rose-500/10" onPress={() => onDelete(p.barcode)}><Trash2 size={12} /></Button>
                                                     )}
                                                 </div>
                                             )}
@@ -344,25 +373,25 @@ const ProductTable = memo(({
             </div>
 
             {totalFiltered > 0 && (
-                <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 backdrop-blur-md z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
-                    <div className="flex items-center gap-2 font-black">
+                <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
+                    <div className="flex items-center gap-2 font-medium">
                         <Button
                             isIconOnly
                             size="sm"
                             variant="flat"
                             onPress={() => onPageChange(Math.max(1, currentPage - 1))}
                             isDisabled={currentPage === 1}
-                            className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                            className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                         >
                             <ChevronLeft size={18} />
                         </Button>
 
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-gray-400 dark:text-zinc-500 uppercase font-black tracking-tighter">MOSTRANDO</span>
-                            <p className="text-[10px] text-gray-900 dark:text-white uppercase tracking-widest flex items-center gap-1">
-                                <span className="italic font-black text-emerald-500">{(totalFiltered === 0 ? 0 : (currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span>
+                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
+                                <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{(totalFiltered === 0 ? 0 : (currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span>
                                 <span className="opacity-20 text-[8px]">DE</span>
-                                <span className="italic font-black">{totalFiltered}</span>
+                                <span className="tracking-tight font-medium">{totalFiltered}</span>
                             </p>
                         </div>
 
@@ -372,7 +401,7 @@ const ProductTable = memo(({
                             variant="flat"
                             onPress={() => onPageChange(Math.min(totalPages, currentPage + 1))}
                             isDisabled={currentPage === totalPages || totalPages === 0}
-                            className="h-8 w-8 min-w-0 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white rounded-lg border border-gray-200 dark:border-white/5 shadow-sm active:scale-90 transition-transform"
+                            className="h-8 w-8 min-w-0 card-base border-none text-zinc-900 dark:text-zinc-50 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90 transition-transform"
                         >
                             <ChevronRight size={18} />
                         </Button>
@@ -383,7 +412,7 @@ const ProductTable = memo(({
                             <select
                                 value={pageSize}
                                 onChange={(e) => onPageSizeChange(Number(e.target.value))}
-                                className="h-8 bg-white dark:bg-zinc-900 text-gray-900 dark:text-white text-[10px] font-black uppercase tracking-widest px-2 pr-6 outline-none rounded-lg border border-gray-200 dark:border-white/10 cursor-pointer shadow-sm appearance-none"
+                                className="h-8 card-base border-none text-zinc-900 dark:text-zinc-50 text-[10px] font-medium uppercase tracking-widest px-2 pr-6 outline-none rounded-2xl border border-gray-200 dark:border-white/10 cursor-pointer shadow-[0_8px_30px_rgb(0,0,0,0.12)] appearance-none"
                             >
                                 {[25, 50, 100, 10000].map(n => <option key={n} value={n}>{n === 10000 ? 'TODOS' : n}</option>)}
                             </select>

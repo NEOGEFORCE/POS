@@ -36,9 +36,9 @@ func NewOrderHandler(inv *services.InventoryService, ord *services.PurchaseOrder
 func (h *OrderHandler) GetSuggestedOrders(c *gin.Context) {
 	supplierIDStr := c.Query("supplier_id")
 
-	// Si es "global", retornar todos los productos en riesgo (Radar Global)
+	// Si es "global", retornar todos los productos en riesgo (Radar Global) agrupados por proveedor
 	if supplierIDStr == "global" {
-		suggested, err := h.inventoryService.GetGlobalRestockSuggestions()
+		suggested, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -67,11 +67,11 @@ func (h *OrderHandler) GetSuggestedOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, suggested)
 }
 
-// GetGlobalRestockSuggestions - Endpoint para Radar Global (productos sin proveedor o con bajo stock)
+// GetGlobalRestockSuggestions - Endpoint para Radar Global (productos sin proveedor o con bajo stock) agrupados por proveedor
 func (h *OrderHandler) GetGlobalRestockSuggestions(c *gin.Context) {
 	log.Printf("[Radar Global] Iniciando solicitud de restock global...")
 
-	suggested, err := h.inventoryService.GetGlobalRestockSuggestions()
+	suggested, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped()
 	if err != nil {
 		log.Printf("[Radar Global] ERROR en servicio: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -81,7 +81,7 @@ func (h *OrderHandler) GetGlobalRestockSuggestions(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Radar Global] Éxito: %d productos devueltos", len(suggested))
+	log.Printf("[Radar Global] Éxito: %d grupos de proveedor devueltos", len(suggested))
 	c.JSON(http.StatusOK, suggested)
 }
 
@@ -236,6 +236,11 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 		ExpectedDate   string  `json:"expectedDate"`
 		TotalEstimated float64 `json:"totalEstimated"`
 		ItemCount      int     `json:"itemCount"`
+		Items          []struct {
+			Barcode          string  `json:"barcode"`
+			ProductName      string  `json:"productName"`
+			ExpectedQuantity float64 `json:"expectedQuantity"`
+		} `json:"items"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -282,6 +287,16 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 		name = createdByName.(string)
 	}
 
+	// Convertir struct anónimo a modelos
+	var expectedItems []models.ExpectedOrderItem
+	for _, item := range req.Items {
+		expectedItems = append(expectedItems, models.ExpectedOrderItem{
+			Barcode:          item.Barcode,
+			ProductName:      item.ProductName,
+			ExpectedQuantity: item.ExpectedQuantity,
+		})
+	}
+
 	// Crear el pedido esperado
 	order, err := h.expectedOrderService.CreateExpectedOrderFromRequest(
 		req.SupplierID,
@@ -289,8 +304,9 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 		expectedDate,
 		req.TotalEstimated,
 		req.ItemCount,
-		dni,
-		name,
+		createdByDNI,
+		createdByName,
+		expectedItems,
 	)
 	if err != nil {
 		fmt.Println("🔥 ERROR CRÍTICO CREANDO EXPECTED ORDER:", err)

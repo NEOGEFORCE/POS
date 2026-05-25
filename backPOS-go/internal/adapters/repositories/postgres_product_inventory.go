@@ -1,12 +1,14 @@
 package repositories
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/core/utils"
 	"backPOS-go/internal/infrastructure/cache"
 	"strings"
 
@@ -14,9 +16,11 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// UpdateQuantity actualiza el stock de un producto de forma atómica
+// UpdateQuantity actualiza el stock de un producto de forma atómica (Protegiendo infinitos)
 func (r *PostgresProductRepository) UpdateQuantity(barcode string, newQuantity float64) error {
-	err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQuantity).Error
+	// MASTER SPRINT: Enforce 3 decimal precision
+	roundedQty := math.Round(newQuantity*1000) / 1000
+	err := r.db.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).Update("quantity", roundedQty).Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		r.invalidateDashboardCache()
@@ -36,7 +40,9 @@ func (r *PostgresProductRepository) BatchUpdateQuantities(updates map[string]flo
 	}
 
 	for barcode, newQty := range updates {
-		if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", newQty).Error; err != nil {
+		// MASTER SPRINT: Enforce 3 decimal precision
+		roundedQty := math.Round(newQty*1000) / 1000
+		if err := tx.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).Update("quantity", roundedQty).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -74,8 +80,9 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 	}
 
 	for barcode, delta := range adjustments {
-		if err := gormDB.Model(&models.Product{}).Where("barcode = ?", barcode).
-			Update("quantity", gorm.Expr("quantity - ?", delta)).Error; err != nil {
+		// MASTER SPRINT: Enforce 3 decimal precision in atomic adjustment
+		if err := gormDB.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).
+			Update("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", delta)).Error; err != nil {
 			if !ok {
 				gormDB.Rollback()
 			}
@@ -111,18 +118,127 @@ func (r *PostgresProductRepository) SyncSuppliers(barcode string, supplierIDs []
 
 // BulkReceive procesa una recepción masiva de mercancía, gestionando costos, impuestos y productos tipo pack.
 // Si bypassExpense es false, registra automáticamente un egreso contable.
-func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string) error {
+func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) ([]string, error) {
+	var changedProducts []string
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		totalAmount := 0.0
-		var mainSupplierID *uint
+		var mainSupplierID *uint = supplierID
 		
+		employeeName := ""
+		if employeeDNI != "" {
+			var emp models.Employee
+			if err := tx.Where("dni = ?", employeeDNI).First(&emp).Error; err == nil {
+				employeeName = emp.Name
+			}
+		}
+		
+		receptionID := fmt.Sprintf("RECP-%d", time.Now().Unix())
 		for _, entry := range entries {
 			var product models.Product
 			if err := tx.Where("barcode = ?", entry.Barcode).First(&product).Error; err != nil {
 				return err
 			}
 
-			// === LÓGICA DE SINCRONIZACIÓN DE PACKS ===
+			oldSalePrice := product.SalePrice
+
+			// === TAREA 2 & 3: AJUSTE FÍSICO EN CALIENTE ===
+			if entry.ActualPhysicalStock != nil && product.Quantity != -1 {
+				theoreticalStock := product.Quantity
+				physicalStock := *entry.ActualPhysicalStock
+				diff := physicalStock - theoreticalStock
+
+				if diff != 0 {
+					moveType := "ADJUSTMENT_UP"
+					reason := "Ajuste en Recepción"
+					if diff < 0 {
+						moveType = "ADJUSTMENT_DOWN"
+						reason = "Ajuste por faltante en físico durante recepción (Auditoría)"
+					}
+
+					// Crear movimiento de ajuste físico en kárdex
+					adjMovement := models.StockMovement{
+						Date:         time.Now(),
+						Barcode:      entry.Barcode,
+						Quantity:     diff,
+						Type:         moveType,
+						Reason:       reason,
+						ReferenceID:  receptionID,
+						EmployeeDNI:  employeeDNI,
+						EmployeeName: employeeName,
+					}
+					if err := tx.Create(&adjMovement).Error; err != nil {
+						return err
+					}
+
+					// Despachar alerta de auditoría por Telegram de forma asíncrona
+					var diffMsg string
+					if diff < 0 {
+						diffMsg = fmt.Sprintf("Faltan %.2f", math.Abs(diff))
+					} else {
+						diffMsg = fmt.Sprintf("Sobran %.2f", diff)
+					}
+
+					userDisplay := employeeName
+					if userDisplay == "" {
+						userDisplay = employeeDNI
+						if userDisplay == "" {
+							userDisplay = "Desconocido"
+						}
+					}
+
+					alertMsg := fmt.Sprintf(
+						"🚨 ALERTA DE AUDITORÍA - POS Pro\nUsuario: %s\nProducto: %s\nTeórico: %.2f | Físico digitado: %.2f\n%s unidades.",
+						userDisplay,
+						product.ProductName,
+						theoreticalStock,
+						physicalStock,
+						diffMsg,
+					)
+
+					go utils.SendAuditAlert(alertMsg)
+				}
+
+				// El stock base antes de sumar la compra pasa a ser el stock físico real
+				if isEgreso {
+					product.Quantity = physicalStock
+				}
+				
+				// Si es pack, también debemos ajustar el stock del producto base proporcionalmente
+				if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 && diff != 0 {
+					var baseProduct models.Product
+					if err := tx.Where("barcode = ?", *product.BaseProductBarcode).First(&baseProduct).Error; err == nil {
+						if baseProduct.Quantity != -1 && isEgreso {
+							baseProduct.Quantity += diff * float64(product.PackMultiplier)
+							if err := tx.Save(&baseProduct).Error; err != nil {
+								return fmt.Errorf("error actualizando stock del producto base en ajuste: %w", err)
+							}
+						}
+					}
+				}
+			}
+
+			// === TAREA 3: APRENDIZAJE LOGÍSTICO (Auto-Frecuencia en Bulk) ===
+			if entry.AddedQuantity > 0 {
+				var lastMove models.StockMovement
+				if err := tx.Where("barcode = ? AND reason = ?", entry.Barcode, "RECEPTION").Order("date DESC").First(&lastMove).Error; err == nil {
+					days := int(time.Since(lastMove.Date).Hours() / 24)
+					if days > 1 && days < 100 && entry.SupplierID != nil {
+						tx.Model(&models.Supplier{}).Where("id = ?", *entry.SupplierID).Update("visit_frequency_days", days)
+					}
+				}
+			}
+
+			// === TAREA 3: INTELIGENCIA DE PACAS (Bulk) ===
+			commonMultiples := []int{12, 24, 30, 50, 100}
+			if product.OrderMultiple <= 1 {
+				for _, m := range commonMultiples {
+					if int(entry.AddedQuantity) == m {
+						product.OrderMultiple = m
+						break
+					}
+				}
+			}
+
 			if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
 				var baseProduct models.Product
 				if err := tx.Where("barcode = ?", *product.BaseProductBarcode).First(&baseProduct).Error; err != nil {
@@ -130,13 +246,17 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 
 				expandedQuantity := entry.AddedQuantity * float64(product.PackMultiplier)
-				baseProduct.Quantity += expandedQuantity
-
-				if err := tx.Save(&baseProduct).Error; err != nil {
-					return fmt.Errorf("error actualizando stock del producto base: %w", err)
+				
+				if baseProduct.Quantity != -1 && isEgreso {
+					baseProduct.Quantity += expandedQuantity
+					if err := tx.Save(&baseProduct).Error; err != nil {
+						return fmt.Errorf("error actualizando stock del producto base: %w", err)
+					}
 				}
 
-				product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
+				if product.Quantity != -1 && isEgreso {
+					product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
+				}
 
 				baseMovement := models.StockMovement{
 					Date:         time.Now(),
@@ -145,14 +265,20 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					Type:         "IN",
 					Reason:       "PACK_RECEPTION_BULK",
 					ReferenceID:  fmt.Sprintf("PACKB-%d", time.Now().Unix()),
-					EmployeeDNI:  product.UpdatedByDNI,
-					EmployeeName: product.UpdatedByName,
+					EmployeeDNI:  employeeDNI,
+					EmployeeName: employeeName,
+				}
+				if !isEgreso {
+					baseMovement.Reason = "PRICE_UPDATE_NO_STOCK"
+					baseMovement.Quantity = 0
 				}
 				if err := tx.Create(&baseMovement).Error; err != nil {
 					return err
 				}
 			} else {
-				product.Quantity += entry.AddedQuantity
+				if product.Quantity != -1 && isEgreso {
+					product.Quantity += entry.AddedQuantity
+				}
 			}
 
 			// === LÓGICA DE COSTO PROMEDIO PONDERADO (WAC) ===
@@ -207,6 +333,24 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 			}
 
+			// Detectar cambio de precio para alerta de Telegram y LOG histórico
+			if oldSalePrice > 0 && product.SalePrice > 0 && oldSalePrice != product.SalePrice {
+				emoji := "📈"
+				if product.SalePrice < oldSalePrice {
+					emoji = "📉"
+				}
+				changeMsg := fmt.Sprintf("%s %s: Antes $%s ➡️ Ahora $%s", 
+					emoji, product.ProductName, 
+					formatMoney(oldSalePrice), 
+					formatMoney(product.SalePrice))
+				changedProducts = append(changedProducts, changeMsg)
+
+				// REGISTRO HISTÓRICO EN DB
+				if err := r.RecordPriceChange(tx, product.Barcode, oldSalePrice, product.SalePrice); err != nil {
+					return fmt.Errorf("error registrando cambio de precio para %s: %w", product.ProductName, err)
+				}
+			}
+
 			if entry.SupplierID != nil {
 				product.SupplierID = entry.SupplierID
 			}
@@ -215,16 +359,27 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				return err
 			}
 
+			// Guardar snapshot de los valores (IVA, DTO, Precios) para reconstrucción/edición futura
+			metaBytes, _ := json.Marshal(entry)
+
 			// 4. Registro de Movimiento en Kárdex
+			movementQty := entry.AddedQuantity
+			movementReason := "RECEPTION"
+			if !isEgreso {
+				movementQty = 0
+				movementReason = "PRICE_UPDATE_NO_STOCK"
+			}
+			
 			movement := models.StockMovement{
 				Date:         time.Now(),
 				Barcode:      entry.Barcode,
-				Quantity:     entry.AddedQuantity,
+				Quantity:     movementQty,
 				Type:         "IN",
-				Reason:       "RECEPTION",
-				ReferenceID:  fmt.Sprintf("RECP-%d", time.Now().Unix()),
-				EmployeeDNI:  product.UpdatedByDNI,
-				EmployeeName: product.UpdatedByName,
+				Reason:       movementReason,
+				ReferenceID:  receptionID,
+				EmployeeDNI:  employeeDNI,
+				EmployeeName: employeeName,
+				Metadata:     string(metaBytes),
 			}
 			if err := tx.Create(&movement).Error; err != nil {
 				return err
@@ -265,9 +420,35 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				Category:      "Proveedores",
 				SupplierID:    mainSupplierID,
 				CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
+				ReferenceID:   receptionID,
 			}
 			if err := tx.Create(&expense).Error; err != nil {
 				return fmt.Errorf("error creando egreso: %w", err)
+			}
+		}
+
+		// 4.6. Creación de Egreso por Flete (si aplica y no hay bypass)
+		if !bypassExpense && freightCost > 0 {
+			description := "FLETE / TRANSPORTE - MERCANCÍA"
+			if mainSupplierID != nil {
+				var supplier models.Supplier
+				if err := tx.First(&supplier, *mainSupplierID).Error; err == nil {
+					description = fmt.Sprintf("FLETE / TRANSPORTE - %s", supplier.Name)
+				}
+			}
+
+			expenseFreight := models.Expense{
+				Description:   description,
+				Amount:        freightCost,
+				Date:          time.Now(),
+				PaymentSource: paymentSource,
+				Status:        "PAID",
+				Category:      "Logística",
+				SupplierID:    mainSupplierID,
+				CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
+			}
+			if err := tx.Create(&expenseFreight).Error; err != nil {
+				return fmt.Errorf("error creando egreso de flete: %w", err)
 			}
 		}
 
@@ -285,7 +466,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 		cache.InvalidateCache(cache.CacheKeyProductCount + "_active")
 		r.invalidateDashboardCache()
 	}
-	return err
+	return changedProducts, err
 }
 
 func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
@@ -304,4 +485,69 @@ func (r *PostgresProductRepository) GetGlobalInventoryRetailValue() (float64, er
 		Select("COALESCE(SUM(quantity * \"salePrice\"), 0)").
 		Scan(&total).Error
 	return total, err
+}
+func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Obtener todos los movimientos de esta recepción
+		var movements []models.StockMovement
+		if err := tx.Where("reference_id = ? AND reason = ?", receptionID, "RECEPTION").Find(&movements).Error; err != nil {
+			return err
+		}
+
+		if len(movements) == 0 {
+			return fmt.Errorf("no se encontraron movimientos para la recepción %s", receptionID)
+		}
+
+		// 2. Revertir stock para cada producto
+		for _, m := range movements {
+			// MASTER SPRINT: Enforce 3 decimal precision in reversal
+			if err := tx.Model(&models.Product{}).
+				Where("barcode = ?", m.Barcode).
+				UpdateColumn("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", m.Quantity)).Error; err != nil {
+				return err
+			}
+		}
+
+		// 3. Eliminar los movimientos
+		if err := tx.Where("reference_id = ? AND reason = ?", receptionID, "RECEPTION").Delete(&models.StockMovement{}).Error; err != nil {
+			return err
+		}
+
+		// 4. Eliminar el egreso vinculado
+		if err := tx.Where("reference_id = ?", receptionID).Delete(&models.Expense{}).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyProducts)
+		r.invalidateDashboardCache()
+	}
+	return err
+}
+
+func formatMoney(amount float64) string {
+	return fmt.Sprintf("%.0f", amount)
+}
+// SanitizeAllNames recorre todos los productos y elimina tildes/normaliza nombres
+func (r *PostgresProductRepository) SanitizeAllNames() (int64, error) {
+	var products []models.Product
+	if err := r.db.Find(&products).Error; err != nil {
+		return 0, err
+	}
+
+	count := int64(0)
+	for _, p := range products {
+		cleanName := utils.NormalizeString(p.ProductName)
+		if cleanName != p.ProductName {
+			// Usar un query directo para evitar hooks de GORM si fuera necesario, 
+			// pero aquí queremos que se actualice el campo correctamente.
+			if err := r.db.Model(&models.Product{}).Where("barcode = ?", p.Barcode).Update("productName", cleanName).Error; err == nil {
+				count++
+			}
+		}
+	}
+	return count, nil
 }

@@ -28,10 +28,10 @@ function ProgressRing({ percentage, size = 80, strokeWidth = 8, color = "#10b981
                         strokeLinecap="round" className="transition-all duration-1000 ease-out" />
                 </svg>
                 <div className="absolute inset-0 flex items-center justify-center">
-                    <span className="text-lg font-black text-gray-900 dark:text-white tabular-nums">{Math.round(percentage)}%</span>
+                    <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tabular-nums">{Math.round(percentage)}%</span>
                 </div>
             </div>
-            <span className="text-[9px] font-black text-gray-500 dark:text-zinc-500 uppercase tracking-widest text-center leading-tight">{label}</span>
+            <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest text-center leading-tight">{label}</span>
         </div>
     );
 }
@@ -80,12 +80,12 @@ export default function DashboardCharts({
     return (
         <div className="grid gap-6 grid-cols-1 lg:grid-cols-7 shrink-0">
             {/* --- Tendencia Ventas 7 Días --- */}
-            <Card className="col-span-1 lg:col-span-4 bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-lg dark:shadow-2xl transition-colors" radius="lg">
+            <Card className="col-span-1 lg:col-span-4 card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors" radius="lg">
                 <CardHeader className="px-6 pt-6 pb-2">
                     <div className="flex items-center gap-3">
-                        <div className="bg-emerald-100 dark:bg-emerald-500/10 p-2.5 rounded-xl text-emerald-600 dark:text-emerald-500 border border-emerald-200 dark:border-emerald-500/20 shadow-sm"><BarChart3 size={18} /></div>
+                        <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 p-2.5 rounded-2xl text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 border border-emerald-200 dark:border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><BarChart3 size={18} /></div>
                         <div>
-                            <h2 className="text-base font-black text-gray-900 dark:text-white uppercase tracking-tight">Tendencia de Ventas</h2>
+                            <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Tendencia de Ventas</h2>
                             <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Últimos 7 días</p>
                         </div>
                     </div>
@@ -116,12 +116,12 @@ export default function DashboardCharts({
             </Card>
 
             {/* --- Donut Métodos de Pago + Progress Rings --- */}
-            <Card className="col-span-1 lg:col-span-3 bg-white/90 dark:bg-zinc-900/50 backdrop-blur-xl border border-gray-200/80 dark:border-white/5 shadow-lg dark:shadow-2xl transition-colors" radius="lg">
+            <Card className="col-span-1 lg:col-span-3 card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors" radius="lg">
                 <CardHeader className="px-6 pt-6 pb-2">
                     <div className="flex items-center gap-3">
-                        <div className="bg-violet-100 dark:bg-violet-500/10 p-2.5 rounded-xl text-violet-600 dark:text-violet-500 border border-violet-200 dark:border-violet-500/20 shadow-sm"><DollarSign size={18} /></div>
+                        <div className="bg-violet-100 dark:bg-violet-500/10 p-2.5 rounded-2xl text-violet-600 dark:text-violet-500 border border-violet-200 dark:border-violet-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><DollarSign size={18} /></div>
                         <div>
-                            <h2 className="text-base font-black text-gray-900 dark:text-white uppercase tracking-tight">Métodos de Pago</h2>
+                            <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Métodos de Pago</h2>
                             <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Distribución del mes</p>
                         </div>
                     </div>
@@ -151,8 +151,8 @@ export default function DashboardCharts({
                                     </PieChart>
                                 </ResponsiveContainer>
                                 <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span className="text-lg font-black text-gray-900 dark:text-white tabular-nums tracking-tighter">${formatCurrency(totalPayments)}</span>
-                                    <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest">Total</span>
+                                    <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tabular-nums tracking-tighter">${formatCurrency(totalPayments)}</span>
+                                    <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Total</span>
                                 </div>
                             </div>
 
@@ -160,7 +160,7 @@ export default function DashboardCharts({
                             <div className="flex flex-wrap gap-x-4 gap-y-1.5 justify-center">
                                 {paymentDonutData.map((d) => (
                                     <div key={d.name} className="flex items-center gap-1.5">
-                                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: d.color }} />
+                                        <div className="w-2.5 h-2.5 rounded-2xl" style={{ background: d.color }} />
                                         <span className="text-[9px] font-bold text-gray-600 dark:text-zinc-400 uppercase tracking-wider">{d.name}</span>
                                     </div>
                                 ))}
@@ -174,7 +174,7 @@ export default function DashboardCharts({
                     ) : (
                         <div className="flex flex-col items-center justify-center h-40 gap-2">
                             <DollarSign className="h-8 w-8 text-gray-300 dark:text-zinc-700" />
-                            <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest">Sin datos de pago</p>
+                            <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Sin datos de pago</p>
                         </div>
                     )}
                 </CardBody>

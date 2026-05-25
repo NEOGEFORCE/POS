@@ -1,17 +1,14 @@
 "use client";
+// Cache buster for Turbopack HMR
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
 import { useToast } from "@/hooks/use-toast";
-import { LogIn, Eye, EyeOff, Mail } from 'lucide-react';
+import { Eye, EyeOff, Mail, Zap } from 'lucide-react';
 // Importamos los componentes premium de HeroUI
 import {
   Button,
-  Card,
-  CardHeader,
-  CardBody,
-  CardFooter,
   Input,
   Modal,
   ModalContent,
@@ -41,7 +38,7 @@ export default function LoginPage() {
   useEffect(() => {
     const checkSetupAndAuth = async () => {
       try {
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/check-setup`);
+        const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/check-setup`);
         const { needsSetup } = await response.json();
 
         if (needsSetup) {
@@ -86,7 +83,7 @@ export default function LoginPage() {
     setIsForgotLoading(true);
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/auth/forgot-password`, {
+      const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/forgot-password`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: forgotEmail }),
@@ -111,49 +108,68 @@ export default function LoginPage() {
   };
 
   return (
-    // Contenedor principal Responsive (Mobile-First) con transición de colores
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-[#09090b] p-4 relative overflow-hidden transition-colors duration-500">
-      
+    <div className="flex min-h-screen bg-[var(--bg-app)] relative overflow-hidden transition-colors duration-500">
       {/* Selector de Tema en la esquina superior derecha */}
       <div className="absolute top-4 right-4 z-50">
         <ThemeToggle />
       </div>
 
-      {/* Background Glow (Brillo dinámico detrás de la tarjeta) */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[300px] sm:w-[500px] h-[300px] sm:h-[500px] bg-emerald-500/10 dark:bg-emerald-500/15 blur-[100px] sm:blur-[120px] rounded-full pointer-events-none" />
-
-      {/* HeroUI Card */}
-      <Card
-        className="w-full max-w-sm border border-gray-200 dark:border-white/5 rounded-[2rem] sm:rounded-[2.5rem] bg-white/80 dark:bg-zinc-950/60 backdrop-blur-3xl shadow-xl dark:shadow-2xl relative z-10 p-2 sm:p-4 transition-colors"
-        shadow="lg"
-      >
-        <CardHeader className="flex-col items-center pt-8 pb-0">
-          <div className="mb-6 flex h-16 w-16 sm:h-20 sm:w-20 items-center justify-center rounded-[1.5rem] sm:rounded-[2rem] bg-gray-100 dark:bg-black text-emerald-600 dark:text-emerald-500 shadow-xl shadow-emerald-500/10 dark:shadow-2xl dark:shadow-emerald-500/20 transition-all duration-500 hover:scale-110 active:scale-95 group border border-gray-200 dark:border-white/5">
-            <LogIn className="h-8 w-8 sm:h-10 sm:w-10 transition-transform group-hover:rotate-12" />
+      {/* PANEL IZQUIERDO (Hero/Marketing) */}
+      <div className="hidden lg:flex w-[55%] flex-col justify-between p-12 relative overflow-hidden bg-[var(--bg-sidebar)] border-r border-[var(--border)]">
+        {/* Glow dinámico de fondo (Esmeralda) */}
+        <div className="absolute top-1/4 -left-1/4 w-[800px] h-[800px] bg-[var(--accent)] opacity-[0.03] dark:opacity-[0.05] blur-[120px] rounded-full pointer-events-none" />
+        
+        <div className="relative z-10">
+          <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent-soft)] shadow-[0_0_30px_var(--accent-soft)] transition-transform hover:scale-105 border border-[var(--accent-border)]">
+            <Zap className="h-8 w-8 text-[var(--accent)]" />
           </div>
-          <h1 className="text-3xl sm:text-4xl font-black tracking-tighter text-gray-900 dark:text-white uppercase">
-            SISTEMA POS
+          <h1 className="mt-12 text-5xl font-medium tracking-tighter text-[var(--text-primary)] uppercase">
+            Store<br/>Overview
           </h1>
-          <p className="text-[9px] sm:text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-[0.2em] sm:tracking-[0.3em] mt-2 sm:mt-3 text-center">
-            v1.0.0 Edition
+          <p className="mt-6 max-w-sm text-sm text-[var(--text-secondary)] leading-relaxed">
+            Sistema inteligente de punto de venta y gestión de inventario. Todo en una única plataforma de alto rendimiento.
           </p>
-        </CardHeader>
+        </div>
 
-        <form onSubmit={handleSubmit}>
-          <CardBody className="space-y-5 px-4 sm:px-6 py-6 sm:py-8 overflow-hidden">
-            <div className="space-y-1">
-              <div className="px-1 mb-2">
-                <label
-                  id="login-username-label"
-                  htmlFor="username"
-                  className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider"
-                >
-                  Usuario
-                </label>
-              </div>
+        <div className="relative z-10 flex items-center gap-4">
+          <div className="flex -space-x-3">
+            {[1,2,3].map(i => (
+              <div key={i} className="h-10 w-10 rounded-full border-2 border-[var(--bg-sidebar)] bg-[var(--bg-elevated)]" />
+            ))}
+          </div>
+          <div className="text-xs font-medium text-[var(--text-secondary)]">
+            <span className="text-[var(--text-primary)] block">Trusted by</span>
+            +2,000 Retailers
+          </div>
+        </div>
+      </div>
+
+      {/* PANEL DERECHO (Formulario de Login) */}
+      <div className="w-full lg:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:px-24 bg-[var(--bg-app)] relative">
+        <div className="w-full max-w-sm mx-auto">
+          {/* Cabecera Móvil (Solo visible en móviles) */}
+          <div className="lg:hidden mb-12 flex flex-col items-center text-center">
+            <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent-soft)] shadow-[0_0_30px_var(--accent-soft)] mb-6 border border-[var(--accent-border)]">
+              <Zap className="h-8 w-8 text-[var(--accent)]" />
+            </div>
+            <h1 className="text-3xl font-medium tracking-tighter text-[var(--text-primary)] uppercase">POS PRO</h1>
+            <p className="mt-2 text-xs font-medium uppercase text-[var(--text-muted)] tracking-widest">
+              v1.0.0 Edition
+            </p>
+          </div>
+
+          <div className="mb-10 lg:text-left text-center">
+            <h2 className="text-2xl font-medium text-[var(--text-primary)] uppercase tracking-tight">Bienvenido</h2>
+            <p className="text-sm text-[var(--text-secondary)] mt-2">Ingresa tus credenciales para continuar.</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-6">
+            <div className="space-y-1.5">
+              <label htmlFor="username" className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider block ml-1">
+                Usuario
+              </label>
               <Input
                 id="username"
-                name="pos-user"
                 autoComplete="off"
                 type="text"
                 isRequired
@@ -162,36 +178,28 @@ export default function LoginPage() {
                 isDisabled={isLoading}
                 variant="flat"
                 radius="lg"
-                aria-labelledby="login-username-label"
                 classNames={{
-                  input: "font-bold text-gray-900 dark:text-white bg-transparent uppercase",
-                  inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
+                  input: "font-medium text-[var(--text-primary)] bg-transparent uppercase",
+                  inputWrapper: "h-14 bg-[var(--bg-elevated)] hover:bg-[var(--bg-card-hover)] focus-within:bg-[var(--bg-card-hover)] border border-[var(--border)] transition-all shadow-none",
                 }}
               />
             </div>
 
-            <div className="space-y-1">
-              <div className="flex items-center justify-between px-1 mb-2">
-                <label
-                  id="login-password-label"
-                  htmlFor="password"
-                  className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider"
-                >
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between ml-1">
+                <label htmlFor="password" className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">
                   Contraseña
                 </label>
                 <button
                   type="button"
                   onClick={() => setIsForgotOpen(true)}
-                  className="text-[9px] font-black text-gray-400 dark:text-zinc-400 uppercase hover:text-emerald-600 dark:hover:text-emerald-500 transition-colors tracking-wider outline-none"
+                  className="text-[10px] font-medium text-[var(--accent)] hover:text-[var(--accent-hover)] transition-colors tracking-wider outline-none uppercase"
                 >
-                  ¿Recuperar Acceso?
+                  ¿Recuperar?
                 </button>
               </div>
-
-              {/* HeroUI Input para Contraseña con botón de visibilidad */}
               <Input
                 id="password"
-                name="pos-password"
                 autoComplete="new-password"
                 type={isVisible ? "text" : "password"}
                 isRequired
@@ -200,72 +208,62 @@ export default function LoginPage() {
                 isDisabled={isLoading}
                 variant="flat"
                 radius="lg"
-                aria-labelledby="login-password-label"
                 endContent={
                   <button className="focus:outline-none" type="button" onClick={toggleVisibility}>
                     {isVisible ? (
-                      <EyeOff className="text-xl text-gray-400 dark:text-zinc-500 pointer-events-none transition-colors hover:text-gray-600 dark:hover:text-zinc-300" />
+                      <EyeOff className="text-xl text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]" />
                     ) : (
-                      <Eye className="text-xl text-gray-400 dark:text-zinc-500 pointer-events-none transition-colors hover:text-gray-600 dark:hover:text-zinc-300" />
+                      <Eye className="text-xl text-[var(--text-muted)] transition-colors hover:text-[var(--text-primary)]" />
                     )}
                   </button>
                 }
                 classNames={{
-                  input: "font-bold text-gray-900 dark:text-white bg-transparent",
-                  inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
+                  input: "font-medium text-[var(--text-primary)] bg-transparent",
+                  inputWrapper: "h-14 bg-[var(--bg-elevated)] hover:bg-[var(--bg-card-hover)] focus-within:bg-[var(--bg-card-hover)] border border-[var(--border)] transition-all shadow-none",
                 }}
               />
             </div>
-          </CardBody>
 
-          <CardFooter className="px-4 sm:px-6 pb-6 sm:pb-8 pt-0">
-            {/* HeroUI Button: Maneja automáticamente el spinner con isLoading */}
             <Button
               type="submit"
               color="primary"
               size="lg"
               radius="lg"
               isLoading={isLoading}
-              endContent={!isLoading && <LogIn className="h-5 w-5" />}
-              className="w-full h-14 sm:h-16 text-base sm:text-lg font-black bg-emerald-500 hover:bg-emerald-600 text-white dark:text-black shadow-[0_0_30px_-8px_rgba(16,185,129,0.4)] transition-all active:scale-95"
+              className="w-full h-14 mt-4 font-medium tracking-wide shadow-[0_0_20px_var(--accent-soft)] transition-all active:scale-[0.98]"
             >
               INICIAR SESIÓN
             </Button>
-          </CardFooter>
-        </form>
-      </Card>
-      {/* Modal de Recuperación de HeroUI */}
+          </form>
+        </div>
+      </div>
+
+      {/* Modal de Recuperación */}
       <Modal
         isOpen={isForgotOpen}
         onOpenChange={setIsForgotOpen}
         placement="center"
         backdrop="blur"
         classNames={{
-          base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl rounded-[2rem]",
-          header: "border-b border-gray-100 dark:border-white/5",
-          footer: "border-t border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-transparent",
+          base: "bg-[var(--bg-card)] border border-[var(--border)] shadow-2xl rounded-3xl",
+          header: "border-b border-[var(--border)]",
+          footer: "border-t border-[var(--border)]",
         }}
       >
         <ModalContent>
           {(onClose) => (
             <form onSubmit={handleForgotPassword}>
               <ModalHeader className="flex flex-col gap-1 pt-6 px-6">
-                <h2 className="font-black text-xl sm:text-2xl uppercase text-gray-900 dark:text-white">Recuperar Acceso</h2>
-                <p className="text-xs font-bold text-gray-500 dark:text-zinc-500 uppercase">
-                  Solo para cuentas Administrativas.
+                <h2 className="font-medium text-xl uppercase text-[var(--text-primary)]">Recuperar Acceso</h2>
+                <p className="text-xs font-medium text-[var(--text-muted)] uppercase tracking-wider mt-1">
+                  Solo cuentas administrativas
                 </p>
               </ModalHeader>
               <ModalBody className="py-6 px-6">
-                <div className="space-y-1">
-                  <div className="px-1 mb-2">
-                    <label
-                      id="login-forgot-email-label"
-                      htmlFor="forgot-email"
-                      className="text-[10px] font-black uppercase text-gray-500 dark:text-zinc-500 tracking-wider"
-                    >
-                      Correo Electrónico
-                    </label>
-                  </div>
+                <div className="space-y-1.5">
+                  <label htmlFor="forgot-email" className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider block ml-1">
+                    Correo Electrónico
+                  </label>
                   <Input
                     autoFocus
                     id="forgot-email"
@@ -276,20 +274,19 @@ export default function LoginPage() {
                     isDisabled={isForgotLoading}
                     variant="flat"
                     radius="lg"
-                    aria-labelledby="login-forgot-email-label"
-                    startContent={<Mail className="text-gray-400 dark:text-zinc-500 w-4 h-4 mr-2" />}
+                    startContent={<Mail className="text-[var(--text-muted)] w-4 h-4 mr-2" />}
                     classNames={{
-                      input: "font-bold text-gray-900 dark:text-white bg-transparent uppercase",
-                      inputWrapper: "h-14 bg-transparent border border-gray-200 dark:border-white/10 transition-all shadow-none",
+                      input: "font-medium text-[var(--text-primary)] bg-transparent uppercase",
+                      inputWrapper: "h-14 bg-[var(--bg-elevated)] focus-within:bg-[var(--bg-card-hover)] border border-[var(--border)] transition-all shadow-none",
                     }}
                   />
                 </div>
               </ModalBody>
               <ModalFooter className="px-6 pb-6">
-                <Button color="danger" variant="light" onPress={onClose} className="font-bold uppercase tracking-wider text-xs">
+                <Button variant="light" onPress={onClose} className="font-medium uppercase tracking-wider text-xs text-[var(--text-secondary)]">
                   Cancelar
                 </Button>
-                <Button color="primary" type="submit" isLoading={isForgotLoading} className="font-bold uppercase tracking-wider text-xs bg-emerald-500 hover:bg-emerald-600 text-white dark:text-black shadow-md shadow-emerald-500/20">
+                <Button color="primary" type="submit" isLoading={isForgotLoading} className="font-medium uppercase tracking-wider text-xs shadow-md">
                   Enviar Llave
                 </Button>
               </ModalFooter>
@@ -297,11 +294,6 @@ export default function LoginPage() {
           )}
         </ModalContent>
       </Modal>
-
-
-      <div className="fixed bottom-4 sm:bottom-8 text-[8px] sm:text-[9px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.3em] sm:tracking-[0.4em] z-20 text-center w-full px-4 transition-colors">
-        SISTEMA POS — v1.0.0
-      </div>
     </div>
   );
 }

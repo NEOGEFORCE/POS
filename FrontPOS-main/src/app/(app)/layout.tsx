@@ -19,6 +19,15 @@ export default function AppLayout({
     const router = useRouter();
 
     useEffect(() => {
+        // DESTROY OLD SERVICE WORKERS THAT MIGHT BE CACHING TURBOPACK CHUNKS
+        if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                for(let registration of registrations) {
+                    registration.unregister();
+                }
+            });
+        }
+        
         if (!loading) {
             if (!user) {
                 router.replace('/login');
@@ -37,6 +46,13 @@ export default function AppLayout({
             }
         }
     }, [user, loading, router]);
+
+    useEffect(() => {
+        const saved = localStorage.getItem('theme')
+        if (saved === 'light') {
+            document.documentElement.setAttribute('data-theme', 'light')
+        }
+    }, [])
 
     // Pantalla de carga con soporte Claro/Oscuro y animación premium
     if (loading) {
@@ -57,8 +73,8 @@ export default function AppLayout({
                 <div className="flex flex-col flex-1 bg-gray-50 dark:bg-[#09090b] transition-colors duration-500 relative min-w-0 w-full max-w-full min-h-0">
 
                     {/* Resplandores de fondo (Glows) */}
-                    <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 dark:bg-emerald-500/10 blur-[100px] md:blur-[120px] rounded-full pointer-events-none transition-colors duration-500" />
-                    <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-emerald-500/5 dark:bg-emerald-500/5 blur-[100px] md:blur-[120px] rounded-full pointer-events-none transition-colors duration-500" />
+                    <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 blur-[100px] md:blur-[120px] rounded-2xl pointer-events-none transition-colors duration-500" />
+                    <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 blur-[100px] md:blur-[120px] rounded-2xl pointer-events-none transition-colors duration-500" />
 
                     <AppHeader />
                     <SessionGuardian />

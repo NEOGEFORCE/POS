@@ -6,14 +6,16 @@ import {
   ShieldCheck, RefreshCw, Download
 } from 'lucide-react';
 import { Button, Spinner } from "@heroui/react";
+import dynamic from 'next/dynamic';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { AuditLog } from '@/lib/definitions';
-import AuditTable from './components/AuditTable';
-import AuditStats from './components/AuditStats';
-import MaintenancePanel from './components/MaintenancePanel';
+
+const AuditTable = dynamic(() => import('./components/AuditTable'), { ssr: false });
+const AuditStats = dynamic(() => import('./components/AuditStats'), { ssr: false });
+const MaintenancePanel = dynamic(() => import('./components/MaintenancePanel'), { ssr: false });
 
 async function fetchAuditLogs(token: string): Promise<AuditLog[]> {
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/admin/audit-logs`, {
+  const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/admin/audit-logs`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
   if (!res.ok) {
@@ -67,21 +69,21 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto bg-transparent text-gray-900 dark:text-white transition-all duration-500 relative">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
-      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="bg-emerald-500 h-10 w-10 rounded-xl text-white shadow-lg shadow-emerald-500/20 flex items-center justify-center transform -rotate-3">
+            <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 h-10 w-10 rounded-2xl text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center transform -rotate-3">
               <ShieldCheck size={20} />
             </div>
             <div className="flex flex-col">
-              <h1 className="text-[13px] font-black text-gray-900 dark:text-white tracking-tighter uppercase italic leading-none">
-                Seguridad & <span className="text-emerald-500">Auditoría</span>
+              <h1 className="text-[13px] font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter uppercase tracking-tight leading-none">
+                Seguridad & <span className="text-zinc-900 dark:text-zinc-100">Auditoría</span>
               </h1>
-              <p className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic mt-1 flex items-center gap-1">
-                <RefreshCw size={10} className="text-emerald-500" /> Monitoreo V5.0
+              <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
+                <RefreshCw size={10} className="text-zinc-900 dark:text-zinc-100" /> Monitoreo V5.0
               </p>
             </div>
           </div>
@@ -91,7 +93,7 @@ export default function AuditPage() {
               isIconOnly
               onPress={loadData}
               isLoading={loading}
-              className="h-10 w-10 min-w-0 bg-white/80 dark:bg-zinc-900/50 text-gray-400 dark:text-zinc-500 rounded-xl border border-gray-200 dark:border-white/5 shadow-sm active:scale-90"
+              className="h-10 w-10 min-w-0 card-base border-none text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
             >
               {!loading && <RefreshCw size={16} />}
             </Button>
@@ -103,7 +105,7 @@ export default function AuditPage() {
                   variant: "default"
                 });
               }}
-              className="h-10 px-4 bg-emerald-500 text-white font-black text-[9px] uppercase tracking-widest italic rounded-xl shadow-lg shadow-emerald-500/20 active:scale-95 transition-all"
+              className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all"
             >
               <Download size={14} className="mr-1.5" /> EXPORTAR
             </Button>

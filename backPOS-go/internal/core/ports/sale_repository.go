@@ -67,4 +67,5 @@ type SaleRepository interface {
 	GetTotalSalesByRange(from, to time.Time) (float64, error)
 	GetSalesBreakdownByRange(from, to time.Time) (map[string]float64, error)
 	GetPendingByClient(clientDNI string) ([]models.Sale, error)
+	GetCreditHistoryByClient(clientDNI string) ([]models.Sale, error)
 }

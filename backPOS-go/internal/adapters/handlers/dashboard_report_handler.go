@@ -142,3 +142,20 @@ func (h *DashboardReportHandler) GetInventoryMovements(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, data)
 }
+func (h *DashboardReportHandler) GetCashFlowReport(c *gin.Context) {
+	from := c.Query("from")
+	to := c.Query("to")
+	if from == "" || to == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
+		return
+	}
+	fromDate, _ := parseDate(from)
+	toDate, _ := parseDate(to)
+
+	data, err := h.service.GetCashFlowReport(fromDate, toDate)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de flujo de caja", err)
+		return
+	}
+	c.JSON(http.StatusOK, data)
+}

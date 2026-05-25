@@ -1,5 +1,5 @@
 /**
- * Motor de Audio para Notificaciones Cerberus POS
+ * Motor de Audio para Notificaciones POS Pro
  * Genera tonos premium usando Web Audio API (sin archivos externos)
  */
 

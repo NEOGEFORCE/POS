@@ -18,17 +18,17 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
     const totalPotentialSavings = items.reduce((acc, item) => acc + item.potentialSave, 0);
 
     return (
-        <Card className="bg-gradient-to-br from-white to-emerald-50/30 dark:from-zinc-900/50 dark:to-emerald-950/20 backdrop-blur-xl border border-emerald-200/50 dark:border-emerald-500/10 shadow-lg dark:shadow-2xl h-full flex flex-col overflow-hidden" radius="lg">
+        <Card className="bg-gradient-to-br from-white to-emerald-50/30 dark:from-zinc-900/50 dark:to-emerald-950/20 border border-emerald-200/50 dark:border-emerald-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-full flex flex-col overflow-hidden" radius="lg">
             <CardHeader className="px-6 pt-6 pb-3 flex-shrink-0 relative overflow-hidden">
-                <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-3xl" />
+                <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/5 rounded-2xl blur-3xl" />
                 <div className="flex items-center justify-between w-full z-10">
                     <div className="flex items-center gap-3">
-                        <div className="bg-emerald-500 p-2.5 rounded-xl text-white shadow-lg shadow-emerald-500/20 transform -rotate-3">
+                        <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 p-2.5 rounded-2xl text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-3">
                             <TrendingDown size={18} />
                         </div>
                         <div>
-                            <h2 className="text-base font-black text-gray-900 dark:text-white uppercase tracking-tight italic">Oportunidades de Ahorro</h2>
-                            <p className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-widest flex items-center gap-1">
+                            <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight">Oportunidades de Ahorro</h2>
+                            <p className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-widest flex items-center gap-1">
                                 <Sparkles size={10} /> {items.length} productos con mejor precio
                             </p>
                         </div>
@@ -38,16 +38,16 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
 
             <CardBody className="px-6 pb-6 pt-0 flex-1 flex flex-col gap-4 overflow-hidden">
                 {/* Banner de Ahorro Total */}
-                <div className="bg-emerald-500 p-4 rounded-2xl shadow-inner relative overflow-hidden group">
+                <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 p-4 rounded-2xl shadow-inner relative overflow-hidden group">
                     <div className="absolute right-0 top-0 opacity-10 group-hover:scale-110 transition-transform duration-700">
                         <TrendingDown size={80} strokeWidth={4} />
                     </div>
-                    <p className="text-[10px] font-black text-emerald-100 uppercase tracking-[0.2em] italic mb-1">Ahorro Potencial Total</p>
+                    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.2em] tracking-tight mb-1">Ahorro Potencial Total</p>
                     <div className="flex items-baseline gap-2">
-                        <h3 className="text-2xl font-black text-white italic tracking-tighter tabular-nums">
+                        <h3 className="text-2xl font-medium text-zinc-900 dark:text-zinc-100 tracking-tight tracking-tighter tabular-nums">
                             {formatCurrency(totalPotentialSavings)}
                         </h3>
-                        <span className="text-[10px] font-black text-emerald-200 uppercase italic">estimado</span>
+                        <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight">estimado</span>
                     </div>
                 </div>
 
@@ -58,22 +58,22 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: idx * 0.1 }}
                             key={item.barcode} 
-                            className="p-3 rounded-2xl bg-white/50 dark:bg-black/20 border border-gray-100 dark:border-white/5 hover:border-emerald-500/30 transition-all duration-300 group"
+                            className="p-3 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 hover:border-emerald-500/30 transition-all duration-300 group"
                         >
                             <div className="flex justify-between items-start mb-2">
                                 <div className="min-w-0">
-                                    <p className="font-black text-gray-900 dark:text-white uppercase tracking-tight text-[11px] truncate leading-tight group-hover:text-emerald-500 transition-colors">
+                                    <p className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight text-[11px] truncate leading-tight group-hover:text-zinc-900 dark:text-zinc-100 transition-colors">
                                         {item.productName}
                                     </p>
                                     <div className="flex items-center gap-2 mt-0.5">
-                                        <span className="text-[8px] font-bold text-gray-400 dark:text-zinc-500 tracking-widest uppercase">{item.barcode}</span>
-                                        <span className="h-1 w-1 rounded-full bg-gray-300 dark:bg-zinc-700" />
-                                        <span className="text-[8px] font-black text-gray-400 dark:text-zinc-500 uppercase italic">Stock: {item.stock}</span>
+                                        <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 tracking-widest uppercase">{item.barcode}</span>
+                                        <span className="h-1 w-1 rounded-2xl bg-gray-300 dark:bg-zinc-700" />
+                                        <span className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">Stock: {item.stock}</span>
                                     </div>
                                 </div>
                                 <Chip size="sm" variant="flat"
-                                    className="bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border border-emerald-500/20"
-                                    classNames={{ content: "text-[8px] font-black uppercase tracking-widest px-1" }}
+                                    className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:text-zinc-300 border border-emerald-500/20"
+                                    classNames={{ content: "text-[8px] font-medium uppercase tracking-widest px-1" }}
                                 >
                                     AHORRA {Math.round((1 - item.bestPrice/item.currentPrice) * 100)}%
                                 </Chip>
@@ -81,19 +81,19 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
 
                             <div className="flex items-center justify-between pt-2 border-t border-gray-100 dark:border-white/5">
                                 <div className="flex flex-col">
-                                    <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest italic leading-none mb-1">Mejor Proveedor</span>
+                                    <span className="text-[8px] font-medium text-gray-400 uppercase tracking-widest tracking-tight leading-none mb-1">Mejor Proveedor</span>
                                     <div className="flex items-center gap-1.5">
-                                        <Truck size={10} className="text-emerald-500" />
-                                        <span className="text-[10px] font-black text-gray-700 dark:text-zinc-300 uppercase truncate max-w-[100px]">{item.bestSupplier}</span>
+                                        <Truck size={10} className="text-zinc-900 dark:text-zinc-100" />
+                                        <span className="text-[10px] font-medium text-gray-700 dark:text-zinc-300 uppercase truncate max-w-[100px]">{item.bestSupplier}</span>
                                     </div>
                                 </div>
                                 
                                 <div className="flex flex-col items-end">
-                                    <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest italic leading-none mb-1">Costo Objetivo</span>
+                                    <span className="text-[8px] font-medium text-gray-400 uppercase tracking-widest tracking-tight leading-none mb-1">Costo Objetivo</span>
                                     <div className="flex items-center gap-2">
                                         <span className="text-[9px] text-gray-400 line-through tabular-nums font-bold">{formatCurrency(item.currentPrice)}</span>
-                                        <ArrowRight size={10} className="text-emerald-500" />
-                                        <span className="text-[12px] font-black text-emerald-500 tabular-nums italic">{formatCurrency(item.bestPrice)}</span>
+                                        <ArrowRight size={10} className="text-zinc-900 dark:text-zinc-100" />
+                                        <span className="text-[12px] font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tight">{formatCurrency(item.bestPrice)}</span>
                                     </div>
                                 </div>
                             </div>
@@ -103,7 +103,7 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
 
                 <Button 
                     variant="shadow"
-                    className="w-full bg-emerald-500 text-white font-black uppercase text-[10px] italic tracking-[0.2em] rounded-xl h-10 shadow-lg shadow-emerald-500/20 group"
+                    className="w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium uppercase text-[10px] tracking-tight tracking-[0.2em] rounded-2xl h-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] group"
                 >
                     Optimizar Compras <ArrowRight size={14} className="ml-2 group-hover:translate-x-1 transition-transform" />
                 </Button>

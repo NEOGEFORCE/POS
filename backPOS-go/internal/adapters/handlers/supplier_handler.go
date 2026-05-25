@@ -9,7 +9,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
-
+	"backPOS-go/internal/core/utils"
 	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
@@ -30,7 +30,7 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 		return
 	}
 
-	supplier.Name = strings.ToUpper(strings.TrimSpace(supplier.Name))
+	supplier.Name = strings.ToUpper(utils.NormalizeString(supplier.Name))
 	
 	// Verificar Duplicados
 	if existing, err := h.service.GetSupplierByName(supplier.Name); err == nil && existing != nil {

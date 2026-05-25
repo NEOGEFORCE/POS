@@ -6,7 +6,7 @@ import {
 } from "@heroui/react";
 import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
-import { formatCurrency, applyRounding, parseCurrency, isProductWeighted } from '@/lib/utils';
+import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP } from '@/lib/utils';
 import { validateProduct, FieldError } from '@/lib/formValidation';
 import ValidationErrors from '@/components/ValidationErrors';
 import { useState, useCallback, useMemo, memo, useEffect } from 'react';
@@ -37,15 +37,12 @@ interface ProductFormModalProps {
   setNewProduct: (p: any) => void;
   editingProduct: Product | null;
   setEditingProduct: (p: any) => void;
-  newMargin: number;
-  setNewMargin: (m: number) => void;
-  editMargin: number;
-  setEditMargin: (m: number) => void;
   categories: Category[];
   suppliers: any[];
   onConfirm: () => void;
   onScan: () => void;
   onScanAlternate: () => void;
+  onScanBase?: () => void;
   allProducts: Product[];
   mutateSuppliers?: () => void;
   mutateCategories?: () => void;
@@ -56,9 +53,7 @@ const ProductFormModal = memo(function ProductFormModal({
   isOpen, onOpenChange, addDialogOpen,
   newProduct, setNewProduct,
   editingProduct, setEditingProduct,
-  newMargin, setNewMargin,
-  editMargin, setEditMargin,
-  categories, suppliers, onConfirm, onScan, onScanAlternate, allProducts, mutateSuppliers, mutateCategories,
+  categories, suppliers, onConfirm, onScan, onScanAlternate, onScanBase, allProducts, mutateSuppliers, mutateCategories,
   apiFieldErrors = {}
 }: ProductFormModalProps) {
   const { toast } = useToast();
@@ -82,12 +77,28 @@ const ProductFormModal = memo(function ProductFormModal({
       setDuplicateFound(null);
       setSupplierSearchValue("");
       setCategorySearchValue("");
+      setSearchTerm("");
     } else if (editingProduct && !addDialogOpen) {
       // Sincronizar nombre de categoría al editar
       const cat = categories.find(c => String(c.id) === String(editingProduct.categoryId));
       if (cat) setCategorySearchValue(cat.name);
+
+      // Sincronizar nombre de producto base si es pack
+      if (editingProduct.isPack && editingProduct.baseProductBarcode) {
+        const base = allProducts.find(p => p.barcode === editingProduct.baseProductBarcode);
+        if (base) setSearchTerm(base.productName);
+      }
     }
-  }, [isOpen, editingProduct, addDialogOpen, categories]);
+  }, [isOpen, editingProduct, addDialogOpen, categories, allProducts]);
+  
+  // Sincronizar searchTerm con el código base si cambia externamente (ej: por scanner)
+  useEffect(() => {
+    const currentBarcode = addDialogOpen ? newProduct.baseProductBarcode : editingProduct?.baseProductBarcode;
+    if (currentBarcode) {
+      const base = allProducts.find(p => p.barcode === currentBarcode);
+      if (base) setSearchTerm(base.productName);
+    }
+  }, [newProduct.baseProductBarcode, editingProduct?.baseProductBarcode, allProducts, addDialogOpen]);
 
   // Combinar errores de validación local y errores de API
   const getFieldError = useCallback((fieldName: string): string | undefined => {
@@ -122,12 +133,13 @@ const ProductFormModal = memo(function ProductFormModal({
   
   // Filtro real para el buscador de producto base (se mantiene por lógica de packs)
   const filteredBaseProducts = useMemo(() => {
-    if (!searchTerm) return baseProducts;
+    if (!searchTerm) return baseProducts.slice(0, 50);
     const term = searchTerm.toLowerCase();
-    return baseProducts.filter(p => 
+    const filtered = baseProducts.filter(p => 
       p.productName.toLowerCase().includes(term) || 
       p.barcode.toLowerCase().includes(term)
     );
+    return filtered.slice(0, 50); // Limitar para rendimiento
   }, [baseProducts, searchTerm]);
   
   // Filtrado explícito para proveedores (Mejora la respuesta del buscador)
@@ -266,6 +278,16 @@ const ProductFormModal = memo(function ProductFormModal({
   // Callback estable para Autocomplete de Producto Base
   const handleBaseProductChange = useCallback((key: any) => {
     const barcode = key as string;
+    if (!barcode) {
+      if (addDialogOpen) {
+        setNewProduct((p: any) => ({ ...p, baseProductBarcode: "" }));
+      } else {
+        setEditingProduct((p: any) => p ? { ...p, baseProductBarcode: "" } : null);
+      }
+      setSearchTerm("");
+      return;
+    }
+
     // Buscar el producto base para calcular el costo automáticamente
     const baseProduct = allProducts.find((p: Product) => p.barcode === barcode);
     
@@ -276,7 +298,6 @@ const ProductFormModal = memo(function ProductFormModal({
         return { 
           ...p, 
           baseProductBarcode: barcode,
-          // Autocalcular costo si tenemos producto base y multiplicador
           purchasePrice: baseProduct ? calculatedCost : p.purchasePrice
         };
       });
@@ -288,7 +309,6 @@ const ProductFormModal = memo(function ProductFormModal({
         return { 
           ...p, 
           baseProductBarcode: barcode,
-          // Autocalcular costo si tenemos producto base y multiplicador
           purchasePrice: baseProduct ? calculatedCost : p.purchasePrice
         };
       });
@@ -402,7 +422,7 @@ const ProductFormModal = memo(function ProductFormModal({
     try {
       const created = await apiFetch<Category>('/categories/create', {
         method: 'POST',
-        body: JSON.stringify({ name: newCategoryName.toUpperCase() }),
+        body: JSON.stringify({ name: normalizeText(newCategoryName) }),
       }, token!);
       
       toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA CREADA' });
@@ -429,16 +449,16 @@ const ProductFormModal = memo(function ProductFormModal({
 
   // CLASES COMPARTIDAS PARA INPUTS (Optimizado para móvil)
   const itemInputClass = {
-    label: "text-xs font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest italic text-center w-full mb-0.5",
-    inputWrapper: "h-9 bg-gray-50 dark:bg-black/20 border border-gray-100 dark:border-white/5 rounded-lg group-data-[focus=true]:border-emerald-500 transition-all shadow-sm py-1.5",
-    input: "font-black text-sm uppercase italic text-gray-900 dark:text-white text-left py-0"
+    label: "text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight text-center w-full mb-0.5",
+    inputWrapper: "h-9 bg-gray-50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 rounded-2xl group-data-[focus=true]:border-emerald-500 transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5",
+    input: "font-medium text-sm uppercase tracking-tight text-zinc-900 dark:text-zinc-50 text-left py-0"
   };
 
   // ESTILO DE SWITCH MINIMALISTA
   const minimalistSwitchClass = {
-    base: "inline-flex flex-row-reverse w-full max-w-fit items-center justify-between cursor-pointer rounded-full gap-2",
-    wrapper: "p-0 h-6 w-10 overflow-visible bg-gray-200 dark:bg-zinc-800 group-data-[selected=true]:bg-emerald-500 transition-colors duration-500 shadow-inner",
-    thumb: "w-4 h-4 shadow-lg border-2 border-transparent transition-all duration-300 group-data-[selected=true]:ml-4 bg-white",
+    base: "inline-flex flex-row-reverse w-full max-w-fit items-center justify-between cursor-pointer rounded-2xl gap-2",
+    wrapper: "p-0 h-6 w-10 overflow-visible bg-gray-200 dark:bg-zinc-800 group-data-[selected=true]:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors duration-500 shadow-inner",
+    thumb: "w-4 h-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-transparent transition-all duration-300 group-data-[selected=true]:ml-4 bg-white",
   };
 
   return (
@@ -449,34 +469,38 @@ const ProductFormModal = memo(function ProductFormModal({
       placement="center"
       scrollBehavior="inside"
       backdrop="blur"
-      size="lg"
+      hideCloseButton={true}
+      size="5xl"
       classNames={{
-        base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-2xl overflow-visible mx-2 md:mx-0 translate-y-2 md:translate-y-4",
+        base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden max-h-[95vh] flex flex-col mx-2 md:mx-0",
         wrapper: "items-center justify-center p-8 md:p-12",
-        closeButton: "absolute right-5 top-5 text-gray-400 dark:text-zinc-500 hover:text-rose-500 transition-colors z-[100] rounded-full",
-        backdrop: "bg-black/60 backdrop-blur-md"
+        closeButton: "absolute right-5 top-5 text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
+        backdrop: "bg-[#18181b] "
       }}
     >
       <ModalContent>
-            <ModalHeader className="px-6 md:px-10 py-3 md:py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-900/50 backdrop-blur-md rounded-t-[2.5rem]">
+        <ModalHeader className="px-6 md:px-10 py-3 md:py-3 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-[#18181b]/50 rounded-t-[2.5rem]">
               <div className="flex items-center gap-3">
-                <div className="h-9 w-9 bg-emerald-500/10 text-emerald-500 flex items-center justify-center rounded-xl border border-emerald-500/20 rotate-3">
+                <div className="h-9 w-9 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 rotate-3">
                   <Package size={18} />
                 </div>
                 <div className="flex flex-col">
-                  <h2 className="text-base md:text-lg font-black text-gray-900 dark:text-white italic tracking-tighter uppercase leading-none">
-                    {addDialogOpen ? "Protocolo " : "Modificar "} <span className="text-emerald-500">Producto</span>
+                  <h2 className="text-base md:text-lg font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter uppercase leading-none">
+                    {addDialogOpen ? "Protocolo " : "Modificar "} <span className="text-zinc-900 dark:text-zinc-100">Producto</span>
                   </h2>
-                  <p className="text-[7px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mt-0.5 italic opacity-80">Edición Compacta v5.2</p>
+                  <p className="text-[7px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] mt-0.5 tracking-tight opacity-80">Edición Compacta v5.2</p>
                 </div>
               </div>
             </ModalHeader>
 
-            <ModalBody className="px-6 md:px-10 py-3 md:py-4 gap-3 custom-scrollbar overflow-x-hidden">
-              {/* 1. SECCIÓN IDENTIDAD (Compacta) */}
+            <ModalBody className="px-6 md:px-10 py-3 md:py-2 pb-32 md:pb-0 gap-0 custom-scrollbar overflow-x-hidden">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
+                {/* COLUMNA IZQUIERDA: IDENTIDAD Y VALORIZACIÓN */}
+                <div className="flex flex-col gap-3">
+                  {/* 1. SECCIÓN IDENTIDAD (Compacta) */}
               <div className="flex flex-col sm:flex-row items-center sm:items-stretch gap-4">
                 <div className="relative group/photo shrink-0">
-                  <div className="h-20 w-20 rounded-2xl bg-gray-50 dark:bg-black/40 border-2 border-dashed border-gray-200 dark:border-white/10 flex items-center justify-center overflow-hidden transition-all group-hover/photo:border-emerald-500 shadow-inner group-hover/photo:scale-[1.02] duration-300">
+                  <div className="h-20 w-20 rounded-2xl bg-gray-50 dark:bg-[#18181b] border-2 border-dashed border-gray-200 dark:border-white/10 flex items-center justify-center overflow-hidden transition-all group-hover/photo:border-emerald-500 shadow-inner group-hover/photo:scale-[1.02] duration-300">
                     {(addDialogOpen ? newProduct.imageUrl : editingProduct?.imageUrl) ? (
                       <img
                         src={(addDialogOpen ? newProduct.imageUrl : editingProduct?.imageUrl) || ''}
@@ -489,7 +513,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       </div>
                     )}
                   </div>
-                  <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-1.5 rounded-lg shadow-xl border-2 border-white dark:border-zinc-950 cursor-pointer active:scale-90 transition-all hover:bg-emerald-600">
+                  <div className="absolute -bottom-1 -right-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-white dark:border-zinc-950 cursor-pointer active:scale-90 transition-all hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5">
                     <Camera size={10} />
                     <input
                       type="file"
@@ -513,20 +537,20 @@ const ProductFormModal = memo(function ProductFormModal({
 
                 <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="flex flex-col justify-center gap-0.5">
-                    <label className={`${itemInputClass.label} flex items-center gap-1`}><Barcode size={10} className="text-emerald-500" /> CÓDIGO</label>
+                    <label className={`${itemInputClass.label} flex items-center gap-1`}><Barcode size={10} className="text-zinc-900 dark:text-zinc-100" /> CÓDIGO</label>
                     <div className="relative">
                       <Input
                         value={addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '')}
                         inputMode="text"
                         onValueChange={(v) => {
-                          const val = v.toUpperCase().trim();
+                          const val = normalizeText(v);
                           if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: val }));
                           else setEditingProduct((p: any) => p ? { ...p, barcode: val } : null);
                         }}
                         classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} pr-14 ${duplicateFound ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : ''}` }}
                       />
                       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 transform scale-90">
-                        <Button isIconOnly size="sm" onPress={onScan} className="h-7 w-7 bg-emerald-500/10 text-emerald-500 rounded-lg">
+                        <Button isIconOnly size="sm" onPress={onScan} className="h-7 w-7 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
                           <Camera size={12} />
                         </Button>
                       </div>
@@ -537,7 +561,7 @@ const ProductFormModal = memo(function ProductFormModal({
                     <Input
                       value={addDialogOpen ? newProduct.productName : (editingProduct?.productName || '')}
                       onValueChange={(v) => {
-                        const val = v.toUpperCase();
+                        const val = normalizeText(v);
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, productName: val }));
                         else setEditingProduct((p: any) => p ? { ...p, productName: val } : null);
                       }}
@@ -557,12 +581,12 @@ const ProductFormModal = memo(function ProductFormModal({
                       className="overflow-hidden"
                     >
                       <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-500/10 border-2 border-amber-500/50 rounded-2xl flex flex-col sm:flex-row items-center gap-4 animate-in fade-in zoom-in duration-300">
-                        <div className="h-10 w-10 rounded-full bg-amber-500 flex items-center justify-center text-white shrink-0 shadow-lg shadow-amber-500/20">
+                        <div className="h-10 w-10 rounded-2xl bg-amber-500 flex items-center justify-center text-white shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-amber-500/20">
                           <Info size={20} />
                         </div>
                         <div className="flex-1 text-center sm:text-left">
-                          <p className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest italic">Producto ya registrado</p>
-                          <h4 className="text-sm font-black text-gray-900 dark:text-white uppercase italic leading-tight">{duplicateFound.productName}</h4>
+                          <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest tracking-tight">Producto ya registrado</p>
+                          <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight">{duplicateFound.productName}</h4>
                           <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-400 mt-0.5">El código ingresado ya está asignado a este producto.</p>
                         </div>
                         <Button
@@ -571,7 +595,7 @@ const ProductFormModal = memo(function ProductFormModal({
                             setEditingProduct(duplicateFound);
                             setDuplicateFound(null);
                           }}
-                          className="bg-amber-500 hover:bg-amber-600 text-white font-black uppercase text-[10px] h-9 px-6 rounded-xl shadow-lg shadow-amber-500/20"
+                          className="bg-amber-500 hover:bg-amber-600 text-white font-medium uppercase text-[10px] h-9 px-6 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-amber-500/20"
                         >
                           Cargar para Editar
                         </Button>
@@ -582,27 +606,28 @@ const ProductFormModal = memo(function ProductFormModal({
 
 
               {/* 1.1 CÓDIGOS ALTERNOS */}
-              <div className="bg-gray-50/50 dark:bg-black/20 p-2 rounded-xl border border-gray-100/50 dark:border-white/5">
+              <div className="bg-gray-50/50 dark:bg-[#18181b] p-2 rounded-2xl border border-gray-100/50 dark:border-white/5">
                 <div className="flex flex-col gap-0.5">
                   <label className={`${itemInputClass.label} flex items-center justify-center gap-1`}>
-                    <Barcode size={10} className="text-emerald-500" /> CÓDIGOS ALTERNOS (Separados por coma)
+                    <Barcode size={10} className="text-zinc-900 dark:text-zinc-100" /> CÓDIGOS ALTERNOS (Separados por coma)
                   </label>
                   <div className="relative">
                     <Input
                       placeholder="EJ: 7701234567890, 7700987654321"
                       value={addDialogOpen ? newProduct.alternateCodes : (editingProduct?.alternateCodes || '')}
                       onValueChange={(v) => {
-                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, alternateCodes: v }));
-                        else setEditingProduct((p: any) => p ? { ...p, alternateCodes: v } : null);
+                        const val = v.split(',').map(c => normalizeText(c)).join(', ');
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, alternateCodes: val }));
+                        else setEditingProduct((p: any) => p ? { ...p, alternateCodes: val } : null);
                       }}
                       classNames={{
                         ...itemInputClass,
                         inputWrapper: `${itemInputClass.inputWrapper} pr-10`,
-                        input: "font-mono text-[10px] tracking-tight text-emerald-500 dark:text-emerald-400"
+                        input: "font-mono text-[10px] tracking-tight text-zinc-900 dark:text-zinc-100 dark:text-zinc-300"
                       }}
                     />
                     <div className="absolute right-1 top-1/2 -translate-y-1/2 transform scale-90">
-                      <Button isIconOnly size="sm" onPress={onScanAlternate} className="h-7 w-7 bg-emerald-500/10 text-emerald-500 rounded-lg">
+                      <Button isIconOnly size="sm" onPress={onScanAlternate} className="h-7 w-7 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
                         <Camera size={12} />
                       </Button>
                     </div>
@@ -611,23 +636,47 @@ const ProductFormModal = memo(function ProductFormModal({
               </div>
 
               {/* 2. VALORIZACIÓN (Inline compacto) */}
-              <div className="grid grid-cols-3 gap-2 bg-gray-50/50 dark:bg-black/20 p-2 rounded-xl border border-gray-100/50 dark:border-white/5">
+              <div className="grid grid-cols-3 gap-2 bg-gray-50/50 dark:bg-[#18181b] p-2 rounded-2xl border border-gray-100/50 dark:border-white/5">
                 <div className="flex flex-col gap-0.5">
                   <label className={`${itemInputClass.label} ${hasFieldError('purchasePrice') ? 'text-rose-500' : ''}`}>COSTO</label>
                   <Input
                     variant="flat"
                     inputMode="decimal"
-                    startContent={<span className={`font-black text-[10px] ${hasFieldError('purchasePrice') ? 'text-rose-500' : 'text-emerald-500'}`}>$</span>}
+                    startContent={<span className={`font-medium text-[10px] ${hasFieldError('purchasePrice') ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-100'}`}>$</span>}
                     value={(() => {
                       const price = addDialogOpen ? newProduct.purchasePrice : editingProduct?.purchasePrice;
-                      return (price !== undefined && price !== null && (price as any) !== '') ? formatCurrency(price) : '';
+                      if (price === undefined || price === null || (price as any) === '') return '';
+                      if (typeof price === 'number') return formatInputCOP(String(Math.round(price)));
+                      return String(price);
                     })()}
                     onValueChange={(v) => {
-                      const val = parseCurrency(v);
-                      if (addDialogOpen) {
-                        setNewProduct((p: any) => ({ ...p, purchasePrice: val, salePrice: applyRounding(val * (1 + newMargin / 100)) }));
+                      const cleaned = formatInputCOP(v);
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, purchasePrice: cleaned }));
+                      else setEditingProduct((p: any) => p ? { ...p, purchasePrice: cleaned } : null);
+                    }}
+                    onBlur={(e) => {
+                      const val = parseCOP(e.target.value);
+                      const marginRaw = addDialogOpen ? newProduct.marginPercentage : editingProduct?.marginPercentage;
+                      const hasMargin = marginRaw !== undefined && marginRaw !== null && marginRaw !== ("" as any);
+                      const margin = Number(marginRaw) || 0;
+                      let currentPvpRaw = addDialogOpen ? newProduct.salePrice : editingProduct?.salePrice;
+                      let currentPvp = typeof currentPvpRaw === 'string' ? parseCOP(currentPvpRaw) : (parseFloat(String(currentPvpRaw)) || 0);
+
+                      let newPvp = currentPvp;
+                      let newMargin = marginRaw;
+
+                      if (hasMargin) {
+                          newPvp = applySurtifamiliarRounding(Math.round(val * (1 + margin / 100)));
                       } else {
-                        setEditingProduct((p: any) => p ? { ...p, purchasePrice: val, salePrice: applyRounding(val * (1 + editMargin / 100)) } : null);
+                          if (currentPvp > 0 && val > 0) {
+                              newMargin = Number((((currentPvp / val) - 1) * 100).toFixed(2));
+                          }
+                      }
+
+                      if (addDialogOpen) {
+                          setNewProduct((p: any) => ({ ...p, purchasePrice: val > 0 ? formatInputCOP(String(val)) : '', salePrice: newPvp > 0 ? formatInputCOP(String(newPvp)) : '', marginPercentage: newMargin }));
+                      } else {
+                          setEditingProduct((p: any) => p ? { ...p, purchasePrice: val > 0 ? formatInputCOP(String(val)) : '', salePrice: newPvp > 0 ? formatInputCOP(String(newPvp)) : '', marginPercentage: newMargin } : null);
                       }
                     }}
                     classNames={{ 
@@ -637,91 +686,247 @@ const ProductFormModal = memo(function ProductFormModal({
                     }}
                   />
                   {getFieldError('purchasePrice') && (
-                    <span className="text-[9px] font-black text-rose-500 italic">{getFieldError('purchasePrice')}</span>
+                    <span className="text-[9px] font-medium text-rose-500 tracking-tight">{getFieldError('purchasePrice')}</span>
                   )}
                 </div>
                 <div className="flex flex-col gap-0.5">
-                  <label className="text-xs font-black text-sky-500 uppercase tracking-widest italic text-center w-full mb-0.5">MARGEN %</label>
+                  <label className="text-xs font-medium text-sky-500 uppercase tracking-widest tracking-tight text-center w-full mb-0.5">MARGEN %</label>
                   <Input
                     type="text"
                     inputMode="decimal"
-                    value={String(addDialogOpen ? newMargin : editMargin)}
+                    value={(() => {
+                        const m = addDialogOpen ? (newProduct.marginPercentage) : (editingProduct?.marginPercentage);
+                        if (m === undefined || m === null) return "";
+                        return String(m);
+                    })()}
+                    onBlur={(e) => {
+                       const valRaw = e.target.value.replace(",", ".");
+                       if (valRaw === "") {
+                           if (addDialogOpen) setNewProduct((p: any) => ({ ...p, marginPercentage: "" }));
+                           else setEditingProduct((p: any) => p ? { ...p, marginPercentage: "" } : null);
+                           return;
+                       }
+                       const val = parseFloat(valRaw) || 0;
+                       
+                       const costRaw = addDialogOpen ? newProduct.purchasePrice : editingProduct?.purchasePrice;
+                       const cost = typeof costRaw === 'string' ? parseCOP(costRaw) : (parseFloat(String(costRaw)) || 0);
+                       
+                       const pvpRaw = addDialogOpen ? newProduct.salePrice : editingProduct?.salePrice;
+                       const pvp = typeof pvpRaw === 'string' ? parseCOP(pvpRaw) : (parseFloat(String(pvpRaw)) || 0);
+
+                       const newPvp = cost > 0 ? applySurtifamiliarRounding(Math.round(cost * (1 + val / 100))) : pvp;
+                       const formattedMargin = Number(val.toFixed(2));
+
+                       if (addDialogOpen) {
+                         setNewProduct((p: any) => ({ ...p, marginPercentage: formattedMargin, salePrice: newPvp > 0 ? formatInputCOP(String(newPvp)) : '' }));
+                       } else {
+                         setEditingProduct((p: any) => p ? { ...p, marginPercentage: formattedMargin, salePrice: newPvp > 0 ? formatInputCOP(String(newPvp)) : '' } : null);
+                       }
+                    }}
                     onFocus={(e) => e.target.select()}
                     onValueChange={(v) => {
-                      if (v === "") {
-                        if (addDialogOpen) setNewMargin(0);
-                        else setEditMargin(0);
-                        return;
-                      }
-                      const val = parseFloat(v.replace(",", ".")) || 0;
-                      if (addDialogOpen) {
-                        setNewMargin(val);
-                        setNewProduct((p: any) => ({ ...p, marginPercentage: val, salePrice: applyRounding(p.purchasePrice * (1 + val / 100)) }));
-                      } else {
-                        setEditMargin(val);
-                        setEditingProduct((p: any) => p ? { ...p, marginPercentage: val, salePrice: applyRounding(p.purchasePrice * (1 + val / 100)) } : null);
-                      }
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, marginPercentage: v }));
+                      else setEditingProduct((p: any) => p ? { ...p, marginPercentage: v } : null);
                     }}
                     classNames={{
-                      inputWrapper: "h-9 bg-sky-500/5 border border-sky-500/10 rounded-lg py-1.5 focus-within:border-sky-500",
-                      input: "font-black text-sm tabular-nums text-sky-500 italic text-left py-0"
+                      inputWrapper: "h-9 bg-sky-500/5 border border-sky-500/10 rounded-2xl py-1.5 focus-within:border-sky-500",
+                      input: "font-medium text-sm tabular-nums text-sky-500 tracking-tight text-left py-0"
                     }}
                   />
                 </div>
                 <div className="flex flex-col gap-0.5 relative">
-                  <label className={`text-xs font-black uppercase tracking-widest italic text-center w-full mb-0.5 ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-emerald-500'}`}>PVP FINAL</label>
+                  <label className={`text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full mb-0.5 ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-100'}`}>PVP FINAL</label>
                   <Input
                     inputMode="decimal"
-                    startContent={<span className={`font-black text-xs ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-emerald-500'}`}>$</span>}
+                    startContent={<span className={`font-medium text-xs ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-100'}`}>$</span>}
                     value={(() => {
                         const price = addDialogOpen ? (newProduct.salePrice) : (editingProduct?.salePrice);
-                        return (price !== undefined && price !== null && (price as any) !== '') ? String(price) : '';
+                        if (price === undefined || price === null || (price as any) === '') return '';
+                        if (typeof price === 'number') return formatInputCOP(String(Math.round(price)));
+                        return String(price);
                     })()}
-                    onValueChange={(v) => {
-                      const newPVP = parseFloat(v) || 0;
-                      const currentMargin = addDialogOpen ? newMargin : editMargin;
+                    onBlur={(e) => {
+                      const val = parseCOP(e.target.value);
+                      const marginRaw = addDialogOpen ? newProduct.marginPercentage : editingProduct?.marginPercentage;
+                      const hasMargin = marginRaw !== undefined && marginRaw !== null && marginRaw !== ("" as any);
+                      const margin = Number(marginRaw) || 0;
                       
-                      // 1. Actualiza el estado del PVP para que el usuario pueda teclear
-                      if (addDialogOpen) {
-                        setNewProduct((p: any) => ({ ...p, salePrice: newPVP }));
+                      const costRaw = addDialogOpen ? newProduct.purchasePrice : editingProduct?.purchasePrice;
+                      const currentCost = typeof costRaw === 'string' ? parseCOP(costRaw) : (parseFloat(String(costRaw)) || 0);
+
+                      let newCost = currentCost;
+                      let newMargin = marginRaw;
+
+                      if (hasMargin) {
+                          newCost = Math.round(val / (1 + margin / 100));
                       } else {
-                        setEditingProduct((p: any) => p ? { ...p, salePrice: newPVP } : null);
+                          if (currentCost > 0 && val > 0) {
+                              newMargin = Number((((val / currentCost) - 1) * 100).toFixed(2));
+                          }
                       }
-                      
-                      // 2. Cálculo Inverso Automático hacia el Costo
-                      if (currentMargin > 0) {
-                        const newCost = Math.round(newPVP / (1 + (currentMargin / 100)));
-                        if (addDialogOpen) {
-                          setNewProduct((p: any) => ({ ...p, purchasePrice: newCost }));
-                        } else {
-                          setEditingProduct((p: any) => p ? { ...p, purchasePrice: newCost } : null);
-                        }
+
+                      if (addDialogOpen) {
+                          setNewProduct((p: any) => ({ ...p, salePrice: val > 0 ? formatInputCOP(String(val)) : '', purchasePrice: newCost > 0 ? formatInputCOP(String(newCost)) : '', marginPercentage: newMargin }));
+                      } else {
+                          setEditingProduct((p: any) => p ? { ...p, salePrice: val > 0 ? formatInputCOP(String(val)) : '', purchasePrice: newCost > 0 ? formatInputCOP(String(newCost)) : '', marginPercentage: newMargin } : null);
                       }
                     }}
+                    onValueChange={(v) => {
+                      const cleaned = formatInputCOP(v);
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, salePrice: cleaned }));
+                      else setEditingProduct((p: any) => p ? { ...p, salePrice: cleaned } : null);
+                    }}
                     classNames={{
-                      inputWrapper: `h-9 border rounded-lg shadow-sm py-1.5 ${hasFieldError('salePrice') ? 'bg-rose-500/5 border-rose-500' : 'bg-emerald-500/10 border-emerald-500/20'}`,
-                      input: `font-black text-sm tabular-nums italic text-left py-0 ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-emerald-500'}`
+                      inputWrapper: `h-9 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5 ${hasFieldError('salePrice') ? 'bg-rose-500/5 border-rose-500' : 'bg-white/5 border-emerald-500/20'}`,
+                      input: `font-medium text-sm tabular-nums tracking-tight text-left py-0 ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-100'}`
                     }}
                   />
                   {!hasFieldError('salePrice') && (
-                    <div className="absolute -right-1 -top-1 bg-emerald-500 text-white text-[6px] font-black px-1.5 py-0.5 rounded-full shadow-lg z-10">
+                    <div className="absolute -right-1 -top-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white text-[6px] font-medium px-1.5 py-0.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-10">
                       +{formatCOP((addDialogOpen ? (newProduct.salePrice || 0) - (newProduct.purchasePrice || 0) : (editingProduct?.salePrice || 0) - (editingProduct?.purchasePrice || 0)))}
                     </div>
                   )}
                   {getFieldError('salePrice') && (
-                    <span className="text-[9px] font-black text-rose-500 italic">{getFieldError('salePrice')}</span>
+                    <span className="text-[9px] font-medium text-rose-500 tracking-tight">{getFieldError('salePrice')}</span>
                   )}
                 </div>
               </div>
 
-              {/* 3. LOGÍSTICA & STOCK (Refinado a 2x2 corto) */}
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="h-[1px] flex-1 bg-gradient-to-r from-transparent via-gray-200 dark:via-white/10 to-transparent"></div>
-                  <span className="text-[7px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.4em] italic whitespace-nowrap">Logística e Inventario</span>
-                  <div className="h-[1px] flex-1 bg-gradient-to-r from-transparent via-gray-200 dark:via-white/10 to-transparent"></div>
+              {/* 2.1 IMPUESTOS (Persistencia Automática) */}
+              <div className="grid grid-cols-3 gap-2 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 p-2 rounded-2xl border border-emerald-500/10 mt-2 mb-1">
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-[0.15em] tracking-tight text-center w-full mb-0.5">IVA %</label>
+                  <Input
+                    size="sm"
+                    inputMode="decimal"
+                    value={String(addDialogOpen ? (newProduct.iva ?? '') : (editingProduct?.iva ?? ''))}
+                    placeholder="0"
+                    onValueChange={(v) => {
+                      const val = v === '' ? 0 : parseFloat(v.replace(",", "."));
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, iva: val }));
+                      else setEditingProduct((p: any) => p ? { ...p, iva: val } : null);
+                    }}
+                    classNames={{
+                      ...itemInputClass,
+                      inputWrapper: "h-8 card-base border-none border-emerald-500/20",
+                      input: "text-center text-xs text-zinc-900 dark:text-zinc-100 font-medium"
+                    }}
+                  />
                 </div>
+                <div className="flex flex-col gap-0.5">
+                  <label className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-[0.15em] tracking-tight text-center w-full mb-0.5">ICUI %</label>
+                  <Input
+                    size="sm"
+                    inputMode="decimal"
+                    value={String(addDialogOpen ? (newProduct.icui ?? '') : (editingProduct?.icui ?? ''))}
+                    placeholder="0"
+                    onValueChange={(v) => {
+                      const val = v === '' ? 0 : parseFloat(v.replace(",", "."));
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, icui: val }));
+                      else setEditingProduct((p: any) => p ? { ...p, icui: val } : null);
+                    }}
+                    classNames={{
+                      ...itemInputClass,
+                      inputWrapper: "h-8 card-base border-none border-emerald-500/20",
+                      input: "text-center text-xs text-zinc-900 dark:text-zinc-100 font-medium"
+                    }}
+                  />
+                </div>
+                <div className="flex flex-col gap-0.5 col-span-1">
+                  <label className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-[0.15em] tracking-tight text-center w-full mb-0.5">IBUA %</label>
+                  <Input
+                    size="sm"
+                    inputMode="decimal"
+                    value={String(addDialogOpen ? (newProduct.ibua ?? '') : (editingProduct?.ibua ?? ''))}
+                    placeholder="0"
+                    onValueChange={(v) => {
+                      const val = v === '' ? 0 : parseFloat(v.replace(",", "."));
+                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, ibua: val }));
+                      else setEditingProduct((p: any) => p ? { ...p, ibua: val } : null);
+                    }}
+                    classNames={{
+                      ...itemInputClass,
+                      inputWrapper: "h-8 card-base border-none border-emerald-500/20",
+                      input: "text-center text-xs text-zinc-900 dark:text-zinc-100 font-medium"
+                    }}
+                  />
+                </div>
+                {/* COMPARATIVA DE PRECIOS DETALLADA */}
+                {supplierPrices.length > 0 && !addDialogOpen && (
+                  <motion.div 
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    className="flex flex-col gap-3 p-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5/[0.02] rounded-2xl border border-emerald-500/10 shadow-inner overflow-hidden mb-1"
+                  >
+                    <div className="flex items-center justify-between px-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1.5 h-1.5 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                        <h4 className="text-[10px] font-medium uppercase tracking-[0.2em] tracking-tight text-zinc-900 dark:text-zinc-100/80">Comparativa de Costos</h4>
+                      </div>
+                      <span className="text-[8px] font-medium text-gray-400 uppercase tracking-tight">Mejor precio resaltado</span>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 gap-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
+                      {supplierPrices
+                        .sort((a, b) => a.purchasePrice - b.purchasePrice)
+                        .map((price, idx) => {
+                          const isCheapest = idx === 0;
+                          return (
+                            <motion.div 
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: idx * 0.05 }}
+                              key={`${price.supplierId}-${idx}`}
+                              className={`flex items-center justify-between p-3 rounded-2xl border transition-all duration-300 ${
+                                isCheapest 
+                                  ? "card-base border-none border-emerald-500/40 shadow-[0_4px_12px_rgba(16,185,129,0.08)]" 
+                                  : "bg-white/50 dark:bg-[#18181b] border-gray-100 dark:border-white/5 opacity-80"
+                              }`}
+                            >
+                              <div className="flex flex-col gap-0.5">
+                                <span className={`text-[9px] font-medium uppercase tracking-tight ${isCheapest ? "text-zinc-900 dark:text-zinc-100" : "text-gray-500"}`}>
+                                  {price.Supplier?.name || `Proveedor #${price.supplierId}`}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <Truck size={8} className="text-gray-400" />
+                                  <span className="text-[7px] text-gray-400 font-bold uppercase tracking-widest">
+                                    {new Date(price.updatedAt).toLocaleDateString()}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-1">
+                                <div className="flex items-center gap-2">
+                                  {isCheapest && idx < supplierPrices.length - 1 && (
+                                    <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 bg-white/5 px-2 py-0.5 rounded-2xl uppercase tracking-tight">
+                                      -{formatCOP(supplierPrices[idx+1].purchasePrice - price.purchasePrice)} ahorro
+                                    </span>
+                                  )}
+                                  <span className={`text-[12px] font-medium tracking-tight tracking-tighter ${isCheapest ? "text-zinc-900 dark:text-zinc-100 scale-110 origin-right transition-transform" : "text-gray-400"}`}>
+                                    {formatCOP(price.purchasePrice)}
+                                  </span>
+                                </div>
+                                {isCheapest && (
+                                  <div className="flex items-center gap-1">
+                                    <Check size={8} className="text-zinc-900 dark:text-zinc-100" strokeWidth={4} />
+                                    <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight leading-none">
+                                      OPCIÓN RECOMENDADA
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                    </div>
+                  </motion.div>
+                )}
 
+              </div>
+              </div> {/* <-- Cierre de la Columna Izquierda */}
+
+              {/* COLUMNA DERECHA: LOGÍSTICA Y STOCK */}
+              <div className="flex flex-col gap-3">
+                {/* 3. LOGÍSTICA & STOCK */}
                 <div className="grid grid-cols-2 gap-3 bg-gray-50/20 dark:bg-black/10 p-3 rounded-2xl border border-gray-100/50 dark:border-white/5">
                   <div className="flex flex-col gap-1.5">
                     <label className={itemInputClass.label}>PROVEEDORES (BUSCAR Y AÑADIR)</label>
@@ -734,30 +939,30 @@ const ProductFormModal = memo(function ProductFormModal({
                           inputValue={supplierSearchValue}
                           onInputChange={setSupplierSearchValue}
                           items={filteredSuppliers}
-                          startContent={<Truck size={14} className="text-emerald-500 mr-1" />}
+                          startContent={<Truck size={14} className="text-zinc-900 dark:text-zinc-100 mr-1" />}
                           classNames={{
                             base: "flex-1",
                           }}
                           popoverProps={{
-                            className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl"
+                            className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl"
                           }}
                           inputProps={{
                             classNames: {
-                              inputWrapper: "h-11 bg-gray-50/80 dark:bg-black/40 border border-gray-200/50 dark:border-white/10 rounded-xl px-3",
-                              input: "font-bold text-xs uppercase text-gray-900 dark:text-white placeholder:text-gray-400",
+                              inputWrapper: "h-11 bg-gray-50/80 dark:bg-[#18181b] border border-gray-200/50 dark:border-white/10 rounded-2xl px-3",
+                              input: "font-bold text-xs uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400",
                             }
                           }}
                         >
                           {(s: any) => (
                             <AutocompleteItem key={String(s.id)} textValue={s.name}>
-                              <span className="text-[10px] font-black uppercase italic">{s.name}</span>
+                              <span className="text-[10px] font-medium uppercase tracking-tight">{s.name}</span>
                             </AutocompleteItem>
                           )}
                         </Autocomplete>
                         <Button
                           isIconOnly
                           variant="flat"
-                          className="h-11 w-11 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl active:scale-95"
+                          className="h-11 w-11 min-w-0 bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 rounded-2xl active:scale-95"
                           onPress={() => setQuickSupplierOpen(true)}
                         >
                           <PlusCircle size={18} />
@@ -765,9 +970,9 @@ const ProductFormModal = memo(function ProductFormModal({
                       </div>
                       
                       {/* Visualización de proveedores seleccionados */}
-                      <div className="flex flex-wrap gap-1.5 p-2 min-h-[40px] bg-gray-50/30 dark:bg-black/20 rounded-xl border border-dashed border-gray-200 dark:border-white/5">
+                      <div className="flex flex-wrap gap-1.5 p-2 min-h-[40px] bg-gray-50/30 dark:bg-[#18181b] rounded-2xl border border-dashed border-gray-200 dark:border-white/5">
                         {((addDialogOpen ? newProduct.suppliers : editingProduct?.suppliers) || []).length === 0 ? (
-                          <span className="text-[8px] font-bold text-gray-400 uppercase italic m-auto">Sin proveedores vinculados</span>
+                          <span className="text-[8px] font-bold text-gray-400 uppercase tracking-tight m-auto">Sin proveedores vinculados</span>
                         ) : (
                           ((addDialogOpen ? newProduct.suppliers : editingProduct?.suppliers) || []).map((s: any) => {
                             const fullInfo = suppliers.find(sup => sup.id === s.id);
@@ -778,7 +983,7 @@ const ProductFormModal = memo(function ProductFormModal({
                                 variant="flat"
                                 color="success"
                                 onClose={() => handleRemoveSupplier(s.id)}
-                                className="bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 font-black text-[8px] uppercase italic"
+                                className="bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 font-medium text-[8px] uppercase tracking-tight"
                               >
                                 {fullInfo?.name || `ID: ${s.id}`}
                               </Chip>
@@ -803,30 +1008,30 @@ const ProductFormModal = memo(function ProductFormModal({
                         }
                         onSelectionChange={handleCategoryChange}
                         items={filteredCategories}
-                        startContent={<Package size={14} className="text-emerald-500 mr-1" />}
+                        startContent={<Package size={14} className="text-zinc-900 dark:text-zinc-100 mr-1" />}
                         classNames={{
                           base: "flex-1",
                         }}
                         popoverProps={{
-                          className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl"
+                          className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl"
                         }}
                         inputProps={{
                           classNames: {
-                            inputWrapper: "h-11 bg-gray-50/80 dark:bg-black/40 border border-gray-200/50 dark:border-white/10 rounded-xl px-3",
-                            input: "font-bold text-xs uppercase text-gray-900 dark:text-white placeholder:text-gray-400",
+                            inputWrapper: "h-11 bg-gray-50/80 dark:bg-[#18181b] border border-gray-200/50 dark:border-white/10 rounded-2xl px-3",
+                            input: "font-bold text-xs uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400",
                           }
                         }}
                       >
                         {(c: any) => (
                           <AutocompleteItem key={String(c.id)} textValue={c.name}>
-                            <span className="text-[10px] font-black uppercase italic">{c.name}</span>
+                            <span className="text-[10px] font-medium uppercase tracking-tight">{c.name}</span>
                           </AutocompleteItem>
                         )}
                       </Autocomplete>
                       <Button
                         isIconOnly
                         variant="flat"
-                        className="h-11 w-11 min-w-0 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-xl active:scale-95"
+                        className="h-11 w-11 min-w-0 bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 rounded-2xl active:scale-95"
                         onPress={() => setQuickCategoryOpen(true)}
                       >
                         <PlusCircle size={18} />
@@ -837,25 +1042,25 @@ const ProductFormModal = memo(function ProductFormModal({
                   <div className="flex flex-col gap-0.5">
                     <label className={itemInputClass.label}>STOCK ACTUAL</label>
                     <Input
-                      type={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "text" : "number"}
+                      type="text"
                       inputMode={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "decimal" : "numeric"}
-                      isDisabled={addDialogOpen ? newProduct.isWeighted : (editingProduct?.isWeighted || false)}
-                      value={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "∞" : String(addDialogOpen ? (newProduct.quantity ?? '') : (editingProduct?.quantity ?? ''))}
+                      isDisabled={(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1}
+                      value={(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 ? "∞" : String(addDialogOpen ? (newProduct.quantity ?? '') : (editingProduct?.quantity ?? ''))}
                       onValueChange={(v) => {
-                        const val = v === '' ? '' : parseFloat(v);
+                        const val = v === '' ? 0 : parseFloat(v);
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: val }));
                         else setEditingProduct((p: any) => p ? { ...p, quantity: val } : null);
                       }}
                       classNames={{
                         ...itemInputClass,
                         inputWrapper: `${itemInputClass.inputWrapper}`,
-                        input: `${itemInputClass.input} text-left ${(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? 'text-emerald-500 text-lg' : ''}`
+                        input: `${itemInputClass.input} text-left ${(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 ? 'text-zinc-900 dark:text-zinc-100 text-lg' : ''}`
                       }}
                     />
                   </div>
 
                   <div className="flex flex-col gap-0.5">
-                    <label className={`text-xs font-black uppercase tracking-widest italic text-center w-full mb-0.5 ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`}>STOCK MÍNIMO</label>
+                    <label className={`text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full mb-0.5 ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`}>STOCK MÍNIMO</label>
                     <Input
                       type="number"
                       inputMode="numeric"
@@ -870,115 +1075,77 @@ const ProductFormModal = memo(function ProductFormModal({
                       }}
                       classNames={{
                         ...itemInputClass,
-                        inputWrapper: `rounded-lg ${hasFieldError('minStock') ? 'bg-rose-500/10 border-rose-500 border-2' : 'bg-rose-500/5 border border-rose-500/10'}`,
-                        input: `font-black text-sm tabular-nums text-left ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`
+                        inputWrapper: `rounded-2xl ${hasFieldError('minStock') ? 'bg-rose-500/10 border-rose-500 border-2' : 'bg-rose-500/5 border border-rose-500/10'}`,
+                        input: `font-medium text-sm tabular-nums text-left ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`
                       }}
                     />
                     {getFieldError('minStock') && (
-                      <span className="text-xs font-black text-rose-500 italic">{getFieldError('minStock')}</span>
+                      <span className="text-xs font-medium text-rose-500 tracking-tight">{getFieldError('minStock')}</span>
                     )}
                   </div>
                 </div>
-
-                {/* COMPARATIVA DE PRECIOS DETALLADA */}
-                {supplierPrices.length > 0 && !addDialogOpen && (
-                  <motion.div 
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: 'auto' }}
-                    className="flex flex-col gap-3 p-4 bg-emerald-500/5 dark:bg-emerald-500/[0.02] rounded-3xl border border-emerald-500/10 shadow-inner overflow-hidden mb-1"
-                  >
-                    <div className="flex items-center justify-between px-1">
-                      <div className="flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
-                        <h4 className="text-[10px] font-black uppercase tracking-[0.2em] italic text-emerald-500/80">Comparativa de Costos</h4>
-                      </div>
-                      <span className="text-[8px] font-black text-gray-400 uppercase italic">Mejor precio resaltado</span>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 gap-2 max-h-[160px] overflow-y-auto pr-1 custom-scrollbar">
-                      {supplierPrices
-                        .sort((a, b) => a.purchasePrice - b.purchasePrice)
-                        .map((price, idx) => {
-                          const isCheapest = idx === 0;
-                          return (
-                            <motion.div 
-                              initial={{ opacity: 0, x: -10 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              transition={{ delay: idx * 0.05 }}
-                              key={`${price.supplierId}-${idx}`}
-                              className={`flex items-center justify-between p-3 rounded-2xl border transition-all duration-300 ${
-                                isCheapest 
-                                  ? "bg-white dark:bg-zinc-900 border-emerald-500/40 shadow-[0_4px_12px_rgba(16,185,129,0.08)]" 
-                                  : "bg-white/50 dark:bg-black/20 border-gray-100 dark:border-white/5 opacity-80"
-                              }`}
-                            >
-                              <div className="flex flex-col gap-0.5">
-                                <span className={`text-[9px] font-black uppercase italic ${isCheapest ? "text-emerald-500" : "text-gray-500"}`}>
-                                  {price.Supplier?.name || `Proveedor #${price.supplierId}`}
-                                </span>
-                                <div className="flex items-center gap-1.5">
-                                  <Truck size={8} className="text-gray-400" />
-                                  <span className="text-[7px] text-gray-400 font-bold uppercase tracking-widest">
-                                    {new Date(price.updatedAt).toLocaleDateString()}
-                                  </span>
-                                </div>
-                              </div>
-                              <div className="flex flex-col items-end gap-1">
-                                <div className="flex items-center gap-2">
-                                  {isCheapest && idx < supplierPrices.length - 1 && (
-                                    <span className="text-[8px] font-black text-emerald-500 bg-emerald-500/10 px-2 py-0.5 rounded-lg uppercase italic">
-                                      -{formatCOP(supplierPrices[idx+1].purchasePrice - price.purchasePrice)} ahorro
-                                    </span>
-                                  )}
-                                  <span className={`text-[12px] font-black italic tracking-tighter ${isCheapest ? "text-emerald-500 scale-110 origin-right transition-transform" : "text-gray-400"}`}>
-                                    {formatCOP(price.purchasePrice)}
-                                  </span>
-                                </div>
-                                {isCheapest && (
-                                  <div className="flex items-center gap-1">
-                                    <Check size={8} className="text-emerald-500" strokeWidth={4} />
-                                    <span className="text-[7px] font-black text-emerald-500 uppercase italic leading-none">
-                                      OPCIÓN RECOMENDADA
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                            </motion.div>
-                          );
-                        })}
-                    </div>
-                  </motion.div>
-                )}
-
-              </div>
-
               {/* 4. CONFIGURACIÓN ESPECIAL (Compacta) */}
-              <div className="flex gap-2">
-                <div className="flex-1 flex items-center justify-between px-3 h-10 bg-gray-50/50 dark:bg-black/20 rounded-xl border border-gray-100 dark:border-white/5">
-                  <div className="flex items-center gap-2">
-                    <div className={`h-6 w-6 rounded-lg flex items-center justify-center transition-all duration-500 ${isProductWeighted(addDialogOpen ? newProduct : editingProduct) ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
-                      <Info size={12} />
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="flex-1 flex flex-col gap-2 p-3 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl border border-gray-100 dark:border-white/5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={`h-6 w-6 rounded-2xl flex items-center justify-center transition-all duration-500 ${isProductWeighted(addDialogOpen ? newProduct : editingProduct) ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
+                        <Info size={12} />
+                      </div>
+                      <span className="text-[8px] font-medium text-gray-500 uppercase tracking-widest tracking-tight">Pesable</span>
                     </div>
-                    <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest italic">Pesable</span>
+                    <Switch
+                      size="sm"
+                      isSelected={isProductWeighted(addDialogOpen ? newProduct : editingProduct)}
+                      onValueChange={(v) => {
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isWeighted: v, quantity: v ? 0 : p.quantity }));
+                        else setEditingProduct((p: any) => p ? { ...p, isWeighted: v, quantity: v ? 0 : p.quantity } : null);
+                      }}
+                      classNames={minimalistSwitchClass}
+                    />
                   </div>
-                  <Switch
-                    size="sm"
-                    isSelected={isProductWeighted(addDialogOpen ? newProduct : editingProduct)}
-                    onValueChange={(v) => {
-                      const qty = v ? 999999 : 0;
-                      if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isWeighted: v, quantity: qty }));
-                      else setEditingProduct((p: any) => p ? { ...p, isWeighted: v, quantity: qty } : null);
-                    }}
-                    classNames={minimalistSwitchClass}
-                  />
+
+                  {isProductWeighted(addDialogOpen ? newProduct : editingProduct) && (
+                    <div className="flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5 mt-1">
+                      <span className="text-[7px] font-medium text-gray-400 uppercase tracking-tight">Control de Stock</span>
+                      <div className="flex bg-gray-200 dark:bg-zinc-800 p-0.5 rounded-2xl gap-1">
+                        <button
+                          onClick={() => {
+                            if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: 0 }));
+                            else setEditingProduct((p: any) => p ? { ...p, quantity: 0 } : null);
+                          }}
+                          className={`px-2 py-1 rounded-2xl text-[8px] font-medium transition-all ${
+                            (addDialogOpen ? newProduct.quantity : editingProduct?.quantity) !== -1 
+                            ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' 
+                            : 'text-gray-400'
+                          }`}
+                        >
+                          REAL
+                        </button>
+                        <button
+                          onClick={() => {
+                            if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: -1 }));
+                            else setEditingProduct((p: any) => p ? { ...p, quantity: -1 } : null);
+                          }}
+                          className={`px-2 py-1 rounded-2xl text-[8px] font-medium transition-all ${
+                            (addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 
+                            ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' 
+                            : 'text-gray-400'
+                          }`}
+                        >
+                          ∞ INFINITO
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex-1 flex items-center justify-between px-3 h-10 bg-gray-50/50 dark:bg-black/20 rounded-xl border border-gray-100 dark:border-white/5">
+                <div className="flex-1 flex items-center justify-between px-3 h-10 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl border border-gray-100 dark:border-white/5">
                   <div className="flex items-center gap-2">
-                    <div className={`h-6 w-6 rounded-lg flex items-center justify-center transition-all duration-500 ${isPack ? 'bg-emerald-500 text-white shadow-lg' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
+                    <div className={`h-6 w-6 rounded-2xl flex items-center justify-center transition-all duration-500 ${isPack ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
                       <Box size={12} />
                     </div>
-                    <span className="text-[8px] font-black text-gray-500 uppercase tracking-widest italic">Modo Pack</span>
+                    <span className="text-[8px] font-medium text-gray-500 uppercase tracking-widest tracking-tight">Modo Pack</span>
                   </div>
                   <Switch
                     size="sm"
@@ -1000,46 +1167,63 @@ const ProductFormModal = memo(function ProductFormModal({
                     animate={{ opacity: 1, height: 'auto' }}
                     exit={{ opacity: 0, height: 0 }}
                   >
-                    <div className="flex flex-row gap-2 p-2 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
+                    <div className="flex flex-row gap-2 p-2 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl border border-emerald-500/10">
                       {/* Producto Base: 75% del ancho */}
                       <div className="flex-1 flex flex-col gap-0.5 min-w-0">
-                        <label className="text-xs font-black uppercase tracking-widest italic text-center w-full">PRODUCTO BASE</label>
-                        <Autocomplete
-                          aria-label="Seleccionar producto base para pack"
-                          items={baseProducts}
-                          selectedKey={(addDialogOpen ? newProduct.baseProductBarcode : editingProduct?.baseProductBarcode) || null}
-                          placeholder="BUSCAR..."
-                          startContent={<Package size={14} className="text-emerald-500 mr-1 flex-shrink-0" />}
-                          onSelectionChange={handleBaseProductChange}
-                          allowsCustomValue={false}
-                          classNames={{
-                            base: "w-full",
-                          }}
-                          popoverProps={{
-                            className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-2xl rounded-xl w-[300px]",
-                            onClose: handlePopoverClose
-                          }}
-                          inputProps={{
-                            classNames: {
-                              inputWrapper: "h-9 bg-white dark:bg-zinc-900 border border-emerald-500/20 rounded-xl py-0",
-                              input: "font-black text-sm uppercase italic text-left py-0"
-                            }
-                          }}
-                        >
-                          {(item) => (
-                            <AutocompleteItem key={item.barcode} textValue={item.productName} className="py-1">
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-black uppercase italic truncate block w-full">{item.productName}</span>
-                                <span className="text-xs text-gray-400 font-bold uppercase">{item.barcode}</span>
-                              </div>
-                            </AutocompleteItem>
-                          )}
-                        </Autocomplete>
+                        <label className="text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full">PRODUCTO BASE</label>
+                        <div className="flex gap-1 items-center">
+                          <Autocomplete
+                            aria-label="Seleccionar producto base para pack"
+                            items={filteredBaseProducts}
+                            selectedKey={(addDialogOpen ? newProduct.baseProductBarcode : editingProduct?.baseProductBarcode) || null}
+                            inputValue={searchTerm}
+                            onInputChange={setSearchTerm}
+                            placeholder="ESCRIBE O ESCANEA..."
+                            startContent={<Package size={14} className="text-zinc-900 dark:text-zinc-100 mr-1 flex-shrink-0" />}
+                            onSelectionChange={handleBaseProductChange}
+                            allowsCustomValue={false}
+                            isClearable
+                            classNames={{
+                              base: "flex-1",
+                            }}
+                            popoverProps={{
+                              className: "z-[9999] bg-white dark:bg-zinc-950 border border-gray-100 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl w-[320px]",
+                              onClose: handlePopoverClose
+                            }}
+                            inputProps={{
+                              classNames: {
+                                inputWrapper: "h-11 card-base border-none border-2 border-emerald-500/30 rounded-2xl py-0 group-data-[focus=true]:border-emerald-500",
+                                input: "font-medium text-[11px] uppercase tracking-tight text-left py-0"
+                              }
+                            }}
+                          >
+                            {(item) => (
+                              <AutocompleteItem key={item.barcode} textValue={item.productName} className="py-2 border-b border-gray-100 dark:border-white/5 last:border-0">
+                                <div className="flex flex-col min-w-0">
+                                  <span className="text-[11px] font-medium uppercase tracking-tight truncate block w-full text-zinc-900 dark:text-zinc-100 dark:text-zinc-300">{item.productName}</span>
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    <span className="text-[9px] text-gray-400 font-bold uppercase tracking-widest">{item.barcode}</span>
+                                    <span className="text-[9px] font-medium text-gray-400 tracking-tight">${formatCOP(item.purchasePrice)}</span>
+                                  </div>
+                                </div>
+                              </AutocompleteItem>
+                            )}
+                          </Autocomplete>
+                          <Button 
+                            isIconOnly 
+                            variant="flat" 
+                            className="h-11 w-11 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl flex-shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+                            onPress={onScanBase}
+                            title="Escanear Producto Base"
+                          >
+                            <Camera size={20} />
+                          </Button>
+                        </div>
                       </div>
 
                       {/* Unidades: 25% del ancho - w-24 fijo */}
                       <div className="flex flex-col gap-0.5 w-24 flex-shrink-0">
-                        <label className="text-xs font-black uppercase tracking-widest italic text-center w-full">UND/PAQ</label>
+                        <label className="text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full">UND/PAQ</label>
                         <Input
                           type="number"
                           inputMode="numeric"
@@ -1047,8 +1231,8 @@ const ProductFormModal = memo(function ProductFormModal({
                           value={String(addDialogOpen ? (newProduct.packMultiplier ?? '') : (editingProduct?.packMultiplier ?? ''))}
                           onValueChange={handlePackMultiplierChange}
                           classNames={{
-                            inputWrapper: "h-9 bg-white dark:bg-zinc-900 border border-emerald-500/20 rounded-xl py-0",
-                            input: "font-black text-sm tabular-nums text-emerald-500 italic text-left py-0"
+                            inputWrapper: "h-9 card-base border-none border border-emerald-500/20 rounded-2xl py-0",
+                            input: "font-medium text-sm tabular-nums text-zinc-900 dark:text-zinc-100 tracking-tight text-left py-0"
                           }}
                         />
                       </div>
@@ -1056,77 +1240,83 @@ const ProductFormModal = memo(function ProductFormModal({
                   </motion.div>
                 )}
               </AnimatePresence>
+
+              </div>
+
+                </div>
             </ModalBody>
 
-            <ModalFooter className="px-6 md:px-10 py-3 md:py-4 border-t border-gray-100 dark:border-white/5 bg-gray-100/50 dark:bg-zinc-950/50 rounded-b-[2.5rem]">
-              <div className="flex w-full gap-3">
-                <Button
-                  variant="flat"
-                  className="flex-1 h-10 rounded-xl font-black uppercase text-[9px] bg-white dark:bg-zinc-900 text-gray-400 italic tracking-widest border border-gray-100 dark:border-white/5"
-                  onPress={onOpenChange as any}
-                >
-                  descartar
-                </Button>
-                <Button
-                  className={`flex-[2] h-10 font-black uppercase tracking-widest rounded-xl shadow-lg transition-all active:scale-[0.98] italic text-[10px] ${
-                    duplicateFound 
-                      ? "bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-600" 
-                      : "bg-emerald-500 text-white shadow-emerald-500/20 hover:bg-emerald-600"
-                  }`}
-                  onPress={() => {
-                    if (addDialogOpen && duplicateFound) {
-                      setEditingProduct(duplicateFound);
-                      setDuplicateFound(null);
-                      return;
-                    }
-
-                    const current = addDialogOpen ? newProduct : editingProduct;
-                    const result = validateProduct({
-                      barcode: current?.barcode,
-                      productName: current?.productName,
-                      purchasePrice: current?.purchasePrice,
-                      salePrice: current?.salePrice,
-                      quantity: current?.quantity,
-                      minStock: current?.minStock,
-                      marginPercentage: addDialogOpen ? newMargin : editMargin,
-                      isWeighted: current?.isWeighted,
-                      isPack: (current as any)?.isPack,
-                      packMultiplier: (current as any)?.packMultiplier,
-                      baseProductBarcode: (current as any)?.baseProductBarcode,
-                      categoryId: current?.categoryId,
-                    });
-                    if (!result.isValid) {
-                      setValidationErrors(result.errors);
-                      return;
-                    }
-                    setValidationErrors([]);
-                    onConfirm();
-                  }}
-                >
-                  {duplicateFound ? (
-                    <>
-                      <Info size={14} className="mr-2" />
-                      CARGAR PARA EDITAR
-                    </>
-                  ) : (
-                    <>
-                      <Check size={14} className="mr-2" />
-                      {addDialogOpen ? "GUARDAR" : "ACTUALIZAR"}
-                    </>
-                  )}
-                </Button>
+            <ModalFooter className="px-6 md:px-10 py-3 md:py-3 border-t border-gray-100 dark:border-white/5 bg-gray-100/50 dark:bg-zinc-950/50 rounded-b-[2.5rem]">
+              <div className="flex flex-col w-full gap-3">
                 <AnimatePresence>
                   {validationErrors.length > 0 && (
                     <motion.div
                       initial={{ opacity: 0, height: 0 }}
                       animate={{ opacity: 1, height: 'auto' }}
                       exit={{ opacity: 0, height: 0 }}
-                      className="col-span-2"
+                      className="w-full"
                     >
                       <ValidationErrors errors={validationErrors} />
                     </motion.div>
                   )}
                 </AnimatePresence>
+                <div className="flex w-full gap-3">
+                  <Button
+                    variant="flat"
+                    className="flex-1 h-10 rounded-2xl font-medium uppercase text-[9px] card-base border-none text-gray-400 tracking-tight tracking-widest border border-gray-100 dark:border-white/5"
+                    onPress={() => onOpenChange(false)}
+                  >
+                    descartar
+                  </Button>
+                  <Button
+                    className={`flex-[2] h-10 font-medium uppercase tracking-widest rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-[0.98] tracking-tight text-[10px] ${
+                      duplicateFound 
+                        ? "bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-600" 
+                        : "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white  hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5"
+                    }`}
+                    onPress={() => {
+                      if (addDialogOpen && duplicateFound) {
+                        setEditingProduct(duplicateFound);
+                        setDuplicateFound(null);
+                        return;
+                      }
+
+                      const current = addDialogOpen ? newProduct : editingProduct;
+                      const result = validateProduct({
+                        barcode: current?.barcode,
+                        productName: current?.productName,
+                        purchasePrice: current?.purchasePrice,
+                        salePrice: current?.salePrice,
+                        quantity: current?.quantity,
+                        minStock: current?.minStock,
+                        marginPercentage: current?.marginPercentage,
+                        isWeighted: current?.isWeighted,
+                        isPack: (current as any)?.isPack,
+                        packMultiplier: (current as any)?.packMultiplier,
+                        baseProductBarcode: (current as any)?.baseProductBarcode,
+                        categoryId: current?.categoryId,
+                      });
+                      if (!result.isValid) {
+                        setValidationErrors(result.errors);
+                        return;
+                      }
+                      setValidationErrors([]);
+                      onConfirm();
+                    }}
+                  >
+                    {duplicateFound ? (
+                      <>
+                        <Info size={14} className="mr-2" />
+                        CARGAR PARA EDITAR
+                      </>
+                    ) : (
+                      <>
+                        <Check size={14} className="mr-2" />
+                        {addDialogOpen ? "GUARDAR" : "ACTUALIZAR"}
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </ModalFooter>
       </ModalContent>

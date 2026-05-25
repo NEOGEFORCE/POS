@@ -37,12 +37,12 @@ const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
       <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-emerald-500 flex items-center justify-center text-white shadow-xl shadow-emerald-500/20 shrink-0 transition-transform active:scale-95">
+        <div className="h-10 w-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 transition-transform active:scale-95">
           <Truck size={20} />
         </div>
         <div className="flex flex-col">
-          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">DIRECTORIO <span className="text-emerald-500">LOGÍSTICO</span></h1>
-          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Abastecimiento Maestro V4.0</p>
+          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">DIRECTORIO <span className="text-zinc-900 dark:text-zinc-100">LOGÍSTICO</span></h1>
+          <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Abastecimiento Maestro V4.0</p>
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -51,14 +51,14 @@ const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
           size="sm"
           onPress={onReload}
           isLoading={isLoading}
-          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-emerald-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          className="h-10 w-10 card-base border-none dark:bg-[#18181b]/80 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
           <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
           size="sm"
           onPress={onAdd}
-          className="h-10 bg-emerald-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-emerald-500/20 italic transition-all active:scale-95 shrink-0"
+          className="h-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[9px] px-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] tracking-tight transition-all active:scale-95 shrink-0"
         >
           <PlusCircle size={16} />
           <span className="ml-2 tracking-widest">NUEVO</span>
@@ -71,10 +71,10 @@ const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       value={filter}
       onValueChange={onSearch}
       classNames={{
-        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
-        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+        inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
       }}
-      startContent={<Search size={14} className="text-emerald-500 mr-1" />}
+      startContent={<Search size={14} className="text-zinc-900 dark:text-zinc-100 mr-1" />}
     />
   </header>
 ));
@@ -169,7 +169,7 @@ export default function SuppliersPage() {
       setAddDialogOpen(false);
       setNewSupplier({ name: '', phone: '', address: '' } as any);
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL CREAR PROVEEDOR' });
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message });
     }
   };
 
@@ -189,11 +189,11 @@ export default function SuppliersPage() {
       toast({
         title: "ÉXITO",
         description: "REGISTRO ACTUALIZADO",
-        className: "bg-emerald-500 text-white border-none"
+        className: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white border-none"
       });
       setEditDialogOpen(false);
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ACTUALIZAR PROVEEDOR' });
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message });
     }
   };
 
@@ -211,20 +211,20 @@ export default function SuppliersPage() {
       loadSuppliers();
       broadcastRevalidate('SUPPLIER_UPDATE');
     } catch (err: any) {
-      toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL ELIMINAR PROVEEDOR' });
+      toast({ variant: 'destructive', title: 'ERROR', description: err.message });
     }
   };
 
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
     <Spinner color="success" size="lg" />
-    <p className="text-[10px] font-black text-emerald-500 uppercase tracking-[0.4em] animate-pulse">Sincronizando Logística...</p>
+    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Logística...</p>
   </div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
-      <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+      <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <SupplierHeader
           filter={filter}
           onSearch={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}

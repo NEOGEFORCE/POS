@@ -191,7 +191,7 @@ func (m *CronManager) handleLogisticReportJob() {
 			"🚚 *PEDIDOS EN CAMINO:* `%d`\n\n"+
 			"%s"+
 			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"🚀 _Sistema Cerberus POS Sincronizado_",
+			"🚀 _Sistema POS Pro Sincronizado_",
 		time.Now().Format("02/01/2006"),
 		formatMoney(totalAmount),
 		len(expectedOrders),
@@ -230,9 +230,17 @@ func (m *CronManager) handleNightlyBackupJob() {
 	dbPass := os.Getenv("DB_PASSWORD")
 	
 	// 2. Ruta de pg_dump (Configurable por .env para producción)
-	pgDumpPath := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+	pgDumpRaw := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+	pgDumpPath := filepath.ToSlash(strings.ReplaceAll(pgDumpRaw, "\\", "/"))
 	if pgDumpPath == "" {
 		pgDumpPath = "pg_dump" // Si está en el PATH
+	}
+
+	// Validar que el binario exista antes de invocarlo
+	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
+		log.Printf("❌ Error: Binario pg_dump no encontrado en la ruta: %s", pgDumpPath)
+		m.telegram.SendAlert(fmt.Sprintf("❌ *FALLO DE RESPALDO:* El ejecutable pg_dump no se encontró en `%s`. Verifica el .env.", pgDumpPath))
+		return
 	}
 	
 	// 3. Crear archivo temporal para el backup
@@ -263,7 +271,7 @@ func (m *CronManager) handleNightlyBackupJob() {
 	defer file.Close()
 	defer os.Remove(backupPath) // Limpiar después de enviar
 
-	caption := fmt.Sprintf("💾 *RESPALDO NOCTURNO AUTOMÁTICO*\n📅 Fecha: `%s`\n🚀 _Sistema Cerberus POS Protegido_", 
+	caption := fmt.Sprintf("💾 *RESPALDO NOCTURNO AUTOMÁTICO*\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Protegido_", 
 		time.Now().Format("02/01/2006 15:04"))
 	
 	err = m.telegram.SendDocument(file, filename, caption)

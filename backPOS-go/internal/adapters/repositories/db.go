@@ -48,7 +48,20 @@ func ConnectDB() {
 	// 2. Ahora conectar a la base de datos real del sistema
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC", host, user, password, dbname, port)
 
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	// Configuración de Logger para GORM (Reducción de ruido en consola)
+	newLogger := logger.New(
+		log.New(os.Stdout, "\r\n", log.LstdFlags),
+		logger.Config{
+			SlowThreshold:             time.Second,   // Umbral de SQL lento (1s)
+			LogLevel:                  logger.Warn,   // Solo Warn o Error para evitar ruidos de consultas rápidas
+			IgnoreRecordNotFoundError: true,          // No loguear 404s de registros
+			Colorful:                  true,
+		},
+	)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: newLogger,
+	})
 	if err != nil {
 		log.Fatal("Failed to connect to database. \n", err)
 	}
@@ -57,13 +70,7 @@ func ConnectDB() {
 	db.Exec("CREATE EXTENSION IF NOT EXISTS unaccent;")
 
 	// Limpiar restricciones antiguas que bloquean la migración (Email ya no es unique)
-	m := db.Migrator()
-	if m.HasConstraint(&models.Employee{}, "uni_employees_email") {
-		m.DropConstraint(&models.Employee{}, "uni_employees_email")
-	}
-	if m.HasIndex(&models.Employee{}, "uni_employees_email") {
-		m.DropIndex(&models.Employee{}, "uni_employees_email")
-	}
+	// NUCLEAR CLEANUP: Se realiza mediante el bloque DO $$ mÃ¡s adelante
 
 	// LIMPIEZA NUCLEAR: Borrar todas las restricciones e índices redundantes antes de la migración
 	// Esto asegura que 'name', 'email' y 'phoneNumber' (que vamos a borrar) no bloqueen nada.
@@ -72,7 +79,21 @@ func ConnectDB() {
 		DECLARE 
 			r RECORD;
 		BEGIN
-			-- 1. Borrar todos los Índices Únicos (excepto la llave primaria)
+			-- 0. Borrar restricciones conflictivas conocidas
+			ALTER TABLE employees DROP CONSTRAINT IF EXISTS uni_employees_dni;
+			ALTER TABLE employees DROP CONSTRAINT IF EXISTS uni_employees_email;
+
+			-- 1. Borrar todas las Restricciones de Unicidad
+			FOR r IN (
+				SELECT conname 
+				FROM pg_constraint 
+				WHERE conrelid = 'employees'::regclass 
+				AND contype = 'u'
+			) LOOP
+				EXECUTE 'ALTER TABLE employees DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
+			END LOOP;
+
+			-- 2. Borrar todos los Índices Únicos (excepto la llave primaria)
 			FOR r IN (
 				SELECT indexname 
 				FROM pg_indexes 
@@ -81,16 +102,6 @@ func ConnectDB() {
 				AND indexdef LIKE '%UNIQUE%'
 			) LOOP
 				EXECUTE 'DROP INDEX IF EXISTS ' || quote_ident(r.indexname);
-			END LOOP;
-
-			-- 2. Borrar todas las Restricciones de Unicidad
-			FOR r IN (
-				SELECT conname 
-				FROM pg_constraint 
-				WHERE conrelid = 'employees'::regclass 
-				AND contype = 'u'
-			) LOOP
-				EXECUTE 'ALTER TABLE employees DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
 			END LOOP;
 
 			-- 3. ELIMINAR LA COLUMNA DE TELÉFONO (Petición del usuario en Employees)
@@ -185,6 +196,15 @@ func ConnectDB() {
 				UPDATE sales SET status = 'PAID';
 			END IF;
 
+			-- 9.1 MIGRACIÓN LOGÍSTICA EN PRODUCTOS
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='order_multiple') THEN
+				ALTER TABLE products ADD COLUMN order_multiple INTEGER DEFAULT 1;
+			END IF;
+
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='discount') THEN
+				ALTER TABLE products ADD COLUMN discount DECIMAL(10,2) DEFAULT 0;
+			END IF;
+
 			-- 10. REFORZAR ON UPDATE CASCADE PARA BARCODES (V9.0)
 			-- Esto es CRÍTICO para permitir editar códigos de producto sin romper la base de datos
 			
@@ -246,6 +266,20 @@ func ConnectDB() {
 		END $$;
 	`)
 
+	// 11. ASEGURAR TABLA DE LOGS DE PRECIO (V9.6) - Fuera de DO $$ para evitar errores de DDL
+	db.Exec(`
+		CREATE TABLE IF NOT EXISTS price_logs (
+			id SERIAL PRIMARY KEY,
+			product_barcode VARCHAR(50) NOT NULL,
+			product_name VARCHAR(255),
+			old_price DECIMAL(10,2),
+			new_price DECIMAL(10,2),
+			created_at BIGINT,
+			CONSTRAINT fk_price_logs_product FOREIGN KEY (product_barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE
+		);
+		CREATE INDEX IF NOT EXISTS idx_price_logs_barcode ON price_logs(product_barcode);
+	`)
+
 	// Migrar tablas una por una
 	models_to_migrate := []interface{}{
 		&models.Employee{},
@@ -266,7 +300,13 @@ func ConnectDB() {
 		&models.AuditLog{},
 		&models.MissingItem{},
 		&models.ExpectedOrder{}, // CRITICAL FIX: Tabla de pedidos esperados/preventa
+		&models.ExpectedOrderItem{},
 		&models.ReportHistory{},
+		&models.PriceLog{},
+		&models.Shrinkage{},
+		&models.ActivePurchaseList{},
+		&models.ConfirmedOrder{},
+		&models.ConfirmedOrderItem{},
 	}
 
 	// Sesión especial para migraciones: sin transacciones y en modo SILENCIOSO para evitar ruido en el terminal

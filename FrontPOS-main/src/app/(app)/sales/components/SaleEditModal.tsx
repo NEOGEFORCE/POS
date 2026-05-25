@@ -14,6 +14,7 @@ import { extractApiError } from '@/lib/api-error';
 import UniversalPaymentModal from '@/components/shared/UniversalPaymentModal';
 import { broadcastRevalidate } from '@/lib/revalidate';
 import dynamic from 'next/dynamic';
+import { API_URL } from '@/lib/constants';
 
 interface SaleEditModalProps {
     isOpen: boolean;
@@ -75,7 +76,7 @@ export default function SaleEditModal({
                 change: change
             };
 
-            const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000/api'}/sales/update-payment/${sale.id}`, {
+            const res = await fetch(`${API_URL}/sales/update-payment/${sale.id}`, {
                 method: 'PUT',
                 headers: { 
                     'Content-Type': 'application/json',

@@ -16,9 +16,11 @@ func NewClientService(repo ports.ClientRepository, cr ports.CreditPaymentReposit
 }
 
 type ClientStatement struct {
-	Client   *models.Client          `json:"client"`
-	Pending  []models.Sale           `json:"pending"`
-	Payments []models.CreditPayment `json:"payments"`
+	Client          *models.Client          `json:"client"`
+	Pending         []models.Sale           `json:"pending"`
+	Payments        []models.CreditPayment  `json:"payments"`
+	HistorySales    []models.Sale           `json:"historySales"`
+	HistoryPayments []models.CreditPayment  `json:"historyPayments"`
 }
 
 func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleRepository) (*ClientStatement, error) {
@@ -43,7 +45,7 @@ func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleReposi
 
 	// Encontrar la fecha de la venta pendiente más antigua para definir el inicio del ciclo
 	// Como ahora el repo devuelve en ASC, la más antigua es la primera [0]
-	oldestDate := pending[0].SaleDate
+	// oldestDate := pending[0].SaleDate
 
 	// Traer todos los abonos realizados desde esa fecha
 	allPayments, err := s.creditRepo.GetByClient(dni)
@@ -51,21 +53,31 @@ func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleReposi
 		allPayments = []models.CreditPayment{}
 	}
 
+	historySales, err := saleRepo.GetCreditHistoryByClient(dni)
+	if err != nil {
+		historySales = []models.Sale{}
+	}
+
 	var cyclePayments []models.CreditPayment
-	for _, p := range allPayments {
-		if p.PaymentDate.After(oldestDate) || p.PaymentDate.Equal(oldestDate) {
-			cyclePayments = append(cyclePayments, p)
+	if len(pending) > 0 {
+		oldestDate := pending[0].SaleDate
+		for _, p := range allPayments {
+			if p.PaymentDate.After(oldestDate) || p.PaymentDate.Equal(oldestDate) {
+				cyclePayments = append(cyclePayments, p)
+			}
 		}
 	}
 
 	return &ClientStatement{
-		Client:   client,
-		Pending:  pending,
-		Payments: cyclePayments,
+		Client:          client,
+		Pending:         pending,
+		Payments:        cyclePayments,
+		HistorySales:    historySales,
+		HistoryPayments: allPayments,
 	}, nil
 }
 
-func (s *ClientService) PayCredit(payment *models.CreditPayment) (*models.Client, error) {
+func (s *ClientService) PayCredit(payment *models.CreditPayment, saleRepo ports.SaleRepository) (*models.Client, error) {
 	client, err := s.repo.GetByDNI(payment.ClientDNI)
 	if err != nil {
 		return nil, err
@@ -90,6 +102,38 @@ func (s *ClientService) PayCredit(payment *models.CreditPayment) (*models.Client
 
 	if err := s.creditRepo.Save(payment); err != nil {
 		return nil, err
+	}
+
+	// Lógica FIFO: Obtener ventas a crédito pendientes ordenadas de más antiguas a más nuevas
+	pendingSales, err := saleRepo.GetPendingByClient(client.DNI)
+	if err == nil && len(pendingSales) > 0 {
+		remainingPayment := payment.TotalPaid
+		for _, sale := range pendingSales {
+			if remainingPayment <= 0 {
+				break
+			}
+			
+			debt := sale.DebtPending
+			if debt <= 0 {
+				// Fallback si por alguna razón debtPending es 0 pero está marcado como pendiente
+				debt = sale.CreditAmount
+			}
+			if debt <= 0 {
+				continue
+			}
+
+			newDebt := 0.0
+			if remainingPayment >= debt {
+				remainingPayment -= debt
+				newDebt = 0.0
+			} else {
+				newDebt = debt - remainingPayment
+				remainingPayment = 0.0
+			}
+
+			// Actualizar en BD
+			_ = saleRepo.UpdateDebt(sale.SaleID, newDebt)
+		}
 	}
 
 	return client, nil

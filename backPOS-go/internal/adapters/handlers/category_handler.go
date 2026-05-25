@@ -8,6 +8,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/core/utils"
 	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
@@ -28,8 +29,8 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Mayúsculas, Sanitización y Metadatos
-	category.Name = strings.ToUpper(strings.TrimSpace(category.Name))
+	// Mayúsculas, Sanitización y Metadatos (Anti-Tildes)
+	category.Name = strings.ToUpper(utils.NormalizeString(category.Name))
 	
 	// Verificar Duplicados
 	if existing, err := h.service.GetCategoryByName(category.Name); err == nil && existing != nil {
@@ -112,7 +113,7 @@ func (h *CategoryHandler) Update(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
-	category.Name = strings.ToUpper(strings.TrimSpace(category.Name))
+	category.Name = strings.ToUpper(utils.NormalizeString(category.Name))
 	if err := h.service.UpdateCategory(uint(id), &category); err != nil {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "not found") {

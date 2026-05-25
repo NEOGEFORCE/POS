@@ -15,4 +15,5 @@ type ClosureRepository interface {
 	GetGlobalDifferenceSum() (float64, error)
 	GetGlobalHistoricalSum() (expected float64, real float64, err error)
 	Delete(id uint) error
+	Update(id uint, updates map[string]interface{}) error
 }

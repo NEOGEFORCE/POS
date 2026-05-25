@@ -85,12 +85,12 @@ export default function LabelsPage() {
     if (isLoading) return (
         <div className="flex flex-col items-center justify-center h-full min-h-[60vh] gap-4 bg-gray-50 dark:bg-[#09090b] transition-colors duration-500 rounded-[2rem] border border-gray-200 dark:border-white/5 m-4">
             <Spinner color="success" size="lg" />
-            <p className="text-[10px] font-black text-gray-500 dark:text-zinc-500 tracking-widest uppercase animate-pulse italic">Sincronizando inventario...</p>
+            <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 tracking-widest uppercase animate-pulse tracking-tight">Sincronizando inventario...</p>
         </div>
     );
 
     return (
-        <div className="flex flex-col min-h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-gray-900 dark:text-white transition-colors duration-500 pb-20">
+        <div className="flex flex-col min-h-screen gap-1 p-1 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 transition-colors duration-500 pb-20">
             <style dangerouslySetInnerHTML={{
                 __html: `
                 @media print {
@@ -101,14 +101,14 @@ export default function LabelsPage() {
             `}} />
 
             {/* HEADER COMPACTO PREMIUM */}
-            <header className="flex items-center justify-between gap-2 p-2 bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/5 rounded-lg shrink-0 shadow-sm transition-colors sticky top-0 z-50 print:hidden">
+            <header className="flex items-center justify-between gap-2 p-2 card-base border-none rounded-2xl shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors sticky top-0 z-50 print:hidden">
                 <div className="flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-md bg-emerald-500 flex items-center justify-center text-white shadow-sm shrink-0">
+                    <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0">
                         <Tag size={16} />
                     </div>
                     <div className="flex flex-col">
-                        <h1 className="text-sm font-black uppercase tracking-tighter leading-none italic">ETIQUETAS</h1>
-                        <p className="text-[9px] font-black text-emerald-500 uppercase tracking-widest mt-0.5 opacity-80 italic">IMPRESIÓN CENTRAL</p>
+                        <h1 className="text-sm font-medium uppercase tracking-tighter leading-none tracking-tight">ETIQUETAS</h1>
+                        <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest mt-0.5 opacity-80 tracking-tight">IMPRESIÓN CENTRAL</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -116,7 +116,7 @@ export default function LabelsPage() {
                         variant="flat"
                         size="sm"
                         onPress={() => mutate()}
-                        className="bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-emerald-500 uppercase tracking-widest text-[9px] font-black h-8 px-3 rounded-md border-none transition-transform active:scale-95"
+                        className="bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-100 uppercase tracking-widest text-[9px] font-medium h-8 px-3 rounded-2xl border-none transition-transform active:scale-95"
                     >
                         <RefreshCw size={14} />
                     </Button>
@@ -125,7 +125,7 @@ export default function LabelsPage() {
                         size="sm"
                         isDisabled={printQueue.length === 0}
                         onPress={handlePrint}
-                        className={`uppercase tracking-widest text-[9px] font-black ${printQueue.length > 0 ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'bg-gray-200 dark:bg-zinc-800 text-gray-400'} h-8 px-4 rounded-md transition-all active:scale-95 italic`}
+                        className={`uppercase tracking-widest text-[9px] font-medium ${printQueue.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-800 text-gray-400'} h-8 px-4 rounded-2xl transition-all active:scale-95 tracking-tight`}
                     >
                         <Printer size={14} className="mr-1" /> IMPRIMIR ({totalLabels})
                     </Button>
@@ -142,9 +142,9 @@ export default function LabelsPage() {
                         onAddToQueue={addToQueue}
                     />
 
-                    <div className="mt-auto p-4 rounded-xl bg-emerald-500/5 border border-emerald-500/10 hidden lg:block">
-                        <p className="text-[9px] font-black text-emerald-600 dark:text-emerald-500 uppercase tracking-[0.2em] mb-1 italic">Tip Pro</p>
-                        <p className="text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed italic">
+                    <div className="mt-auto p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10 hidden lg:block">
+                        <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-[0.2em] mb-1 tracking-tight">Tip Pro</p>
+                        <p className="text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed tracking-tight">
                             Agrega productos rápidamente y ajusta las cantidades antes de imprimir. El diseño está optimizado para ahorro de tinta.
                         </p>
                     </div>

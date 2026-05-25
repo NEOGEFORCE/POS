@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -374,13 +375,22 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	user := os.Getenv("DB_USER")
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
-	pgDumpPath := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+	
+	pgDumpRaw := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+	pgDumpPath := filepath.ToSlash(strings.ReplaceAll(pgDumpRaw, "\\", "/"))
 
 	if host == "" { host = "localhost" }
 	if port == "" { port = "5432" }
 	if user == "" { user = "postgres" }
 	if dbname == "" { dbname = "sistemapos" }
 	if pgDumpPath == "" { pgDumpPath = "pg_dump" }
+
+	// Validar que el binario exista antes de invocarlo
+	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
+		log.Printf("Error: Binario pg_dump no encontrado en la ruta: %s", pgDumpPath)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, fmt.Sprintf("Error: El ejecutable pg_dump no se encontró en la ruta especificada (%s). Verifique su archivo .env.", pgDumpPath), err)
+		return
+	}
 
 	fileName := fmt.Sprintf("pos_manual_backup_%s.sql", time.Now().Format("20060102_150405"))
 	filePath := "./" + fileName
@@ -395,7 +405,11 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	log.Printf("🛠️ Manual Backup: %s %v", pgDumpPath, args)
 	if err := cmd.Run(); err != nil {
 		log.Printf("Error ejecutando pg_dump manual: %v", err)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo generar el respaldo. Verifique la ruta de pg_dump en el .env", err)
+		msg := "No se pudo generar el respaldo. Verifique que 'pg_dump' esté instalado y la ruta en el .env sea correcta."
+		if strings.Contains(err.Error(), "executable file not found") {
+			msg = fmt.Sprintf("Error: El ejecutable '%s' no se encontró en el sistema.", pgDumpPath)
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, msg, err)
 		return
 	}
 
@@ -422,13 +436,22 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	user := os.Getenv("DB_USER")
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
-	pgDumpPath := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+	
+	pgDumpRaw := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
+	pgDumpPath := filepath.ToSlash(strings.ReplaceAll(pgDumpRaw, "\\", "/"))
 
 	if host == "" { host = "localhost" }
 	if port == "" { port = "5432" }
 	if user == "" { user = "postgres" }
 	if dbname == "" { dbname = "sistemapos" }
 	if pgDumpPath == "" { pgDumpPath = "pg_dump" }
+
+	// Validar que el binario exista
+	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
+		log.Printf("Error: Binario pg_dump no encontrado en la ruta: %s", pgDumpPath)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, fmt.Sprintf("Error: No se encontró pg_dump en %s. Instale las herramientas o ajuste el .env.", pgDumpPath), err)
+		return
+	}
 
 	fileName := fmt.Sprintf("pos_manual_telegram_%s.sql", time.Now().Format("20060102_150405"))
 	filePath := "./" + fileName
@@ -441,7 +464,11 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	log.Printf("🛠️ Manual Telegram Backup: %s %v", pgDumpPath, args)
 	if err := cmd.Run(); err != nil {
 		log.Printf("Error ejecutando pg_dump para Telegram: %v", err)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo generar el respaldo para Telegram.", err)
+		msg := "No se pudo generar el respaldo para Telegram. Verifique la instalación de PostgreSQL Client Tools."
+		if strings.Contains(err.Error(), "executable file not found") {
+			msg = fmt.Sprintf("Error: No se encontró '%s'. Instale las herramientas de PostgreSQL o ajuste el .env.", pgDumpPath)
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, msg, err)
 		return
 	}
 
@@ -456,7 +483,7 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	defer os.Remove(filePath)
 
 	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
-	caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema Cerberus POS Sincronizado_", 
+	caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Sincronizado_", 
 		requesterName, requesterDNI, time.Now().Format("02/01/2006 15:04"))
 
 	if err := h.telegram.SendDocument(file, fileName, caption); err != nil {

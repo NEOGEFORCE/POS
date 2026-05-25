@@ -12,6 +12,7 @@ import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { ConfirmDialog } from '@/components/ConfirmDialog';
 
 // Dinámicos para optimización de carga y HMR
 const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: false });
@@ -31,14 +32,14 @@ const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
       <div className="flex items-center gap-3">
-        <div className="h-10 w-10 rounded-xl bg-rose-500 flex items-center justify-center text-white shadow-xl shadow-rose-500/20 shrink-0 transition-transform active:scale-95 transform -rotate-3">
+        <div className="h-10 w-10 rounded-2xl bg-rose-500 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 shrink-0 transition-transform active:scale-95 transform -rotate-3">
           <TrendingDown size={20} />
         </div>
         <div className="flex flex-col">
-          <h1 className="text-[13px] font-black uppercase tracking-tighter leading-none italic">
+          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">
             CONTROL DE <span className="text-rose-500">EGRESOS</span>
           </h1>
-          <p className="text-[8px] font-black text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Audit Ledger V4.5</p>
+          <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Audit Ledger V4.5</p>
         </div>
       </div>
       <div className="flex items-center gap-2">
@@ -47,14 +48,14 @@ const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
           size="sm"
           onPress={onReload}
           isLoading={isLoading}
-          className="h-10 w-10 bg-white/80 dark:bg-zinc-900/80 text-rose-500 rounded-xl shadow-sm border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          className="h-10 w-10 card-base border-none dark:bg-[#18181b]/80 text-rose-500 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
         >
           <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
         <Button
           size="sm"
           onPress={onAdd}
-          className="h-10 bg-rose-500 text-white font-black uppercase text-[9px] px-4 rounded-xl shadow-lg shadow-rose-500/20 italic transition-all active:scale-95 shrink-0"
+          className="h-10 bg-rose-500 text-white font-medium uppercase text-[9px] px-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 tracking-tight transition-all active:scale-95 shrink-0"
         >
           <PlusCircle size={16} />
           <span className="ml-2 tracking-widest">NUEVA SALIDA</span>
@@ -67,8 +68,8 @@ const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       value={filter}
       onValueChange={onSearch}
       classNames={{
-        inputWrapper: "h-11 px-4 rounded-xl bg-white/50 dark:bg-black/20 border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
-        input: "font-black text-[11px] uppercase text-gray-900 dark:text-white placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+        inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+        input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
       }}
       startContent={<Search size={14} className="text-rose-500 mr-1" />}
     />
@@ -103,6 +104,9 @@ export default function ExpensesPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [pendingModalOpen, setPendingModalOpen] = useState(false);
+  
+  const [duplicateAlertOpen, setDuplicateAlertOpen] = useState(false);
+  const [pendingExpenseData, setPendingExpenseData] = useState<any>(null);
 
   // Estados de Datos
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
@@ -179,6 +183,25 @@ export default function ExpensesPage() {
       return;
     }
 
+    if (addDialogOpen && data.category === 'Proveedores' && data.supplierId) {
+      const today = new Date().toISOString().split('T')[0];
+      const isDuplicate = expenses.some(e => {
+        if (!e.supplier?.id) return false;
+        const eDate = new Date(e.date).toISOString().split('T')[0];
+        return e.supplier.id === Number(data.supplierId) && eDate === today;
+      });
+
+      if (isDuplicate) {
+        setPendingExpenseData(data);
+        setDuplicateAlertOpen(true);
+        return;
+      }
+    }
+
+    await proceedWithSave(data, token);
+  };
+
+  const proceedWithSave = async (data: any, token: string) => {
     try {
       const currentDate = new Date().toISOString();
 
@@ -239,12 +262,12 @@ export default function ExpensesPage() {
     } catch (err: any) {
       toast({
         variant: "destructive",
-        title: "FALLO OPERATIVO",
-        description: err.message || 'FALLO AL REGISTRAR MOVIMIENTO',
-        className: "bg-rose-500 text-white border-none"
+        title: "ERROR AL GUARDAR",
+        description: err.message || "Fallo al procesar el egreso."
       });
     }
   };
+
   const handleDeleteExpense = async () => {
     if (!deletingId) return;
     const token = Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token');
@@ -271,14 +294,14 @@ export default function ExpensesPage() {
     }
   };
 
-  const handleSettleDebt = async (id: string, paymentSource: string) => {
+  const handleSettleDebt = async (id: string, paymentSource: string, amount: number) => {
     const token = Cookies.get('org-pos-token');
     if (!token) return;
 
     try {
       await apiFetch(`/expenses/settle/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ paymentSource }),
+        body: JSON.stringify({ paymentSource, amount }),
         fallbackError: 'FALLO AL SALDAR DEUDA'
       }, token);
 
@@ -301,10 +324,10 @@ export default function ExpensesPage() {
   if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="danger" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-gray-900 dark:text-white transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
-      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50 backdrop-blur-md">
+      <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <ExpenseHeader
           filter={filter}
           onSearch={(v) => setFilter(v.toUpperCase())}
@@ -342,10 +365,31 @@ export default function ExpensesPage() {
       {/* Modals Orchestration */}
       <ExpenseFormModal
         isOpen={addDialogOpen || editDialogOpen}
-        onOpenChange={(o) => { if (!o) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingExpense(null); } }}
-        isEdit={editDialogOpen}
-        initialExpense={addDialogOpen ? null : editingExpense}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAddDialogOpen(false);
+            setEditDialogOpen(false);
+            setEditingExpense(null);
+          }
+        }}
+        initialData={editingExpense || undefined}
         onSave={handleSaveExpense}
+      />
+
+      <ConfirmDialog
+        isOpen={duplicateAlertOpen}
+        onOpenChange={setDuplicateAlertOpen}
+        title="⚠️ ALERTA: POSIBLE PAGO DUPLICADO"
+        description="Ya se realizó un pago a este proveedor el día de hoy. ¿Está seguro de que desea registrar otro pago?"
+        onConfirm={() => {
+          setDuplicateAlertOpen(false);
+          const token = Cookies.get('org-pos-token');
+          if (token && pendingExpenseData) {
+            proceedWithSave(pendingExpenseData, token);
+          }
+        }}
+        confirmText="Confirmar Pago"
+        type="danger"
       />
 
       <DeleteExpenseModal

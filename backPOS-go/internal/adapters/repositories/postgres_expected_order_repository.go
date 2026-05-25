@@ -104,3 +104,17 @@ func (r *PostgresExpectedOrderRepository) GetSupplierByName(name string) (*model
 func (r *PostgresExpectedOrderRepository) CreateSupplier(supplier *models.Supplier) error {
 	return r.db.Create(supplier).Error
 }
+
+func (r *PostgresExpectedOrderRepository) GetSupplierByID(id uint) (*models.Supplier, error) {
+	var supplier models.Supplier
+	err := r.db.First(&supplier, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &supplier, nil
+}
+
+func (r *PostgresExpectedOrderRepository) UpdateSupplierDeliveryDays(id uint, days string) error {
+	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("delivery_day", days).Error
+}
+

@@ -44,7 +44,7 @@ const AnalyticalCard = ({
 }) => (
     <div 
         onClick={onClick}
-        className={`relative group flex-1 bg-white/80 dark:bg-zinc-900/50 backdrop-blur-xl p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-xl overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20 ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
+        className={`relative group flex-1 card-base border-none dark:bg-[#18181b]/50  p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20 ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
     >
         {/* Background Sparkline */}
         {chartData && (
@@ -72,14 +72,14 @@ const AnalyticalCard = ({
 
         <div className="relative z-10">
             <div className="flex justify-between items-start mb-2 sm:mb-3">
-                <div className={`p-1.5 sm:p-2 rounded-xl bg-opacity-10 text-white shadow-inner`} style={{ backgroundColor: `${color}20`, color: color }}>
+                <div className={`p-1.5 sm:p-2 rounded-2xl bg-opacity-10 text-white shadow-inner`} style={{ backgroundColor: `${color}20`, color: color }}>
                     <Icon size={16} className="sm:size-4" />
                 </div>
                 <div className="text-right pr-2">
-                    <span className="text-[8px] sm:text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest leading-none block mb-1 italic">
+                    <span className="text-[8px] sm:text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none block mb-1 tracking-tight">
                         {label}
                     </span>
-                    <span className="text-lg sm:text-xl font-black text-gray-900 dark:text-white italic leading-none tracking-tighter tabular-nums block">
+                    <span className="text-lg sm:text-xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight leading-none tracking-tighter tabular-nums block">
                         {isCurrency && <span className="text-[10px] mr-0.5" style={{ color }}>$</span>}
                         {value}
                     </span>
@@ -87,10 +87,10 @@ const AnalyticalCard = ({
             </div>
 
             <div className="flex flex-col gap-1">
-                <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-black uppercase tracking-wider">
-                    <span className="text-gray-400 dark:text-zinc-500 truncate">{subValue}</span>
+                <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-medium uppercase tracking-wider">
+                    <span className="text-zinc-500 dark:text-zinc-400 truncate">{subValue}</span>
                     {onClick && (
-                        <span className="text-[7px] font-black text-rose-500 flex items-center gap-0.5 animate-pulse">
+                        <span className="text-[7px] font-medium text-rose-500 flex items-center gap-0.5 animate-pulse">
                             VER DETALLES <ChevronRight size={8} />
                         </span>
                     )}

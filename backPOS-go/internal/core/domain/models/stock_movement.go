@@ -14,6 +14,13 @@ type StockMovement struct {
 	EmployeeDNI string  `gorm:"index" json:"employeeDni"`
 	EmployeeName string `json:"employeeName"`
 	ReferenceID  string `gorm:"index" json:"referenceId"` // e.g., SaleID or ReceptionID
+	Metadata     string `gorm:"type:text" json:"metadata"` // Snapshot of prices/taxes in JSON
+	EditedBy      string     `gorm:"index;column:edited_by" json:"editedBy"`
+	EditedAt      *time.Time `gorm:"column:edited_at" json:"editedAt"`
+	OriginalValues string    `gorm:"type:jsonb;column:original_values" json:"originalValues"`
+	AnnulledBy    string     `gorm:"index;column:annulled_by" json:"annulledBy"`
+	AnnulledAt    *time.Time `gorm:"column:annulled_at" json:"annulledAt"`
+	AnnulledReason string    `gorm:"type:text;column:annulled_reason" json:"annulledReason"`
 	Product     Product `gorm:"foreignKey:Barcode;references:Barcode" json:"product,omitempty"`
 }
 

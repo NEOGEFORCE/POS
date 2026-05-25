@@ -48,8 +48,18 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 	// Lógica de Estado Inicial para Préstamos
 	if expense.PaymentSource == "PRESTAMO" || expense.PaymentSource == "PREST." {
 		expense.Status = "PENDING"
+		expense.RemainingAmount = expense.Amount
+		expense.PaidAmount = 0
 	} else if expense.Status == "" {
 		expense.Status = "PAID"
+		expense.RemainingAmount = 0
+		expense.PaidAmount = expense.Amount
+	} else if expense.Status == "PENDING" {
+		expense.RemainingAmount = expense.Amount
+		expense.PaidAmount = 0
+	} else if expense.Status == "PAID" {
+		expense.RemainingAmount = 0
+		expense.PaidAmount = expense.Amount
 	}
 
 	err := s.repo.Save(expense)
@@ -88,7 +98,7 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 }
 
 // SettleExpense marca un egreso como pagado y define su fuente real de dinero
-func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string) (*models.Expense, error) {
+func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string, paymentAmount float64) (*models.Expense, error) {
 	expense, err := s.repo.GetByID(id)
 	if err != nil {
 		return nil, errors.New("egreso no encontrado")
@@ -98,13 +108,24 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		return nil, errors.New("este egreso ya está marcado como pagado")
 	}
 
-	// Actualizar campos
-	expense.Status = "PAID"
+	if expense.RemainingAmount == 0 {
+		expense.RemainingAmount = expense.Amount
+	}
+
+	amountToPay := paymentAmount
+	if amountToPay <= 0 || amountToPay > expense.RemainingAmount {
+		amountToPay = expense.RemainingAmount
+	}
+
+	expense.PaidAmount += amountToPay
+	expense.RemainingAmount -= amountToPay
+
+	if expense.RemainingAmount <= 0 {
+		expense.Status = "PAID"
+	}
+
 	expense.PaymentSource = newPaymentSource
-	// Al saldar una deuda, la fecha se actualiza a HOY para que impacte el cierre actual
 	expense.Date = time.Now()
-	
-	// Registramos quién hizo el pago real
 	expense.CreatedByDNI = updaterDNI
 
 	if err := s.repo.Update(id, expense); err != nil {
@@ -173,7 +194,7 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 
 	// Actualizar stock usando BulkReceive (que también marca la orden como recibida)
 	// BypassExpense = true porque el egreso se acaba de crear arriba manualmente
-	if err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI); err != nil {
+	if _, err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI, expense.SupplierID, 0, 0, true); err != nil {
 		// Loggear error si falla el stock, pero el egreso ya es exitoso
 	}
 

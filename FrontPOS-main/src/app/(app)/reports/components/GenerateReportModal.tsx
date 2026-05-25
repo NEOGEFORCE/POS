@@ -21,10 +21,11 @@ interface GenerateReportModalProps {
 }
 
 const CATEGORIES = [
-    { id: 'box-closure', name: 'CUADRE CAJA', icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+    { id: 'box-closure', name: 'CUADRE CAJA', icon: Wallet, color: 'text-zinc-900 dark:text-zinc-100', bg: 'bg-white/5' },
     { id: 'payments', name: 'VENTAS & PAGOS', icon: ShoppingCart, color: 'text-blue-500', bg: 'bg-blue-500/10' },
     { id: 'inventory', name: 'INVENTARIO', icon: Package, color: 'text-amber-500', bg: 'bg-amber-500/10' },
     { id: 'pnl', name: 'FINANZAS / PNL', icon: TrendingUp, color: 'text-violet-500', bg: 'bg-violet-500/10' },
+    { id: 'cashflow', name: 'FLUJO DE CAJA (INGRESOS/EGRESOS)', icon: Database, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
     { id: 'ranking', name: 'RANKING PRODUCTOS', icon: Target, color: 'text-rose-500', bg: 'bg-rose-500/10' },
     { id: 'savings', name: 'AHORROS & COSTOS', icon: Tag, color: 'text-teal-500', bg: 'bg-teal-500/10' },
     { id: 'vault-audit', name: 'ARQUEO GENERAL BÓVEDA', icon: Database, color: 'text-amber-600', bg: 'bg-amber-600/10' },
@@ -89,7 +90,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
             backdrop="blur"
             scrollBehavior="inside"
             classNames={{
-                base: "bg-white/80 dark:bg-zinc-950/90 backdrop-blur-3xl border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-2xl max-h-[95vh] sm:max-h-none w-[95vw] sm:w-auto",
+                base: "card-base border-none dark:bg-zinc-950/90  border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)] max-h-[95vh] sm:max-h-none w-[95vw] sm:w-auto",
                 header: "border-b border-gray-100 dark:border-white/5 p-4 md:p-8",
                 body: "p-4 md:p-8 overflow-y-auto custom-scrollbar",
                 footer: "border-t border-gray-100 dark:border-white/5 p-4 md:p-8"
@@ -99,11 +100,11 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                 {(onClose) => (
                     <>
                         <ModalHeader className="flex flex-col gap-1">
-                            <h2 className="text-2xl font-black text-gray-900 dark:text-white italic tracking-tighter uppercase leading-none flex items-center gap-3">
-                                <span className="p-2.5 bg-emerald-500 rounded-xl text-white shadow-lg shadow-emerald-500/20"><Zap size={20} /></span>
-                                Generador <span className="text-emerald-500">Maestro</span>
+                            <h2 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter uppercase leading-none flex items-center gap-3">
+                                <span className="p-2.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><Zap size={20} /></span>
+                                Generador <span className="text-zinc-900 dark:text-zinc-100">Maestro</span>
                             </h2>
-                            <p className="text-[10px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-[0.3em] mt-2 italic">Configuración de Salida de Datos V4.0</p>
+                            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Configuración de Salida de Datos V4.0</p>
                         </ModalHeader>
 
                         <ModalBody className="gap-4 md:gap-8">
@@ -112,22 +113,22 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                 <div className="space-y-6">
                                     {/* Nombre del Archivo */}
                                     <div className="space-y-2">
-                                        <label className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Nombre del Archivo</label>
+                                        <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Nombre del Archivo</label>
                                         <Input 
                                             value={reportName}
                                             onValueChange={setReportName}
                                             size="lg"
                                             classNames={{
                                                 inputWrapper: "bg-gray-100 dark:bg-zinc-950/80 border-2 border-transparent focus-within:!border-emerald-500/50 rounded-2xl h-14",
-                                                input: "font-black text-sm uppercase italic text-gray-900 dark:text-white"
+                                                input: "font-medium text-sm uppercase tracking-tight text-zinc-900 dark:text-zinc-50"
                                             }}
-                                            startContent={<FileText size={18} className="text-emerald-500 mr-2" />}
+                                            startContent={<FileText size={18} className="text-zinc-900 dark:text-zinc-100 mr-2" />}
                                         />
                                     </div>
 
                                     {/* Rango de Fechas */}
                                     <div className="space-y-3">
-                                        <label className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Rango de Fechas</label>
+                                        <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Rango de Fechas</label>
                                         <div className="grid grid-cols-2 gap-3">
                                             <Input 
                                                 type="date"
@@ -135,7 +136,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 onValueChange={setDateFrom}
                                                 classNames={{
                                                     inputWrapper: "bg-gray-100 dark:bg-zinc-950/80 border-2 border-transparent focus-within:!border-emerald-500/50 rounded-2xl h-12",
-                                                    input: "font-black text-[10px] text-gray-900 dark:text-white uppercase tracking-widest"
+                                                    input: "font-medium text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest"
                                                 }}
                                                 startContent={<Calendar size={14} className="text-gray-400 mr-1" />}
                                             />
@@ -145,7 +146,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 onValueChange={setDateTo}
                                                 classNames={{
                                                     inputWrapper: "bg-gray-100 dark:bg-zinc-950/80 border-2 border-transparent focus-within:!border-emerald-500/50 rounded-2xl h-12",
-                                                    input: "font-black text-[10px] text-gray-900 dark:text-white uppercase tracking-widest"
+                                                    input: "font-medium text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest"
                                                 }}
                                                 startContent={<Calendar size={14} className="text-gray-400 mr-1" />}
                                             />
@@ -154,7 +155,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
 
                                     {/* Seleccionar Fuente de Datos - Toggle Cards ADN Inventario */}
                                     <div className="space-y-3">
-                                        <label className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Seleccionar Fuente de Datos</label>
+                                        <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Seleccionar Fuente de Datos</label>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-2">
                                             {CATEGORIES.map((cat) => (
                                                 <button
@@ -162,14 +163,14 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                     onClick={() => setCategory(cat.id)}
                                                     className={`p-3 sm:p-4 rounded-2xl border-2 transition-all flex items-center gap-3 text-left ${
                                                         category === cat.id 
-                                                            ? 'bg-emerald-500/10 border-emerald-500/50' 
-                                                            : 'bg-zinc-950/50 border-white/5 hover:border-white/10'
+                                                            ? 'bg-white/5 border-emerald-500/50' 
+                                                            : 'bg-white dark:bg-zinc-950/50 border-zinc-200 dark:border-white/5 hover:border-zinc-200 dark:border-white/10'
                                                     }`}
                                                 >
-                                                    <div className={`p-2 rounded-lg ${cat.bg} ${cat.color}`}>
+                                                    <div className={`p-2 rounded-2xl ${cat.bg} ${cat.color}`}>
                                                         <cat.icon size={16} />
                                                     </div>
-                                                    <span className={`text-[10px] font-black uppercase tracking-tight italic ${category === cat.id ? 'text-emerald-400' : 'text-zinc-400'}`}>
+                                                    <span className={`text-[10px] font-medium uppercase tracking-tight tracking-tight ${category === cat.id ? 'text-zinc-300' : 'text-zinc-500 dark:text-zinc-400'}`}>
                                                         {cat.name}
                                                     </span>
                                                 </button>
@@ -182,13 +183,13 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                 <div className="space-y-6">
                                     {/* Criterios de Exportación - Panel ADN Inventario */}
                                     <div className="bg-gray-100 dark:bg-zinc-950/80 border border-gray-200 dark:border-white/5 rounded-2xl p-6 space-y-5">
-                                        <label className="text-[9px] font-black text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                            <ShieldCheck size={14} className="text-emerald-500" /> Criterios de Exportación
+                                        <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                                            <ShieldCheck size={14} className="text-zinc-900 dark:text-zinc-100" /> Criterios de Exportación
                                         </label>
                                         
                                         {/* Radios Custom con Peer */}
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Formato de Salida</label>
+                                            <label className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Formato de Salida</label>
                                             <div className="flex flex-wrap gap-3">
                                                 {['PDF', 'EXCEL', 'CSV'].map((fmt) => (
                                                     <label key={fmt} className="flex items-center gap-3 cursor-pointer group">
@@ -200,10 +201,10 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                             onChange={(e) => setFormat(e.target.value)}
                                                             className="peer sr-only"
                                                         />
-                                                        <div className="w-5 h-5 rounded-full border border-zinc-700 bg-zinc-900 peer-checked:bg-emerald-500 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
-                                                            <div className="w-2 h-2 rounded-full bg-white opacity-0 peer-checked:opacity-100" />
+                                                        <div className="w-5 h-5 rounded-2xl border border-zinc-700 bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
+                                                            <div className="w-2 h-2 rounded-2xl bg-white opacity-0 peer-checked:opacity-100" />
                                                         </div>
-                                                        <span className="text-sm text-gray-600 dark:text-zinc-400 font-medium peer-checked:text-emerald-500 dark:peer-checked:text-white transition-colors">
+                                                        <span className="text-sm text-gray-600 dark:text-zinc-400 font-medium peer-checked:text-zinc-900 dark:text-zinc-100 dark:peer-checked:text-white transition-colors">
                                                             {fmt === 'PDF' ? 'Documento PDF' : fmt === 'EXCEL' ? 'Excel Sheet' : 'CSV Tabular'}
                                                         </span>
                                                     </label>
@@ -212,11 +213,11 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                         </div>
 
                                         {/* Divisor sutil */}
-                                        <div className="border-b border-white/5" />
+                                        <div className="border-b border-zinc-200 dark:border-white/5" />
 
                                         {/* Checkboxes Custom con Peer */}
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Opciones de Contenido</label>
+                                            <label className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-wider">Opciones de Contenido</label>
                                             <div className="space-y-2">
                                                 {[
                                                     { id: 'details', label: 'Incluir Listado Detallado' },
@@ -230,10 +231,10 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                             onChange={() => toggleDataSource(opt.id)}
                                                             className="peer sr-only"
                                                         />
-                                                        <div className="w-5 h-5 rounded border border-zinc-700 bg-zinc-900 peer-checked:bg-emerald-500 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
+                                                        <div className="w-5 h-5 rounded border border-zinc-700 bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
                                                             <Check size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                                         </div>
-                                                        <span className="text-sm text-gray-600 dark:text-zinc-400 font-medium peer-checked:text-emerald-500 dark:peer-checked:text-white transition-colors">
+                                                        <span className="text-sm text-gray-600 dark:text-zinc-400 font-medium peer-checked:text-zinc-900 dark:text-zinc-100 dark:peer-checked:text-white transition-colors">
                                                             {opt.label}
                                                         </span>
                                                     </label>
@@ -244,14 +245,14 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
 
                                     {/* Email Input */}
                                     <div className="space-y-2">
-                                        <label className="text-[9px] font-black text-gray-400 dark:text-zinc-500 uppercase tracking-widest ml-1">Enviar Copia a Email (Opcional)</label>
+                                        <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Enviar Copia a Email (Opcional)</label>
                                         <Input 
                                             value={deliveryEmail}
                                             onValueChange={setDeliveryEmail}
                                             placeholder="CORREO@DESTINO.COM"
                                             classNames={{
                                                 inputWrapper: "bg-gray-100 dark:bg-zinc-950/80 border-2 border-transparent focus-within:!border-emerald-500/50 rounded-2xl h-12",
-                                                input: "font-black text-[11px] uppercase text-gray-900 dark:text-white"
+                                                input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50"
                                             }}
                                             startContent={<Mail size={16} className="text-gray-400 mr-2" />}
                                         />
@@ -267,10 +268,10 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 onChange={(e) => setSaveToCloud(e.target.checked)}
                                                 className="peer sr-only"
                                             />
-                                            <div className="w-5 h-5 rounded border border-zinc-700 bg-zinc-900 peer-checked:bg-emerald-500 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
+                                            <div className="w-5 h-5 rounded border border-zinc-700 bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
                                                 <Cloud size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                             </div>
-                                            <span className="text-sm text-zinc-400 font-medium peer-checked:text-emerald-400 transition-colors flex items-center gap-2">
+                                            <span className="text-sm text-zinc-500 dark:text-zinc-400 font-medium peer-checked:text-zinc-300 transition-colors flex items-center gap-2">
                                                 Auto-Archivar en Cloud Manager
                                             </span>
                                         </label>
@@ -283,10 +284,10 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 onChange={(e) => setSendToTelegram(e.target.checked)}
                                                 className="peer sr-only"
                                             />
-                                            <div className="w-5 h-5 rounded border border-zinc-700 bg-zinc-900 peer-checked:bg-blue-500 peer-checked:border-blue-500 flex items-center justify-center transition-all">
+                                            <div className="w-5 h-5 rounded border border-zinc-700 bg-[#18181b] peer-checked:bg-blue-500 peer-checked:border-blue-500 flex items-center justify-center transition-all">
                                                 <Send size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                             </div>
-                                            <span className="text-sm text-zinc-400 font-medium peer-checked:text-blue-400 transition-colors flex items-center gap-2">
+                                            <span className="text-sm text-zinc-500 dark:text-zinc-400 font-medium peer-checked:text-blue-400 transition-colors flex items-center gap-2">
                                                 Notificar y Enviar PDF vía Telegram
                                             </span>
                                         </label>
@@ -298,18 +299,18 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                         <ModalFooter className="flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
                             <div className="flex items-center gap-2 opacity-50 justify-center sm:justify-start">
                                 <Clock size={12} />
-                                <span className="text-[9px] font-bold uppercase italic tracking-[0.2em] text-zinc-500">Estimado: {format === 'PDF' ? '3s' : 'Procesando...'}</span>
+                                <span className="text-[9px] font-bold uppercase tracking-tight tracking-[0.2em] text-zinc-500">Estimado: {format === 'PDF' ? '3s' : 'Procesando...'}</span>
                             </div>
                             <div className="flex flex-col sm:flex-row gap-3">
                                 <Button 
                                     variant="light" 
-                                    className="font-black text-[10px] uppercase tracking-widest italic rounded-xl px-8 text-zinc-400 hover:text-white h-12 sm:h-auto" 
+                                    className="font-medium text-[10px] uppercase tracking-widest tracking-tight rounded-2xl px-8 text-zinc-500 dark:text-zinc-400 hover:text-white h-12 sm:h-auto" 
                                     onPress={onClose}
                                 >
                                     Cancelar
                                 </Button>
                                 <Button 
-                                    className="bg-emerald-500 hover:bg-emerald-600 text-white font-bold text-sm uppercase tracking-wider rounded-xl px-8 py-3 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_25px_rgba(16,185,129,0.5)] transition-all flex items-center gap-2 h-14 sm:h-auto"
+                                    className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-bold text-sm uppercase tracking-wider rounded-2xl px-8 py-3 shadow-[0_0_15px_rgba(16,185,129,0.3)] hover:shadow-[0_0_25px_rgba(16,185,129,0.5)] transition-all flex items-center gap-2 h-14 sm:h-auto"
                                     onPress={handleGenerate}
                                 >
                                     <FileDigit size={16} />
