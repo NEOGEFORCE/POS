@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"time"
@@ -436,4 +437,71 @@ func (r *PostgresProductRepository) SaveShrinkage(shrinkage *models.Shrinkage, s
 
 		return nil
 	})
+}
+
+func (r *PostgresProductRepository) EditReception(ref string, dniStr string, reason string, products []models.EditReceiveItem) ([]string, error) {
+	var movement models.StockMovement
+	err := r.db.Where("id = ? OR reference_id = ?", ref, ref).First(&movement).Error
+	if err != nil {
+		return nil, fmt.Errorf("recepción original no encontrada: %w", err)
+	}
+
+	originalSnapshot, _ := json.Marshal(movement)
+	movement.OriginalValues = string(originalSnapshot)
+
+	priceChanges := make([]string, 0)
+	err = r.db.Transaction(func(tx *gorm.DB) error {
+		for _, item := range products {
+			var product models.Product
+			if err := tx.Where("barcode = ?", item.Barcode).First(&product).Error; err != nil {
+				return fmt.Errorf("producto %s no encontrado", item.Barcode)
+			}
+
+			oldWac := product.PurchasePrice
+			oldStock := product.Quantity - movement.Quantity
+			newStock := oldStock + item.Quantity
+
+			costoConImpuestos := item.CostUnit * (1 + item.IVA/100 + item.ICUI/100 + item.IBUA/100)
+			costoFinal := costoConImpuestos * (1 - item.Discount/100)
+
+			var nuevoWAC float64
+			if newStock > 0 {
+				nuevoWAC = ((oldStock * oldWac) + (item.Quantity * costoFinal)) / newStock
+			} else {
+				nuevoWAC = costoFinal
+			}
+
+			diff := math.Abs(nuevoWAC - oldWac)
+			if oldWac > 0 && diff > 0.01 {
+				priceChanges = append(priceChanges, fmt.Sprintf("%s: $%.2f → $%.2f", product.ProductName, oldWac, nuevoWAC))
+			}
+
+			product.PurchasePrice = math.Round(nuevoWAC*100) / 100
+			
+			if item.PVP > 0 {
+				margen := ((item.PVP - nuevoWAC) / item.PVP) * 100
+				product.MarginPercentage = math.Round(margen*100) / 100
+				product.SalePrice = item.PVP
+			}
+
+			product.Quantity = newStock
+			if err := tx.Save(&product).Error; err != nil {
+				return err
+			}
+		}
+
+		now := time.Now()
+		movement.EditedBy = dniStr
+		movement.EditedAt = &now
+		movement.Reason = "EDITADO: " + reason
+		movement.Quantity = products[0].Quantity 
+		
+		if err := tx.Save(&movement).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	return priceChanges, err
 }

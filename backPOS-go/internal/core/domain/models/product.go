@@ -73,3 +73,14 @@ type PriceLog struct {
 func (PriceLog) TableName() string {
 	return "price_logs"
 }
+
+type EditReceiveItem struct {
+	Barcode  string
+	Quantity float64
+	CostUnit float64
+	IVA      float64
+	ICUI     float64
+	IBUA     float64
+	Discount float64
+	PVP      float64
+}

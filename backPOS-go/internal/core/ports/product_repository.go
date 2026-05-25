@@ -93,6 +93,7 @@ type ProductRepository interface {
 	GetPriceChangesToday() ([]models.PriceLog, error)
 	RecordPriceChange(tx interface{}, barcode string, oldPrice, newPrice float64) error
 	DeleteReception(receptionID string) error
+	EditReception(ref string, dniStr string, reason string, products []models.EditReceiveItem) ([]string, error)
 	SanitizeAllNames() (int64, error)
 	SaveShrinkage(shrinkage *models.Shrinkage, shiftID *uint) error
 }

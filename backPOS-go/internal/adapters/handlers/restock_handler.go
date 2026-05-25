@@ -126,3 +126,53 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pedido confirmado"})
 }
+
+func (h *RestockHandler) GetPendingOrders(c *gin.Context) {
+	orders, err := h.restockService.GetPendingOrders()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, orders)
+}
+
+func (h *RestockHandler) GetPendingOrder(c *gin.Context) {
+	id := c.Param("id")
+	order, err := h.restockService.GetOrderByID(id)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Pedido no encontrado"})
+		return
+	}
+	c.JSON(http.StatusOK, order)
+}
+
+func (h *RestockHandler) GetOrdersHistory(c *gin.Context) {
+	limit := 10
+	offset := 0
+	
+	if limitStr := c.Query("limit"); limitStr != "" {
+		fmt.Sscanf(limitStr, "%d", &limit)
+	}
+	if offsetStr := c.Query("offset"); offsetStr != "" {
+		fmt.Sscanf(offsetStr, "%d", &offset)
+	}
+	
+	filters := make(map[string]interface{})
+	if supplier := c.Query("supplier_id"); supplier != "" {
+		filters["supplier_id"] = supplier
+	}
+	if status := c.Query("status"); status != "" {
+		filters["status"] = status
+	}
+
+	orders, total, err := h.restockService.GetOrdersHistory(limit, offset, filters)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	
+	c.JSON(http.StatusOK, gin.H{
+		"data":  orders,
+		"total": total,
+	})
+}

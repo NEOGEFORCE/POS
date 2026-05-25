@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"fmt"
@@ -43,48 +43,48 @@ func parseValidationErrors(err error) map[string]string {
 			field := strings.ToLower(e.Field())
 			switch field {
 			case "barcode":
-				fieldErrors[field] = "Código de barras requerido"
+				fieldErrors[field] = "CÃ³digo de barras requerido"
 			case "productname":
 				fieldErrors[field] = "Nombre de producto requerido"
 			case "purchaseprice":
-				fieldErrors[field] = "Precio de compra inválido"
+				fieldErrors[field] = "Precio de compra invÃ¡lido"
 			case "saleprice":
-				fieldErrors[field] = "Precio de venta inválido"
+				fieldErrors[field] = "Precio de venta invÃ¡lido"
 			case "quantity":
-				fieldErrors[field] = "Cantidad debe ser un número válido"
+				fieldErrors[field] = "Cantidad debe ser un nÃºmero vÃ¡lido"
 			case "minstock":
-				fieldErrors[field] = "Stock mínimo debe ser un número válido"
+				fieldErrors[field] = "Stock mÃ­nimo debe ser un nÃºmero vÃ¡lido"
 			default:
-				fieldErrors[field] = "Valor inválido"
+				fieldErrors[field] = "Valor invÃ¡lido"
 			}
 		}
 	} else if strings.Contains(err.Error(), "json: cannot unmarshal") {
-		// Errores de unmarshalling de JSON (ej. enviar string a campo numérico)
+		// Errores de unmarshalling de JSON (ej. enviar string a campo numÃ©rico)
 		msg := err.Error()
 		if strings.Contains(msg, "purchasePrice") || strings.Contains(msg, "purchase_price") {
-			fieldErrors["purchasePrice"] = "Formato numérico inválido (ejemplo válido: 1300)"
+			fieldErrors["purchasePrice"] = "Formato numÃ©rico invÃ¡lido (ejemplo vÃ¡lido: 1300)"
 		} else if strings.Contains(msg, "salePrice") || strings.Contains(msg, "sale_price") {
-			fieldErrors["salePrice"] = "Formato numérico inválido (ejemplo válido: 1500)"
+			fieldErrors["salePrice"] = "Formato numÃ©rico invÃ¡lido (ejemplo vÃ¡lido: 1500)"
 		} else if strings.Contains(msg, "quantity") {
-			fieldErrors["quantity"] = "Stock debe ser un número (sin símbolos de moneda)"
+			fieldErrors["quantity"] = "Stock debe ser un nÃºmero (sin sÃ­mbolos de moneda)"
 		} else if strings.Contains(msg, "minStock") || strings.Contains(msg, "min_stock") {
-			fieldErrors["minStock"] = "Stock mínimo debe ser un número"
+			fieldErrors["minStock"] = "Stock mÃ­nimo debe ser un nÃºmero"
 		} else if strings.Contains(msg, "marginPercentage") {
-			fieldErrors["marginPercentage"] = "Margen debe ser un número"
+			fieldErrors["marginPercentage"] = "Margen debe ser un nÃºmero"
 		} else {
-			fieldErrors["general"] = "Formato de datos inválido. Verifique que los números no contengan símbolos de moneda"
+			fieldErrors["general"] = "Formato de datos invÃ¡lido. Verifique que los nÃºmeros no contengan sÃ­mbolos de moneda"
 		}
 	}
 
 	return fieldErrors
 }
 
-// SendValidationError envía error con detalles por campo
+// SendValidationError envÃ­a error con detalles por campo
 func SendValidationError(c *gin.Context, fieldErrors map[string]string) {
 	c.JSON(http.StatusBadRequest, gin.H{
 		"error": gin.H{
 			"code":    ErrBadRequest,
-			"message": "Validación fallida",
+			"message": "ValidaciÃ³n fallida",
 			"fields":  fieldErrors,
 		},
 	})
@@ -98,13 +98,13 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		return
 	}
 
-	// Mayúsculas, Sanitización y Metadatos
+	// MayÃºsculas, SanitizaciÃ³n y Metadatos
 	product.Barcode = strings.ToUpper(strings.TrimSpace(product.Barcode))
 	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
 
 	// 1. Verificar Duplicados (Barcode)
 	if existing, err := h.service.GetProduct(product.Barcode); err == nil && existing != nil {
-		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El código de barras ya existe en el sistema", gin.H{
+		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El cÃ³digo de barras ya existe en el sistema", gin.H{
 			"barcode": existing.Barcode,
 			"name":    existing.ProductName,
 			"active":  existing.IsActive,
@@ -129,7 +129,7 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") ||
 			strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") {
-			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El código de barras ya está registrado", err)
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El cÃ³digo de barras ya estÃ¡ registrado", err)
 			return
 		}
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al crear producto", err)
@@ -137,20 +137,20 @@ func (h *ProductHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, product)
 	
-	// AVISO GLOBAL: Nuevo producto en el catálogo
+	// AVISO GLOBAL: Nuevo producto en el catÃ¡logo
 	go sse.GetSSEService().BroadcastProductUpdate(product)
 	
-	// Auditoría de Creación
+	// AuditorÃ­a de CreaciÃ³n
 	h.auditService.Log(dniStr, nameStr, "CREATE_PRODUCT", "INVENTORY", 
 		fmt.Sprintf("Creado producto: %s (%s)", product.ProductName, product.Barcode),
-		fmt.Sprintf("Se registró un nuevo producto: %s con código %s", product.ProductName, product.Barcode),
+		fmt.Sprintf("Se registrÃ³ un nuevo producto: %s con cÃ³digo %s", product.ProductName, product.Barcode),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
 func (h *ProductHandler) GetAll(c *gin.Context) {
 	products, err := h.service.GetAllProducts()
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catálogo de productos", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catÃ¡logo de productos", err)
 		return
 	}
 	c.JSON(http.StatusOK, products)
@@ -232,9 +232,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Sanitización
+	// SanitizaciÃ³n
 	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
-	// Capturar estado anterior para auditoría forense
+	// Capturar estado anterior para auditorÃ­a forense
 	existing, _ := h.service.GetProduct(barcode)
 
 	if err := h.service.UpdateProduct(barcode, &product); err != nil {
@@ -244,7 +244,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 			SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
 			return
 		}
-		// TEMPORAL: Devolver error REAL al frontend para diagnóstico
+		// TEMPORAL: Devolver error REAL al frontend para diagnÃ³stico
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":   "UPDATE_FAILED",
 			"message": err.Error(),
@@ -253,7 +253,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// Auditoría de Cambio de Precio (CRÍTICO)
+	// AuditorÃ­a de Cambio de Precio (CRÃTICO)
 	if existing != nil && existing.SalePrice != product.SalePrice {
 		dniStr, nameStr := GetContextUser(c)
 
@@ -266,7 +266,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 
 		h.auditService.Log(dniStr, nameStr, "PRICE_CHANGE", "INVENTORY",
 			fmt.Sprintf("Cambio precio %s: %f -> %f", barcode, existing.SalePrice, product.SalePrice),
-			fmt.Sprintf("Se modificó el precio de venta de %s de $%s a $%s", existing.ProductName, fmt.Sprintf("%.2f", existing.SalePrice), fmt.Sprintf("%.2f", product.SalePrice)),
+			fmt.Sprintf("Se modificÃ³ el precio de venta de %s de $%s a $%s", existing.ProductName, fmt.Sprintf("%.2f", existing.SalePrice), fmt.Sprintf("%.2f", product.SalePrice)),
 			fmt.Sprintf(`{"before": {"price": %f}, "after": {"price": %f}}`, existing.SalePrice, product.SalePrice),
 			c.ClientIP(), c.Request.UserAgent(), true)
 	}
@@ -290,14 +290,14 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	// Auditoría de Eliminación (CRÍTICO)
+	// AuditorÃ­a de EliminaciÃ³n (CRÃTICO)
 	dniStr, nameStr := GetContextUser(c)
 	productName := barcode
 	if existing != nil { productName = existing.ProductName }
 	
 	h.auditService.Log(dniStr, nameStr, "DELETE_PRODUCT", "INVENTORY", 
 		fmt.Sprintf("Desactivado producto: %s", barcode),
-		fmt.Sprintf("Se desactivó el producto: %s (%s)", productName, barcode),
+		fmt.Sprintf("Se desactivÃ³ el producto: %s (%s)", productName, barcode),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Product deleted"})
@@ -319,7 +319,7 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos invÃ¡lido", err)
 		return
 	}
 
@@ -335,11 +335,11 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 	go sse.GetSSEService().BroadcastInventoryUpdate(product)
 	go sse.GetSSEService().BroadcastProductUpdate(product)
 
-	// Auditoría de Recepción Individual
+	// AuditorÃ­a de RecepciÃ³n Individual
 	dniStr, nameStr := GetContextUser(c)
 	h.auditService.Log(dniStr, nameStr, "RECEIVE_STOCK", "INVENTORY", 
 		fmt.Sprintf("Entrada stock: %s (+%.2f)", body.Barcode, body.AddedQuantity),
-		fmt.Sprintf("Se registró entrada de %.2f unidades para el producto %s", body.AddedQuantity, product.ProductName),
+		fmt.Sprintf("Se registrÃ³ entrada de %.2f unidades para el producto %s", body.AddedQuantity, product.ProductName),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
@@ -350,11 +350,11 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos invÃ¡lido", err)
 		return
 	}
 
-	// Extraer información del empleado del JWT context
+	// Extraer informaciÃ³n del empleado del JWT context
 	dniStr, nameStr := GetContextUser(c)
 
 	if err := h.service.AdjustStock(barcode, body.Amount, dniStr, nameStr); err != nil {
@@ -383,11 +383,11 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos invÃ¡lido", err)
 		return
 	}
 
-	// Doble Validación de Seguridad: Solo ADMIN/SUPERADMIN pueden omitir egresos
+	// Doble ValidaciÃ³n de Seguridad: Solo ADMIN/SUPERADMIN pueden omitir egresos
 	if body.BypassExpense {
 		roleStr := GetContextRole(c)
 		if roleStr != "ADMIN" && roleStr != "SUPERADMIN" {
@@ -409,24 +409,24 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 	}
 
 	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr, body.SupplierID, body.FreightCost, body.TotalWeight, isEgreso); err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepción masiva", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepciÃ³n masiva", err)
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Bulk receive processed successfully"})
 
-	// AVISO GLOBAL: Recepción masiva (Actualiza Dashboard, Inventario y Productos)
+	// AVISO GLOBAL: RecepciÃ³n masiva (Actualiza Dashboard, Inventario y Productos)
 	go func() {
 		sse.GetSSEService().BroadcastInventoryUpdate(nil)
 		sse.GetSSEService().BroadcastDashboardUpdate()
 		sse.GetSSEService().BroadcastProductUpdate(nil)
 	}()
 
-	// Auditoría de Recepción Masiva
+	// AuditorÃ­a de RecepciÃ³n Masiva
 	dniStr, nameStr := GetContextUser(c)
 	h.auditService.Log(dniStr, nameStr, "BULK_RECEIVE", "INVENTORY", 
-		fmt.Sprintf("Recepción masiva: %d ítems (Egreso: %v)", len(body.Entries), !body.BypassExpense),
-		fmt.Sprintf("Se procesó una recepción masiva de %d productos. Origen pago: %s", len(body.Entries), body.PaymentSource),
+		fmt.Sprintf("RecepciÃ³n masiva: %d Ã­tems (Egreso: %v)", len(body.Entries), !body.BypassExpense),
+		fmt.Sprintf("Se procesÃ³ una recepciÃ³n masiva de %d productos. Origen pago: %s", len(body.Entries), body.PaymentSource),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 func (h *ProductHandler) FixPrices(c *gin.Context) {
@@ -436,7 +436,7 @@ func (h *ProductHandler) FixPrices(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Precios corregidos y redondeados exitosamente"})
 
-	// AVISO GLOBAL: Corrección masiva de precios realizada
+	// AVISO GLOBAL: CorrecciÃ³n masiva de precios realizada
 	go sse.GetSSEService().BroadcastProductUpdate(nil)
 }
 
@@ -463,7 +463,7 @@ func (h *ProductHandler) OpenBulk(c *gin.Context) {
 	barcode := c.Param("barcode")
 	dniStr, nameStr := GetContextUser(c)
 
-	// Capturar producto para auditoría
+	// Capturar producto para auditorÃ­a
 	product, err := h.service.GetProduct(barcode)
 	if err != nil {
 		SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
@@ -475,10 +475,10 @@ func (h *ProductHandler) OpenBulk(c *gin.Context) {
 		return
 	}
 
-	// Auditoría de Apertura (Apertura a Venta Libre)
+	// AuditorÃ­a de Apertura (Apertura a Venta Libre)
 	h.auditService.Log(dniStr, nameStr, "OPEN_BULK", "INVENTORY",
 		fmt.Sprintf("Abierta paca: %s (%s)", product.ProductName, barcode),
-		fmt.Sprintf("Se descontó 1 unidad de %s para habilitar Venta Rápida de sus componentes.", product.ProductName),
+		fmt.Sprintf("Se descontÃ³ 1 unidad de %s para habilitar Venta RÃ¡pida de sus componentes.", product.ProductName),
 		fmt.Sprintf(`{"before": %f, "after": %f}`, product.Quantity, product.Quantity-1),
 		c.ClientIP(), c.Request.UserAgent(), false)
 
@@ -493,7 +493,7 @@ func (h *ProductHandler) OpenBulk(c *gin.Context) {
 func (h *ProductHandler) ExportCSV(c *gin.Context) {
 	products, err := h.service.GetAllProducts()
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catálogo para exportar", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catÃ¡logo para exportar", err)
 		return
 	}
 
@@ -502,7 +502,7 @@ func (h *ProductHandler) ExportCSV(c *gin.Context) {
 	c.Header("Content-Type", "text/csv; charset=utf-8")
 
 	writer := csv.NewWriter(c.Writer)
-	writer.Comma = ';' // Delimitador estándar para Excel en español
+	writer.Comma = ';' // Delimitador estÃ¡ndar para Excel en espaÃ±ol
 
 	// Cabecera: Barcode, Name, Quantity, PurchasePrice, SalePrice, IsWeighted
 	writer.Write([]string{"CODIGO", "NOMBRE", "STOCK", "COSTO", "VENTA", "PESABLE"})
@@ -523,7 +523,7 @@ func (h *ProductHandler) ExportCSV(c *gin.Context) {
 func (h *ProductHandler) ImportCSV(c *gin.Context) {
 	file, _, err := c.Request.FormFile("file")
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "No se proporcionó ningún archivo", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "No se proporcionÃ³ ningÃºn archivo", err)
 		return
 	}
 	defer file.Close()
@@ -559,13 +559,13 @@ func (h *ProductHandler) ImportCSV(c *gin.Context) {
 		}
 		line++
 		if err != nil {
-			errors = append(errors, fmt.Sprintf("Línea %d: Error de formato", line))
+			errors = append(errors, fmt.Sprintf("LÃ­nea %d: Error de formato", line))
 			continue
 		}
 
-		// Mapeo básico: Barcode, Name, Quantity, PurchasePrice, SalePrice, IsWeighted
+		// Mapeo bÃ¡sico: Barcode, Name, Quantity, PurchasePrice, SalePrice, IsWeighted
 		if len(record) < 5 {
-			errors = append(errors, fmt.Sprintf("Línea %d: Columnas insuficientes", line))
+			errors = append(errors, fmt.Sprintf("LÃ­nea %d: Columnas insuficientes", line))
 			continue
 		}
 
@@ -590,14 +590,14 @@ func (h *ProductHandler) ImportCSV(c *gin.Context) {
 		}
 
 		if p.Barcode == "" || p.ProductName == "" {
-			errors = append(errors, fmt.Sprintf("Línea %d: Código o Nombre vacío", line))
+			errors = append(errors, fmt.Sprintf("LÃ­nea %d: CÃ³digo o Nombre vacÃ­o", line))
 			continue
 		}
 
 		products = append(products, p)
 	}
 
-	// Procesar Importación
+	// Procesar ImportaciÃ³n
 	successCount := 0
 	for _, p := range products {
 		if err := h.service.UpsertProduct(&p); err == nil {
@@ -607,10 +607,10 @@ func (h *ProductHandler) ImportCSV(c *gin.Context) {
 		}
 	}
 
-	// Auditoría
+	// AuditorÃ­a
 	h.auditService.Log(dniStr, nameStr, "IMPORT_CSV", "INVENTORY", 
-		fmt.Sprintf("Importación CSV: %d éxitos, %d errores", successCount, len(errors)),
-		fmt.Sprintf("Se procesó un archivo CSV. Se crearon/actualizaron %d productos.", successCount),
+		fmt.Sprintf("ImportaciÃ³n CSV: %d Ã©xitos, %d errores", successCount, len(errors)),
+		fmt.Sprintf("Se procesÃ³ un archivo CSV. Se crearon/actualizaron %d productos.", successCount),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
 
 	// Avisar al frontend
@@ -643,7 +643,7 @@ func (h *ProductHandler) DeleteReception(c *gin.Context) {
 		Reason string `json:"reason" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Falta PIN o Razón", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Falta PIN o RazÃ³n", err)
 		return
 	}
 
@@ -655,38 +655,67 @@ func (h *ProductHandler) DeleteReception(c *gin.Context) {
 
 	err := h.service.DeleteReception(ref, dniStr, req.Reason)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al anular recepción", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al anular recepciÃ³n", err)
 		return
 	}
-	h.auditService.Log(dniStr, nameStr, "DELETE_RECEPTION", "INVENTORY", "Recepción Anulada", "Ref: "+ref, "", c.ClientIP(), c.Request.UserAgent(), false)
-	c.JSON(200, gin.H{"message": "Recepción anulada correctamente"})
+	h.auditService.Log(dniStr, nameStr, "DELETE_RECEPTION", "INVENTORY", "RecepciÃ³n Anulada", "Ref: "+ref, "", c.ClientIP(), c.Request.UserAgent(), false)
+	c.JSON(200, gin.H{"message": "RecepciÃ³n anulada correctamente"})
+}
+
+type EditReceiveItemReq struct {
+	Barcode  string  `json:"barcode" binding:"required"`
+	Quantity float64 `json:"quantity" binding:"required"`
+	CostUnit float64 `json:"costUnit" binding:"required"`
+	IVA      float64 `json:"iva"`
+	ICUI     float64 `json:"icui"`
+	IBUA     float64 `json:"ibua"`
+	Discount float64 `json:"discount"`
+	PVP      float64 `json:"pvp"`
 }
 
 func (h *ProductHandler) EditReception(c *gin.Context) {
 	ref := c.Param("ref") // movement ID
 	var req struct {
-		PIN      string  `json:"pin" binding:"required"`
-		Quantity float64 `json:"quantity"`
-		Price    float64 `json:"price"`
-		Reason   string  `json:"reason" binding:"required"`
+		PIN      string               `json:"pin" binding:"required"`
+		Reason   string               `json:"reason" binding:"required"`
+		Products []EditReceiveItemReq `json:"products" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Datos inválidos", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Datos invÃ¡lidos", err)
 		return
 	}
 
-	dniStr, nameStr := GetContextUser(c)
+	dniStr, _ := GetContextUser(c)
 	if err := h.authService.VerifyPIN(dniStr, req.PIN); err != nil {
 		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "PIN incorrecto", err)
 		return
 	}
 
-	err := h.service.EditReception(ref, req.Quantity, req.Price, dniStr, req.Reason)
+	var serviceProducts []models.EditReceiveItem
+	for _, p := range req.Products {
+		serviceProducts = append(serviceProducts, models.EditReceiveItem{
+			Barcode:  p.Barcode,
+			Quantity: p.Quantity,
+			CostUnit: p.CostUnit,
+			IVA:      p.IVA,
+			ICUI:     p.ICUI,
+			IBUA:     p.IBUA,
+			Discount: p.Discount,
+			PVP:      p.PVP,
+		})
+	}
+
+	err := h.service.EditReception(ref, dniStr, req.Reason, serviceProducts)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al editar recepción", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al editar recepciÃ³n", err)
 		return
 	}
 
-	h.auditService.Log(dniStr, nameStr, "EDIT_RECEPTION", "INVENTORY", "Recepción Editada", "Ref: "+ref, "", c.ClientIP(), c.Request.UserAgent(), false)
-	c.JSON(200, gin.H{"message": "Recepción editada correctamente"})
+	c.JSON(200, gin.H{
+		"message":      "RecepciÃ³n editada exitosamente",
+		"ref":          ref,
+		"editedBy":     dniStr,
+		"editedAt":     time.Now().Format(time.RFC3339),
+		"priceChanges": []string{}, // Placeholder if we return changes
+	})
 }

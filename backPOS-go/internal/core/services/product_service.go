@@ -1,4 +1,4 @@
-package services
+﻿package services
 
 import (
 	"backPOS-go/internal/core/domain/models"
@@ -64,26 +64,26 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		return err
 	}
 
-	// Si el código de barras ha cambiado, verificar que el nuevo no esté ocupado por OTRO producto
-	// IMPORTANTE: Solo verificar el barcode principal, NO códigos alternos
+	// Si el cÃ³digo de barras ha cambiado, verificar que el nuevo no estÃ© ocupado por OTRO producto
+	// IMPORTANTE: Solo verificar el barcode principal, NO cÃ³digos alternos
 	if updatedProduct.Barcode != "" && updatedProduct.Barcode != barcode {
 		collision, err := s.repo.GetByBarcode(updatedProduct.Barcode)
 		if err == nil && collision != nil && collision.Barcode == updatedProduct.Barcode {
-			// Solo es colisión si otro producto tiene ese barcode como código PRINCIPAL
-			return fmt.Errorf("el código de barras '%s' ya está en uso por el producto: %s", updatedProduct.Barcode, collision.ProductName)
+			// Solo es colisiÃ³n si otro producto tiene ese barcode como cÃ³digo PRINCIPAL
+			return fmt.Errorf("el cÃ³digo de barras '%s' ya estÃ¡ en uso por el producto: %s", updatedProduct.Barcode, collision.ProductName)
 		}
 	}
 
-	// 1. Lógica de Costo: Priorizar el precio manual del update para flexibilidad total
+	// 1. LÃ³gica de Costo: Priorizar el precio manual del update para flexibilidad total
 	if updatedProduct.PurchasePrice > 0 {
 		existing.PurchasePrice = updatedProduct.PurchasePrice
 		
-		// Si tiene un proveedor principal, sincronizar ese costo también
+		// Si tiene un proveedor principal, sincronizar ese costo tambiÃ©n
 		if existing.SupplierID != nil && *existing.SupplierID > 0 {
 			_ = s.repo.UpdateSupplierPrice(barcode, *existing.SupplierID, existing.PurchasePrice)
 		}
 	} else {
-		// Si no se envía precio nuevo, intentar mantener el máximo de proveedores (histórico)
+		// Si no se envÃ­a precio nuevo, intentar mantener el mÃ¡ximo de proveedores (histÃ³rico)
 		supplierPrices, err := s.repo.GetSupplierPrices(barcode)
 		if err == nil && len(supplierPrices) > 0 {
 			maxCost := 0.0
@@ -96,12 +96,12 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		}
 	}
 
-	// 2. Actualizar campos básicos
-	existing.Barcode = updatedProduct.Barcode // Permitir cambio de código principal
+	// 2. Actualizar campos bÃ¡sicos
+	existing.Barcode = updatedProduct.Barcode // Permitir cambio de cÃ³digo principal
 	existing.ProductName = updatedProduct.ProductName
 	existing.IsWeighted = updatedProduct.IsWeighted
 	existing.CategoryID = updatedProduct.CategoryID
-	existing.AlternateCodes = updatedProduct.AlternateCodes // Nuevos códigos alternos
+	existing.AlternateCodes = updatedProduct.AlternateCodes // Nuevos cÃ³digos alternos
 	// Limpiar asociaciones para que GORM no sobreescriba foreign keys con objetos preloaded
 	existing.Category = models.Category{}
 	existing.Supplier = models.Supplier{}
@@ -130,27 +130,27 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		existing.CategoryID = 0
 	}
 
-	// Lógica de Empaques (Sincronización con Producto Base)
+	// LÃ³gica de Empaques (SincronizaciÃ³n con Producto Base)
 	existing.IsPack = updatedProduct.IsPack
 	existing.PackMultiplier = updatedProduct.PackMultiplier
 	if updatedProduct.BaseProductBarcode != nil && *updatedProduct.BaseProductBarcode != "" {
 		existing.BaseProductBarcode = updatedProduct.BaseProductBarcode
 
 		// BLINDAJE MODO PACK: Solo actualizar el base si hay un cambio real en la cantidad del pack
-		// solicitado por el usuario, evitando sobreescrituras accidentales por re-cálculos.
+		// solicitado por el usuario, evitando sobreescrituras accidentales por re-cÃ¡lculos.
 		if existing.PackMultiplier > 0 {
 			baseProduct, err := s.repo.GetByBarcode(*existing.BaseProductBarcode)
 			if err == nil {
-				// Calcular cuántas unidades de empaque REPRESENTA el stock actual del base
+				// Calcular cuÃ¡ntas unidades de empaque REPRESENTA el stock actual del base
 				currentCalculatedPackQty := math.Floor(baseProduct.Quantity / float64(existing.PackMultiplier))
 
-				// Si la cantidad que envía el usuario es diferente a la calculada, significa que el usuario
+				// Si la cantidad que envÃ­a el usuario es diferente a la calculada, significa que el usuario
 				// quiere forzar un nuevo stock para el pack (y por ende para el base)
 				if updatedProduct.Quantity != currentCalculatedPackQty {
 					// Calcular nueva cantidad base: cantidad_pack * multiplicador
 					baseProduct.Quantity = updatedProduct.Quantity * float64(existing.PackMultiplier)
 					
-					// Usar UpdateQuantity para asegurar atomicidad e invalidación de caché
+					// Usar UpdateQuantity para asegurar atomicidad e invalidaciÃ³n de cachÃ©
 					_ = s.repo.UpdateQuantity(baseProduct.Barcode, baseProduct.Quantity)
 
 					// Log del ajuste en el base
@@ -169,10 +169,10 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 			}
 		}
 	} else {
-		existing.BaseProductBarcode = nil // Aseguramos NULL en la DB si viene vacío o nulo
+		existing.BaseProductBarcode = nil // Aseguramos NULL en la DB si viene vacÃ­o o nulo
 	}
 	existing.Quantity = updatedProduct.Quantity
-	// 3. Lógica de Precios:
+	// 3. LÃ³gica de Precios:
 	if existing.MarginPercentage > 0 && existing.PurchasePrice > 0 {
 		suggested := existing.PurchasePrice * (1 + existing.MarginPercentage/100)
 		existing.SalePrice = applyRounding(suggested)
@@ -183,18 +183,18 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		}
 	}
 
-	// 4. (Verificación de duplicados ya se hizo arriba, no repetir)
+	// 4. (VerificaciÃ³n de duplicados ya se hizo arriba, no repetir)
 
 	// 5. Ejecutar Update principal (incluye cambio de barcode si aplica)
 	if err := s.repo.Update(barcode, existing); err != nil {
 		errStr := err.Error()
 		if strings.Contains(errStr, "23505") || strings.Contains(errStr, "duplicate key") {
-			return fmt.Errorf("error: el código de barras %s ya está en uso por otro producto", existing.Barcode)
+			return fmt.Errorf("error: el cÃ³digo de barras %s ya estÃ¡ en uso por otro producto", existing.Barcode)
 		}
 		return fmt.Errorf("error al persistir producto: %w", err)
 	}
 
-	// 5. Sincronizar Proveedores (Many-to-Many) - DESPUÉS del update para usar el nuevo barcode si cambió
+	// 5. Sincronizar Proveedores (Many-to-Many) - DESPUÃ‰S del update para usar el nuevo barcode si cambiÃ³
 	if len(updatedProduct.Suppliers) > 0 {
 		var ids []uint
 		for _, s := range updatedProduct.Suppliers {
@@ -231,8 +231,8 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		return err
 	}
 
-	// === LÓGICA DE SINCRONIZACIÓN DE PACKS ===
-	// Si es un pack con producto base válido, el inventario real vive en el base
+	// === LÃ“GICA DE SINCRONIZACIÃ“N DE PACKS ===
+	// Si es un pack con producto base vÃ¡lido, el inventario real vive en el base
 	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
 		baseProduct, err := s.repo.GetByBarcode(*product.BaseProductBarcode)
 		if err != nil {
@@ -251,7 +251,7 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		// 3. Sincronizar el stock del pack actual
 		product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
 
-		// Log en el Kárdex del Base
+		// Log en el KÃ¡rdex del Base
 		baseMovement := &models.StockMovement{
 			Date:         time.Now(),
 			Barcode:      baseProduct.Barcode,
@@ -268,7 +268,7 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		product.Quantity += addedQuantity
 	}
 
-	// === LÓGICA DE COSTO PROMEDIO PONDERADO (WAC) ===
+	// === LÃ“GICA DE COSTO PROMEDIO PONDERADO (WAC) ===
 	currentStock := product.Quantity - addedQuantity
 	if currentStock < 0 {
 		currentStock = 0
@@ -279,18 +279,18 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 
 	if entryTotalCost > 0 {
 		if currentStock+addedQuantity > 0 {
-			// Fórmula: (StockAnterior * CostoAnterior + StockNuevo * CostoNuevo) / StockTotal
+			// FÃ³rmula: (StockAnterior * CostoAnterior + StockNuevo * CostoNuevo) / StockTotal
 			product.PurchasePrice = ((currentStock * product.PurchasePrice) + (addedQuantity * entryTotalCost)) / (currentStock + addedQuantity)
 		} else {
 			product.PurchasePrice = entryTotalCost
 		}
 
-		// Guardar los últimos impuestos aplicados como referencia
+		// Guardar los Ãºltimos impuestos aplicados como referencia
 		product.Iva = iva
 		product.Icui = icui
 		product.Ibua = ibua
 
-		// Actualizar el precio específico del proveedor (como referencia histórica)
+		// Actualizar el precio especÃ­fico del proveedor (como referencia histÃ³rica)
 		if supplierID != nil {
 			_ = s.repo.UpdateSupplierPrice(barcode, *supplierID, entryTotalCost)
 		}
@@ -304,7 +304,7 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 			product.MarginPercentage = margin
 		}
 	} else if product.PurchasePrice > 0 {
-		// El precio de venta NO SE TOCA automáticamente.
+		// El precio de venta NO SE TOCA automÃ¡ticamente.
 		// Solo recalculamos el margen informativo.
 		product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 	}
@@ -317,12 +317,12 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 		return err
 	}
 	
-	// Automatización: Marcar pedido esperado como recibido
+	// AutomatizaciÃ³n: Marcar pedido esperado como recibido
 	if supplierID != nil {
 		_ = s.expected.MarkAsReceivedBySupplier(*supplierID)
 	}
 
-	// 4. Log the movement for профессиональный Kárdex
+	// 4. Log the movement for Ð¿Ñ€Ð¾Ñ„ÐµÑÑÐ¸Ð¾Ð½Ð°Ð»ÑŒÐ½Ñ‹Ð¹ KÃ¡rdex
 	movement := &models.StockMovement{
 		Date:         time.Now(),
 		Barcode:      barcode,
@@ -348,7 +348,7 @@ func (s *ProductService) AdjustStock(barcode string, amount float64, employeeDNI
 		movementType = "ADJUSTMENT_DOWN"
 	}
 
-	// Lógica de Packs (Ajuste Manual)
+	// LÃ³gica de Packs (Ajuste Manual)
 	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
 		baseProduct, err := s.repo.GetByBarcode(*product.BaseProductBarcode)
 		if err == nil {
@@ -417,7 +417,7 @@ func (s *ProductService) FixAllProductPrices() error {
 			if newPrice != p.SalePrice {
 				p.SalePrice = newPrice
 				if err := s.repo.Update(p.Barcode, &p); err != nil {
-					// Continuar con los demás aunque uno falle
+					// Continuar con los demÃ¡s aunque uno falle
 					fmt.Printf("Error actualizando %s: %v\n", p.Barcode, err)
 				}
 			}
@@ -429,7 +429,7 @@ func (s *ProductService) FixAllProductPrices() error {
 func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) error {
 	_, err := s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI, supplierID, freightCost, totalWeight, isEgreso)
 	if err == nil {
-		// Automatización: Intentar identificar el proveedor principal para marcar preventa como recibida
+		// AutomatizaciÃ³n: Intentar identificar el proveedor principal para marcar preventa como recibida
 		var mainSupplierID uint
 		for _, e := range entries {
 			if e.SupplierID != nil && *e.SupplierID > 0 {
@@ -471,7 +471,7 @@ func (s *ProductService) OpenBulk(barcode string, employeeDNI string, employeeNa
 		return err
 	}
 
-	// 2. Registrar Movimiento de Kárdex Justificado
+	// 2. Registrar Movimiento de KÃ¡rdex Justificado
 	movement := &models.StockMovement{
 		Date:         time.Now(),
 		Barcode:      barcode,
@@ -493,7 +493,7 @@ func (s *ProductService) UpsertProduct(product *models.Product) error {
 		return s.CreateProduct(product)
 	}
 
-	// Actualizar existente (solo campos básicos del CSV)
+	// Actualizar existente (solo campos bÃ¡sicos del CSV)
 	existing.ProductName = product.ProductName
 	existing.Quantity = product.Quantity
 	existing.PurchasePrice = product.PurchasePrice
@@ -514,7 +514,19 @@ func (s *ProductService) DeleteReception(ref string, dniStr string, reason strin
 	return nil
 }
 
-func (s *ProductService) EditReception(ref string, qty float64, price float64, dniStr string, reason string) error {
-	// Dummy implementation for now
+func (s *ProductService) EditReception(ref string, dniStr string, reason string, products []models.EditReceiveItem) error {
+	priceChanges, err := s.repo.EditReception(ref, dniStr, reason, products)
+	if err != nil {
+		return err
+	}
+
+	if len(priceChanges) > 0 {
+		msg := "âš ï¸ PRECIOS MODIFICADOS EN EDICIÃ“N DE RECEPCIÃ“N:\n\n"
+		for _, change := range priceChanges {
+			msg += "Â· " + change + "\n"
+		}
+		s.telegram.SendAlert(msg)
+	}
+
 	return nil
 }

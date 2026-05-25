@@ -72,7 +72,7 @@ func (r *PostgresRestockRepository) GetOrdersHistory(limit, offset int, filters 
 
 func (r *PostgresRestockRepository) GetOrderByID(id string) (*models.ConfirmedOrder, error) {
 	var order models.ConfirmedOrder
-	err := r.db.Preload("Supplier").Where("id = ?", id).First(&order).Error
+	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").Where("id = ?", id).First(&order).Error
 	if err != nil {
 		return nil, err
 	}

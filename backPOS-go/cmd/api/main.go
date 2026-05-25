@@ -266,7 +266,7 @@ func main() {
 				productAdmin.POST("/products/bulk-receive", productHandler.BulkReceive)
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
 				productAdmin.DELETE("/inventory/receive/:ref", productHandler.DeleteReception)
-				productAdmin.PUT("/inventory/receive/:ref/edit", productHandler.EditReception)
+				productAdmin.PATCH("/inventory/receive/:ref", productHandler.EditReception)
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
 
 				// Smart Restock API
@@ -276,6 +276,11 @@ func main() {
 				productAdmin.POST("/inventory/restock/purchase-list", restockHandler.AddToPurchaseList)
 				productAdmin.DELETE("/inventory/restock/purchase-list/:id", restockHandler.RemoveFromPurchaseList)
 				productAdmin.POST("/inventory/restock/confirm", restockHandler.ConfirmOrder)
+
+				// Carga Maestra API
+				productAdmin.GET("/inventory/receive/pending", restockHandler.GetPendingOrders)
+				productAdmin.GET("/inventory/receive/pending/:id", restockHandler.GetPendingOrder)
+				productAdmin.GET("/inventory/receive/history", restockHandler.GetOrdersHistory)
 
 				// Report History
 				productAdmin.GET("/reports/history", reportHandler.GetHistory)

@@ -203,3 +203,5 @@ func (s *AuthService) CheckSetup() (bool, error) {
 	// Solo necesita setup si confirmamos exitosamente que el conteo es 0
 	return count == 0, nil
 }
+
+

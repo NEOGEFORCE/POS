@@ -32,7 +32,8 @@ type ConfirmedOrder struct {
 	ReceivedAt       *time.Time `gorm:"column:received_at" json:"receivedAt"`
 	ReceivedBy       string     `gorm:"type:varchar(255);column:received_by" json:"receivedBy"`
 
-	Supplier         Supplier   `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
+	Supplier         Supplier             `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
+	Items            []ConfirmedOrderItem `gorm:"foreignKey:ConfirmedOrderID" json:"items,omitempty"`
 }
 
 func (ConfirmedOrder) TableName() string {

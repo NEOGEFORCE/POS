@@ -60,10 +60,17 @@ func (s *RestockService) ConfirmOrder(supplierID uint, estimatedTotal, realInvoi
 	if err != nil {
 		return err
 	}
-
 	return s.repo.ClearPurchaseList(supplierID)
 }
 
 func (s *RestockService) GetPendingOrders() ([]models.ConfirmedOrder, error) {
 	return s.repo.GetPendingOrders()
+}
+
+func (s *RestockService) GetOrdersHistory(limit, offset int, filters map[string]interface{}) ([]models.ConfirmedOrder, int64, error) {
+	return s.repo.GetOrdersHistory(limit, offset, filters)
+}
+
+func (s *RestockService) GetOrderByID(id string) (*models.ConfirmedOrder, error) {
+	return s.repo.GetOrderByID(id)
 }
