@@ -80,6 +80,18 @@ func (s *AuthService) Login(identifier string, password string, ip string, devic
 	return tokenString, user, nil
 }
 
+func (s *AuthService) VerifyPIN(dni, pin string) error {
+	user, err := s.repo.FindByDNI(dni)
+	if err != nil {
+		return errors.New("usuario no encontrado")
+	}
+	err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pin))
+	if err != nil {
+		return errors.New("PIN incorrecto")
+	}
+	return nil
+}
+
 func (s *AuthService) ForgotPassword(email string) error {
 	user, err := s.repo.FindByEmail(email)
 	if err != nil {

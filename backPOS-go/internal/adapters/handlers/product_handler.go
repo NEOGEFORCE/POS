@@ -23,10 +23,16 @@ type ProductHandler struct {
 	service          *services.ProductService
 	inventoryService *services.InventoryService
 	auditService     *services.AuditService
+	authService      *services.AuthService
 }
 
-func NewProductHandler(s *services.ProductService, i *services.InventoryService, a *services.AuditService) *ProductHandler {
-	return &ProductHandler{service: s, inventoryService: i, auditService: a}
+func NewProductHandler(s *services.ProductService, is *services.InventoryService, as *services.AuditService, authSvc *services.AuthService) *ProductHandler {
+	return &ProductHandler{
+		service:          s,
+		inventoryService: is,
+		auditService:     as,
+		authService:      authSvc,
+	}
 }
 
 func parseValidationErrors(err error) map[string]string {
@@ -631,7 +637,56 @@ func (h *ProductHandler) SanitizeAllNames(c *gin.Context) {
 }
 
 func (h *ProductHandler) DeleteReception(c *gin.Context) {
-	ref := c.Param("ref")
-	h.service.DeleteReception(ref)
-	c.JSON(200, gin.H{})
+	ref := c.Param("ref") // can be movement ID
+	var req struct {
+		PIN    string `json:"pin" binding:"required"`
+		Reason string `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Falta PIN o Razón", err)
+		return
+	}
+
+	dniStr, nameStr := GetContextUser(c)
+	if err := h.authService.VerifyPIN(dniStr, req.PIN); err != nil {
+		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "PIN incorrecto", err)
+		return
+	}
+
+	err := h.service.DeleteReception(ref, dniStr, req.Reason)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al anular recepción", err)
+		return
+	}
+	h.auditService.Log(dniStr, nameStr, "DELETE_RECEPTION", "INVENTORY", "Recepción Anulada", "Ref: "+ref, "", c.ClientIP(), c.Request.UserAgent(), false)
+	c.JSON(200, gin.H{"message": "Recepción anulada correctamente"})
+}
+
+func (h *ProductHandler) EditReception(c *gin.Context) {
+	ref := c.Param("ref") // movement ID
+	var req struct {
+		PIN      string  `json:"pin" binding:"required"`
+		Quantity float64 `json:"quantity"`
+		Price    float64 `json:"price"`
+		Reason   string  `json:"reason" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Datos inválidos", err)
+		return
+	}
+
+	dniStr, nameStr := GetContextUser(c)
+	if err := h.authService.VerifyPIN(dniStr, req.PIN); err != nil {
+		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "PIN incorrecto", err)
+		return
+	}
+
+	err := h.service.EditReception(ref, req.Quantity, req.Price, dniStr, req.Reason)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al editar recepción", err)
+		return
+	}
+
+	h.auditService.Log(dniStr, nameStr, "EDIT_RECEPTION", "INVENTORY", "Recepción Editada", "Ref: "+ref, "", c.ClientIP(), c.Request.UserAgent(), false)
+	c.JSON(200, gin.H{"message": "Recepción editada correctamente"})
 }

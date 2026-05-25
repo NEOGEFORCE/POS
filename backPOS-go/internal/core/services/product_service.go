@@ -509,6 +509,12 @@ func (s *ProductService) SanitizeAllNames() (int, error) {
 	return 0, nil
 }
 
-func (s *ProductService) DeleteReception(ref string) error {
+func (s *ProductService) DeleteReception(ref string, dniStr string, reason string) error {
+	// Dummy implementation for now
+	return nil
+}
+
+func (s *ProductService) EditReception(ref string, qty float64, price float64, dniStr string, reason string) error {
+	// Dummy implementation for now
 	return nil
 }

@@ -25,6 +25,7 @@ type SuggestedOrder struct {
 	ProductName      string      `json:"productName"`
 	Stock            float64     `json:"stock"`
 	MinStock         float64     `json:"minStock"`
+	MinShelfStock    float64     `json:"minShelfStock"`
 	IsPack           bool        `json:"isPack"`         // Modo Pack existente
 	PackMultiplier   int         `json:"packMultiplier"` // Multiplicador del pack
 	OrderMultiple    int         `json:"orderMultiple"`  // Alias para frontend (REQUERIDO)
@@ -225,6 +226,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 			ProductName:      p.ProductName,
 			Stock:            p.Quantity,
 			MinStock:         p.MinStock,
+			MinShelfStock:    p.MinShelfStock,
 			IsPack:           p.IsPack,
 			PackMultiplier:   p.PackMultiplier,
 			OrderMultiple:    p.OrderMultiple,
@@ -446,6 +448,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 			ProductName:      p.ProductName,
 			Stock:            p.Quantity,
 			MinStock:         p.MinStock,
+			MinShelfStock:    p.MinShelfStock,
 			IsPack:           p.IsPack,
 			PackMultiplier:   p.PackMultiplier,
 			OrderMultiple:    p.OrderMultiple,

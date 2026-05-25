@@ -73,8 +73,8 @@ func main() {
 	reportService := services.NewReportService(reportRepo)
 
 	// Initialize Handlers
-	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService)
-	restockHandler := handlers.NewRestockHandler(restockService, inventoryService)
+	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService, authService)
+	restockHandler := handlers.NewRestockHandler(restockService, inventoryService, telegramService)
 	saleHandler := handlers.NewSaleHandler(saleService, auditService)
 	authHandler := handlers.NewAuthHandler(authService)
 	categoryHandler := handlers.NewCategoryHandler(categoryService, auditService)
@@ -265,7 +265,8 @@ func main() {
 				productAdmin.POST("/products/receive-stock", productHandler.ReceiveStock)
 				productAdmin.POST("/products/bulk-receive", productHandler.BulkReceive)
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
-				productAdmin.DELETE("/products/reception/:ref", productHandler.DeleteReception)
+				productAdmin.DELETE("/inventory/receive/:ref", productHandler.DeleteReception)
+				productAdmin.PUT("/inventory/receive/:ref/edit", productHandler.EditReception)
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
 
 				// Smart Restock API

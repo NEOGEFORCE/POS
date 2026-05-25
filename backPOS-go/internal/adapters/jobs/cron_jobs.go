@@ -86,6 +86,12 @@ func (m *CronManager) Start() {
 		log.Printf("❌ Failed to schedule Job 4: %v", err)
 	}
 
+	// Job 5: Critical Shelf Stock Alert (Daily at 07:00 AM)
+	_, err = m.scheduler.AddFunc("0 7 * * *", m.handleShelfStockCriticalAlert)
+	if err != nil {
+		log.Printf("❌ Failed to schedule Job 5: %v", err)
+	}
+
 	m.scheduler.Start()
 	log.Println("🕒 Cron Scheduler Started with America/Bogota Location")
 }
@@ -278,4 +284,36 @@ func (m *CronManager) handleNightlyBackupJob() {
 	if err != nil {
 		log.Printf("❌ Failed to send backup to Telegram: %v", err)
 	}
+}
+
+func (m *CronManager) handleShelfStockCriticalAlert() {
+	log.Println("🤖 Running Daily Shelf Stock Critical Job (07:00 AM)...")
+
+	criticals, err := m.inventory.GetGlobalRestockSuggestions()
+	if err != nil {
+		log.Printf("❌ Shelf Stock Job Error: %v", err)
+		return
+	}
+
+	suppliersMap := make(map[string][]services.SuggestedOrder)
+	for _, c := range criticals {
+		if c.Stock <= c.MinShelfStock && c.AvgDailySales > 3 {
+			suppliersMap[c.BestSupplierName] = append(suppliersMap[c.BestSupplierName], c)
+		}
+	}
+
+	if len(suppliersMap) == 0 {
+		return
+	}
+
+	today := time.Now().Format("02/01/2006")
+	message := fmt.Sprintf("🚨 *PRODUCTOS CRÍTICOS* — %s\nSe venden mucho y se están quedando sin stock:\n\n", today)
+
+	for suppName, items := range suppliersMap {
+		for _, item := range items {
+			message += fmt.Sprintf("· *%s*: stock %.0f | vende %.1f/día | proveedor: %s\n", item.ProductName, item.Stock, item.AvgDailySales, suppName)
+		}
+	}
+
+	m.telegram.SendAlert(message)
 }

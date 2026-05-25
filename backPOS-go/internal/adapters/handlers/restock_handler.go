@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 
 	"backPOS-go/internal/core/domain/models"
@@ -12,12 +13,14 @@ import (
 type RestockHandler struct {
 	restockService   *services.RestockService
 	inventoryService *services.InventoryService
+	telegram         *services.TelegramService
 }
 
-func NewRestockHandler(rs *services.RestockService, is *services.InventoryService) *RestockHandler {
+func NewRestockHandler(rs *services.RestockService, is *services.InventoryService, tg *services.TelegramService) *RestockHandler {
 	return &RestockHandler{
 		restockService:   rs,
 		inventoryService: is,
+		telegram:         tg,
 	}
 }
 
@@ -110,6 +113,15 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+
+	diff := req.RealInvoiceTotal - req.EstimatedTotal
+	diffPercent := diff / req.EstimatedTotal
+
+	if diffPercent > 0.05 {
+		msg := fmt.Sprintf("⚠️ PEDIDO PROVEEDOR %d — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción", 
+			req.SupplierID, req.EstimatedTotal, req.RealInvoiceTotal, diff)
+		h.telegram.SendAlert(msg)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pedido confirmado"})
