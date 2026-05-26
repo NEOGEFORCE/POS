@@ -95,6 +95,11 @@ func (r *PostgresCategoryRepository) Delete(id uint) error {
 	}
 	return err
 }
+
+func (r *PostgresCategoryRepository) UpdateCategoryMargin(id uint, margin float64) error {
+	return r.db.Model(&models.Category{}).Where("id = ?", id).Update("margin_percentage", margin).Error
+}
+
 func (r *PostgresCategoryRepository) Count() (int64, error) {
 	if cached, found := cache.CacheManager.Get(cache.CacheKeyCategoryCount); found {
 		return cached.(int64), nil

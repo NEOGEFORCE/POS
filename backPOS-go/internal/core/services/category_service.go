@@ -36,3 +36,7 @@ func (s *CategoryService) UpdateCategory(id uint, category *models.Category) err
 func (s *CategoryService) DeleteCategory(id uint) error {
 	return s.repo.Delete(id)
 }
+
+func (s *CategoryService) UpdateCategoryMargin(id uint, margin float64) error {
+	return s.repo.UpdateCategoryMargin(id, margin)
+}

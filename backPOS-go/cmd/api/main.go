@@ -85,7 +85,7 @@ func main() {
 	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService)
 	adminHandler := handlers.NewAdminHandler(adminService, auditService, telegramService)
 	returnHandler := handlers.NewReturnHandler(returnService, auditService)
-	orderHandler := handlers.NewOrderHandler(inventoryService, orderService, expectedOrderService, telegramService, auditService)
+	orderHandler := handlers.NewOrderHandler(inventoryService, orderService, expectedOrderService, telegramService, auditService, restockService, expenseService)
 	debtHandler := handlers.NewDebtHandler(clientService, saleService, auditService)
 	notificationHandler := handlers.NewNotificationHandler(telegramService)
 	reportHandler := handlers.NewReportHandler(reportService)
@@ -96,7 +96,8 @@ func main() {
 	cronManager.Start()
 
 	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
-	telegramService.StartListener(inventoryService, saleRepo, dashboardService, productService)
+	aiBotService := services.NewAIBotService(saleRepo, productRepo, expenseRepo, restockRepo, telegramService)
+	telegramService.StartListener(inventoryService, saleRepo, dashboardService, productService, aiBotService)
 
 	// Mantenimiento: Blindaje de datos existentes (Limpieza de tildes)
 	go func() {
@@ -267,6 +268,8 @@ func main() {
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
 				productAdmin.DELETE("/inventory/receive/:ref", productHandler.DeleteReception)
 				productAdmin.PATCH("/inventory/receive/:ref", productHandler.EditReception)
+				productAdmin.POST("/inventory/scan-invoice", productHandler.ScanInvoice)
+				productAdmin.POST("/inventory/save-alias", productHandler.SaveAlias)
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
 
 				// Smart Restock API
@@ -308,6 +311,7 @@ func main() {
 				categoryAdmin.Use(middlewares.RoleMiddleware("admin"))
 				{
 					categoryAdmin.PUT("/update-categories/:id", categoryHandler.Update)
+					categoryAdmin.PATCH("/update-categories/:id/margin", categoryHandler.UpdateMargin)
 					categoryAdmin.DELETE("/delete-categories/:id", categoryHandler.Delete)
 				}
 			}
@@ -353,10 +357,14 @@ func main() {
 			protected.GET("/sales/history/:id", saleHandler.GetByID)
 			protected.DELETE("/sales/delete/:id", middlewares.RoleMiddleware("admin"), saleHandler.Delete)
 			protected.PUT("/sales/update-payment/:id", saleHandler.UpdatePayment)
+			protected.POST("/sales/add-items/:id", saleHandler.AddItems)
 
 			// Devoluciones
 			protected.POST("/returns/create", returnHandler.Create)
 			protected.GET("/returns/all", returnHandler.GetAll)
+			protected.GET("/sales/returns/invoice/:ref", returnHandler.GetByInvoice)
+			protected.GET("/sales/returns/blind", returnHandler.GetBlind)
+			protected.POST("/sales/returns", returnHandler.ProcessReturn)
 
 			// Expenses
 			// Egresos Financieros (Gestión de Gastos Operativos)
@@ -429,6 +437,7 @@ func main() {
 			protected.GET("/inventory/global-restock", orderHandler.GetGlobalRestockSuggestions) // Radar Global
 			protected.POST("/inventory/orders", orderHandler.CreateOrder)
 			protected.GET("/inventory/orders", orderHandler.GetAllOrders)
+			protected.POST("/inventory/orders/dismiss", orderHandler.DismissOrder)
 			protected.POST("/inventory/shrinkage", productHandler.RegisterShrinkage)
 			protected.POST("/telegram/send-delivery-summary", orderHandler.SendDeliverySummaryToTelegram)
 			protected.GET("/inventory/savings-opportunities", productHandler.GetSavingsOpportunities)

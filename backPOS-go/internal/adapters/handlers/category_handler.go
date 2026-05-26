@@ -157,7 +157,7 @@ func (h *CategoryHandler) Delete(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar categoría", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Category deleted"})
+	c.JSON(http.StatusOK, gin.H{"message": "Categoría eliminada con éxito"})
 
 	// AVISO GLOBAL: Categoría eliminada
 	go sse.GetSSEService().BroadcastCategoryUpdate(id)
@@ -169,4 +169,28 @@ func (h *CategoryHandler) Delete(c *gin.Context) {
 		fmt.Sprintf("Desactivada categoría ID: %d", id),
 		fmt.Sprintf("Se desactivó la categoría con ID #%d", id),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+}
+
+func (h *CategoryHandler) UpdateMargin(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido o mal formado", err)
+		return
+	}
+
+	var req struct {
+		MarginPercentage float64 `json:"marginPercentage"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		return
+	}
+
+	if err := h.service.UpdateCategoryMargin(uint(id), req.MarginPercentage); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar el margen de la categoría", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Margen actualizado con éxito"})
 }
