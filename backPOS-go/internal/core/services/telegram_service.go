@@ -2,7 +2,9 @@ package services
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"net/http"
 	"io"
 	"log"
 	"os"
@@ -141,8 +143,31 @@ func (s *TelegramService) SendDocument(reader io.Reader, filename string, captio
 	log.Printf("✅ Document sent to Telegram: %s", filename)
 	return nil
 }
+
+func (s *TelegramService) SendPhoto(imgBytes []byte, caption string) error {
+	if !s.active {
+		return fmt.Errorf("telegram service not configured")
+	}
+
+	photoObj := tgbotapi.FileBytes{
+		Name:  caption,
+		Bytes: imgBytes,
+	}
+
+	photo := tgbotapi.NewPhoto(s.chatID, photoObj)
+	photo.Caption = caption
+
+	_, err := s.bot.Send(photo)
+	if err != nil {
+		return fmt.Errorf("failed to send photo: %w", err)
+	}
+
+	log.Printf("✅ Photo sent to Telegram: %s", caption)
+	return nil
+}
+
 // StartListener inicia el bucle de escucha de comandos de Telegram
-func (s *TelegramService) StartListener(invService *InventoryService, saleRepo ports.SaleRepository, dashService *DashboardService, prodService *ProductService) {
+func (s *TelegramService) StartListener(invService *InventoryService, saleRepo ports.SaleRepository, dashService *DashboardService, prodService *ProductService, aiBotService *AIBotService) {
 	if !s.active {
 		return
 	}
@@ -160,7 +185,25 @@ func (s *TelegramService) StartListener(invService *InventoryService, saleRepo p
 		updates := s.bot.GetUpdatesChan(u)
 
 		for update := range updates {
-			if update.Message == nil || !update.Message.IsCommand() {
+			if update.CallbackQuery != nil {
+				if aiBotService != nil {
+					aiBotService.HandleCallbackQuery(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Data)
+				}
+				// Responder al callback para quitar el "reloj" de cargando en el botón
+				callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
+				s.bot.Request(callback)
+				continue
+			}
+
+			if update.Message == nil {
+				continue
+			}
+
+			if !update.Message.IsCommand() {
+				// Mensaje de texto libre → pasar al AI service
+				if aiBotService != nil {
+					aiBotService.ProcessMessage(update.Message.Chat.ID, update.Message.Text)
+				}
 				continue
 			}
 
@@ -169,7 +212,7 @@ func (s *TelegramService) StartListener(invService *InventoryService, saleRepo p
 
 			switch update.Message.Command() {
 			case "start":
-				msg.Text = "🚀 *POS Pro Bot Activo*\n\nComandos disponibles:\n/inventario - Reporte de bajo stock\n/vendido_today - Ventas de hoy\n/top_semana - Top 10 productos semana\n/buscar [nombre] - Consultar precio/stock\n/nomina - Resumen financiero\n/cambios_hoy - Auditoría de precios hoy"
+				msg.Text = "🚀 *POS Pro Bot Activo*\n\nComandos disponibles:\n/inventario - Reporte de bajo stock\n/vendido_today - Ventas de hoy\n/top_semana - Top 10 productos semana\n/buscar [nombre] - Consultar precio/stock\n/nomina - Resumen financiero\n/cambios_hoy - Auditoría de precios hoy\n\n*También puedes hablarme naturalmente para pedir reportes, cambiar precios, o registrar egresos!*"
 			case "inventario":
 				msg.Text = s.handleInventario(invService)
 			case "vendido_today":
@@ -352,4 +395,60 @@ func (s *TelegramService) handleCambiosHoy(prodService *ProductService) string {
 	report += "\n⚠️ *Si falta alguno en góndola, cámbialo ya.*"
 
 	return report
+}
+
+func (s *TelegramService) handleImageMessage(msg *tgbotapi.Message, aiBotService *AIBotService) {
+	if msg.Chat.ID != s.chatID {
+		s.bot.Send(tgbotapi.NewMessage(msg.Chat.ID, "No estás autorizado."))
+		return
+	}
+
+	s.SendAlert("📷 Procesando imagen con IA...")
+
+	var fileID string
+	if len(msg.Photo) > 0 {
+		photos := msg.Photo
+		fileID = photos[len(photos)-1].FileID
+	} else if msg.Document != nil {
+		fileID = msg.Document.FileID
+	}
+
+	file, err := s.bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	if err != nil {
+		s.SendAlert("❌ No pude descargar la imagen")
+		return
+	}
+
+	fileURL := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", os.Getenv("TELEGRAM_BOT_TOKEN"), file.FilePath)
+
+	resp, err := http.Get(fileURL)
+	if err != nil {
+		s.SendAlert("❌ Error al descargar la imagen")
+		return
+	}
+	defer resp.Body.Close()
+	imgBytes, _ := io.ReadAll(resp.Body)
+
+	mimeType := "image/jpeg"
+	if strings.HasSuffix(file.FilePath, ".png") {
+		mimeType = "image/png"
+	}
+	if strings.HasSuffix(file.FilePath, ".pdf") {
+		mimeType = "application/pdf"
+	}
+
+	imgBase64 := base64.StdEncoding.EncodeToString(imgBytes)
+
+	caption := ""
+	if msg.Caption != "" {
+		caption = msg.Caption
+	}
+
+	response, err := aiBotService.ProcessImageMessage(msg.Chat.ID, imgBase64, mimeType, caption)
+	if err != nil {
+		s.SendAlert("❌ Error al analizar la imagen: " + err.Error())
+		return
+	}
+
+	s.SendMarkdownAlert(response)
 }

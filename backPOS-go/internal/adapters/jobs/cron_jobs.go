@@ -123,17 +123,32 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 
 	message := "🛒 *Sugerencias de Pedido para Hoy (" + today + ")*:\n\n"
 	foundAny := false
+	var urgentAlerts []string
 
 	for _, s := range suppliers {
 		suggested, _ := m.inventory.GetSuggestedOrders(s.ID)
 		if len(suggested) > 0 {
 			message += fmt.Sprintf("• *%s*: %d items a reponer\n", s.Name, len(suggested))
 			foundAny = true
+
+			// TAREA 2: Escanear y destacar Alertas de Aumento de Stock Base
+			for _, item := range suggested {
+				if item.AlertType == "INCREASE_MIN_STOCK" || item.AlertType == "HIGH_MOVER" {
+					urgentAlerts = append(urgentAlerts, fmt.Sprintf("   ⚠️ *%s*: %s", item.ProductName, item.Alert))
+				}
+			}
 		}
 	}
 
 	if foundAny {
-		message += "\n👉 Revisa el panel para confirmar las órdenes."
+		if len(urgentAlerts) > 0 {
+			message += "\n🔥 *¡ATENCIÓN A ESTOS PRODUCTOS!*\n_Se están vendiendo muy rápido. ¡Pide más y sube tu Stock Base!_\n"
+			for _, alert := range urgentAlerts {
+				message += alert + "\n"
+			}
+		}
+		
+		message += "\n👉 Revisa el panel de Pedidos Inteligentes para confirmar."
 		m.telegram.SendAlert(message)
 	}
 }
@@ -166,8 +181,8 @@ func (m *CronManager) handlePendingDeliveriesAlert() {
 func (m *CronManager) handleLogisticReportJob() {
 	log.Println("🤖 Running Daily Logistic Report Job (07:00 AM)...")
 
-	// Get Expected Orders for today
-	todayStr := time.Now().Format("2006-01-02")
+	loc, _ := time.LoadLocation("America/Bogota")
+	todayStr := time.Now().In(loc).Format("2006-01-02")
 	expectedOrders, err := m.expected.GetExpectedOrdersByDate(todayStr)
 	if err != nil {
 		log.Printf("❌ Logistic Job Error: %v", err)
@@ -236,9 +251,9 @@ func (m *CronManager) handleNightlyBackupJob() {
 	dbPass := os.Getenv("DB_PASSWORD")
 	
 	// 2. Ruta de pg_dump (Configurable por .env para producción)
-	pgDumpRaw := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
-	pgDumpPath := filepath.ToSlash(strings.ReplaceAll(pgDumpRaw, "\\", "/"))
-	if pgDumpPath == "" {
+	pgDumpRaw := strings.TrimSpace(strings.Trim(os.Getenv("PG_DUMP_PATH"), "\""))
+	pgDumpPath := filepath.Clean(pgDumpRaw)
+	if pgDumpPath == "" || pgDumpPath == "." {
 		pgDumpPath = "pg_dump" // Si está en el PATH
 	}
 
@@ -289,29 +304,56 @@ func (m *CronManager) handleNightlyBackupJob() {
 func (m *CronManager) handleShelfStockCriticalAlert() {
 	log.Println("🤖 Running Daily Shelf Stock Critical Job (07:00 AM)...")
 
+	loc, _ := time.LoadLocation("America/Bogota")
+	todayStr := time.Now().In(loc).Format("2006-01-02")
+	
+	expectedOrders, _ := m.expected.GetExpectedOrdersByDate(todayStr)
+	expectedSuppliers := make(map[string]bool)
+	for _, o := range expectedOrders {
+		expectedSuppliers[o.SupplierName] = true
+	}
+
 	criticals, err := m.inventory.GetGlobalRestockSuggestions()
 	if err != nil {
 		log.Printf("❌ Shelf Stock Job Error: %v", err)
 		return
 	}
 
-	suppliersMap := make(map[string][]services.SuggestedOrder)
+	primarySuppliersMap := make(map[string][]services.SuggestedOrder)
+	secondarySuppliersMap := make(map[string][]services.SuggestedOrder)
+
 	for _, c := range criticals {
 		if c.Stock <= c.MinShelfStock && c.AvgDailySales > 3 {
-			suppliersMap[c.BestSupplierName] = append(suppliersMap[c.BestSupplierName], c)
+			if expectedSuppliers[c.BestSupplierName] {
+				primarySuppliersMap[c.BestSupplierName] = append(primarySuppliersMap[c.BestSupplierName], c)
+			} else {
+				secondarySuppliersMap[c.BestSupplierName] = append(secondarySuppliersMap[c.BestSupplierName], c)
+			}
 		}
 	}
 
-	if len(suppliersMap) == 0 {
+	if len(primarySuppliersMap) == 0 && len(secondarySuppliersMap) == 0 {
 		return
 	}
 
-	today := time.Now().Format("02/01/2006")
-	message := fmt.Sprintf("🚨 *PRODUCTOS CRÍTICOS* — %s\nSe venden mucho y se están quedando sin stock:\n\n", today)
+	todayFmt := time.Now().In(loc).Format("02/01/2006")
+	message := fmt.Sprintf("🚨 *PRODUCTOS CRÍTICOS* — %s\n", todayFmt)
 
-	for suppName, items := range suppliersMap {
-		for _, item := range items {
-			message += fmt.Sprintf("· *%s*: stock %.0f | vende %.1f/día | proveedor: %s\n", item.ProductName, item.Stock, item.AvgDailySales, suppName)
+	if len(primarySuppliersMap) > 0 {
+		message += "\n🚚 *PROVEEDORES QUE LLEGAN HOY (PRIORIDAD ALTA)*:\n"
+		for suppName, items := range primarySuppliersMap {
+			for _, item := range items {
+				message += fmt.Sprintf("· *%s*: stock %.0f | vende %.1f/día | prov: %s\n", item.ProductName, item.Stock, item.AvgDailySales, suppName)
+			}
+		}
+	}
+
+	if len(secondarySuppliersMap) > 0 {
+		message += "\n⚠️ *OTROS CRÍTICOS (SIN ENTREGA HOY)*:\n"
+		for suppName, items := range secondarySuppliersMap {
+			for _, item := range items {
+				message += fmt.Sprintf("· *%s*: stock %.0f | vende %.1f/día | prov: %s\n", item.ProductName, item.Stock, item.AvgDailySales, suppName)
+			}
 		}
 	}
 

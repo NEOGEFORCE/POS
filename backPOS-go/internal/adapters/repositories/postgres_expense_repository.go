@@ -40,7 +40,26 @@ func (r *PostgresExpenseRepository) Save(expense *models.Expense) error {
 
 func (r *PostgresExpenseRepository) GetAll() ([]models.Expense, error) {
 	expenses := []models.Expense{}
-	err := r.db.Preload("Creator").Order("date DESC").Limit(100).Find(&expenses).Error
+	err := r.db.Preload("Creator").Order("date DESC").Find(&expenses).Error
+	return expenses, err
+}
+
+func (r *PostgresExpenseRepository) GetAllFiltered(supplier, concept string) ([]models.Expense, error) {
+	expenses := []models.Expense{}
+	query := r.db.Preload("Creator").Model(&models.Expense{})
+
+	if supplier != "" {
+		// Use a join to filter by supplier name, or filter by exact supplier_id if we had it. 
+		// Since expense has supplier_id, we can join with suppliers table.
+		query = query.Joins("LEFT JOIN suppliers ON suppliers.id = expenses.supplier_id").
+			Where("suppliers.name ILIKE ?", "%"+supplier+"%")
+	}
+	
+	if concept != "" {
+		query = query.Where("description ILIKE ?", "%"+concept+"%")
+	}
+
+	err := query.Order("date DESC").Find(&expenses).Error
 	return expenses, err
 }
 
@@ -60,6 +79,12 @@ func (r *PostgresExpenseRepository) GetByDateRange(from, to time.Time) ([]models
 		query = query.Where("date <= ?", to)
 	}
 	err := query.Order("date DESC").Limit(500).Find(&expenses).Error
+	return expenses, err
+}
+
+func (r *PostgresExpenseRepository) GetPendingRestockExpensesBySupplier(supplierID uint) ([]models.Expense, error) {
+	expenses := []models.Expense{}
+	err := r.db.Preload("Creator").Where("category = ?", "Proveedores").Where("supplier_id = ?", supplierID).Where("is_restocked = ?", false).Order("date DESC").Find(&expenses).Error
 	return expenses, err
 }
 

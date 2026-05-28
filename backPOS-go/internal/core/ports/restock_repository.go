@@ -11,8 +11,10 @@ type RestockRepository interface {
 
 	// ConfirmedOrder
 	GetPendingOrders() ([]models.ConfirmedOrder, error)
+	GetPendingOrdersBySupplier(supplierID uint) ([]models.ConfirmedOrder, error)
 	GetOrdersHistory(limit, offset int, filters map[string]interface{}) ([]models.ConfirmedOrder, int64, error)
 	GetOrderByID(id string) (*models.ConfirmedOrder, error)
 	CreateConfirmedOrder(order *models.ConfirmedOrder, items []models.ConfirmedOrderItem) error
 	UpdateOrderStatus(id, status, receivedBy string) error
+	DeleteOrderAndItems(id string) error
 }

@@ -64,7 +64,10 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 }
 
 func (h *ExpenseHandler) GetAll(c *gin.Context) {
-	expenses, err := h.service.GetAllExpenses()
+	supplier := c.Query("supplier")
+	concept := c.Query("concept")
+
+	expenses, err := h.service.GetAllExpenses(supplier, concept)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener gastos", err)
 		return

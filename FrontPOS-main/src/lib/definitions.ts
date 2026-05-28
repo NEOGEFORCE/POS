@@ -34,6 +34,7 @@ export type Category = {
   id: string;
   name: string;
   productCount: number;
+  marginPercentage?: number;
 };
 
 export type Product = {

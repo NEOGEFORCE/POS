@@ -37,16 +37,6 @@ const nextConfig: NextConfig = {
     pagesBufferLength: 20,
   },
   transpilePackages: ['@ericblade/quagga2'],
-  // Nota: rewrites() puede causar conflictos con 'output: export'. Si hay errores, revísalo.
-  // Pero se mantiene como estaba originalmente.
-  async rewrites() {
-    return [
-      {
-        source: '/api/:path*',
-        destination: 'http://localhost:3000/api/:path*',
-      },
-    ];
-  },
 };
 
 export default withPWA(nextConfig);

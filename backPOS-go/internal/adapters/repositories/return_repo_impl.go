@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/cache"
 	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
@@ -111,4 +112,97 @@ func (r *GormReturnRepository) GetTotalReturnedByRange(from, to time.Time) (floa
 	}
 	err := query.Select("COALESCE(SUM(\"totalReturned\"), 0)").Scan(&total).Error
 	return total, err
+}
+
+func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) error {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Kárdex Movements
+		for _, mv := range movements {
+			if err := tx.Create(mv).Error; err != nil {
+				return fmt.Errorf("error guardando movimiento de stock: %w", err)
+			}
+		}
+
+		// 2. Adjust Stock
+		for barcode, delta := range stockAdjustments {
+			if err := tx.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).
+				Update("quantity", gorm.Expr("ROUND((quantity + ?)::numeric, 3)", delta)).Error; err != nil {
+				return fmt.Errorf("error actualizando stock de producto %s: %w", barcode, err)
+			}
+		}
+
+		// 3. Mark original sale as hasReturn
+		if originalSale != nil && originalSale.SaleID > 0 {
+			if err := tx.Model(&models.Sale{}).Where("saleId = ?", originalSale.SaleID).Update("hasReturn", true).Error; err != nil {
+				return fmt.Errorf("error actualizando estado de venta original: %w", err)
+			}
+		}
+
+		// 4. Create the Return record
+		ret := &models.Return{
+			SaleID:        req.InvoiceRef,
+			Date:          time.Now(),
+			TotalReturned: req.RefundAmount,
+			Reason:        "DEVOLUCION_AVANZADA",
+			ReturnType:    req.Type,
+			EmployeeDNI:   employeeDNI,
+		}
+		if err := tx.Create(ret).Error; err != nil {
+			return fmt.Errorf("error guardando registro de devolución: %w", err)
+		}
+
+		// Update returnRef on originalSale
+		if originalSale != nil && originalSale.SaleID > 0 {
+			if err := tx.Model(&models.Sale{}).Where("saleId = ?", originalSale.SaleID).Update("returnRef", ret.ID).Error; err != nil {
+				return fmt.Errorf("error vinculando devolucion a factura: %w", err)
+			}
+		}
+
+		// 5. Cash Handling
+		if req.Type == "REFUND" && req.RefundAmount > 0 {
+			// Egreso de caja
+			expense := &models.Expense{
+				Date:         time.Now(),
+				Amount:       req.RefundAmount,
+				Description:  "DEVOLUCION_EFECTIVO",
+				CreatedByDNI: employeeDNI,
+				Category:     "Devoluciones",
+			}
+			if err := tx.Create(expense).Error; err != nil {
+				return fmt.Errorf("error registrando egreso de caja: %w", err)
+			}
+		} else if req.Type == "EXCHANGE" && req.ChargeAmount > 0 {
+			// Ingreso de caja (Mini-venta)
+			miniSale := &models.Sale{
+				SaleDate:      time.Now(),
+				EmployeeDNI:   employeeDNI,
+				TotalAmount:   req.ChargeAmount,
+				PaymentMethod: req.ChargeMethod,
+				Status:        "PAID",
+			}
+			switch req.ChargeMethod {
+			case "EFECTIVO", "CASH":
+				miniSale.CashAmount = req.ChargeAmount
+				miniSale.AmountPaid = req.ChargeAmount
+			case "TRANSFERENCIA", "TRANSFER":
+				miniSale.TransferAmount = req.ChargeAmount
+				miniSale.AmountPaid = req.ChargeAmount
+			default:
+				// Fallback to transfer just in case
+				miniSale.TransferAmount = req.ChargeAmount
+				miniSale.AmountPaid = req.ChargeAmount
+			}
+			if err := tx.Create(miniSale).Error; err != nil {
+				return fmt.Errorf("error registrando cobro adicional: %w", err)
+			}
+		}
+
+		return nil
+	})
+
+	if err == nil {
+		cache.InvalidateCache(cache.CacheKeyProducts)
+		r.invalidateDashboardCache()
+	}
+	return err
 }

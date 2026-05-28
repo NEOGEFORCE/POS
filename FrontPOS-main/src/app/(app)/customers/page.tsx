@@ -361,6 +361,7 @@ export default function CustomersPage() {
         lastChange={lastChange}
         onPay={handlePayCredit}
         showCreditTab={false}
+        isAbono={true}
       />
 
       <CustomerFormModal

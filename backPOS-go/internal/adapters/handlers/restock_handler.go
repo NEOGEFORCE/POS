@@ -95,11 +95,22 @@ func (h *RestockHandler) RemoveFromPurchaseList(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Removido de la lista"})
 }
 
+type ConfirmOrderItemReq struct {
+	ProductID string  `json:"product_id"`
+	Barcode   string  `json:"barcode"`
+	Quantity  float64 `json:"quantity"`
+	UnitCost  float64 `json:"unit_cost"`
+}
+
 type ConfirmOrderReq struct {
-	SupplierID       uint    `json:"supplier_id"`
-	EstimatedTotal   float64 `json:"estimated_total"`
-	RealInvoiceTotal float64 `json:"real_invoice_total"`
-	ConfirmedBy      string  `json:"confirmed_by"`
+	SupplierID       uint                  `json:"supplier_id"`
+	ExpectedDate     string                `json:"expected_date"`
+	InvoiceRef       string                `json:"invoice_ref"`
+	Items            []ConfirmOrderItemReq `json:"items"`
+	EstimatedTotal   float64               `json:"estimated_total"`
+	RealInvoiceTotal float64               `json:"real_invoice_total"`
+	ConfirmedBy      string                `json:"confirmed_by"`
+	EditOrderID      string                `json:"edit_order_id"`
 }
 
 func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
@@ -109,19 +120,30 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 		return
 	}
 
-	err := h.restockService.ConfirmOrder(req.SupplierID, req.EstimatedTotal, req.RealInvoiceTotal, req.ConfirmedBy)
+	var items []models.ConfirmedOrderItem
+	for _, reqItem := range req.Items {
+		items = append(items, models.ConfirmedOrderItem{
+			ProductID:      reqItem.Barcode,
+			Quantity:       reqItem.Quantity,
+			EstimatedPrice: reqItem.UnitCost,
+		})
+	}
+
+	err := h.restockService.ConfirmOrder(req.SupplierID, req.ExpectedDate, req.InvoiceRef, items, req.EstimatedTotal, req.RealInvoiceTotal, req.ConfirmedBy, req.EditOrderID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	diff := req.RealInvoiceTotal - req.EstimatedTotal
-	diffPercent := diff / req.EstimatedTotal
+	if req.EstimatedTotal > 0 {
+		diff := req.RealInvoiceTotal - req.EstimatedTotal
+		diffPercent := diff / req.EstimatedTotal
 
-	if diffPercent > 0.05 {
-		msg := fmt.Sprintf("⚠️ PEDIDO PROVEEDOR %d — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción", 
-			req.SupplierID, req.EstimatedTotal, req.RealInvoiceTotal, diff)
-		h.telegram.SendAlert(msg)
+		if diffPercent > 0.05 {
+			msg := fmt.Sprintf("⚠️ PEDIDO PROVEEDOR %d — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción", 
+				req.SupplierID, req.EstimatedTotal, req.RealInvoiceTotal, diff)
+			h.telegram.SendAlert(msg)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pedido confirmado"})

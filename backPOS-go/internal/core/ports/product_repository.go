@@ -81,7 +81,8 @@ type ProductRepository interface {
 	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
 	GetBySupplier(supplierID uint) ([]models.Product, error)
 	SyncSuppliers(productBarcode string, supplierIDs []uint) error
-	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) ([]string, error)
+	UnlinkSupplier(productBarcode string, supplierID uint) error
+	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error)
 	GetSavingsOpportunities() ([]SavingsOpportunity, error)
 	GetAllWithLowStock() ([]models.Product, error)
 	GetProductsWithBestSupplier(supplierID *uint) ([]ProductRestockInfo, error)
@@ -94,8 +95,16 @@ type ProductRepository interface {
 	RecordPriceChange(tx interface{}, barcode string, oldPrice, newPrice float64) error
 	DeleteReception(receptionID string) error
 	EditReception(ref string, dniStr string, reason string, products []models.EditReceiveItem) ([]string, error)
+	GetReception(receptionID string) ([]models.StockMovement, error)
 	SanitizeAllNames() (int64, error)
 	SaveShrinkage(shrinkage *models.Shrinkage, shiftID *uint) error
+
+	// Invoice Reader Methods
+	GetSupplierAliases(supplierID uint) (map[string]models.SupplierProductAlias, error)
+	GetSupplierInvoiceParams(supplierID uint) (*models.SupplierInvoiceParams, error)
+	SaveSupplierAlias(alias *models.SupplierProductAlias) error
+	FindProductBySimilarName(name string, supplierID uint) (*models.Product, float64)
+	SearchSimilarProducts(name string, limit int) []models.ProductSearch
 }
 
 type SupplierOrderMethodRepository interface {

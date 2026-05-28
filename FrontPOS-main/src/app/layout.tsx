@@ -1,6 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { AuthProvider } from '@/lib/auth';
-import { Toaster } from 'sileo';
+import { Toaster } from 'sonner';
 import { DM_Sans, DM_Mono } from 'next/font/google';
 
 // IMPORTANTE: Importamos el archivo puente que acabamos de crear
@@ -64,7 +64,7 @@ export default function RootLayout({
             <GlobalSyncProvider />
             <NetworkMonitor />
             {children}
-            <Toaster />
+            <Toaster position="top-left" richColors expand={false} theme="system" closeButton />
           </AuthProvider>
         </Providers>
 

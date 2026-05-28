@@ -11,4 +11,6 @@ type CreditPaymentRepository interface {
 	GetByDateRange(start, end time.Time) ([]models.CreditPayment, error)
 	GetTotalCollectedByDateRange(start, end time.Time) (float64, error)
 	GetDailyCollectedByRange(from, to time.Time) (map[string]float64, error)
+	GetByID(id uint) (*models.CreditPayment, error)
+	Delete(id uint) error
 }

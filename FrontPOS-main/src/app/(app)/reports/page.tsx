@@ -62,251 +62,118 @@ export default function ReportsPage() {
   const [quickCategory, setQuickCategory] = useState("box-closure");
 
   const getHeaders = () => {
-    const token = Cookies.get('token');
+    const token = Cookies.get('org-pos-token');
     return { 'Authorization': `Bearer ${token}` };
   };
-
-  const handleDownload = async (type: string, customOptions?: any) => {
+  const handleDownload = async (type: string, customOptions?: any) => {
     setLoadingReport(type);
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
-      switch (type) {
-        case 'box-closure': {
-          const res = await fetch(`${baseUrl}/cashier-history?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
+      
+      // Fallback para los que aún requieren generación en Frontend (Inventario y Cierres)
+      if (type === 'inventory' || type === 'box-closure' || type === 'savings') {
+          let url = '';
+          let title = '';
+          if (type === 'inventory') { url = `${baseUrl}/products/inventory`; title = 'Inventario Actual'; }
+          if (type === 'box-closure') { url = `${baseUrl}/cashier-history?from=${dateFrom}&to=${dateTo}`; title = 'Reporte de Cierres de Caja'; }
+          if (type === 'savings') { url = `${baseUrl}/inventory/savings-opportunities`; title = 'Ahorros y Costos'; }
+          
+          const res = await fetch(url, { headers: getHeaders() });
           const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte de cierres");
-          generatePDFReport({
-            title: 'Reporte de Cierres de Caja',
-            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
-            filename: customOptions?.reportName || 'Cierres_Caja',
-            columns: [
+          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte");
+          
+          let columns: any[] = [];
+          let formattedData: any[] = [];
+          if (type === 'inventory') {
+             columns = [
+              { header: 'Producto', dataKey: 'name' },
+              { header: 'Stock', dataKey: 'stock' },
+              { header: 'Costo', dataKey: 'cost' },
+              { header: 'Venta', dataKey: 'price' }
+            ];
+            formattedData = (data || []).map((p: any) => ({
+              name: p.name || p.nombre,
+              stock: p.stock !== undefined ? p.stock : (p.cantidad || 0),
+              cost: `$${formatCurrency(p.costPrice || p.precioCosto || 0)}`,
+              price: `$${formatCurrency(p.salePrice || p.precioVenta || 0)}`
+            }));
+          } else if (type === 'box-closure') {
+             columns = [
               { header: 'ID', dataKey: 'id' },
               { header: 'Cajero', dataKey: 'createdBy' },
               { header: 'Esperado', dataKey: 'expected' },
               { header: 'Real', dataKey: 'real' },
               { header: 'Diff', dataKey: 'diff' }
-            ],
-            data: (data || []).map((item: any) => ({
+            ];
+            formattedData = (data || []).map((item: any) => ({
               ...item,
               expected: `$${formatCurrency(item.expectedCash)}`,
               real: `$${formatCurrency(item.totalCashReal)}`,
               diff: `$${formatCurrency(item.difference)}`
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'cashflow': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/cashflow?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte de flujo de caja");
-          
-          generatePDFReport({
-            title: 'Flujo de Caja (Ingresos y Egresos)',
-            subtitle: `Rango: ${dateFrom} - ${dateTo} | Ingresos Totales: $${formatCurrency(data.totalIncome)} | Egresos Totales: $${formatCurrency(data.totalExpense)} | Saldo Total: $${formatCurrency(data.totalBalance)}`,
-            filename: customOptions?.reportName || 'Flujo_Caja',
-            columns: [
-              { header: 'Fecha', dataKey: 'date' },
-              { header: 'Ingresos', dataKey: 'income' },
-              { header: 'Egresos', dataKey: 'expense' },
-              { header: 'Saldo Diario', dataKey: 'balance' }
-            ],
-            data: (data.dailyDetails || []).map((item: any) => ({
-              date: item.date,
-              income: `$${formatCurrency(item.income)}`,
-              expense: `$${formatCurrency(item.expense)}`,
-              balance: `$${formatCurrency(item.balance)}`
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'inventory': {
-          const res = await fetch(`${baseUrl}/products/inventory`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte de inventario");
-          generatePDFReport({
-            title: 'Inventario Actual',
-            subtitle: `Reporte de Stock`,
-            filename: customOptions?.reportName || 'Inventario',
-            columns: [
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Stock', dataKey: 'stock' },
-              { header: 'Costo', dataKey: 'cost' },
-              { header: 'Venta', dataKey: 'price' }
-            ],
-            data: (data || []).map((p: any) => ({
-              name: p.name || p.nombre,
-              stock: p.stock !== undefined ? p.stock : (p.cantidad || 0),
-              cost: `$${formatCurrency(p.costPrice || p.precioCosto || 0)}`,
-              price: `$${formatCurrency(p.salePrice || p.precioVenta || 0)}`
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'pnl': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/pnl?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar reporte PnL");
-          generatePDFReport({
-            title: 'Estado de Resultados (P&L)',
-            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
-            filename: customOptions?.reportName || 'PnL',
-            columns: [
-              { header: 'Concepto', dataKey: 'concept' },
-              { header: 'Valor', dataKey: 'value' }
-            ],
-            data: [
-              { concept: 'Ingresos Brutos', value: `$${formatCurrency(data.totalRevenue)}` },
-              { concept: 'Costo de Mercancía', value: `$${formatCurrency(data.totalCogs)}` },
-              { concept: 'Beneficio Bruto', value: `$${formatCurrency(data.grossProfit)}` },
-              { concept: 'Gastos Operativos', value: `$${formatCurrency(data.totalExpenses)}` },
-              { concept: 'Beneficio Neto', value: `$${formatCurrency(data.netProfit)}` },
-              { concept: 'Margen (%)', value: `${(data.marginPercentage || 0).toFixed(2)}%` },
-            ],
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'ranking': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/ranking?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar ranking");
-          generatePDFReport({
-            title: 'Ranking de Productos',
-            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
-            filename: customOptions?.reportName || 'Ranking_Productos',
-            columns: [
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Cant. Vendida', dataKey: 'quantity' },
-              { header: 'Total Generado', dataKey: 'total' }
-            ],
-            data: (data || []).map((item: any) => ({
-              name: item.name || item.productName || item.nombre,
-              quantity: item.quantity || item.cantidad || 0,
-              total: `$${formatCurrency(item.totalRevenue || item.total || 0)}`
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'vault-audit': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/vault-audit`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar auditoría");
-          generatePDFReport({
-            title: 'Auditoría de Bóveda',
-            subtitle: `Generado hoy`,
-            filename: customOptions?.reportName || 'Boveda',
-            columns: [
-              { header: 'Detalle', dataKey: 'detail' },
-              { header: 'Monto', dataKey: 'amount' }
-            ],
-            data: Object.entries(data).map(([k, v]) => ({
-              detail: k,
-              amount: typeof v === 'number' ? `$${formatCurrency(v)}` : String(v)
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'global-credit': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/global-debt`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar cartera");
-          generatePDFReport({
-            title: 'Cartera Global',
-            subtitle: `Deudas Activas`,
-            filename: customOptions?.reportName || 'Cartera',
-            columns: [
-              { header: 'Cliente', dataKey: 'client' },
-              { header: 'Deuda', dataKey: 'debt' },
-            ],
-            data: (data || []).map((c: any) => ({
-              client: c.name || c.cliente || c.ClientName || 'Desconocido',
-              debt: `$${formatCurrency(c.totalDebt || c.deuda || c.Debt || 0)}`
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'voids-audit': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/voids?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar anulaciones");
-          generatePDFReport({
-            title: 'Anulaciones',
-            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
-            filename: customOptions?.reportName || 'Anulaciones',
-            columns: [
-              { header: 'Fecha', dataKey: 'date' },
-              { header: 'Empleado', dataKey: 'employee' },
-              { header: 'Monto', dataKey: 'amount' }
-            ],
-            data: (data || []).map((a: any) => ({
-              date: new Date(a.date || a.fecha || a.CreatedAt).toLocaleString(),
-              employee: a.employeeName || a.empleado || a.Employee || 'Desconocido',
-              amount: `$${formatCurrency(a.amount || a.monto || a.TotalAmount || 0)}`
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'payments': {
-          const res = await fetch(`${baseUrl}/dashboard/reports/movements?from=${dateFrom}&to=${dateTo}`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar ventas/pagos");
-          generatePDFReport({
-            title: 'Movimientos (Ventas/Pagos)',
-            subtitle: `Rango: ${dateFrom} - ${dateTo}`,
-            filename: customOptions?.reportName || 'Movimientos',
-            columns: [
-              { header: 'Fecha', dataKey: 'date' },
-              { header: 'Tipo', dataKey: 'type' },
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Cant.', dataKey: 'qty' }
-            ],
-            data: (data || []).map((m: any) => ({
-              date: new Date(m.date || m.CreatedAt).toLocaleString(),
-              type: m.type || m.MovementType || 'Desconocido',
-              name: m.name || m.ProductName || m.barcode || 'N/A',
-              qty: m.quantity || m.Quantity || 0
-            })),
-            sendToTelegram: customOptions?.sendToTelegram
-          });
-          break;
-        }
-        case 'savings': {
-          const res = await fetch(`${baseUrl}/inventory/savings-opportunities`, { headers: getHeaders() });
-          const data = await res.json();
-          if (!res.ok) throw new Error(data.error || "Fallo al generar ahorros");
-          generatePDFReport({
-            title: 'Ahorros y Costos',
-            subtitle: `Oportunidades de Optimización`,
-            filename: customOptions?.reportName || 'Ahorros',
-            columns: [
+            }));
+          } else if (type === 'savings') {
+             columns = [
               { header: 'Producto', dataKey: 'name' },
               { header: 'Proveedor', dataKey: 'supplier' },
               { header: 'Mejor Precio', dataKey: 'price' }
-            ],
-            data: (data || []).map((s: any) => ({
+            ];
+            formattedData = (data || []).map((s: any) => ({
               name: s.productName || s.name || s.ProductName,
               supplier: s.supplierName || s.supplier || s.SupplierName,
               price: `$${formatCurrency(s.bestPrice || s.price || s.BestPrice || 0)}`
-            })),
+            }));
+          }
+          
+          generatePDFReport({
+            title: title,
+            subtitle: `Generado hoy`,
+            filename: customOptions?.reportName || type,
+            columns: columns,
+            data: formattedData,
             sendToTelegram: customOptions?.sendToTelegram
           });
-          break;
-        }
-        default:
-          toast({ title: 'Atención', description: 'El reporte seleccionado aún no está implementado.', variant: 'default' });
+          setLoadingReport(null);
           return;
       }
-      toast({ title: 'ÉXITO', description: 'REPORTE GENERADO CORRECTAMENTE', variant: 'success' });
+      
+      // NUEVO FLUJO CENTRALIZADO EN EL BACKEND (GO)
+      const format = customOptions?.format || 'PDF';
+      const sendTelegram = customOptions?.sendToTelegram ? 'true' : 'false';
+      
+      const url = `${baseUrl}/dashboard/reports/export?type=${type}&from=${dateFrom}&to=${dateTo}&format=${format}&telegram=${sendTelegram}`;
+      
+      const res = await fetch(url, { headers: getHeaders() });
+      if (!res.ok) {
+        let errData;
+        try { errData = await res.json(); } catch(e) {}
+        throw new Error(errData?.error || "Fallo al exportar reporte (Posible 404/500)");
+      }
+      
+      const blob = await res.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      
+      const extension = format === 'EXCEL' ? 'xlsx' : 'pdf';
+      a.download = `${customOptions?.reportName || type}.${extension}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Reporte Generado",
+        description: `Descargado exitosamente. ${customOptions?.sendToTelegram ? 'Se envió copia por Telegram.' : ''}`,
+        variant: "default"
+      });
+      
     } catch (error: any) {
       console.error(error);
-      toast({ title: 'ERROR', description: error.message || 'FALLO AL GENERAR REPORTE', variant: 'destructive' });
+      toast({
+        title: "Error al generar",
+        description: error.message || "Error desconocido",
+        variant: "destructive"
+      });
     } finally {
       setLoadingReport(null);
     }

@@ -1,6 +1,10 @@
 package models
 
-import "time"
+import (
+	"time"
+
+	"gorm.io/gorm"
+)
 
 type AuditLog struct {
 	ID            uint      `json:"id" gorm:"primaryKey"`
@@ -16,3 +20,18 @@ type AuditLog struct {
 	Device        string    `json:"device"`
 	CreatedAt     time.Time `json:"created_at"`
 }
+
+func (m *AuditLog) BeforeCreate(tx *gorm.DB) (err error) {
+	if m.Changes == "" {
+		m.Changes = "{}"
+	}
+	return
+}
+
+func (m *AuditLog) BeforeUpdate(tx *gorm.DB) (err error) {
+	if m.Changes == "" {
+		m.Changes = "{}"
+	}
+	return
+}
+

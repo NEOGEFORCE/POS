@@ -23,24 +23,24 @@ func (r *PostgresExpectedOrderRepository) Save(order *models.ExpectedOrder) erro
 // GetByID obtiene un pedido esperado por ID
 func (r *PostgresExpectedOrderRepository) GetByID(id uint) (*models.ExpectedOrder, error) {
 	var order models.ExpectedOrder
-	err := r.db.Preload("Supplier").First(&order, id).Error
+	err := r.db.Preload("Supplier").Preload("Items").First(&order, id).Error
 	return &order, err
 }
 
 // GetAll obtiene todos los pedidos esperados
 func (r *PostgresExpectedOrderRepository) GetAll() ([]models.ExpectedOrder, error) {
 	var orders []models.ExpectedOrder
-	err := r.db.Preload("Supplier").Order("expectedDate ASC").Find(&orders).Error
+	err := r.db.Preload("Supplier").Preload("Items").Order("expectedDate ASC").Find(&orders).Error
 	return orders, err
 }
 
-// GetExpectedToday obtiene los pedidos esperados para hoy (fecha actual)
+// GetExpectedToday obtiene los pedidos esperados para hoy (fecha actual en zona Colombia)
 func (r *PostgresExpectedOrderRepository) GetExpectedToday() ([]models.ExpectedOrder, error) {
 	var orders []models.ExpectedOrder
 
-	err := r.db.Preload("Supplier").
-		Where("DATE(\"expectedDate\") = CURRENT_DATE AND status = ?", "PENDING").
-		Order("\"expectedDate\" ASC").
+	err := r.db.Preload("Supplier").Preload("Items").
+		Where(`DATE("expectedDate" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') = (CURRENT_TIMESTAMP AT TIME ZONE 'America/Bogota')::date AND status = ?`, "PENDING").
+		Order(`"expectedDate" ASC`).
 		Find(&orders).Error
 
 	if err != nil {
@@ -53,12 +53,13 @@ func (r *PostgresExpectedOrderRepository) GetExpectedToday() ([]models.ExpectedO
 }
 
 // GetByDate obtiene los pedidos esperados para una fecha específica (YYYY-MM-DD)
+// La comparación se hace en zona Colombia para evitar desfases UTC
 func (r *PostgresExpectedOrderRepository) GetByDate(date string) ([]models.ExpectedOrder, error) {
 	var orders []models.ExpectedOrder
 
-	err := r.db.Preload("Supplier").
-		Where("DATE(\"expectedDate\") = ? AND status = ?", date, "PENDING").
-		Order("\"expectedDate\" ASC").
+	err := r.db.Preload("Supplier").Preload("Items").
+		Where(`DATE("expectedDate" AT TIME ZONE 'UTC' AT TIME ZONE 'America/Bogota') = ? AND status = ?`, date, "PENDING").
+		Order(`"expectedDate" ASC`).
 		Find(&orders).Error
 
 	if err != nil {
@@ -73,7 +74,7 @@ func (r *PostgresExpectedOrderRepository) GetByDate(date string) ([]models.Expec
 // GetBySupplier obtiene pedidos esperados por proveedor
 func (r *PostgresExpectedOrderRepository) GetBySupplier(supplierID uint) ([]models.ExpectedOrder, error) {
 	var orders []models.ExpectedOrder
-	err := r.db.Preload("Supplier").
+	err := r.db.Preload("Supplier").Preload("Items").
 		Where("supplierId = ? AND status = ?", supplierID, "PENDING").
 		Order("expectedDate ASC").
 		Find(&orders).Error

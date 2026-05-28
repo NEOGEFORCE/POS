@@ -75,8 +75,19 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 	return err
 }
 
-func (s *ExpenseService) GetAllExpenses() ([]models.Expense, error) {
-	return s.repo.GetAll()
+func (s *ExpenseService) GetAllExpenses(supplier, concept string) ([]models.Expense, error) {
+	if supplier == "" && concept == "" {
+		return s.repo.GetAll()
+	}
+	return s.repo.GetAllFiltered(supplier, concept)
+}
+
+func (s *ExpenseService) GetPendingRestockExpensesBySupplier(supplierID uint) ([]models.Expense, error) {
+	return s.repo.GetPendingRestockExpensesBySupplier(supplierID)
+}
+
+func (s *ExpenseService) GetByID(id uint) (*models.Expense, error) {
+	return s.repo.GetByID(id)
 }
 
 func (s *ExpenseService) DeleteExpense(id uint) error {
@@ -194,7 +205,7 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 
 	// Actualizar stock usando BulkReceive (que también marca la orden como recibida)
 	// BypassExpense = true porque el egreso se acaba de crear arriba manualmente
-	if _, err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI, expense.SupplierID, 0, 0, true); err != nil {
+	if _, err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI, expense.SupplierID, 0, 0, true, ""); err != nil {
 		// Loggear error si falla el stock, pero el egreso ya es exitoso
 	}
 

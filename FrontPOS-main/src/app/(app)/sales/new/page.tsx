@@ -407,9 +407,11 @@ export default function NewSalePage() {
                                                         <Button isIconOnly color="primary" variant="light" size="sm" className="h-6 w-6 min-w-6 hover:bg-emerald-100" onPress={() => setEditingCartItem(item)}>
                                                             <Edit2 size={16} className="text-emerald-500" strokeWidth={2.5} />
                                                         </Button>
-                                                        <Button isIconOnly color="danger" variant="light" size="sm" className="h-6 w-6 min-w-6 hover:bg-rose-100" onPress={() => { removeFromCart(item.cartItemId); returnFocusToScanner(); }}>
-                                                            <Trash2 size={16} className="text-rose-500" strokeWidth={2.5} />
-                                                        </Button>
+                                                        {!item.isPreexisting && (
+                                                            <Button isIconOnly color="danger" variant="light" size="sm" className="h-6 w-6 min-w-6 hover:bg-rose-100" onPress={() => { removeFromCart(item.cartItemId); returnFocusToScanner(); }}>
+                                                                <Trash2 size={16} className="text-rose-500" strokeWidth={2.5} />
+                                                            </Button>
+                                                        )}
                                                     </div>
                                                 </TableCell>
                                             </TableRow>

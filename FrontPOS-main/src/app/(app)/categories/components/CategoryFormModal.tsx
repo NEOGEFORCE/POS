@@ -17,6 +17,8 @@ interface FormModalProps {
   isEdit: boolean;
   categoryName: string;
   setCategoryName: (name: string) => void;
+  marginPercentage?: number;
+  setMarginPercentage?: (margin: number) => void;
   onSave: () => Promise<void>;
 }
 
@@ -25,7 +27,9 @@ const CategoryFormModal = memo(({
   onOpenChange, 
   isEdit, 
   categoryName, 
-  setCategoryName, 
+  setCategoryName,
+  marginPercentage,
+  setMarginPercentage,
   onSave 
 }: FormModalProps) => {
   const [isSaving, setIsSaving] = useState(false);
@@ -102,6 +106,18 @@ const CategoryFormModal = memo(({
                     classNames={commonInputClasses}
                     startContent={<Shapes size={22} className="text-zinc-900 dark:text-zinc-100 mr-3" />}
                   />
+                  {isEdit && setMarginPercentage && (
+                    <Input
+                      type="number"
+                      label="MARGEN DE GANANCIA POR DEFECTO (%)"
+                      labelPlacement="inside"
+                      placeholder="Ej. 25"
+                      value={marginPercentage?.toString() || ''}
+                      onValueChange={(v) => setMarginPercentage(Number(v) || 0)}
+                      classNames={commonInputClasses}
+                      startContent={<Sparkles size={22} className="text-zinc-900 dark:text-zinc-100 mr-3" />}
+                    />
+                  )}
                   <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight px-2">
                     * El nombre se normalizará automáticamente a mayúsculas para mantener la integridad del catálogo.
                   </p>

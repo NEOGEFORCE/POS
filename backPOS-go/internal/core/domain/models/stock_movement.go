@@ -2,6 +2,8 @@ package models
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type StockMovement struct {
@@ -21,9 +23,24 @@ type StockMovement struct {
 	AnnulledBy    string     `gorm:"index;column:annulled_by" json:"annulledBy"`
 	AnnulledAt    *time.Time `gorm:"column:annulled_at" json:"annulledAt"`
 	AnnulledReason string    `gorm:"type:text;column:annulled_reason" json:"annulledReason"`
-	Product     Product `gorm:"foreignKey:Barcode;references:Barcode" json:"product,omitempty"`
+	Product     Product `gorm:"foreignKey:Barcode;references:Barcode;constraint:false;" json:"product,omitempty"`
 }
 
 func (StockMovement) TableName() string {
 	return "stock_movements"
 }
+
+func (m *StockMovement) BeforeCreate(tx *gorm.DB) (err error) {
+	if m.OriginalValues == "" {
+		m.OriginalValues = "{}"
+	}
+	return
+}
+
+func (m *StockMovement) BeforeUpdate(tx *gorm.DB) (err error) {
+	if m.OriginalValues == "" {
+		m.OriginalValues = "{}"
+	}
+	return
+}
+

@@ -18,8 +18,9 @@ type Product struct {
 	SalePrice        float64    `gorm:"type:decimal(10,2);not null;column:salePrice" json:"salePrice"`
 	CategoryID       uint       `gorm:"index;column:categoryId;constraint:OnDelete:SET NULL;" json:"categoryId"`
 	Category         Category   `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
-	Suppliers        []Supplier `gorm:"many2many:product_suppliers;" json:"suppliers,omitempty"`
-	SupplierID       *uint      `gorm:"index;column:supplierId;constraint:OnDelete:SET NULL;" json:"supplierId"`
+	Suppliers        []Supplier        `gorm:"many2many:product_suppliers;" json:"suppliers,omitempty"`
+	ProductSuppliers []ProductSupplier `gorm:"foreignKey:ProductID;references:Barcode" json:"productSuppliers,omitempty"`
+	SupplierID       *uint             `gorm:"index;column:supplierId;constraint:OnDelete:SET NULL;" json:"supplierId"`
 	Supplier         Supplier   `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
 	CreatedByDNI     string     `gorm:"index;column:createdByDni" json:"createdByDni"`
 	CreatedByName    string     `gorm:"column:createdByName" json:"createdByName"`
@@ -49,11 +50,12 @@ func (Product) TableName() string {
 }
 
 type ProductSupplier struct {
-	ProductID     string  `gorm:"primaryKey;column:product_barcode"`
-	SupplierID    uint    `gorm:"primaryKey;column:supplier_id"`
-	PurchasePrice float64 `gorm:"type:decimal(10,2);column:purchasePrice"`
-	CreatedAt     int64   `gorm:"autoCreateTime;column:created_at" json:"createdAt"`
-	UpdatedAt     int64   `gorm:"autoUpdateTime;column:updated_at" json:"updatedAt"`
+	ProductID     string    `gorm:"primaryKey;column:product_barcode" json:"productBarcode"`
+	SupplierID    uint      `gorm:"primaryKey;column:supplier_id" json:"supplierId"`
+	PurchasePrice float64   `gorm:"type:decimal(10,2);column:purchasePrice" json:"purchasePrice"`
+	CreatedAt     int64     `gorm:"autoCreateTime;column:created_at" json:"createdAt"`
+	UpdatedAt     int64     `gorm:"autoUpdateTime;column:updated_at" json:"updatedAt"`
+	Supplier      *Supplier `gorm:"foreignKey:SupplierID;references:ID" json:"supplier,omitempty"`
 }
 
 func (ProductSupplier) TableName() string {
@@ -67,7 +69,7 @@ type PriceLog struct {
 	OldPrice       float64 `gorm:"type:decimal(10,2);column:old_price" json:"oldPrice"`
 	NewPrice       float64 `gorm:"type:decimal(10,2);column:new_price" json:"newPrice"`
 	CreatedAt      int64   `gorm:"autoCreateTime;column:created_at" json:"createdAt"`
-	Product        Product `gorm:"foreignKey:ProductBarcode;references:Barcode" json:"-"`
+	Product        Product `gorm:"foreignKey:ProductBarcode;references:Barcode;constraint:false" json:"-"`
 }
 
 func (PriceLog) TableName() string {

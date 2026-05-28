@@ -12,11 +12,13 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useAuth } from '@/lib/auth';
 import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
 import { formatTime } from '@/lib/utils';
+import { PackagePlus } from 'lucide-react';
 
 interface SalesTableProps {
     sales: Sale[];
     onOpenPreview: (sale: Sale) => void;
     onOpenEdit: (sale: Sale) => void;
+    onOpenAddItems: (sale: Sale) => void;
     onOpenDelete: (sale: Sale) => void;
 }
 
@@ -41,6 +43,7 @@ const SaleRow = React.memo(({
     style: React.CSSProperties, 
     onPreview: (s: Sale) => void, 
     onEdit: (s: Sale) => void,
+    onAddItems: (s: Sale) => void,
     onDelete: (s: Sale) => void,
     isAdmin: boolean
 }) => {
@@ -99,6 +102,11 @@ const SaleRow = React.memo(({
                         <Eye size={20} strokeWidth={2.5} />
                     </Button>
                 </Tooltip>
+                <Tooltip content="AÑADIR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                    <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-indigo-500 dark:text-zinc-500 dark:hover:text-indigo-400 transition-colors p-2" onPress={() => onAddItems(sale)}>
+                        <PackagePlus size={20} strokeWidth={2.5} />
+                    </Button>
+                </Tooltip>
                 <Tooltip content="CORREGIR REGISTRO" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                     <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-amber-500 dark:text-zinc-500 dark:hover:text-amber-400 transition-colors p-2" onPress={() => onEdit(sale)}>
                         <Edit3 size={20} strokeWidth={2.5} />
@@ -118,7 +126,7 @@ const SaleRow = React.memo(({
 
 SaleRow.displayName = 'SaleRow';
 
-export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenDelete }: SalesTableProps) {
+export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAddItems, onOpenDelete }: SalesTableProps) {
     const parentRef = useRef<HTMLDivElement>(null);
     const { user } = useAuth();
     
@@ -169,6 +177,7 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenDel
                                 }}
                                 onPreview={onOpenPreview}
                                 onEdit={onOpenEdit}
+                                onAddItems={onOpenAddItems}
                                 onDelete={onOpenDelete}
                                 isAdmin={isAdmin}
                             />

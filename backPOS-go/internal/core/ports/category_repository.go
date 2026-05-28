@@ -8,5 +8,6 @@ type CategoryRepository interface {
 	GetByName(name string) (*models.Category, error)
 	GetAll() ([]models.Category, error)
 	Update(id uint, category *models.Category) error
+	UpdateCategoryMargin(id uint, margin float64) error
 	Delete(id uint) error
 }

@@ -43,7 +43,13 @@ func (r *PostgresRestockRepository) ClearPurchaseList(supplierID uint) error {
 
 func (r *PostgresRestockRepository) GetPendingOrders() ([]models.ConfirmedOrder, error) {
 	var orders []models.ConfirmedOrder
-	err := r.db.Preload("Supplier").Where("status != ?", "received").Order("confirmed_at asc").Find(&orders).Error
+	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").Where("status != ?", "received").Where("status != ?", "dismissed").Order("confirmed_at asc").Find(&orders).Error
+	return orders, err
+}
+
+func (r *PostgresRestockRepository) GetPendingOrdersBySupplier(supplierID uint) ([]models.ConfirmedOrder, error) {
+	var orders []models.ConfirmedOrder
+	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").Where("supplier_id = ?", supplierID).Where("status != ?", "received").Where("status != ?", "dismissed").Order("confirmed_at asc").Find(&orders).Error
 	return orders, err
 }
 
@@ -103,4 +109,16 @@ func (r *PostgresRestockRepository) UpdateOrderStatus(id, status, receivedBy str
 		updates["received_at"] = gorm.Expr("NOW()")
 	}
 	return r.db.Model(&models.ConfirmedOrder{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func (r *PostgresRestockRepository) DeleteOrderAndItems(id string) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("confirmed_order_id = ?", id).Delete(&models.ConfirmedOrderItem{}).Error; err != nil {
+			return err
+		}
+		if err := tx.Where("id = ?", id).Delete(&models.ConfirmedOrder{}).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }

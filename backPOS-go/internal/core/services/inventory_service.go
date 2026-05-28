@@ -154,8 +154,13 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 		stockRequeridoPorVentas := avgDaily * diasCobertura
 		sugeridoPorVentas := stockRequeridoPorVentas - effectiveStock
 
-		// La Regla de Decisión: El pedido final es el MAYOR entre el sugerido por ventas y el sugerido base
-		deficit := math.Max(sugeridoBase, sugeridoPorVentas)
+		// La Regla de Decisión: si stock actual + tránsito >= min, NO sugerir.
+		var deficit float64
+		if effectiveStock >= p.MinStock {
+			deficit = 0
+		} else {
+			deficit = math.Max(sugeridoBase, sugeridoPorVentas)
+		}
 		
 		alert := ""
 		alertType := ""
@@ -281,10 +286,15 @@ func (s *InventoryService) GetGlobalRestockSuggestionsGrouped() ([]SupplierGroup
 	supplierNames := make(map[uint]string)
 
 	for _, item := range suggestions {
-		groupsMap[item.SupplierID] = append(groupsMap[item.SupplierID], item)
-		if item.SupplierID != 0 {
+		targetID := item.BestSupplierID
+		if targetID == 0 {
+			targetID = item.SupplierID // Fallback
+		}
+		
+		groupsMap[targetID] = append(groupsMap[targetID], item)
+		if targetID != 0 {
 			if item.BestSupplierName != "" {
-				supplierNames[item.SupplierID] = item.BestSupplierName
+				supplierNames[targetID] = item.BestSupplierName
 			}
 		}
 	}

@@ -32,3 +32,4 @@
 - `ConfirmDialog.tsx`: Fondos s√≥lidos en header/footer
 - `GlobalSyncProvider.tsx`: Toasts SSE con debounce
 - `error-utils.ts`: Utilidad centralizada de extracci√≥n de errores
+- CorrecciÛn de c·lculo fiscal aditivo para prevenir cobro de impuesto sobre impuesto (IVA + IBUA)

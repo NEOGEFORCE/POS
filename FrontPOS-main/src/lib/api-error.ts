@@ -28,45 +28,45 @@ export class ApiError extends Error {
 // Mapa de traducciones para errores comunes de base de datos / red
 const ERROR_TRANSLATIONS: Record<string, string> = {
   // Errores de MySQL / base de datos
-  '1062': 'REGISTRO DUPLICADO: Ya existe un elemento con este código o nombre',
-  'UNIQUE': 'REGISTRO DUPLICADO: Este dato ya está registrado',
-  'duplicate': 'REGISTRO DUPLICADO: Este dato ya está registrado',
-  'foreign key': 'CONFLICTO DE VÍNCULOS: Este elemento tiene información asociada que impide la acción',
-  'cannot delete': 'BLOQUEO DE ELIMINACIÓN: Primero debes borrar o desvincular los registros relacionados',
-  'Data too long': 'TEXTO DEMASIADO LARGO: Por favor, reduce la descripción o el nombre',
-  'Incorrect decimal': 'ERROR EN PRECIO/CANTIDAD: Verifica que los números sean válidos',
-  'Out of range': 'NÚMERO INVÁLIDO: El valor es demasiado alto para el sistema',
-  'connection refused': 'FALLO DE CONEXIÓN: No hay comunicación con el servidor central',
-  'deadline exceeded': 'TIEMPO EXCEDIDO: La respuesta tardó mucho, intenta de nuevo',
-  'record not found': 'NO ENCONTRADO: El registro no existe o fue eliminado por otro usuario',
-  'not found': 'BÚSQUEDA SIN RESULTADOS: No se encontró lo que buscas',
+  '1062': 'Registro Duplicado: Ya existe un elemento con este código o nombre',
+  'UNIQUE': 'Registro Duplicado: Este dato ya está registrado',
+  'duplicate': 'Registro Duplicado: Este dato ya está registrado',
+  'foreign key': 'Conflicto de Vínculos: Este elemento tiene información asociada que impide la acción',
+  'cannot delete': 'Bloqueo de Eliminación: Primero debes borrar o desvincular los registros relacionados',
+  'Data too long': 'Texto Demasiado Largo: Por favor, reduce la descripción o el nombre',
+  'Incorrect decimal': 'Error Numérico: Verifica que los números sean válidos',
+  'Out of range': 'Número Inválido: El valor es demasiado alto para el sistema',
+  'connection refused': 'Fallo de Conexión: No hay comunicación con el servidor central',
+  'deadline exceeded': 'Tiempo Excedido: La respuesta tardó mucho, intenta de nuevo',
+  'record not found': 'No Encontrado: El registro no existe o fue eliminado por otro usuario',
+  'not found': 'Búsqueda sin Resultados: No se encontró lo que buscas',
   
   // Errores de Inventario / POS
-  'insufficient stock': 'SIN INVENTARIO: No hay suficiente stock para realizar esta venta',
-  'out of stock': 'PRODUCTO AGOTADO: No puedes vender este producto sin existencias',
-  'low stock': 'ADVERTENCIA: El stock está por debajo del mínimo permitido',
-  'invalid price': 'PRECIO INVÁLIDO: El precio de venta no puede ser menor al de costo',
-  'negative quantity': 'CANTIDAD INVÁLIDA: No se permiten valores negativos en este campo',
-  'stock cannot be negative': 'ERROR DE STOCK: El inventario no puede quedar en negativo para este producto',
-  'already exists': 'YA EXISTE: Ese código o nombre ya está en uso',
-  'bad request': 'DATOS INVÁLIDOS: Revisa la información ingresada',
-  'internal server error': 'FALLO INTERNO: Hubo un error en el servidor, contacta a soporte',
-  'network error': 'ERROR DE RED: Verifica tu conexión a internet',
-  'timeout': 'TIEMPO EXCEDIDO: El servidor tardó demasiado en responder',
+  'insufficient stock': 'Sin Inventario: No hay suficiente stock para realizar esta venta',
+  'out of stock': 'Producto Agotado: No puedes vender este producto sin existencias',
+  'low stock': 'Advertencia: El stock está por debajo del mínimo permitido',
+  'invalid price': 'Precio Inválido: El precio de venta no puede ser menor al de costo',
+  'negative quantity': 'Cantidad Inválida: No se permiten valores negativos en este campo',
+  'stock cannot be negative': 'Error de Stock: El inventario no puede quedar en negativo para este producto',
+  'already exists': 'Ya Existe: Ese código o nombre ya está en uso',
+  'bad request': 'Datos Inválidos: Revisa la información ingresada',
+  'internal server error': 'Fallo Interno: Hubo un error en el servidor, contacta a soporte',
+  'network error': 'Error de Red: Verifica tu conexión a internet',
+  'timeout': 'Tiempo Excedido: El servidor tardó demasiado en responder',
   
   // Errores de autenticación
-  'token': 'SESIÓN EXPIRADA: Tu ingreso ha caducado, por favor vuelve a entrar',
-  'unauthorized': 'SIN PERMISOS: No tienes autorización para realizar esta operación',
-  'forbidden': 'ROL RESTRINGIDO: Tu nivel de acceso no permite entrar aquí',
-  'invalid credentials': 'DATOS INCORRECTOS: El usuario o la contraseña no coinciden',
-  'user not found': 'USUARIO NO EXISTE: Revisa el nombre de usuario ingresado',
-  'password too short': 'CONTRASEÑA DÉBIL: Debe tener al menos 6 caracteres',
+  'token': 'Sesión Expirada: Tu ingreso ha caducado, por favor vuelve a entrar',
+  'unauthorized': 'Sin Permisos: No tienes autorización para realizar esta operación',
+  'forbidden': 'Rol Restringido: Tu nivel de acceso no permite entrar aquí',
+  'invalid credentials': 'Datos Incorrectos: El usuario o la contraseña no coinciden',
+  'user not found': 'Usuario no Existe: Revisa el nombre de usuario ingresado',
+  'password too short': 'Contraseña Débil: Debe tener al menos 6 caracteres',
 
   // Errores de validación de campos (Gin/Gorm)
-  'required': 'CAMPO FALTANTE: Es obligatorio completar este dato',
-  'unmarshal': 'FORMATO ERRONEO: El valor ingresado no es del tipo esperado (ej: letras en un campo numérico)',
-  'unsupported format': 'ARCHIVO O FORMATO NO VÁLIDO: Verifica los datos ingresados',
-  'json: cannot unmarshal': 'DATO INVÁLIDO: Ingresaste un texto donde se esperaba un número o viceversa',
+  'required': 'Campo Faltante: Es obligatorio completar este dato',
+  'unmarshal': 'Formato Erróneo: El valor ingresado no es del tipo esperado (ej: letras en un campo numérico)',
+  'unsupported format': 'Formato no Válido: Verifica los datos ingresados',
+  'json: cannot unmarshal': 'Dato Inválido: Ingresaste un texto donde se esperaba un número o viceversa',
 };
 
 /**
@@ -150,7 +150,7 @@ export async function extractApiError(res: Response, fallback: string): Promise<
     // Prioridad 1: Nueva estructura global {"success": false, "message": "..."}
     if (data?.success === false && typeof data.message === 'string') {
       const translated = translateError(data.message);
-      return translated || data.message.toUpperCase();
+      return translated || data.message;
     }
 
     // Prioridad 2: Estructura de campos detallados { error: { fields: { ... } } }
@@ -162,7 +162,7 @@ export async function extractApiError(res: Response, fallback: string): Promise<
           const friendlyMsg = typeof msg === 'string' ? (translateError(msg) || msg) : 'Dato inválido';
           return `${friendlyField}: ${friendlyMsg}`;
         });
-        if (fieldMsgs.length > 0) return `REVISA: ${fieldMsgs.join(' | ')}`.toUpperCase();
+        if (fieldMsgs.length > 0) return `Revisa: ${fieldMsgs.join(' | ')}`;
       }
     }
     
@@ -175,15 +175,15 @@ export async function extractApiError(res: Response, fallback: string): Promise<
       const translatedMsg = message ? translateError(message) : null;
       if (translatedMsg) return translatedMsg;
 
-      if (message) return message.toUpperCase();
-      if (details) return details.toUpperCase();
+      if (message) return message;
+      if (details) return details;
     }
     
     // Formato 4: Simple { error: "string" } o { message: "string" }
     const directMsg = data?.error || data?.message;
     if (typeof directMsg === 'string') {
       const translated = translateError(directMsg);
-      return translated || directMsg.toUpperCase();
+      return translated || directMsg;
     }
     
   } catch {
@@ -192,16 +192,16 @@ export async function extractApiError(res: Response, fallback: string): Promise<
   
   // Usar el código HTTP para dar contexto
   const httpMessages: Record<number, string> = {
-    400: 'DATOS INCOMPLETOS: Revisa que todos los campos obligatorios estén llenos',
-    401: 'ACCESO CADUCADO: Vuelve a ingresar tus credenciales',
-    403: 'SIN AUTORIZACIÓN: No tienes permiso para realizar esta acción',
-    404: 'NO ENCONTRADO: Lo que buscas no existe o ha sido movido',
-    409: 'DUPLICADO: Estos datos ya pertenecen a otro registro activo',
-    422: 'ERROR DE VALIDACIÓN: Corrige los datos marcados antes de continuar',
-    429: 'SISTEMA OCUPADO: Espera unos segundos y vuelve a intentar',
-    500: 'FALLO TÉCNICO: Hubo un error en el servidor. Intenta de nuevo.',
-    502: 'ERROR DE PUERTA DE ENLACE: Problemas de comunicación con el servidor',
-    503: 'SERVIDOR EN MANTENIMIENTO: Intenta en unos minutos',
+    400: 'Datos Incompletos: Revisa que todos los campos obligatorios estén llenos',
+    401: 'Acceso Caducado: Vuelve a ingresar tus credenciales',
+    403: 'Sin Autorización: No tienes permiso para realizar esta acción',
+    404: 'No Encontrado: Lo que buscas no existe o ha sido movido',
+    409: 'Duplicado: Estos datos ya pertenecen a otro registro activo',
+    422: 'Error de Validación: Corrige los datos marcados antes de continuar',
+    429: 'Sistema Ocupado: Espera unos segundos y vuelve a intentar',
+    500: 'Fallo Técnico: Hubo un error en el servidor. Intenta de nuevo.',
+    502: 'Error de Puerta de Enlace: Problemas de comunicación con el servidor',
+    503: 'Servidor en Mantenimiento: Intenta en unos minutos',
   };
   
   return httpMessages[res.status] || fallback;

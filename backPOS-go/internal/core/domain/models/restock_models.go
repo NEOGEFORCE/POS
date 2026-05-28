@@ -13,7 +13,7 @@ type ActivePurchaseList struct {
 	CreatedAt  time.Time  `gorm:"autoCreateTime;column:created_at" json:"createdAt"`
 	CreatedBy  string     `gorm:"type:varchar(255);column:created_by" json:"createdBy"` // DNI or Name
 
-	Product    Product    `gorm:"foreignKey:ProductID;references:Barcode" json:"product,omitempty"`
+	Product    Product    `gorm:"foreignKey:ProductID;references:Barcode;constraint:false" json:"product,omitempty"`
 	Supplier   Supplier   `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
 }
 
@@ -26,8 +26,10 @@ type ConfirmedOrder struct {
 	SupplierID       uint       `gorm:"index;column:supplier_id" json:"supplierId"`
 	EstimatedTotal   float64    `gorm:"type:decimal(12,2);column:estimated_total" json:"estimatedTotal"`
 	RealInvoiceTotal float64    `gorm:"type:decimal(12,2);column:real_invoice_total" json:"realInvoiceTotal"`
+	ExpectedDate     string     `gorm:"type:date;column:expected_date" json:"expectedDate"`
+	InvoiceRef       string     `gorm:"type:varchar(50);column:invoice_ref" json:"invoiceRef"`
 	Status           string     `gorm:"type:varchar(20);column:status" json:"status"` // 'pending', 'in_transit', 'received'
-	ConfirmedAt      time.Time  `gorm:"column:confirmed_at" json:"confirmedAt"`
+	ConfirmedAt      time.Time  `gorm:"autoCreateTime;column:confirmed_at" json:"confirmedAt"`
 	ConfirmedBy      string     `gorm:"type:varchar(255);column:confirmed_by" json:"confirmedBy"`
 	ReceivedAt       *time.Time `gorm:"column:received_at" json:"receivedAt"`
 	ReceivedBy       string     `gorm:"type:varchar(255);column:received_by" json:"receivedBy"`
@@ -48,7 +50,7 @@ type ConfirmedOrderItem struct {
 	EstimatedPrice   float64    `gorm:"type:decimal(10,2);column:estimated_price" json:"estimatedPrice"`
 
 	ConfirmedOrder   ConfirmedOrder `gorm:"foreignKey:ConfirmedOrderID;constraint:OnDelete:CASCADE;" json:"confirmedOrder,omitempty"`
-	Product          Product        `gorm:"foreignKey:ProductID;references:Barcode" json:"product,omitempty"`
+	Product          Product        `gorm:"foreignKey:ProductID;references:Barcode;constraint:false" json:"product,omitempty"`
 }
 
 func (ConfirmedOrderItem) TableName() string {

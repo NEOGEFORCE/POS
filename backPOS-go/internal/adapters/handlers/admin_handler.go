@@ -376,14 +376,14 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
 	
-	pgDumpRaw := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
-	pgDumpPath := filepath.ToSlash(strings.ReplaceAll(pgDumpRaw, "\\", "/"))
+	pgDumpRaw := strings.TrimSpace(strings.Trim(os.Getenv("PG_DUMP_PATH"), "\""))
+	pgDumpPath := filepath.Clean(pgDumpRaw)
 
 	if host == "" { host = "localhost" }
 	if port == "" { port = "5432" }
 	if user == "" { user = "postgres" }
 	if dbname == "" { dbname = "sistemapos" }
-	if pgDumpPath == "" { pgDumpPath = "pg_dump" }
+	if pgDumpPath == "" || pgDumpPath == "." { pgDumpPath = "pg_dump" }
 
 	// Validar que el binario exista antes de invocarlo
 	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
@@ -437,14 +437,14 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
 	
-	pgDumpRaw := strings.Trim(os.Getenv("PG_DUMP_PATH"), "\"")
-	pgDumpPath := filepath.ToSlash(strings.ReplaceAll(pgDumpRaw, "\\", "/"))
+	pgDumpRaw := strings.TrimSpace(strings.Trim(os.Getenv("PG_DUMP_PATH"), "\""))
+	pgDumpPath := filepath.Clean(pgDumpRaw)
 
 	if host == "" { host = "localhost" }
 	if port == "" { port = "5432" }
 	if user == "" { user = "postgres" }
 	if dbname == "" { dbname = "sistemapos" }
-	if pgDumpPath == "" { pgDumpPath = "pg_dump" }
+	if pgDumpPath == "" || pgDumpPath == "." { pgDumpPath = "pg_dump" }
 
 	// Validar que el binario exista
 	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
@@ -462,8 +462,9 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
 
 	log.Printf("🛠️ Manual Telegram Backup: %s %v", pgDumpPath, args)
-	if err := cmd.Run(); err != nil {
-		log.Printf("Error ejecutando pg_dump para Telegram: %v", err)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("Error ejecutando pg_dump para Telegram: %v. Salida: %s", err, string(output))
 		msg := "No se pudo generar el respaldo para Telegram. Verifique la instalación de PostgreSQL Client Tools."
 		if strings.Contains(err.Error(), "executable file not found") {
 			msg = fmt.Sprintf("Error: No se encontró '%s'. Instale las herramientas de PostgreSQL o ajuste el .env.", pgDumpPath)

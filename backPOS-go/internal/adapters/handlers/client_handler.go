@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
@@ -200,4 +201,20 @@ func (h *ClientHandler) GetStatement(c *gin.Context) {
 		fmt.Sprintf("Estado de cuenta consultado: %s", dni),
 		fmt.Sprintf("Se generó reporte de deuda para el cliente con DNI %s", dni),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
+}
+
+func (h *ClientHandler) DeleteCreditPayment(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido", err)
+		return
+	}
+
+	err = h.service.DeleteCreditPayment(uint(id), h.saleRepo)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error al eliminar abono", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Abono eliminado correctamente"})
 }

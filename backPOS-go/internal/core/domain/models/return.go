@@ -14,7 +14,7 @@ type Return struct {
 	Reason        string         `gorm:"column:reason" json:"reason"`
 	ReturnType    string         `gorm:"column:returnType" json:"returnType"` // "REFUND" or "EXCHANGE"
 	EmployeeDNI   string         `gorm:"not null;column:employeeDni" json:"employeeDni"`
-	Sale          Sale           `gorm:"foreignKey:SaleID" json:"sale,omitempty"`
+	Sale          Sale           `gorm:"foreignKey:SaleID;constraint:false;" json:"sale,omitempty"`
 	Employee      Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`
 	Details       []ReturnDetail `gorm:"foreignKey:ReturnID" json:"details,omitempty"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
@@ -32,7 +32,7 @@ type ReturnDetail struct {
 	Price     float64        `gorm:"type:decimal(10,2);not null;column:price" json:"price"`
 	Subtotal  float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`
 	IsExchange bool          `gorm:"default:false;column:isExchange" json:"isExchange"`
-	Product   Product        `gorm:"foreignKey:Barcode;references:Barcode" json:"product,omitempty"`
+	Product   Product        `gorm:"foreignKey:Barcode;references:Barcode;constraint:false;" json:"product,omitempty"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

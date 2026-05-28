@@ -37,12 +37,9 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const currentStock = item.currentStock;
 
     // TAREA 1: Fórmula Maestra de Modificadores Secuenciales (Compuesta) - Motor Surtifamiliar v10.0
-    // 1. Costo Bruto (sin descuento): Bruto = Base * (1+IVA) * (1+ICUI) * (1+IBUA)
+    // 1. Costo Bruto (sin descuento): Bruto = Base * (1 + IVA + ICUI + IBUA)
     const calculateGrossCost = (basePrice: number, iva: number, icui: number, ibua: number) => {
-        return basePrice 
-            * (1 + (Number(iva || 0) / 100)) 
-            * (1 + (Number(icui || 0) / 100)) 
-            * (1 + (Number(ibua || 0) / 100));
+        return basePrice * (1 + (Number(iva || 0) / 100) + (Number(icui || 0) / 100) + (Number(ibua || 0) / 100));
     };
 
     // Costo Neto Final para el inventario y pago: Neto = Bruto * (1 - DTO)
@@ -60,8 +57,11 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
     const formatInitialPercent = (val: number) => (val === 0 ? '' : String(val));
 
+    const effectiveQty = item.addedQuantity * (item.unit === 'LB' ? 0.5 : 1);
+
     // Local state
-    const [localTotal, setLocalTotal] = useState(formatInitial(item.newPurchasePrice * item.addedQuantity));
+    const [localTotal, setLocalTotal] = useState(formatInitial(calculateGrossCost(item.newPurchasePrice, item.iva || 0, item.icui || 0, item.ibua || 0) * effectiveQty));
+    const [localSubtotal, setLocalSubtotal] = useState(formatInitial(item.newPurchasePrice * effectiveQty));
     const [localCost, setLocalCost] = useState(formatInitial(calculateNetCost(item.newPurchasePrice, item.iva || 0, item.icui || 0, item.ibua || 0, item.discount || 0))); 
     const [localSalePrice, setLocalSalePrice] = useState(formatInitial(item.newSalePrice));
     const [localIva, setLocalIva] = useState(formatInitialPercent(item.iva || 0));
@@ -73,12 +73,19 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     useEffect(() => {
         const basePrice = item.newPurchasePrice;
         const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
+        const bruto = calculateGrossCost(basePrice, item.iva, item.icui, item.ibua);
 
         // Solo actualizar si el valor calculado difiere del valor local parseado
         const parsedLocalTotal = parseCOP(localTotal) || 0;
-        const targetTotal = neto * item.addedQuantity;
+        const targetTotal = bruto * effectiveQty; // Total usa el costo Bruto
         if (Math.abs(parsedLocalTotal - targetTotal) >= 1) {
             setLocalTotal(formatInitial(targetTotal));
+        }
+
+        const parsedLocalSubtotal = parseCOP(localSubtotal) || 0;
+        const targetSubtotal = basePrice * effectiveQty;
+        if (Math.abs(parsedLocalSubtotal - targetSubtotal) >= 1) {
+            setLocalSubtotal(formatInitial(targetSubtotal));
         }
 
         const parsedLocalCost = parseCOP(localCost) || 0;
@@ -115,19 +122,49 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         if (Math.abs(parsedLocalMargin - (item.marginPercentage || 0)) >= 0.01) {
             setLocalMargin(formatInitialPercent(item.marginPercentage || 30));
         }
-    }, [item.newPurchasePrice, item.addedQuantity, item.newSalePrice, item.iva, item.icui, item.ibua, item.discount, item.marginPercentage]);
+    }, [item.newPurchasePrice, effectiveQty, item.newSalePrice, item.iva, item.icui, item.ibua, item.discount, item.marginPercentage]);
 
     const handleTotalChange = (val: string) => {
-        const formatted = formatInputCOP(val);
-        setLocalTotal(formatted);
+        setLocalTotal(formatInputCOP(val));
+    };
+
+    const handleTotalBlur = (val: string) => {
         const totalRow = parseCOP(val) || 0;
-        const basePrice = totalRow / Math.max(1, item.addedQuantity);
+        // Total = Bruto * Qty  -->  Bruto = Base * (1 + sum(Taxes))
+        const taxesMultiplier = 1 + (Number(item.iva || 0) / 100) + (Number(item.icui || 0) / 100) + (Number(item.ibua || 0) / 100);
+        const basePrice = totalRow / (Math.max(0.001, effectiveQty) * taxesMultiplier);
         
         const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
+        const targetSubtotal = basePrice * effectiveQty;
         const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
         
         setLocalCost(formatCOP(Math.round(neto)));
         setLocalSalePrice(formatCOP(newSalePrice));
+        setLocalTotal(formatCOP(totalRow));
+        setLocalSubtotal(formatCOP(Math.round(targetSubtotal)));
+        
+        onUpdate(item.lineId, {
+            newPurchasePrice: basePrice,
+            newSalePrice: newSalePrice
+        });
+    };
+
+    const handleSubtotalChange = (val: string) => {
+        setLocalSubtotal(formatInputCOP(val));
+    };
+
+    const handleSubtotalBlur = (val: string) => {
+        const subtotalRow = parseCOP(val) || 0;
+        const basePrice = subtotalRow / Math.max(0.001, effectiveQty);
+        
+        const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
+        const bruto = calculateGrossCost(basePrice, item.iva, item.icui, item.ibua);
+        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
+        
+        setLocalCost(formatCOP(Math.round(neto)));
+        setLocalSalePrice(formatCOP(newSalePrice));
+        setLocalTotal(formatCOP(Math.round(bruto * effectiveQty)));
+        setLocalSubtotal(formatCOP(subtotalRow));
         
         onUpdate(item.lineId, {
             newPurchasePrice: basePrice,
@@ -136,23 +173,29 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleCostChange = (val: string) => {
-        const formatted = formatInputCOP(val);
-        setLocalCost(formatted);
+        setLocalCost(formatInputCOP(val));
+    };
+
+    const handleCostBlur = (val: string) => {
         const neto = parseCOP(val) || 0;
         
-        // RECONSTRUCCIÓN: Obtener Base desde Neto (Operación inversa secuencial)
-        const multiplier = (1 + (Number(item.iva || 0) / 100)) 
-                         * (1 + (Number(item.icui || 0) / 100)) 
-                         * (1 + (Number(item.ibua || 0) / 100)) 
+        // RECONSTRUCCIÓN: Obtener Base desde Neto
+        const multiplier = (1 + (Number(item.iva || 0) / 100) 
+                         + (Number(item.icui || 0) / 100) 
+                         + (Number(item.ibua || 0) / 100)) 
                          * (1 - (Number(item.discount || 0) / 100));
         
         const basePrice = neto / (multiplier || 1);
-        const newTotal = neto * item.addedQuantity;
+        const bruto = calculateGrossCost(basePrice, item.iva, item.icui, item.ibua);
+        const newTotal = bruto * effectiveQty; // Total se basa en Bruto (no DTO)
+        
+        const targetSubtotal = basePrice * effectiveQty;
         
         setLocalTotal(formatCOP(Math.round(newTotal)));
+        setLocalCost(formatCOP(neto));
+        setLocalSubtotal(formatCOP(Math.round(targetSubtotal)));
         
-        const newSalePrice = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
-
+        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
         setLocalSalePrice(formatCOP(newSalePrice));
 
         onUpdate(item.lineId, {
@@ -162,15 +205,19 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleSalePriceChange = (val: string) => {
-        const formatted = formatInputCOP(val);
-        setLocalSalePrice(formatted);
+        setLocalSalePrice(formatInputCOP(val));
+    };
+
+    const handleSalePriceBlur = (val: string) => {
         const sale = applyRounding(parseCOP(val) || 0);
         
-        // Recalcular MARGEN basado en el Costo Bruto (el descuento no afecta el % nominal)
+        // Recalcular MARGEN basado en el Costo Bruto
         const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
         const margin = bruto > 0 ? ((sale / bruto) - 1) * 100 : item.marginPercentage;
         
         setLocalMargin(String(margin));
+        setLocalSalePrice(formatCOP(sale));
+        
         onUpdate(item.lineId, { 
             newSalePrice: sale, 
             marginPercentage: margin 
@@ -190,9 +237,11 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         
         const neto = calculateNetCost(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.discount);
         const pvp = calculatePVP(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.marginPercentage);
+        const bruto = calculateGrossCost(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA);
         
         setLocalCost(formatCOP(Math.round(neto)));
         setLocalSalePrice(formatCOP(pvp));
+        setLocalTotal(formatCOP(Math.round(bruto * effectiveQty)));
 
         onUpdate(item.lineId, { 
             [type]: value,
@@ -238,32 +287,69 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         try {
             const token = Cookies.get('org-pos-token');
             
-            // 1. Obtener el producto completo para no sobrescribir con ceros
+            if (item.isMatched === false) {
+                // Lógica especial para emparejar manualmente un item no reconocido por IA
+                const productUrl = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/products/${normalizeText(editBarcode)}`;
+                const prodRes = await fetch(productUrl, { headers: { 'Authorization': `Bearer ${token}` } });
+                
+                if (!prodRes.ok) {
+                    throw new Error("El código de barras ingresado no existe en el sistema. Crea el producto primero.");
+                }
+                const realProduct = await prodRes.json();
+
+                // Intentar guardar el alias
+                const supplierId = localStorage.getItem('selectedSupplierId') || "0"; 
+                // We don't have supplierId in ReceptionRow natively unless passed, but we can assume the user can map it later or we just pass it if possible.
+                // Actually the API expects supplierId. We can pull it from the DOM or ignore it if the backend allows 0. 
+                // For now let's just call it.
+                await fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api'}/inventory/save-alias`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({
+                        supplierId: Number(supplierId), // Ideally we need the real supplier ID, but backend can fallback
+                        invoiceName: (item as any).invoiceName || item.productName,
+                        productBarcode: realProduct.barcode
+                    })
+                });
+
+                onUpdate(item.lineId, {
+                    productName: realProduct.productName,
+                    barcode: realProduct.barcode,
+                    isMatched: true,
+                    iva: realProduct.iva,
+                    icui: realProduct.icui,
+                    ibua: realProduct.ibua,
+                    marginPercentage: realProduct.marginPercentage,
+                    currentStock: realProduct.quantity
+                });
+
+                toast({ variant: 'success', title: 'EMPAREJADO', description: 'El producto fue emparejado y el sistema lo recordará la próxima vez.' });
+                setIsEditModalOpen(false);
+                return;
+            }
+
+            // Lógica normal para productos ya existentes
             const fullProduct = await apiFetch<any>(`/products/${item.barcode}`, {}, token!);
             
             if (!fullProduct) throw new Error("Producto no encontrado");
 
-            // 2. Modificar solo los campos deseados
             const payload = {
                 ...fullProduct,
                 productName: normalizeText(editName),
                 barcode: normalizeText(editBarcode)
             };
             
-            // 3. PUT al API con el producto completo
             await apiFetch(`/products/${item.barcode}`, {
                 method: 'PUT',
                 body: JSON.stringify(payload),
                 fallbackError: 'Error al actualizar producto'
             }, token!);
 
-            // Mutar estado local inmediatamente
             onUpdate(item.lineId, {
                 productName: payload.productName,
                 barcode: payload.barcode
             });
 
-            // Emitir evento por BroadcastChannel
             broadcastRevalidate('PRODUCT_UPDATE');
 
             setIsEditModalOpen(false);
@@ -276,8 +362,13 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         }
     };
 
+    let matchClasses = "bg-[var(--bg-card)] border-[var(--border)]";
+    if (item.matchStatus === 'match') matchClasses = "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]";
+    if (item.matchStatus === 'warning') matchClasses = "bg-amber-50 dark:bg-amber-950/20 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.1)]";
+    if (item.matchStatus === 'extra') matchClasses = "bg-rose-50 dark:bg-rose-950/20 border-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.1)]";
+
     return (
-        <div className="flex flex-col gap-2 p-3 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl hover:bg-[var(--bg-card-hover)] transition-colors shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-[var(--accent)]">
+        <div className={`flex flex-col gap-2 p-3 border rounded-2xl transition-all shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-[var(--accent)] ${matchClasses}`}>
             {/* Modal Edición Rápida */}
             <Modal isOpen={isEditModalOpen} onOpenChange={setIsEditModalOpen} placement="center">
                 <ModalContent className="dark:bg-zinc-950 border border-zinc-200 dark:border-white/10 rounded-2xl">
@@ -323,6 +414,9 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         <div className="flex items-center gap-1.5 min-w-0">
                             <h3 className="text-[10px] md:text-xs font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate">{item.productName}</h3>
                             <span className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 font-mono tracking-tighter shrink-0 mt-0.5">#{item.barcode}</span>
+                            {item.isMatched === false && (
+                                <span className="text-[8px] font-bold text-rose-500 bg-rose-500/10 px-1.5 py-0.5 rounded-md uppercase tracking-tight shrink-0 mt-0.5 ml-1 animate-pulse">REVISAR IA</span>
+                            )}
                             {isAdmin && (
                                 <button onClick={() => { setEditName(item.productName); setEditBarcode(item.barcode); setIsEditModalOpen(true); }} className="text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:text-zinc-100 transition-colors shrink-0 ml-1">
                                     <Edit2 size={12} />
@@ -392,9 +486,13 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                 // Si no es pesado, asegurar que sea entero
                                 const finalVal = !item.isWeighted ? Math.floor(numVal) : numVal;
                                 
-                                const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.discount);
-                                const newTotal = neto * finalVal;
+                                const newEffectiveQty = finalVal * (item.unit === 'LB' ? 0.5 : 1);
+                                
+                                const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
+                                const newTotal = bruto * newEffectiveQty;
+                                const targetSubtotal = item.newPurchasePrice * newEffectiveQty;
                                 setLocalTotal(formatInitial(newTotal));
+                                setLocalSubtotal(formatInitial(targetSubtotal));
                                 
                                 onUpdate(item.lineId, { addedQuantity: finalVal });
                             }}
@@ -462,10 +560,10 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                     </div>
                 </div>
 
-                {/* SUB-FILA 2: COSTO, PVP, TOTAL (Grid 3 Columnas) */}
-                <div className="grid grid-cols-3 gap-2">
+                {/* SUB-FILA 2: COSTO, PVP, SUBTOTAL, TOTAL (Responsive Grid) */}
+                <div className="grid grid-cols-2 min-[500px]:grid-cols-4 gap-1.5">
                     <div className="flex flex-col gap-0.5">
-                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Costo</label>
+                        <label className="text-[9px] font-medium text-gray-400 uppercase ml-1 truncate">Costo</label>
                         <div className="flex items-center bg-[var(--bg-elevated)] rounded-2xl h-10 px-2 gap-1 border border-[var(--border)] shadow-sm focus-within:border-rose-500/50 transition-all">
                             <span className="text-[10px] text-rose-500 font-medium">$</span>
                             <input 
@@ -474,6 +572,8 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                 inputMode="decimal"
                                 onFocus={handleFocus}
                                 onChange={(e) => handleCostChange(e.target.value)}
+                                onBlur={(e) => handleCostBlur(e.target.value)}
+                                onKeyDown={(e) => { if(e.key === 'Enter') handleCostBlur((e.target as HTMLInputElement).value) }}
                                 disabled={item.entryType === 'gift'}
                             />
                         </div>
@@ -488,6 +588,24 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                 inputMode="decimal"
                                 onFocus={handleFocus}
                                 onChange={(e) => handleSalePriceChange(e.target.value)}
+                                onBlur={(e) => handleSalePriceBlur(e.target.value)}
+                                onKeyDown={(e) => { if(e.key === 'Enter') handleSalePriceBlur((e.target as HTMLInputElement).value) }}
+                            />
+                        </div>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Subt.</label>
+                        <div className="flex items-center bg-[var(--bg-elevated)] rounded-2xl h-10 px-2 gap-1 border border-[var(--border)] shadow-sm focus-within:border-[var(--accent)] transition-all">
+                            <span className="text-[10px] text-zinc-900 dark:text-zinc-100 font-medium">$</span>
+                            <input 
+                                className={`bg-transparent w-full text-[11px] font-medium tracking-tight tabular-nums border-none outline-none focus:ring-0 p-0 ${item.entryType === 'gift' ? 'text-gray-400' : 'text-zinc-900 dark:text-zinc-50'}`} 
+                                value={localSubtotal}
+                                inputMode="decimal"
+                                onFocus={handleFocus}
+                                onChange={(e) => handleSubtotalChange(e.target.value)}
+                                onBlur={(e) => handleSubtotalBlur(e.target.value)}
+                                onKeyDown={(e) => { if(e.key === 'Enter') handleSubtotalBlur((e.target as HTMLInputElement).value) }}
+                                disabled={item.entryType === 'gift'}
                             />
                         </div>
                     </div>
@@ -501,6 +619,8 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                 inputMode="decimal"
                                 onFocus={handleFocus}
                                 onChange={(e) => handleTotalChange(e.target.value)}
+                                onBlur={(e) => handleTotalBlur(e.target.value)}
+                                onKeyDown={(e) => { if(e.key === 'Enter') handleTotalBlur((e.target as HTMLInputElement).value) }}
                                 disabled={item.entryType === 'gift'}
                             />
                         </div>

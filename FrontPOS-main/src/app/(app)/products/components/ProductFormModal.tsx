@@ -1042,14 +1042,16 @@ const ProductFormModal = memo(function ProductFormModal({
                   <div className="flex flex-col gap-0.5">
                     <label className={itemInputClass.label}>STOCK ACTUAL</label>
                     <Input
-                      type="text"
+                      type="number"
+                      step={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "any" : "1"}
                       inputMode={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "decimal" : "numeric"}
                       isDisabled={(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1}
                       value={(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 ? "∞" : String(addDialogOpen ? (newProduct.quantity ?? '') : (editingProduct?.quantity ?? ''))}
                       onValueChange={(v) => {
-                        const val = v === '' ? 0 : parseFloat(v);
-                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: val }));
-                        else setEditingProduct((p: any) => p ? { ...p, quantity: val } : null);
+                        // Allow typing decimals like '1.' or '1.5' by saving the string if it ends in a dot,
+                        // otherwise parsing to float. HeroUI's type="number" gives us strings natively.
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: v }));
+                        else setEditingProduct((p: any) => p ? { ...p, quantity: v } : null);
                       }}
                       classNames={{
                         ...itemInputClass,
@@ -1063,15 +1065,15 @@ const ProductFormModal = memo(function ProductFormModal({
                     <label className={`text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full mb-0.5 ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`}>STOCK MÍNIMO</label>
                     <Input
                       type="number"
-                      inputMode="numeric"
+                      step={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "any" : "1"}
+                      inputMode={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "decimal" : "numeric"}
                       value={String(addDialogOpen 
                         ? (newProduct.minStock ?? '') 
                         : (editingProduct?.minStock ?? '')
                       )}
                       onValueChange={(v) => {
-                        const val = v === '' ? '' : parseFloat(v);
-                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, minStock: val }));
-                        else setEditingProduct((p: any) => p ? { ...p, minStock: val } : null);
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, minStock: v }));
+                        else setEditingProduct((p: any) => p ? { ...p, minStock: v } : null);
                       }}
                       classNames={{
                         ...itemInputClass,

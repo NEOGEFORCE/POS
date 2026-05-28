@@ -7,6 +7,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"gorm.io/gorm"
 )
 
 type SaleService struct {
@@ -73,19 +74,16 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	}
 
 	// 3. Validar stock total requerido
-	for barcode, totalNeeded := range deductions {
-		product, ok := productCache[barcode]
+	for barcode := range deductions {
+		_, ok := productCache[barcode]
 		if !ok {
 			base, err := s.productRepo.GetByBarcode(barcode)
 			if err != nil {
 				return fmt.Errorf("stock insuficiente: producto base %s no existe", barcode)
 			}
-			product = base
 			productCache[barcode] = base
 		}
-		if product.Quantity < totalNeeded && !product.IsWeighted {
-			return fmt.Errorf("stock insuficiente para %s: disponible %.2f, requerido %.2f", product.ProductName, product.Quantity, totalNeeded)
-		}
+		// Validación eliminada a petición del usuario para permitir vender en negativo
 	}
 
 	// 4. Calcular totales
@@ -230,6 +228,19 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 				continue
 			}
 
+			// TAREA 1.5: Alerta de Venta en Negativo
+			if product.Quantity < 0 {
+				msgNeg := fmt.Sprintf("🚨 *¡VENTA SIN STOCK DETECTADA!*\n\n"+
+					"Se ha vendido el producto *%s* pero el inventario ha quedado en negativo.\n\n"+
+					"📦 *Stock Actual:* %.2f\n"+
+					"👤 *Cajero:* %s\n"+
+					"📝 *Factura:* #%d\n\n"+
+					"💡 _Regístrelo pronto para cuadrar el inventario._",
+					product.ProductName, product.Quantity, sale.Employee.Name, sale.SaleID)
+				
+				s.telegramService.SendMarkdownAlert(msgNeg)
+			}
+
 			// Solo alertar si tiene proveedor y frecuencia definida
 			if product.SupplierID != nil && product.Supplier.VisitFrequencyDays > 0 {
 				// Estimar días hasta la próxima visita
@@ -255,6 +266,25 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 					s.telegramService.SendMarkdownAlert(msg)
 				}
 			}
+
+			// TAREA 1.6: Alerta de Min Estante
+			if product.MinShelfStock > 0 && product.Quantity <= product.MinShelfStock && product.Quantity >= 0 {
+				var supplierText string
+				if product.SupplierID != nil && product.Supplier.Name != "" {
+					supplierText = fmt.Sprintf("🚚 *El preventista de %s viene hoy/pronto.*\n💡 _Pide más cantidad para no quedarte sin stock._", product.Supplier.Name)
+				} else {
+					supplierText = "💡 _Pide más cantidad pronto._"
+				}
+
+				msgMin := fmt.Sprintf("⚠️ *¡ALERTA DE STOCK BAJO (MIN. ESTANTE)!*\n\n"+
+					"El producto *%s* ha caído a su nivel de alerta en estante.\n\n"+
+					"📦 *Stock Actual:* %.2f\n"+
+					"📉 *Mínimo Permitido:* %.2f\n\n"+
+					"%s",
+					product.ProductName, product.Quantity, product.MinShelfStock, supplierText)
+				
+				s.telegramService.SendMarkdownAlert(msgMin)
+			}
 		}
 
 		// Impresión de recibo
@@ -269,6 +299,168 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	return nil
 }
 
+
+func (s *SaleService) AddItemsToSale(saleID uint, newDetails []models.SaleDetail, cashAmount, transferAmount float64, transferSource, employeeDNI string) error {
+	sale, err := s.saleRepo.GetByID(saleID)
+	if err != nil {
+		return errors.New("venta no encontrada")
+	}
+
+	if sale.Status != "PAID" && sale.Status != "CREDIT" {
+		return errors.New("no se puede editar esta venta")
+	}
+
+	var additionalTotal float64
+	deductions := make(map[string]float64)
+
+	// Validar stock y preparar deducciones
+	for i := range newDetails {
+		detail := &newDetails[i]
+		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
+			additionalTotal += detail.Subtotal
+			continue
+		}
+
+		product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "BaseProduct")
+		if err != nil {
+			return fmt.Errorf("producto no encontrado: %s", detail.Barcode)
+		}
+
+		effectiveQty := detail.Quantity
+		targetBarcode := detail.Barcode
+
+		if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" {
+			targetBarcode = *product.BaseProductBarcode
+			effectiveQty = detail.Quantity * float64(product.PackMultiplier)
+		}
+
+		deductions[targetBarcode] += effectiveQty
+		detail.UnitPrice = product.SalePrice
+		detail.CostPrice = product.PurchasePrice
+		detail.Subtotal = applyRounding(product.SalePrice * detail.Quantity)
+		additionalTotal += detail.Subtotal
+	}
+
+	// Validar stock total requerido
+	for barcode := range deductions {
+		_, err := s.productRepo.GetByBarcode(barcode)
+		if err != nil {
+			return fmt.Errorf("stock insuficiente: producto base %s no existe", barcode)
+		}
+		// Validación eliminada a petición del usuario para permitir vender en negativo
+	}
+
+	// Actualizar los métodos de pago de la venta
+	paidExtra := cashAmount + transferAmount
+	if paidExtra < (additionalTotal - 5.0) {
+		return fmt.Errorf("pago adicional insuficiente: total extra %.2f, pagado extra %.2f", additionalTotal, paidExtra)
+	}
+
+	sale.TotalAmount += additionalTotal
+	sale.CashAmount += cashAmount
+	sale.TransferAmount += transferAmount
+	if transferSource != "" {
+		sale.TransferSource = transferSource
+	}
+
+	sale.AmountPaid += paidExtra
+	
+	// Recalcular cambio solo sobre efectivo
+	cashNeeded := sale.TotalAmount - sale.TransferAmount - sale.CreditAmount
+	if cashNeeded < 0 { cashNeeded = 0 }
+	sale.Change = sale.CashAmount - cashNeeded
+	if sale.Change < 0 { sale.Change = 0 }
+
+	// Recalcular tipo de pago
+	typeCount := 0
+	if sale.CashAmount > 0 { typeCount++ }
+	if sale.TransferAmount > 0 { typeCount++ }
+	if sale.CreditAmount > 0 { typeCount++ }
+
+	if typeCount > 1 {
+		sale.PaymentMethod = "MIXTO"
+	} else if sale.CreditAmount > 0 {
+		sale.PaymentMethod = "FIADO"
+	} else if sale.TransferAmount > 0 {
+		source := strings.ToUpper(sale.TransferSource)
+		if source == "" { source = "TRANSFERENCIA" }
+		sale.PaymentMethod = source
+	} else {
+		sale.PaymentMethod = "EFECTIVO"
+	}
+
+	rawInterface := s.saleRepo.GetDB()
+	rawDB, ok := rawInterface.(*gorm.DB)
+	if !ok {
+		return fmt.Errorf("error obteniendo db: tipo incorrecto")
+	}
+	
+	// Actualizar venta
+	if err := rawDB.Save(sale).Error; err != nil {
+		return fmt.Errorf("error actualizando venta: %w", err)
+	}
+
+	// Insertar o actualizar detalles
+	for _, detail := range newDetails {
+		var existingDetail models.SaleDetail
+		err := rawDB.Where("saleId = ? AND barcode = ?", sale.SaleID, detail.Barcode).First(&existingDetail).Error
+		
+		if err == nil && existingDetail.ID != 0 {
+			existingDetail.Quantity += detail.Quantity
+			existingDetail.Subtotal += detail.Subtotal
+			rawDB.Save(&existingDetail)
+		} else {
+			detail.SaleID = sale.SaleID
+			rawDB.Create(&detail)
+		}
+	}
+
+	if len(deductions) > 0 {
+		if err := s.productRepo.BatchAdjustQuantitiesWithTx(rawDB, deductions); err != nil {
+			return fmt.Errorf("error ajustando inventario: %w", err)
+		}
+
+		for _, detail := range newDetails {
+			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" { continue }
+
+			targetBarcode := detail.Barcode
+			effectiveQty := detail.Quantity
+			
+			product, _ := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "BaseProduct")
+			if product != nil && product.IsPack && product.BaseProductBarcode != nil {
+				targetBarcode = *product.BaseProductBarcode
+				effectiveQty = detail.Quantity * float64(product.PackMultiplier)
+			}
+
+			m := &models.StockMovement{
+				Date:         time.Now(),
+				Barcode:      targetBarcode,
+				Quantity:     effectiveQty,
+				Type:         "OUT",
+				Reason:       "EDIT_SALE_ADD",
+				ReferenceID:  fmt.Sprintf("SALE-%d", sale.SaleID),
+				EmployeeDNI:  employeeDNI,
+				EmployeeName: "CAJERO",
+			}
+			_ = s.movementRepo.SaveWithTx(rawDB, m)
+		}
+	}
+
+	go func() {
+		defer func() { recover() }()
+		if s.telegramService != nil {
+			msg := fmt.Sprintf("✏️ *VENTA EDITADA (Productos Añadidos)*\n\n"+
+				"*Venta:* #%d\n"+
+				"*Monto Adicional:* $%.2f\n"+
+				"*Cajero:* %s\n"+
+				"*Items Nuevos:* %d",
+				sale.SaleID, additionalTotal, employeeDNI, len(newDetails))
+			s.telegramService.SendMarkdownAlert(msg)
+		}
+	}()
+
+	return nil
+}
 
 func (s *SaleService) ListSales(filter ports.SaleFilter) ([]models.Sale, int64, error) {
 	if filter.Page <= 0 {

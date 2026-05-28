@@ -103,17 +103,20 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	log.Printf("✅ [SaveClosure] Cierre guardado con éxito. ID: %d. Iniciando envío asíncrono de reportes...", closure.ID)
 
 	// Auditoría Forense de Cierre de Caja
-	isCritical := closure.Difference != 0
+	// Nueva política: El cuadre se valida según lo físico. Ya no es crítico si hay diferencia con lo esperado.
+	isCritical := false
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
 		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 	
+	realBalance := closure.PhysicalCash + closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer - closure.TotalExpenses
+
 	details := fmt.Sprintf("Cierre de caja ID #%d realizado por %s", closure.ID, closure.ClosedByName)
-	human := fmt.Sprintf("El cajero %s realizó el cierre de caja. Balance: $%s real vs $%s esperado. Diferencia: $%s", 
-		closure.ClosedByName, fmt.Sprintf("%.2f", closure.PhysicalCash), fmt.Sprintf("%.2f", expectedCash), fmt.Sprintf("%.2f", closure.Difference))
+	human := fmt.Sprintf("El cajero %s realizó el cierre de caja. Balance Real Físico: $%s. (Esperado sistema: $%s)", 
+		closure.ClosedByName, fmt.Sprintf("%.2f", realBalance), fmt.Sprintf("%.2f", expectedCash))
 	
-	changes := fmt.Sprintf(`{"expected": %f, "physical": %f, "difference": %f}`, expectedCash, closure.PhysicalCash, closure.Difference)
+	changes := fmt.Sprintf(`{"expected": %f, "physical": %f, "realBalance": %f}`, expectedCash, closure.PhysicalCash, realBalance)
 	
 	h.auditService.Log(dniStr, nameStr, "CASH_CLOSURE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), isCritical)
 
@@ -205,25 +208,11 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 
-	
-	statusIcon := "✅"
-	statusText := "BALANCE PERFECTO"
+	digitalIncome := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
+	realBalance := closure.PhysicalCash + digitalIncome - closure.TotalExpenses
 
-	// Nueva Lógica de Balance (Verde vs Rojo)
-	// Si el saldo esperado es negativo (Egresos > Ventas), es un SOBRANTE/FLUJO POSITIVO
-	if expectedCash < 0 {
-		statusIcon = "💚"
-		statusText = "SOBRANTE / FLUJO POSITIVO"
-	} else {
-		// Si es positivo, comparamos con el físico para ver si hay faltante real
-		if closure.PhysicalCash < expectedCash {
-			statusIcon = "🚨"
-			statusText = "FALTANTE"
-		} else if closure.PhysicalCash > expectedCash {
-			statusIcon = "⚠️"
-			statusText = "SOBRANTE"
-		}
-	}
+	statusIcon := "✅"
+	// statusText := "BALANCE FÍSICO APROBADO"
 
 	// 1. INFO GENERAL
 	loc := time.FixedZone("America/Bogota", -5*60*60)
@@ -237,22 +226,19 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		closure.StartDate.In(loc).Format("02/01 15:04"),
 		closure.EndDate.In(loc).Format("02/01 15:04"))
 
-	// 2. RESUMEN FINANCIERO
-	core := fmt.Sprintf("💰 *RESUMEN DE CAJA*\n"+
-		"🔹 Ventas Brutas:  `$%s`\n"+
-		"🔹 Entradas Efec:  `+$%s`\n"+
-		"🔹 Salidas Efec:   `-$%s`\n"+
+	// 2. RESUMEN FINANCIERO (Real-First)
+	core := fmt.Sprintf("💰 *RESUMEN DE CAJA (REAL)*\n"+
+		"💵 Efectivo Físico:  `$%s`\n"+
+		"📱 Ingresos Digital: `+$%s`\n"+
+		"💸 Egresos/Retiros:  `-$%s`\n"+
 		"────────────────────\n"+
-		"📥 *ESPERADO:*      `$%s`\n"+
-		"💵 *REAL:*          `$%s`\n\n"+
-		"%s *ESTADO:*       `%s`\n"+
-		"📊 *DIFERENCIA:*   `$%s`\n\n",
-		formatCOP(closure.TotalSales),
-		formatCOP(closure.TotalCash),
-		formatCOP(closure.TotalExpenses),
-		formatCOP(expectedCash),
+		"%s *BALANCE REAL:* `$%s`\n\n"+
+		"📥 _Esperado Sist.:_  `$%s`\n\n",
 		formatCOP(closure.PhysicalCash),
-		statusIcon, statusText, formatCOP(closure.Difference))
+		formatCOP(digitalIncome),
+		formatCOP(closure.TotalExpenses),
+		statusIcon, formatCOP(realBalance),
+		formatCOP(expectedCash))
 
 	// 3. DESGLOSE FÍSICO
 	physical := fmt.Sprintf("🪙 *DESGLOSE DE EFECTIVO*\n"+
@@ -513,45 +499,46 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 
+	digitalIncome := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
+	realBalance := closure.PhysicalCash + digitalIncome - closure.TotalExpenses
+
 	boxY := pdf.GetY()
 	
-	// Caja Esperada
+	// Efectivo Físico
 	pdf.SetFillColor(255, 255, 255)
 	pdf.SetDrawColor(0, 0, 0)
 	pdf.SetLineWidth(0.2)
 	pdf.Rect(10, boxY, 60, 18, "D")
 	pdf.SetXY(10, boxY + 2)
 	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("CAJA ESPERADA"), "0", 1, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(expectedCash)), "0", 1, "C", false, 0, "")
-
-	// Arqueo Físico
-	pdf.Rect(75, boxY, 60, 18, "D")
-	pdf.SetXY(75, boxY + 2)
-	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("ARQUEO FÍSICO"), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 5, tr("EFECTIVO FÍSICO"), "0", 1, "C", false, 0, "")
 	pdf.SetFont("Arial", "B", 12)
 	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.PhysicalCash)), "0", 1, "C", false, 0, "")
 
-	// Diferencia / Estado
-	statusText := "BALANCE"
-	if expectedCash < 0 {
-		statusText = "SOBRANTE"
-	} else if closure.Difference < 0 {
-		statusText = "FALTANTE"
-	} else if closure.Difference > 0 {
-		statusText = "SOBRANTE"
-	}
+	// Digital - Egresos
+	pdf.Rect(75, boxY, 60, 18, "D")
+	pdf.SetXY(75, boxY + 2)
+	pdf.SetFont("Arial", "B", 7)
+	pdf.CellFormat(60, 5, tr("DIGITAL - EGRESOS"), "0", 1, "C", false, 0, "")
+	pdf.SetFont("Arial", "B", 12)
+	netDigital := digitalIncome - closure.TotalExpenses
+	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(netDigital)), "0", 1, "C", false, 0, "")
 
-	pdf.Rect(140, boxY, 60, 18, "D")
+	// Balance Real
+	pdf.SetFillColor(230, 245, 230) // Fondo verde claro
+	pdf.Rect(140, boxY, 60, 18, "DF")
 	pdf.SetXY(140, boxY + 2)
 	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr(statusText), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 1, "C", false, 0, "")
 	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.Difference)), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 1, "C", false, 0, "")
 	
 	pdf.SetY(boxY + 25)
+
+	// --- NOTA ESPERADO ---
+	pdf.SetFont("Arial", "I", 8)
+	pdf.CellFormat(190, 5, tr(fmt.Sprintf("* Efectivo Esperado por Sistema (Informativo): $%s", formatCOP(expectedCash))), "0", 1, "L", false, 0, "")
+	pdf.Ln(2)
 
 	// --- TABLAS DE AUDITORÍA ---
 	// Estilo de tabla Enterprise

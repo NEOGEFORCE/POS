@@ -17,10 +17,12 @@ import {
     CheckCircle2,
     BookOpen,
     Receipt,
-    Wallet
+    Wallet,
+    Trash
 } from 'lucide-react';
 import { Customer, Sale, CreditPayment } from '@/lib/definitions';
-import { apiFetch } from '@/lib/api-error';
+import { apiFetch, extractApiError } from '@/lib/api-error';
+import { toast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 
 interface StatementData {
@@ -41,6 +43,29 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
     const [loading, setLoading] = useState(false);
     const [data, setData] = useState<StatementData | null>(null);
     const [activeTab, setActiveTab] = useState("saldo");
+    const [isDeleting, setIsDeleting] = useState<number | null>(null);
+
+    const handleDeletePayment = async (id: number | string) => {
+        if (!confirm("¿Está seguro de anular este abono? El saldo de la deuda se recalculará.")) return;
+        setIsDeleting(Number(id));
+        const token = Cookies.get('org-pos-token');
+        try {
+            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/clients/delete-credit-payment/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) {
+                const errorMsg = await extractApiError(res, "Error al anular abono");
+                throw new Error(errorMsg);
+            }
+            toast({ variant: "success", title: "Abono anulado", description: "El saldo ha sido recalculado" });
+            loadStatement();
+        } catch (err: any) {
+            toast({ variant: "destructive", title: "Error", description: err.message });
+        } finally {
+            setIsDeleting(null);
+        }
+    };
 
     const loadStatement = async () => {
         if (!customer) return;
@@ -428,6 +453,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                 <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
                                                                 <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Método</th>
                                                                 <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Monto</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-center w-12">Anular</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
@@ -439,6 +465,11 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                     </td>
                                                                     <td className="px-4 py-3 text-right font-medium text-zinc-900 dark:text-zinc-100 group-hover:scale-105 transition-transform origin-right">
                                                                         $ {p.totalPaid.toLocaleString()}
+                                                                    </td>
+                                                                    <td className="px-4 py-3 text-center">
+                                                                        <Button isIconOnly size="sm" color="danger" variant="light" className="min-w-6 w-6 h-6 p-0 text-rose-500 hover:bg-rose-500/10" onPress={() => handleDeletePayment(p.id)} isLoading={isDeleting === p.id}>
+                                                                            <Trash size={12} />
+                                                                        </Button>
                                                                     </td>
                                                                 </tr>
                                                             ))}
@@ -489,6 +520,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                 <th className="px-3 py-3 font-medium text-rose-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Débito</th>
                                                                 <th className="px-3 py-3 font-medium text-zinc-300 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Crédito</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Saldo</th>
+                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-center w-8">Acción</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
@@ -520,6 +552,13 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                     </td>
                                                                     <td className="px-3 py-2.5 text-right font-medium tabular-nums text-[10px]">
                                                                         $ {entry.balance.toLocaleString()}
+                                                                    </td>
+                                                                    <td className="px-3 py-2.5 text-center">
+                                                                        {entry.type === 'ABONO' && (
+                                                                            <Button isIconOnly size="sm" color="danger" variant="light" className="min-w-6 w-6 h-6 p-0 text-rose-500 hover:bg-rose-500/10" onPress={() => handleDeletePayment(entry.id)} isLoading={isDeleting === entry.id}>
+                                                                                <Trash size={12} />
+                                                                            </Button>
+                                                                        )}
                                                                     </td>
                                                                 </tr>
                                                             ))}

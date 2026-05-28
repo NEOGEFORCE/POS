@@ -22,12 +22,15 @@ const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal
 const PendingDebtsModal = dynamic(() => import('./components/PendingDebtsModal'), { ssr: false });
 
 // COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (ESTILO USUARIOS)
-const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
+const ExpenseHeader = memo(({ filter, supplierFilter, onSearch, onSearchSupplier, onAdd, onReload, isLoading, onApplyFilters }: {
   filter: string,
+  supplierFilter: string,
   onSearch: (v: string) => void,
+  onSearchSupplier: (v: string) => void,
   onAdd: () => void,
   onReload: () => void,
-  isLoading: boolean
+  isLoading: boolean,
+  onApplyFilters: () => void
 }) => (
   <header className="flex flex-col gap-2.5 transition-all">
     <div className="flex items-center justify-between px-1">
@@ -62,23 +65,47 @@ const ExpenseHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
         </Button>
       </div>
     </div>
-    <Input
-      size="sm"
-      placeholder="FILTRAR POR CONCEPTO O CATEGORÍA..."
-      value={filter}
-      onValueChange={onSearch}
-      classNames={{
-        inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
-        input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
-      }}
-      startContent={<Search size={14} className="text-rose-500 mr-1" />}
-    />
+    <div className="flex flex-col sm:flex-row gap-2">
+      <Input
+        size="sm"
+        placeholder="FILTRAR POR CONCEPTO..."
+        value={filter}
+        onValueChange={onSearch}
+        classNames={{
+          inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+          input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+        }}
+        startContent={<Search size={14} className="text-rose-500 mr-1" />}
+      />
+      <Input
+        size="sm"
+        placeholder="FILTRAR POR PROVEEDOR..."
+        value={supplierFilter}
+        onValueChange={onSearchSupplier}
+        classNames={{
+          inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+          input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+        }}
+        startContent={<Search size={14} className="text-rose-500 mr-1" />}
+      />
+      <Button
+        onPress={onApplyFilters}
+        className="h-11 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium uppercase text-[10px] rounded-2xl px-6"
+      >
+        Buscar (Servidor)
+      </Button>
+    </div>
   </header>
 ));
 ExpenseHeader.displayName = 'ExpenseHeader';
 
-async function fetchExpenses(token: string): Promise<Expense[]> {
-  const data = await apiFetch('/expenses/list', {
+async function fetchExpenses(token: string, concept: string = '', supplier: string = ''): Promise<Expense[]> {
+  const query = new URLSearchParams();
+  if (concept) query.append('concept', concept);
+  if (supplier) query.append('supplier', supplier);
+  const url = `/expenses/list${query.toString() ? '?' + query.toString() : ''}`;
+  
+  const data = await apiFetch(url, {
     method: 'GET',
     fallbackError: 'FALLO AL CARGAR EGRESOS'
   }, token);
@@ -97,6 +124,7 @@ export default function ExpensesPage() {
   const [loading, setLoading] = useState(true);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [filter, setFilter] = useState('');
+  const [supplierFilter, setSupplierFilter] = useState('');
 
   // Modales
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -112,17 +140,18 @@ export default function ExpensesPage() {
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const loadExpenses = useCallback(async () => {
+    setLoading(true);
     const token = Cookies.get('org-pos-token');
     if (!token) { setLoading(false); return; }
     try {
-      const data = await fetchExpenses(token);
+      const data = await fetchExpenses(token, filter, supplierFilter);
       setExpenses(data);
     } catch {
       toast({ variant: "destructive", title: "Error Auditoría", description: "No se pudo sincronizar el historial de egresos." });
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, filter, supplierFilter]);
 
   useEffect(() => { 
     loadExpenses(); 
@@ -134,7 +163,7 @@ export default function ExpensesPage() {
       }
     });
     return cleanup;
-  }, [loadExpenses]);
+  }, []);
 
   const stats = useMemo(() => {
     const now = new Date();
@@ -157,9 +186,23 @@ export default function ExpensesPage() {
   }, [expenses]);
 
   const filteredExpenses = useMemo(() => {
-    const query = filter.toLowerCase();
-    return expenses.filter(e => e.description.toLowerCase().includes(query));
-  }, [expenses, filter]);
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+
+    return expenses.filter(e => {
+      const d = new Date(e.date);
+      const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+      
+      // Ya filtramos por DB con filter/supplierFilter.
+      // Así que aquí solo aplicamos la regla de "si no hay filtro, mostrar solo el mes actual"
+      if (filter.trim() !== '' || supplierFilter.trim() !== '') {
+        return true;
+      }
+      
+      return isCurrentMonth;
+    });
+  }, [expenses, filter, supplierFilter]);
 
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -330,9 +373,12 @@ export default function ExpensesPage() {
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <ExpenseHeader
           filter={filter}
+          supplierFilter={supplierFilter}
           onSearch={(v) => setFilter(v.toUpperCase())}
+          onSearchSupplier={(v) => setSupplierFilter(v.toUpperCase())}
           onAdd={() => setAddDialogOpen(true)}
-          onReload={loadExpenses}
+          onReload={() => { setFilter(''); setSupplierFilter(''); loadExpenses(); }}
+          onApplyFilters={loadExpenses}
           isLoading={loading}
         />
         <ExpenseStats

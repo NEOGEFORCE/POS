@@ -13,8 +13,9 @@ type Category struct {
 	UpdatedByName string         `gorm:"column:updatedByName" json:"updatedByName"`
 	Creator       Employee       `gorm:"foreignKey:CreatedByDNI;references:DNI" json:"creator,omitempty"`
 	Updater       Employee       `gorm:"foreignKey:UpdatedByDNI;references:DNI" json:"updater,omitempty"`
-	ProductCount  int64          `gorm:"->;column:product_count" json:"productCount"`
-	IsActive      bool           `gorm:"default:true;column:is_active" json:"isActive"`
+	ProductCount     int64          `gorm:"->;column:product_count" json:"productCount"`
+	MarginPercentage float64        `gorm:"type:decimal(5,2);default:0;column:margin_percentage" json:"marginPercentage"`
+	IsActive         bool           `gorm:"default:true;column:is_active" json:"isActive"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

@@ -118,9 +118,29 @@ func (r *PostgresProductRepository) SyncSuppliers(barcode string, supplierIDs []
 
 // BulkReceive procesa una recepción masiva de mercancía, gestionando costos, impuestos y productos tipo pack.
 // Si bypassExpense es false, registra automáticamente un egreso contable.
-func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) ([]string, error) {
+func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error) {
 	var changedProducts []string
 	err := r.db.Transaction(func(tx *gorm.DB) error {
+		// Opción A: si estamos en modo edición, eliminar/dar de baja la recepción anterior y revertir stock antes de procesar el consolidado
+		if editReceptionID != "" {
+			var movements []models.StockMovement
+			if err := tx.Where("reference_id = ? AND reason = ?", editReceptionID, "RECEPTION").Find(&movements).Error; err == nil {
+				for _, m := range movements {
+					if err := tx.Model(&models.Product{}).
+						Where("barcode = ?", m.Barcode).
+						UpdateColumn("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", m.Quantity)).Error; err != nil {
+						return err
+					}
+				}
+			}
+			if err := tx.Where("reference_id = ? AND reason = ?", editReceptionID, "RECEPTION").Delete(&models.StockMovement{}).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("reference_id = ?", editReceptionID).Delete(&models.Expense{}).Error; err != nil {
+				return err
+			}
+		}
+
 		totalAmount := 0.0
 		var mainSupplierID *uint = supplierID
 		
@@ -396,6 +416,20 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 		}
 
+		// Determinar si paymentSource es un JSON de pagos mixtos para egresos
+		type mixedPayment struct {
+			Method string  `json:"method"`
+			Amount float64 `json:"amount"`
+		}
+		var mixed []mixedPayment
+		isMixed := false
+
+		if strings.HasPrefix(paymentSource, "[") {
+			if err := json.Unmarshal([]byte(paymentSource), &mixed); err == nil && len(mixed) > 0 {
+				isMixed = true
+			}
+		}
+
 		// 4.5. Creación de Egreso Automático (si no hay bypass)
 		if !bypassExpense && totalAmount > 0 {
 			description := "RECEPCIÓN DE MERCANCÍA MASIVA"
@@ -406,24 +440,53 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 			}
 			
-			status := "PAID"
-			if paymentSource == "PRESTAMO" || paymentSource == "PREST." {
-				status = "PENDING"
-			}
-			
-			expense := models.Expense{
-				Description:   description,
-				Amount:        totalAmount,
-				Date:          time.Now(),
-				PaymentSource: paymentSource,
-				Status:        status,
-				Category:      "Proveedores",
-				SupplierID:    mainSupplierID,
-				CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
-				ReferenceID:   receptionID,
-			}
-			if err := tx.Create(&expense).Error; err != nil {
-				return fmt.Errorf("error creando egreso: %w", err)
+			if isMixed {
+				// Crear un egreso por cada método de pago
+				for _, mp := range mixed {
+					if mp.Amount <= 0 {
+						continue
+					}
+					status := "PAID"
+					if mp.Method == "PRESTAMO" || mp.Method == "PREST." {
+						status = "PENDING"
+					}
+
+					expense := models.Expense{
+						Description:   fmt.Sprintf("%s (%s)", description, mp.Method),
+						Amount:        mp.Amount,
+						Date:          time.Now(),
+						PaymentSource: mp.Method,
+						Status:        status,
+						Category:      "Proveedores",
+						SupplierID:    mainSupplierID,
+						CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
+						ReferenceID:   receptionID,
+					}
+					if err := tx.Create(&expense).Error; err != nil {
+						return fmt.Errorf("error creando egreso mixto: %w", err)
+					}
+				}
+			} else {
+				// Flujo normal (un solo método de pago)
+				status := "PAID"
+				if paymentSource == "PRESTAMO" || paymentSource == "PREST." {
+					status = "PENDING"
+				}
+				
+				expense := models.Expense{
+					Description:   description,
+					Amount:        totalAmount,
+					Date:          time.Now(),
+					PaymentSource: paymentSource,
+					Status:        status,
+					Category:      "Proveedores",
+					SupplierID:    mainSupplierID,
+					CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
+					ReferenceID:   receptionID,
+				}
+				if err := tx.Create(&expense).Error; err != nil {
+					return fmt.Errorf("error creando egreso: %w", err)
+				}
 			}
 		}
 
@@ -437,11 +500,18 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 			}
 
+			freightPaymentSource := paymentSource
+			if isMixed && len(mixed) > 0 {
+				freightPaymentSource = mixed[0].Method
+			} else if paymentSource == "" {
+				freightPaymentSource = "EFECTIVO"
+			}
+
 			expenseFreight := models.Expense{
 				Description:   description,
 				Amount:        freightCost,
 				Date:          time.Now(),
-				PaymentSource: paymentSource,
+				PaymentSource: freightPaymentSource,
 				Status:        "PAID",
 				Category:      "Logística",
 				SupplierID:    mainSupplierID,
@@ -456,6 +526,9 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 		if orderID != nil && *orderID > 0 {
 			tx.Model(&models.PurchaseOrder{}).Where("id = ?", *orderID).Update("status", models.PurchaseOrderReceived)
 			tx.Model(&models.ExpectedOrder{}).Where("id = ?", *orderID).Update("status", "RECEIVED")
+		}
+		if mainSupplierID != nil && *mainSupplierID > 0 {
+			tx.Model(&models.ConfirmedOrder{}).Where("supplier_id = ? AND status != 'received' AND status != 'dismissed'", *mainSupplierID).Update("status", "received")
 		}
 
 		return nil
@@ -550,4 +623,10 @@ func (r *PostgresProductRepository) SanitizeAllNames() (int64, error) {
 		}
 	}
 	return count, nil
+}
+
+func (r *PostgresProductRepository) GetReception(receptionID string) ([]models.StockMovement, error) {
+	var movements []models.StockMovement
+	err := r.db.Preload("Product").Where("reference_id = ? AND reason = ?", receptionID, "RECEPTION").Find(&movements).Error
+	return movements, err
 }

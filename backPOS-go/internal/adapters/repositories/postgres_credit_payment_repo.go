@@ -24,6 +24,19 @@ func (r *PostgresCreditPaymentRepository) GetByClient(dni string) ([]models.Cred
 	return payments, err
 }
 
+func (r *PostgresCreditPaymentRepository) GetByID(id uint) (*models.CreditPayment, error) {
+	var payment models.CreditPayment
+	err := r.db.First(&payment, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &payment, nil
+}
+
+func (r *PostgresCreditPaymentRepository) Delete(id uint) error {
+	return r.db.Delete(&models.CreditPayment{}, id).Error
+}
+
 func (r *PostgresCreditPaymentRepository) GetByDateRange(start, end time.Time) ([]models.CreditPayment, error) {
 	var payments []models.CreditPayment
 	err := r.db.Preload("Client").Where("\"paymentDate\" BETWEEN ? AND ?", start, end).Find(&payments).Error

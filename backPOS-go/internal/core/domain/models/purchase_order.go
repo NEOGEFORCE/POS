@@ -36,7 +36,7 @@ type PurchaseOrderItem struct {
 	ID            uint           `gorm:"primaryKey;autoIncrement" json:"id"`
 	OrderID       uint           `gorm:"index;not null;column:orderId" json:"orderId"`
 	ProductBarcode string         `gorm:"not null;index;column:productBarcode" json:"barcode"`
-	Product       Product        `gorm:"foreignKey:ProductBarcode;references:Barcode" json:"product,omitempty"`
+	Product       Product        `gorm:"foreignKey:ProductBarcode;references:Barcode;constraint:false" json:"product,omitempty"`
 	Quantity      float64        `gorm:"not null;column:quantity" json:"quantity"`
 	UnitPrice     float64        `gorm:"type:decimal(10,2);not null;column:unitPrice" json:"unitPrice"`
 	Subtotal      float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`

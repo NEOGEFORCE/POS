@@ -22,6 +22,7 @@ export default function ReceptionHistoryPage() {
     const { user } = useAuth();
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [isDeleting, setIsDeleting] = useState(false);
+    const [editingId, setEditingId] = useState<string | null>(null);
     const [receptionToDelete, setReceptionToDelete] = useState<string | null>(null);
 
     const isAdmin = useMemo(() => {
@@ -29,8 +30,13 @@ export default function ReceptionHistoryPage() {
         return ['admin', 'administrador', 'superadmin'].includes(role);
     }, [user]);
 
+    const displayDate = useMemo(() => {
+        const [y, m, d] = selectedDate.split('-');
+        return `${d}/${m}/${y}`;
+    }, [selectedDate]);
+
     // Fetch movements using the existing report endpoint
-    const { data: movements, isLoading, mutate } = useApi<StockMovement[]>(
+    const { data: movements, isLoading, error: movementsError, mutate } = useApi<StockMovement[]>(
         `/dashboard/reports/movements?from=${selectedDate}&to=${selectedDate}`
     );
 
@@ -68,46 +74,7 @@ export default function ReceptionHistoryPage() {
         );
     }, [movements]);
 
-    const handleEdit = async (receptionId: string) => {
-        const reception = receptions.find(r => r.id === receptionId);
-        if (!reception) return;
 
-        setIsDeleting(true);
-        try {
-            const itemsToReload = (reception.items as any[]).map(item => {
-                let meta: any = {};
-                if (item.metadata) {
-                    try { meta = JSON.parse(item.metadata); } catch(e) {}
-                }
-                return {
-                    lineId: `line-${item.barcode}-${Date.now()}-${Math.random()}`,
-                    barcode: item.barcode,
-                    productName: item.name,
-                    addedQuantity: item.quantity,
-                    newPurchasePrice: meta.newPurchasePrice || 0,
-                    newSalePrice: meta.newSalePrice || 0,
-                    iva: meta.ivaPct || 0,
-                    icui: meta.icuiPct || 0,
-                    ibua: meta.ibuaPct || 0,
-                    discount: meta.discountPct || 0,
-                    supplierId: meta.supplierId || null,
-                    entryType: 'purchase',
-                    unit: 'UND' // Default
-                };
-            });
-
-            const token = Cookies.get('org-pos-token');
-            await apiFetch(`/products/reception/${receptionId}`, { method: 'DELETE' }, token);
-            
-            localStorage.setItem('reception_to_edit', JSON.stringify(itemsToReload));
-            toast({ title: "MODO EDICIÓN", description: "Recepción eliminada. Redirigiendo para corregir..." });
-            router.push('/inventory/receive');
-        } catch (err: any) {
-            toast({ variant: 'destructive', title: "ERROR", description: err.message });
-        } finally {
-            setIsDeleting(false);
-        }
-    };
 
     const handleDelete = async () => {
         if (!receptionToDelete) return;
@@ -166,6 +133,13 @@ export default function ReceptionHistoryPage() {
                         <Spinner color="success" size="lg" />
                         <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest animate-pulse">Cargando Historial...</p>
                     </div>
+                ) : movementsError ? (
+                    <Card className="card-base border-none border border-rose-200 dark:border-rose-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                        <CardBody className="py-16 flex flex-col items-center justify-center gap-3 text-center">
+                            <p className="text-sm font-bold text-rose-500 uppercase">Error al cargar el historial</p>
+                            <p className="text-[10px] text-zinc-500">{movementsError?.message || 'Intenta cambiar la fecha o recargar la página.'}</p>
+                        </CardBody>
+                    </Card>
                 ) : receptions.length === 0 ? (
                     <Card className="card-base border-none border border-zinc-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <CardBody className="py-20 flex flex-col items-center justify-center gap-4 text-center">
@@ -174,7 +148,7 @@ export default function ReceptionHistoryPage() {
                             </div>
                             <div>
                                 <h3 className="text-sm font-bold text-zinc-900 dark:text-white uppercase">No hay recepciones</h3>
-                                <p className="text-[10px] text-zinc-500 mt-1">No se registraron entradas de mercancía el {formatDate(selectedDate)}</p>
+                                <p className="text-[10px] text-zinc-500 mt-1">No se registraron entradas de mercancía el {displayDate}</p>
                             </div>
                         </CardBody>
                     </Card>
@@ -209,8 +183,8 @@ export default function ReceptionHistoryPage() {
                                                     color="warning"
                                                     className="w-full font-medium text-[10px] uppercase h-8 rounded-2xl bg-amber-500/10 hover:bg-amber-500 text-amber-600 dark:text-amber-500 hover:text-white transition-all"
                                                     startContent={<FileText size={14} />}
-                                                    isLoading={isDeleting}
-                                                    onPress={() => handleEdit(rec.id)}
+                                                    isDisabled={isDeleting}
+                                                    onPress={() => router.push('/inventory/receive?edit_reception=' + rec.id)}
                                                 >
                                                     Editar
                                                 </Button>

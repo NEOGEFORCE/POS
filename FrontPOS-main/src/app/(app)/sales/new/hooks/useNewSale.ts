@@ -15,6 +15,8 @@ import { registerAuditLog } from '@/lib/audit-service';
 export interface CartItem extends Product {
     cartQuantity: number;
     cartItemId: string; // ID único para React keys
+    originalQuantity?: number;
+    isPreexisting?: boolean;
 }
 
 export function useNewSale() {
@@ -378,7 +380,7 @@ export function useNewSale() {
                 console.error("Sync failed for", sale.id, err);
             }
         }
-        toast({ variant: "success", title: "SINCRO COMPLETA", description: "TODO AL DÍA" });
+        // toast({ variant: "success", title: "SINCRO COMPLETA", description: "TODO AL DÍA" });
     };
 
     // Actualizar conteo de cola al montar y cada vez que cambia el estado offline
@@ -421,6 +423,19 @@ export function useNewSale() {
     const sortedCart = useMemo(() => {
         return [...currentCart];
     }, [currentCart]);
+
+    const isEditMode = activeCartKey.startsWith('Factura EDIT-');
+    
+    const extraTotal = useMemo(() => {
+        if (!isEditMode) return 0;
+        const items = splitItemsToPay || currentCart;
+        if (!Array.isArray(items) || items.length === 0) return 0;
+        return items.reduce((sum, item) => {
+            const qty = item.isPreexisting ? Math.max(0, item.cartQuantity - (item.originalQuantity || 0)) : item.cartQuantity;
+            const price = Number(item.salePrice) || 0;
+            return sum + applyRounding(price * qty);
+        }, 0);
+    }, [splitItemsToPay, currentCart, isEditMode]);
 
     const total = useMemo(() => {
         const items = splitItemsToPay || currentCart;
@@ -543,21 +558,18 @@ export function useNewSale() {
             const item = current[idx];
             const newQty = item.cartQuantity + delta;
 
+            if (item.isPreexisting && newQty < (item.originalQuantity || 0)) {
+                toast({ variant: "destructive", title: "ACCIÓN BLOQUEADA", description: "No puedes reducir la cantidad por debajo de lo que ya estaba en la factura original." });
+                return prev;
+            }
+
             if (newQty <= 0) {
                 const filtered = current.filter(i => i.cartItemId !== cartItemId);
                 if (selectedItemId === cartItemId) setSelectedItemId(null);
                 return { ...prev, [currentKey]: filtered };
             }
 
-            if (!isProductWeighted(item) && delta > 0 && newQty > item.quantity) {
-                // Modo Estricto: Bloquear si no hay stock físico en sistema
-                toast({ 
-                    variant: "destructive", 
-                    title: "LÍMITE DE INVENTARIO", 
-                    description: `SOLO HAY ${item.quantity} UNIDADES DE "${item.productName.toUpperCase()}" EN SISTEMA. NO SE PUEDE AGREGAR MÁS.` 
-                }); 
-                return prev;
-            }
+
 
             current[idx] = { ...current[idx], cartQuantity: newQty };
             return { ...prev, [currentKey]: current };
@@ -608,20 +620,19 @@ export function useNewSale() {
             if (idx === -1) return prev;
 
             const item = current[idx];
+
+            if (item.isPreexisting && quantity < (item.originalQuantity || 0)) {
+                toast({ variant: "destructive", title: "ACCIÓN BLOQUEADA", description: "No puedes reducir la cantidad por debajo de lo que ya estaba en la factura original." });
+                return prev;
+            }
+
             if (quantity <= 0) {
                 const filtered = current.filter(i => i.cartItemId !== cartItemId);
                 if (selectedItemId === cartItemId) setSelectedItemId(null);
                 return { ...prev, [currentKey]: filtered };
             }
 
-            if (!isProductWeighted(item) && quantity > item.quantity) {
-                toast({ 
-                    variant: "destructive", 
-                    title: "STOCK INSUFICIENTE", 
-                    description: `NO ES POSIBLE ASIGNAR ${quantity} UNIDADES. EL SALDO ACTUAL DE "${item.productName.toUpperCase()}" ES DE ${item.quantity}.` 
-                }); 
-                return prev;
-            }
+
 
             current[idx] = { ...current[idx], cartQuantity: quantity };
             return { ...prev, [currentKey]: current };
@@ -659,7 +670,7 @@ export function useNewSale() {
         setScannerBuffer('');
         setFeedbackCode('0000'); // Triggers beep
         setIsFeedbackError(false);
-        toast({ variant: "success", title: "ÉXITO", description: "VENTA RÁPIDA AGREGADA" }); 
+        // toast({ variant: "success", title: "ÉXITO", description: "VENTA RÁPIDA AGREGADA" }); 
         returnFocusToScanner();
     }, [toast, returnFocusToScanner, setSearchQuery, setScannerBuffer]);
 
@@ -670,14 +681,7 @@ export function useNewSale() {
                 return;
             }
 
-            if (p.quantity <= 0 && !isProductWeighted(p)) { 
-                toast({ 
-                    variant: "destructive", 
-                    title: "PRODUCTO AGOTADO", 
-                    description: `EL ARTÍCULO "${p.productName.toUpperCase()}" TIENE STOCK 0. NO SE PUEDE AÑADIR AL CARRITO HASTA QUE SE REGISTRE NUEVA MERCANCÍA.` 
-                }); 
-                return;
-            }
+
 
             const currentKey = activeCartKeyRef.current;
 
@@ -722,14 +726,7 @@ export function useNewSale() {
                 const idx = current.findIndex(item => item.cartItemId === p.barcode);
                 
                 if (idx > -1) {
-                    if (!isProductWeighted(p) && current[idx].cartQuantity >= p.quantity) {
-                        toast({ 
-                            variant: "destructive", 
-                            title: "STOCK AGOTADO", 
-                            description: `YA HAS AGREGADO TODAS LAS UNIDADES DISPONIBLES (${p.quantity}) DE "${p.productName.toUpperCase()}".` 
-                        });
-                        return prev;
-                    }
+
                     const updatedItem = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
                     current.splice(idx, 1);
                     current.push(updatedItem);
@@ -819,11 +816,11 @@ export function useNewSale() {
                     setIsFeedbackError(false);
                     setScannerBuffer('');
                     setSearchQuery('');
-                    toast({ 
-                        variant: "success", 
-                        title: "BALANZA DETECTADA", 
-                        description: `${p.productName}: ${calculatedWeight.toFixed(3)}kg añadidos` 
-                    });
+                    // toast({ 
+                    //     variant: "success", 
+                    //     title: "BALANZA DETECTADA", 
+                    //     description: `${p.productName}: ${calculatedWeight.toFixed(3)}kg añadidos` 
+                    // });
                     // Autofocus en el carrito: necesitamos reconstruir el ID para seleccionarlo
                     // como dependemos del estado, usamos el mismo barcode temporal (para heuristic no se suele editar la cantidad, pero por si acaso)
                     returnFocusToScanner();
@@ -900,7 +897,7 @@ export function useNewSale() {
                 }
                 return { ...prev, [currentKey]: current };
             });
-            toast({ variant: "success", title: "PESO SINCRONIZADO", description: `${item.productName}: ${scaleWeight.toFixed(3)} kg` });
+            // toast({ variant: "success", title: "PESO SINCRONIZADO", description: `${item.productName}: ${scaleWeight.toFixed(3)} kg` });
         }
     }, [isScaleOnline, isScaleReloading, scaleWeight, selectedItemId, carts, toast, reloadScale]);
 
@@ -916,8 +913,80 @@ export function useNewSale() {
     }) => {
         if (submitting || submittingRef.current) return;
         if (currentCart.length === 0 && !splitItemsToPay) return;
+        
+        const currentKey = activeCartKeyRef.current;
+        const isEditModeLocal = currentKey.startsWith('Factura EDIT-');
         const itemsToPay = splitItemsToPay || currentCart;
+        
+        if (isEditModeLocal) {
+            setSubmitting(true);
+            submittingRef.current = true;
+            try {
+                const token = Cookies.get('org-pos-token');
+                let payloadItems = [];
+                let totalDeductionsForState = new Map<string, number>();
 
+                for (const item of itemsToPay) {
+                    const qty = item.isPreexisting ? Math.max(0, item.cartQuantity - (item.originalQuantity || 0)) : item.cartQuantity;
+                    if (qty > 0) {
+                        payloadItems.push({
+                            barcode: item.barcode,
+                            quantity: qty
+                        });
+                        totalDeductionsForState.set(item.barcode, qty);
+                    }
+                }
+                
+                if (payloadItems.length === 0) {
+                    toast({ variant: "destructive", title: "SIN CAMBIOS", description: "No has agregado nuevos productos a esta factura." });
+                    setSubmitting(false);
+                    submittingRef.current = false;
+                    return;
+                }
+                
+                const saleId = currentKey.split('-')[1];
+                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/add-items/${saleId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ items: payloadItems })
+                });
+                
+                if (res.ok) {
+                    toast({ variant: 'success', title: 'VENTA ACTUALIZADA', description: 'SE AGREGARON LOS PRODUCTOS CON ÉXITO' });
+                    setLastChange(paymentData.change);
+                    setShowSuccessScreen(true);
+                    
+                    // actualizamos inventario
+                    setProducts(prev => prev.map(p => {
+                        const deduction = totalDeductionsForState.get(p.barcode);
+                        if (deduction !== undefined) {
+                            return { ...p, quantity: Math.max(0, p.quantity - deduction) };
+                        }
+                        return p;
+                    }));
+                    mutateProducts();
+                    
+                    // clean cart
+                    const updatedCarts = { ...carts };
+                    delete updatedCarts[currentKey];
+                    setCarts(updatedCarts);
+                    const newKeys = cartKeys.filter(k => k !== currentKey);
+                    setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
+                    setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
+                    
+                    broadcastRevalidate('SALE_MADE');
+                } else {
+                    const errorMsg = await extractApiError(res, "ERROR AL ACTUALIZAR");
+                    toast({ variant: "destructive", title: "ERROR DEL SERVIDOR", description: errorMsg });
+                }
+            } catch (err) {
+                 toast({ variant: "destructive", title: "ERROR INESPERADO", description: "Ocurrió un error de red" });
+            } finally {
+                setSubmitting(false);
+                submittingRef.current = false;
+            }
+            return;
+        }
         // --- BLINDAJE DE PRECIOS (POS GUARD v1.0) ---
         // Verificamos que los precios del carrito coincidan con los datos frescos de la memoria (SWR)
         const priceMismatches = itemsToPay.filter(item => {
@@ -1038,16 +1107,27 @@ export function useNewSale() {
             const isNetworkError = err instanceof TypeError || err.name === 'TypeError' || err.message?.includes('fetch') || isTimeout;
             
             if (isNetworkError) {
-                const { addToSyncQueue } = await import('@/lib/offline-db');
-                await addToSyncQueue('SALE', saleData);
-                
-                toast({ 
-                    variant: isTimeout ? "destructive" : "default", 
-                    title: isTimeout ? "TIEMPO EXCEDIDO" : "MODO OFFLINE", 
-                    description: isTimeout ? "EL SERVIDOR TARDÓ DEMASIADO. VENTA GUARDADA LOCALMENTE." : "FALLO DE RED. VENTA GUARDADA LOCALMENTE." 
-                });
-                
-                finalizeLocalSale(itemsToPay, saleData, change);
+                try {
+                    const { db } = await import('@/lib/db');
+                    await db.ventas_pendientes.add({
+                        cart: itemsToPay,
+                        total: localTotal,
+                        paymentMethod: paymentMethod,
+                        customerDni: selectedCustomerDni,
+                        timestamp: Date.now()
+                    });
+                    
+                    toast({ 
+                        variant: "success", 
+                        title: "MODO OFFLINE", 
+                        description: "Venta guardada localmente (Modo Offline)" 
+                    });
+                    
+                    finalizeLocalSale(itemsToPay, saleData, change);
+                } catch (dbError) {
+                    toast({ variant: "destructive", title: "ERROR CRÍTICO", description: "Fallo al guardar la venta offline" });
+                    setSubmitting(false);
+                }
             } else {
                 toast({ variant: "destructive", title: "ERROR INESPERADO", description: err.message || "CONSULTE AL ADMINISTRADOR", duration: 10000 });
                 setSubmitting(false);
@@ -1222,7 +1302,7 @@ export function useNewSale() {
         selectedCustomer, selectedCustomerDni,
         
         // Computed
-        total, filteredProductsGrid, filteredCustomers,
+        total: isEditMode ? extraTotal : total, filteredProductsGrid, filteredCustomers,
         
         // UI State
         loading: loading || ((products.length === 0 || categories.length === 0) && (productsLoading || categoriesLoading)), 

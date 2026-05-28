@@ -18,7 +18,7 @@ const (
 type Shrinkage struct {
 	ID          uint           `gorm:"primaryKey;autoIncrement" json:"id"`
 	ProductID   string         `gorm:"not null;index;column:product_id" json:"product_id"`
-	Product     Product        `gorm:"foreignKey:ProductID;references:Barcode" json:"product,omitempty"`
+	Product     Product        `gorm:"foreignKey:ProductID;references:Barcode;constraint:false" json:"product,omitempty"`
 	Quantity    float64        `gorm:"type:decimal(10,3);not null" json:"quantity"`
 	Reason      ShrinkageReason `gorm:"type:varchar(50);not null" json:"reason"`
 	CostAtTime  float64        `gorm:"type:decimal(10,2);not null" json:"cost_at_time"`

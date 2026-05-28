@@ -372,14 +372,15 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 
 func (h *ProductHandler) BulkReceive(c *gin.Context) {
 	var body struct {
-		OrderID       *uint                `json:"orderId"`
-		Entries       []ports.ReceiveEntry `json:"entries" binding:"required"`
-		BypassExpense bool                 `json:"bypassExpense"`
-		PaymentSource string               `json:"paymentSource"`
-		SupplierID    *uint                `json:"supplierId"`
-		FreightCost   float64              `json:"freightCost"`
-		TotalWeight   float64              `json:"totalWeight"`
-		IsEgreso      *bool                `json:"isEgreso"`
+		OrderID         *uint                `json:"orderId"`
+		Entries         []ports.ReceiveEntry `json:"entries" binding:"required"`
+		BypassExpense   bool                 `json:"bypassExpense"`
+		PaymentSource   string               `json:"paymentSource"`
+		SupplierID      *uint                `json:"supplierId"`
+		FreightCost     float64              `json:"freightCost"`
+		TotalWeight     float64              `json:"totalWeight"`
+		IsEgreso        *bool                `json:"isEgreso"`
+		EditReceptionID string               `json:"editReceptionId"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
@@ -408,7 +409,7 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 		isEgreso = *body.IsEgreso
 	}
 
-	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr, body.SupplierID, body.FreightCost, body.TotalWeight, isEgreso); err != nil {
+	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr, body.SupplierID, body.FreightCost, body.TotalWeight, isEgreso, body.EditReceptionID); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepciÃ³n masiva", err)
 		return
 	}
@@ -741,6 +742,20 @@ func (h *ProductHandler) EditReception(c *gin.Context) {
 	})
 }
 
+func (h *ProductHandler) GetReception(c *gin.Context) {
+	id := c.Param("id")
+	movements, err := h.service.GetReception(id)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener detalle de la recepción", err)
+		return
+	}
+	if len(movements) == 0 {
+		SendError(c, http.StatusNotFound, ErrNotFound, "Recepción no encontrada", nil)
+		return
+	}
+	c.JSON(http.StatusOK, movements)
+}
+
 func (h *ProductHandler) ScanInvoice(c *gin.Context) {
 	var req struct {
 		ImageBase64  string `json:"imageBase64"`
@@ -777,4 +792,24 @@ func (h *ProductHandler) SaveAlias(c *gin.Context) {
 	// We'll return 200 OK for now to satisfy the compiler.
 	c.JSON(http.StatusOK, gin.H{"message": "Alias guardado con éxito"})
 }
+
+func (h *ProductHandler) UnlinkSupplier(c *gin.Context) {
+	barcode := c.Param("barcode")
+	var req struct {
+		SupplierID uint `json:"supplierId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Falta supplierId", err)
+		return
+	}
+
+	err := h.service.UnlinkSupplier(barcode, req.SupplierID)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al desvincular proveedor", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Proveedor desvinculado con éxito"})
+}
+
 

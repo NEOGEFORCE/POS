@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useRouter } from 'next/navigation';
 import {
     Button, Input, Pagination, Spinner
 } from "@heroui/react";
@@ -15,6 +16,7 @@ import Cookies from 'js-cookie';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
 // COMPONENTES MODULARIADOS
+import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
 const SalesKPIs = dynamic(() => import('./components/SalesKPIs'), { ssr: false });
 const SaleDetailModal = dynamic(() => import('./components/SaleDetailModal'), { ssr: false });
 const SaleEditModal = dynamic(() => import('./components/SaleEditModal'), { ssr: false });
@@ -40,6 +42,53 @@ export default function SalesHistoryPage() {
 
     const { data: customersData } = useApi<Customer[]>('/clients/all-clients');
     const customers = customersData || [];
+    const router = useRouter();
+
+    const handleAddItems = async (s: Sale) => {
+        const cartKey = `Factura EDIT-${s.id}`;
+        const cartItems = (s.details || []).map(d => ({
+            cartItemId: `edit_${d.id}`,
+            barcode: d.barcode,
+            productName: d.product?.productName || "PRODUCTO",
+            salePrice: d.unitPrice,
+            cartQuantity: d.quantity,
+            originalQuantity: d.quantity,
+            isPreexisting: true,
+            categoryId: d.product?.categoryId || 0,
+            quantity: d.product?.quantity || 0,
+            purchasePrice: d.product?.purchasePrice || 0,
+            marginPercentage: d.product?.marginPercentage || 0,
+            isWeighted: d.product?.isWeighted || false
+        }));
+        
+        try {
+            const currentData = await loadCartsFromIndexedDB();
+            const carts = currentData ? currentData.carts : { 'Factura 1': [] };
+            const cartCustomers = currentData ? currentData.cartCustomers : { 'Factura 1': '0' };
+            
+            const clientDni = s.client?.dni && s.client?.dni !== "0" ? s.client?.dni : (s as any).clientDni || '0';
+            const customerDni = clientDni !== "0" ? clientDni : (currentData?.customerDni || '0');
+
+            carts[cartKey] = cartItems;
+            if (clientDni && clientDni !== "0") {
+                cartCustomers[cartKey] = clientDni;
+            }
+
+            await saveCartsToIndexedDB(
+                carts,
+                cartKey,
+                customerDni,
+                cartCustomers,
+                null
+            );
+            router.push('/sales/new');
+        } catch (error) {
+            console.error("Error setting cart data:", error);
+            localStorage.setItem(`pos_cart_${cartKey}`, JSON.stringify(cartItems));
+            localStorage.setItem('pos_active_cart', cartKey);
+            router.push('/sales/new');
+        }
+    };
 
     const handlePrint = useCallback(() => {
         if (!selectedSale) return;
@@ -137,6 +186,7 @@ export default function SalesHistoryPage() {
                         sales={sales}
                         onOpenPreview={(s) => { setSelectedSale(s); setIsPreviewOpen(true); }}
                         onOpenEdit={(s) => { setSelectedSale(s); setIsEditOpen(true); }}
+                        onOpenAddItems={handleAddItems}
                         onOpenDelete={(s) => { setSelectedSale(s); setIsDeleteOpen(true); }}
                     />
 

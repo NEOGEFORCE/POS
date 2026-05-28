@@ -195,16 +195,16 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 			"purchasePrice" = $5, "salePrice" = $6, "categoryId" = $7, "supplierId" = $8, 
 			iva = $9, icui = $10, ibua = $11, discount = $12, "marginPercentage" = $13, "imageUrl" = $14, 
 			"minStock" = $15, "isActive" = $16, "isPack" = $17, "packMultiplier" = $18, 
-			"baseProductBarcode" = $19, alternate_codes = $20, "alternateCodes" = $21, 
-			"updatedByDni" = $22, "updatedByName" = $23, order_multiple = $24
-			WHERE barcode = $25`
+			"baseProductBarcode" = $19, alternate_codes = $20, 
+			"updatedByDni" = $21, "updatedByName" = $22, order_multiple = $23
+			WHERE barcode = $24`
 
 		result := r.db.Exec(query,
 			product.Barcode, product.ProductName, product.Quantity, product.IsWeighted,
 			product.PurchasePrice, product.SalePrice, catID, suppID,
 			product.Iva, product.Icui, product.Ibua, product.Discount, product.MarginPercentage, product.ImageUrl,
 			product.MinStock, product.IsActive, product.IsPack, product.PackMultiplier,
-			baseBc, product.AlternateCodes, product.AlternateCodes,
+			baseBc, product.AlternateCodes,
 			product.UpdatedByDNI, product.UpdatedByName, product.OrderMultiple,
 			barcode,
 		)
@@ -230,16 +230,16 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 			"purchasePrice" = $4, "salePrice" = $5, "categoryId" = $6, "supplierId" = $7, 
 			iva = $8, icui = $9, ibua = $10, discount = $11, "marginPercentage" = $12, "imageUrl" = $13, 
 			"minStock" = $14, "isActive" = $15, "isPack" = $16, "packMultiplier" = $17, 
-			"baseProductBarcode" = $18, alternate_codes = $19, "alternateCodes" = $20, 
-			"updatedByDni" = $21, "updatedByName" = $22, order_multiple = $23
-			WHERE barcode = $24`
+			"baseProductBarcode" = $18, alternate_codes = $19, 
+			"updatedByDni" = $20, "updatedByName" = $21, order_multiple = $22
+			WHERE barcode = $23`
 
 		result := r.db.Exec(query,
 			product.ProductName, product.Quantity, product.IsWeighted,
 			product.PurchasePrice, product.SalePrice, catID, suppID,
 			product.Iva, product.Icui, product.Ibua, product.Discount, product.MarginPercentage, product.ImageUrl,
 			product.MinStock, product.IsActive, product.IsPack, product.PackMultiplier,
-			baseBc, product.AlternateCodes, product.AlternateCodes,
+			baseBc, product.AlternateCodes,
 			product.UpdatedByDNI, product.UpdatedByName, product.OrderMultiple,
 			barcode,
 		)
@@ -325,6 +325,20 @@ func (r *PostgresProductRepository) GetBySupplier(supplierID uint) ([]models.Pro
 		supplierID, supplierID,
 	).Find(&products).Error
 	return products, err
+}
+
+func (r *PostgresProductRepository) UnlinkSupplier(barcode string, supplierID uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Set products.supplierId to NULL if it matches this supplier
+		if err := tx.Exec(`UPDATE products SET "supplierId" = NULL WHERE barcode = ? AND "supplierId" = ?`, barcode, supplierID).Error; err != nil {
+			return err
+		}
+		// 2. Remove from product_suppliers mapping table
+		if err := tx.Exec(`DELETE FROM product_suppliers WHERE product_barcode = ? AND supplier_id = ?`, barcode, supplierID).Error; err != nil {
+			return err
+		}
+		return nil
+	})
 }
 func (r *PostgresProductRepository) UpdateSupplierFrequency(supplierID uint, days int) error {
 	return r.db.Model(&models.Supplier{}).Where("id = ?", supplierID).Update("visit_frequency_days", days).Error
@@ -505,3 +519,70 @@ func (r *PostgresProductRepository) EditReception(ref string, dniStr string, rea
 
 	return priceChanges, err
 }
+
+func (r *PostgresProductRepository) GetSupplierAliases(supplierID uint) (map[string]models.SupplierProductAlias, error) {
+	var aliases []models.SupplierProductAlias
+	if err := r.db.Where("supplier_id = ?", supplierID).Find(&aliases).Error; err != nil {
+		return nil, err
+	}
+	result := make(map[string]models.SupplierProductAlias)
+	for _, a := range aliases {
+		result[a.InvoiceName] = a
+	}
+	return result, nil
+}
+
+func (r *PostgresProductRepository) GetSupplierInvoiceParams(supplierID uint) (*models.SupplierInvoiceParams, error) {
+	var params models.SupplierInvoiceParams
+	if err := r.db.Where("supplier_id = ?", supplierID).First(&params).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil // Not an error if it doesn't exist yet
+		}
+		return nil, err
+	}
+	return &params, nil
+}
+
+func (r *PostgresProductRepository) SaveSupplierAlias(alias *models.SupplierProductAlias) error {
+	var existing models.SupplierProductAlias
+	err := r.db.Where("supplier_id = ? AND invoice_name = ?", alias.SupplierID, alias.InvoiceName).First(&existing).Error
+	if err == nil {
+		existing.UsesCount++
+		return r.db.Save(&existing).Error
+	}
+	if err == gorm.ErrRecordNotFound {
+		return r.db.Create(alias).Error
+	}
+	return err
+}
+
+func (r *PostgresProductRepository) FindProductBySimilarName(name string, supplierID uint) (*models.Product, float64) {
+	var p models.Product
+	// Direct ILIKE match or using trigram similarity if enabled.
+	// For now, let's use a simple ILIKE search with wildcards. In production, pg_trgm is better.
+	// We check if there's any product where the name matches partially.
+	searchTerm := "%" + name + "%"
+	err := r.db.Where("\"productName\" ILIKE ?", searchTerm).First(&p).Error
+	if err == nil {
+		return &p, 0.8 // Dummy confidence for ILIKE
+	}
+	return nil, 0
+}
+
+func (r *PostgresProductRepository) SearchSimilarProducts(name string, limit int) []models.ProductSearch {
+	var products []models.Product
+	searchTerm := "%" + name + "%"
+	r.db.Where("\"productName\" ILIKE ?", searchTerm).Limit(limit).Find(&products)
+
+	var suggestions []models.ProductSearch
+	for _, p := range products {
+		suggestions = append(suggestions, models.ProductSearch{
+			ID:          1, // Not used heavily, barcode is main ID
+			Barcode:     p.Barcode,
+			ProductName: p.ProductName,
+			Confidence:  0.8,
+		})
+	}
+	return suggestions
+}
+

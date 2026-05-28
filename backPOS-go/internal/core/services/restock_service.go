@@ -26,37 +26,28 @@ func (s *RestockService) RemovePurchaseListItem(id string) error {
 	return s.repo.RemovePurchaseListItem(id)
 }
 
-func (s *RestockService) ConfirmOrder(supplierID uint, estimatedTotal, realInvoiceTotal float64, confirmedBy string) error {
-	// First get the active items for this supplier
-	activeList, err := s.repo.GetActivePurchaseList()
-	if err != nil {
-		return err
-	}
-
-	var items []models.ConfirmedOrderItem
-	for _, item := range activeList {
-		if item.SupplierID == supplierID {
-			items = append(items, models.ConfirmedOrderItem{
-				ProductID:      item.ProductID,
-				Quantity:       item.Quantity,
-				EstimatedPrice: 0, // We could pull this from product if needed, but UI calculates total
-			})
-		}
-	}
-
+func (s *RestockService) ConfirmOrder(supplierID uint, expectedDate, invoiceRef string, items []models.ConfirmedOrderItem, estimatedTotal, realInvoiceTotal float64, confirmedBy string, editOrderID string) error {
 	if len(items) == 0 {
 		return nil // Nothing to confirm
 	}
 
+	if editOrderID != "" {
+		if err := s.repo.DeleteOrderAndItems(editOrderID); err != nil {
+			return err
+		}
+	}
+
 	order := &models.ConfirmedOrder{
 		SupplierID:       supplierID,
+		ExpectedDate:     expectedDate,
+		InvoiceRef:       invoiceRef,
 		EstimatedTotal:   estimatedTotal,
 		RealInvoiceTotal: realInvoiceTotal,
 		Status:           "pending",
 		ConfirmedBy:      confirmedBy,
 	}
 
-	err = s.repo.CreateConfirmedOrder(order, items)
+	err := s.repo.CreateConfirmedOrder(order, items)
 	if err != nil {
 		return err
 	}
@@ -67,10 +58,18 @@ func (s *RestockService) GetPendingOrders() ([]models.ConfirmedOrder, error) {
 	return s.repo.GetPendingOrders()
 }
 
+func (s *RestockService) GetPendingOrdersBySupplier(supplierID uint) ([]models.ConfirmedOrder, error) {
+	return s.repo.GetPendingOrdersBySupplier(supplierID)
+}
+
 func (s *RestockService) GetOrdersHistory(limit, offset int, filters map[string]interface{}) ([]models.ConfirmedOrder, int64, error) {
 	return s.repo.GetOrdersHistory(limit, offset, filters)
 }
 
 func (s *RestockService) GetOrderByID(id string) (*models.ConfirmedOrder, error) {
 	return s.repo.GetOrderByID(id)
+}
+
+func (s *RestockService) UpdateOrderStatus(id string, status string, receivedBy string) error {
+	return s.repo.UpdateOrderStatus(id, status, receivedBy)
 }

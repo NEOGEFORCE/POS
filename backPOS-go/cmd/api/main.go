@@ -96,7 +96,7 @@ func main() {
 	cronManager.Start()
 
 	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
-	aiBotService := services.NewAIBotService(saleRepo, productRepo, expenseRepo, restockRepo, telegramService)
+	aiBotService := services.NewAIBotService(saleRepo, productRepo, expenseRepo, restockRepo, telegramService, repositories.DB)
 	telegramService.StartListener(inventoryService, saleRepo, dashboardService, productService, aiBotService)
 
 	// Mantenimiento: Blindaje de datos existentes (Limpieza de tildes)
@@ -268,6 +268,7 @@ func main() {
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
 				productAdmin.DELETE("/inventory/receive/:ref", productHandler.DeleteReception)
 				productAdmin.PATCH("/inventory/receive/:ref", productHandler.EditReception)
+				productAdmin.GET("/receptions/:id", productHandler.GetReception)
 				productAdmin.POST("/inventory/scan-invoice", productHandler.ScanInvoice)
 				productAdmin.POST("/inventory/save-alias", productHandler.SaveAlias)
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
@@ -437,8 +438,10 @@ func main() {
 			protected.GET("/inventory/global-restock", orderHandler.GetGlobalRestockSuggestions) // Radar Global
 			protected.POST("/inventory/orders", orderHandler.CreateOrder)
 			protected.GET("/inventory/orders", orderHandler.GetAllOrders)
+			protected.GET("/inventory/orders/:id/items", orderHandler.GetOrderItems)
 			protected.POST("/inventory/orders/dismiss", orderHandler.DismissOrder)
 			protected.POST("/inventory/shrinkage", productHandler.RegisterShrinkage)
+			protected.PATCH("/inventory/products/:barcode/unlink-supplier", productHandler.UnlinkSupplier)
 			protected.POST("/telegram/send-delivery-summary", orderHandler.SendDeliverySummaryToTelegram)
 			protected.GET("/inventory/savings-opportunities", productHandler.GetSavingsOpportunities)
 

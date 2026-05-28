@@ -176,6 +176,19 @@ export default function CategoriesPage() {
         const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CATEGORÍA");
         throw new Error(errorMsg);
       }
+
+      // Also update margin if changed
+      if (editingCategory.marginPercentage !== undefined) {
+        const marginRes = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/update-categories/${editingCategory.id}/margin`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+          body: JSON.stringify({ marginPercentage: editingCategory.marginPercentage })
+        });
+        if (!marginRes.ok) {
+           console.error("Failed to update margin");
+        }
+      }
+
       toast({ variant: 'success', title: 'ÉXITO', description: 'NOMBRE DE CATEGORÍA SINCRONIZADO.' });
       setEditDialogOpen(false);
       setEditingCategory(null);
@@ -318,6 +331,8 @@ export default function CategoriesPage() {
             setEditingCategory(p => p ? { ...p, name } : null);
           }
         }}
+        marginPercentage={editingCategory?.marginPercentage}
+        setMarginPercentage={(margin) => setEditingCategory(p => p ? { ...p, marginPercentage: margin } : null)}
         onSave={addDialogOpen ? handleAddCategory : handleEditCategory}
       />
 

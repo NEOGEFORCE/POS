@@ -55,6 +55,10 @@ export default {
               DEFAULT: "#059669",
               foreground: "#ffffff",
             },
+            secondary: {
+              DEFAULT: "#6b7280",
+              foreground: "#ffffff",
+            },
             focus: "#059669",
           }
         },
@@ -62,6 +66,10 @@ export default {
           colors: {
             primary: {
               DEFAULT: "#10b981",
+              foreground: "#ffffff",
+            },
+            secondary: {
+              DEFAULT: "#4b5563",
               foreground: "#ffffff",
             },
             focus: "#10b981",

@@ -4,6 +4,8 @@ import (
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
 	"net/http"
+	"time"
+	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
 )
@@ -129,12 +131,18 @@ func (h *DashboardReportHandler) GetInventoryMovements(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
 		return
 	}
-	fromDate, _ := parseDate(from)
-	toDate, _ := parseDate(to)
+	loc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		loc = time.FixedZone("America/Bogota", -5*60*60)
+	}
+	fromDate, _ := time.ParseInLocation("2006-01-02", from, loc)
+	startOfToDate, _ := time.ParseInLocation("2006-01-02", to, loc)
+	toDate := startOfToDate.Add(24 * time.Hour).Add(-time.Nanosecond)
 
 	data, err := h.service.GetInventoryMovementsReport(fromDate, toDate)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al generar reporte de movimientos de inventario", err)
+		// Devolver array vacío en lugar de error para que el frontend no quede en carga infinita
+		c.JSON(http.StatusOK, []services.StockMovementReportItem{})
 		return
 	}
 	if data == nil {

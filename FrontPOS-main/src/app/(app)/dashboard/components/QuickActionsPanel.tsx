@@ -40,7 +40,7 @@ export default function QuickActionsPanel() {
         {
             label: "Pedidos Inteligentes",
             icon: PackageSearch,
-            href: "/inventory/restock",
+            href: "/inventory/orders",
             color: "purple",
             shadow: "shadow-purple-500/20"
         }

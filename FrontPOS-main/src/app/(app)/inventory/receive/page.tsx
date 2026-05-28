@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button, Input, Badge, Spinner, Select, SelectItem, Autocomplete, AutocompleteItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Switch, Tooltip, Checkbox } from "@heroui/react";
 import Link from 'next/link';
 import {
@@ -18,11 +18,14 @@ import Cookies from 'js-cookie';
 import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/auth';
 import { apiFetch, ApiError } from '@/lib/api-error';
+import { API_URL } from '@/lib/constants';
+import PendingOrdersView from './components/PendingOrdersView';
 
 const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 const ReceptionRow = dynamic(() => import('./components/ReceptionRow'), { ssr: false });
 const SupplierFormModal = dynamic(() => import('../../suppliers/components/SupplierFormModal'), { ssr: false });
 const ProductFormModal = dynamic(() => import('../../products/components/ProductFormModal'), { ssr: false });
+const InvoiceReaderModal = dynamic(() => import('./components/InvoiceReaderModal'), { ssr: false });
 
 // Stats Component inline (mismo patrón que ProductStats)
 const SPARKLINE_DATA_1 = [{ val: 40 }, { val: 30 }, { val: 45 }, { val: 20 }, { val: 50 }];
@@ -43,17 +46,25 @@ export interface ReceiveItem {
     entryType: 'purchase' | 'gift' | 'return';
     iva: number; // Porcentaje (%)
     icui: number; // Porcentaje (%)
+    matchStatus?: 'match' | 'warning' | 'extra'; // Match de factura
     ibua: number; // Porcentaje (%)
     discount: number;
     currentStock: number;
     unit: 'UND' | 'KG' | 'LB';
     isWeighted: boolean;
     actualPhysicalStock?: number;
+    productSuppliers?: any[];
+    isMatched?: boolean;
+    supplierId?: string | number;
 }
 
 export default function ReceiveInventoryPage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
+    const editReceptionParam = searchParams.get('edit_reception');
+    const [editReceptionId, setEditReceptionId] = useState<string | null>(null);
     const { toast } = useToast();
+    const [viewMode, setViewMode] = useState<'pending' | 'active'>('pending');
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [notFoundDialogOpen, setNotFoundDialogOpen] = useState(false);
@@ -98,6 +109,9 @@ export default function ReceiveInventoryPage() {
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [scanMode, setScanMode] = useState<'main' | 'alternate' | 'search' | 'baseProduct'>('main');
 
+    // ESTADO PARA LECTOR IA DE FACTURAS
+    const [isInvoiceReaderOpen, setIsInvoiceReaderOpen] = useState(false);
+
     const paymentMethods = [
         { id: 'EFECTIVO', label: 'Caja', icon: Wallet },
         { id: 'FONDO', label: 'Fondo', icon: Landmark },
@@ -106,7 +120,6 @@ export default function ReceiveInventoryPage() {
         { id: 'PRESTAMO', label: 'Prest.', icon: HandCoins }
     ];
 
-    // FASE 3: Blindaje de Rol Estricto - Cargando desde Contexto Centralizado
     // FASE 3: Blindaje de Rol Estricto - Cargando desde Contexto Centralizado
     const isAdmin = useMemo(() => {
         const role = (user?.role || user?.Role || '').toLowerCase();
@@ -121,29 +134,78 @@ export default function ReceiveInventoryPage() {
         if (!authLoading && !isAdmin && bypassExpense) setBypassExpense(false);
     }, [authLoading, isAdmin, bypassExpense]);
 
-    // LÓGICA DE RECARGA PARA EDICIÓN (Viene del Historial)
+    // LÓGICA DE RECARGA PARA EDICIÓN (Viene del Historial vía URL)
     useEffect(() => {
-        const toEdit = localStorage.getItem('reception_to_edit');
-        if (toEdit) {
+        const fetchEditReception = async () => {
+            if (!editReceptionParam) return;
+            setEditReceptionId(editReceptionParam);
+            const token = Cookies.get('org-pos-token');
+            if (!token) return;
             try {
-                const items = JSON.parse(toEdit);
-                if (Array.isArray(items) && items.length > 0) {
-                    setReceiveList(items);
-                    if (items[0].supplierId) {
-                        setSelectedGlobalSupplier(String(items[0].supplierId));
+                const response = await apiFetch<any[]>(`/receptions/${editReceptionParam}`, {}, token);
+                if (Array.isArray(response) && response.length > 0) {
+                    const mappedItems: ReceiveItem[] = response.map(item => {
+                        let meta: any = {};
+                        if (item.metadata) {
+                            try {
+                                meta = JSON.parse(item.metadata);
+                            } catch (e) {}
+                        }
+                        
+                        const addedQuantity = item.quantity;
+                        const newPurchasePrice = meta.newPurchasePrice || item.product?.purchasePrice || 0;
+                        const newSalePrice = meta.newSalePrice || item.product?.salePrice || 0;
+                        const iva = meta.ivaPct || 0;
+                        const icui = meta.icuiPct || 0;
+                        const ibua = meta.ibuaPct || 0;
+                        const discount = meta.discountPct || 0;
+                        const supplierId = meta.supplierId || item.product?.supplierId || null;
+                        const actualPhysicalStock = meta.actualPhysicalStock !== undefined ? meta.actualPhysicalStock : addedQuantity;
+
+                        return {
+                            lineId: `line-${item.barcode}-${Date.now()}-${Math.random()}`,
+                            barcode: item.barcode,
+                            productName: item.product?.productName || item.name || 'PRODUCTO SIN NOMBRE',
+                            addedQuantity: Math.abs(addedQuantity),
+                            newPurchasePrice: newPurchasePrice,
+                            newSalePrice: newSalePrice,
+                            marginPercentage: item.product?.marginPercentage || 0,
+                            entryType: 'purchase',
+                            iva: iva,
+                            icui: icui,
+                            ibua: ibua,
+                            discount: discount,
+                            currentStock: item.product?.quantity || 0,
+                            unit: item.product?.unit || 'UND',
+                            isWeighted: item.product?.isWeighted || false,
+                            actualPhysicalStock: actualPhysicalStock,
+                            supplierId: supplierId
+                        };
+                    });
+
+                    setReceiveList(mappedItems);
+                    if (mappedItems[0]?.supplierId) {
+                        setSelectedGlobalSupplier(String(mappedItems[0].supplierId));
                     }
-                    toast({ 
-                        title: "MODO EDICIÓN", 
-                        description: "Se cargaron los productos para corregir la recepción eliminada." 
+                    // Cambiar a vista activa automáticamente
+                    setViewMode('active');
+                    toast({
+                        title: "MODO EDICIÓN",
+                        description: `Cargada recepción ${editReceptionParam} para edición contable.`
                     });
                 }
-            } catch (e) {
-                console.error("Error loading reception to edit", e);
-            } finally {
-                localStorage.removeItem('reception_to_edit');
+            } catch (e: any) {
+                console.error("Error fetching reception to edit:", e);
+                toast({
+                    variant: "destructive",
+                    title: "ERROR DE CARGA",
+                    description: "No se pudo obtener el detalle de la recepción: " + e.message
+                });
             }
-        }
-    }, [toast]);
+        };
+
+        fetchEditReception();
+    }, [editReceptionParam, toast]);
 
 
     const searchRef = useRef<HTMLInputElement>(null);
@@ -372,8 +434,8 @@ export default function ReceiveInventoryPage() {
             const ibua = Number(product.ibua || 0);
             const discount = 0; // El descuento varía semanalmente, se inicia en 0 por defecto
             
-            // Neto inicial para calcular margen real (Secuencial: Base * (1+IVA) * (1+ICUI) * (1+IBUA) * (1+DTO))
-            const neto = basePrice * (1 + iva/100) * (1 + icui/100) * (1 + ibua/100);
+            // Neto inicial para calcular margen real (Aditivo: Base * (1 + IVA + ICUI + IBUA) * (1-DTO))
+            const neto = basePrice * (1 + iva/100 + icui/100 + ibua/100);
             const salePrice = applyRounding(Number(product.salePrice));
             const margin = neto > 0 ? ((salePrice / neto) - 1) * 100 : 30;
 
@@ -399,6 +461,52 @@ export default function ReceiveInventoryPage() {
     }, []);
 
 
+    const handleInvoiceMatch = useCallback((items: any[]) => {
+        setReceiveList(prev => {
+            const newList = [...prev];
+            
+            items.forEach(ocr => {
+                const existIdx = newList.findIndex(item => item.barcode === ocr.sku);
+                
+                if (existIdx >= 0) {
+                    // Match: Si SKU coincide
+                    if (newList[existIdx].addedQuantity === ocr.quantity) {
+                        newList[existIdx].matchStatus = 'match'; // Verde
+                    } else {
+                        // Difiere la cantidad
+                        newList[existIdx].addedQuantity = ocr.quantity;
+                        newList[existIdx].matchStatus = 'warning'; // Amarillo
+                    }
+                } else {
+                    // Extra: Producto no esperado
+                    const p = products.find(prod => prod.barcode === ocr.sku);
+                    if (p) {
+                        newList.push({
+                            lineId: crypto.randomUUID(),
+                            barcode: p.barcode,
+                            productName: p.productName,
+                            addedQuantity: ocr.quantity,
+                            newPurchasePrice: Number(p.purchasePrice),
+                            newSalePrice: Number(p.salePrice),
+                            marginPercentage: 20,
+                            entryType: 'purchase',
+                            iva: Number(p.iva || 0),
+                            icui: Number(p.icui || 0),
+                            ibua: Number(p.ibua || 0),
+                            discount: 0,
+                            currentStock: Number(p.quantity || 0),
+                            unit: p.isWeighted ? 'KG' : 'UND',
+                            isWeighted: Boolean(p.isWeighted),
+                            matchStatus: 'extra' // Rojo
+                        });
+                    }
+                }
+            });
+            return newList;
+        });
+        toast({ title: "Factura Procesada", description: "Se han cruzado los datos correctamente." });
+    }, [products, toast]);
+
     const fetchPendingOrders = async () => {
         if (!selectedGlobalSupplier) {
             toast({ title: "Error", description: "Selecciona un proveedor primero", variant: "destructive" });
@@ -408,7 +516,7 @@ export default function ReceiveInventoryPage() {
         setIsOrderModalOpen(true);
         try {
             const token = Cookies.get('org-pos-token');
-            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/inventory/orders?supplier_id=${selectedGlobalSupplier}`, {
+            const res = await fetch(`${API_URL}/inventory/orders?supplier_id=${selectedGlobalSupplier}`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (res.ok) {
@@ -422,9 +530,29 @@ export default function ReceiveInventoryPage() {
         }
     };
 
+    const handleDismissOrder = async (orderId: any, type: string) => {
+        try {
+            const token = Cookies.get('org-pos-token');
+            const res = await fetch(`${API_URL}/inventory/orders/dismiss`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id: orderId, type })
+            });
+            if (res.ok) {
+                toast({ title: "Completado", description: "Orden omitida/recibida correctamente" });
+                setPendingOrders(prev => prev.filter(o => !(o.id === orderId && o.source === type)));
+            } else {
+                toast({ title: "Error", description: "No se pudo omitir la orden", variant: "destructive" });
+            }
+        } catch (err) {
+            console.error(err);
+            toast({ title: "Error", description: "Ocurrió un error en la conexión", variant: "destructive" });
+        }
+    };
+
     const handleCreateSupplier = async (data: Partial<Supplier>) => {
         const token = Cookies.get('org-pos-token');
-        const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/suppliers/create`, {
+        const res = await fetch(`${API_URL}/suppliers/create`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
             body: JSON.stringify(data)
@@ -534,16 +662,54 @@ export default function ReceiveInventoryPage() {
         }
     }, [isProductModalOpen, scanMode, handleCodeSubmit]);
 
-    const loadOrderIntoList = (order: any) => {
-        order.orderItems.forEach((item: any) => {
-            const p = products.find(prod => prod.barcode === item.productBarcode);
-            if (p) {
-                addToReceive(p, item.quantity, item.unitPrice);
-            }
-        });
-        setSelectedOrderId(order.id);
-        setIsOrderModalOpen(false);
-        toast({ title: "Orden Cargada", description: `Se han añadido los productos de la orden #${order.id}` });
+    const loadOrderIntoList = (supplierId: number, items: any[]) => {
+        console.log("Orden seleccionada - ID Proveedor:", supplierId, "Ítems recibidos:", items);
+        // Establecer proveedor
+        setSelectedGlobalSupplier(String(supplierId));
+        
+        // Limpiar lista actual y cargar nuevos
+        setReceiveList([]);
+        setTimeout(() => {
+            const newLines: ReceiveItem[] = [];
+            items.forEach((item: any) => {
+                const searchCode = String(item.barcode || item.product_id || item.productId || "").trim();
+                const p = products.find(prod => String(prod.barcode).trim() === searchCode);
+                if (p) {
+                    const qty = Number(item.quantity || item.expectedQuantity || item.qty || 1);
+                    const cost = Number(item.unit_cost || item.unitCost || p.purchasePrice || 0);
+                    
+                    const newLineId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
+                    const iva = Number(p.iva || 0);
+                    const icui = Number(p.icui || 0);
+                    const ibua = Number(p.ibua || 0);
+                    const basePrice = cost;
+                    const neto = basePrice * (1 + iva/100 + icui/100 + ibua/100);
+                    const salePrice = applyRounding(Number(p.salePrice || 0));
+                    const margin = neto > 0 ? ((salePrice / neto) - 1) * 100 : 30;
+
+                    newLines.push({
+                        lineId: newLineId,
+                        barcode: p.barcode,
+                        productName: p.productName,
+                        addedQuantity: qty,
+                        newPurchasePrice: basePrice,
+                        newSalePrice: salePrice,
+                        marginPercentage: margin,
+                        entryType: 'purchase',
+                        iva,
+                        icui,
+                        ibua,
+                        discount: 0,
+                        currentStock: Number(p.quantity || 0),
+                        unit: p.isWeighted ? 'KG' : 'UND',
+                        isWeighted: Boolean(p.isWeighted)
+                    });
+                }
+            });
+            setReceiveList(newLines);
+            setViewMode('active');
+            toast({ title: "Pedido Cargado", description: `Se han añadido ${newLines.length} productos para revisión.` });
+        }, 100);
     };
 
     // Función para confirmar borrado de lista
@@ -616,12 +782,11 @@ export default function ReceiveInventoryPage() {
             const discountPct = Number(item.discount || 0);
 
             const totalUnit = basePrice 
-                * (1 + (ivaPct / 100)) 
-                * (1 + (icuiPct / 100)) 
-                * (1 + (ibuaPct / 100)) 
-                * (1 - (discountPct / 100));
+                * (1 + (ivaPct / 100) + (icuiPct / 100) + (ibuaPct / 100));
             
-            const lineTotal = totalUnit * item.addedQuantity;
+            const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
+            const effectiveQty = item.addedQuantity * quantityModifier;
+            const lineTotal = totalUnit * effectiveQty;
 
             if (item.entryType === 'purchase') return sum + lineTotal;
             if (item.entryType === 'return') return sum - lineTotal;
@@ -633,27 +798,31 @@ export default function ReceiveInventoryPage() {
     
     const isPaymentsValid = Math.abs(sumPayments - expectedTotal) < 1;
 
-    const totalOrderValue = useMemo(() => {
-        return receiveList.reduce((sum, item) => {
+    const { subtotalOrderValue, taxesOrderValue, totalOrderValue } = useMemo(() => {
+        return receiveList.reduce((acc, item) => {
             const basePrice = Number(item.newPurchasePrice);
             const ivaPct = Number(item.iva || 0);
             const icuiPct = Number(item.icui || 0);
             const ibuaPct = Number(item.ibua || 0);
-            const discountPct = Number(item.discount || 0);
 
-            const totalUnit = basePrice 
-                * (1 + (ivaPct / 100)) 
-                * (1 + (icuiPct / 100)) 
-                * (1 + (ibuaPct / 100)) 
-                * (1 - (discountPct / 100));
-            
-            const lineTotal = totalUnit * item.addedQuantity;
+            const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
+            const effectiveQty = item.addedQuantity * quantityModifier;
 
-            if (item.entryType === 'purchase') return sum + lineTotal;
-            if (item.entryType === 'return') return sum - lineTotal;
-            if (item.entryType === 'gift') return sum;
-            return sum;
-        }, 0);
+            const itemSubtotal = basePrice * effectiveQty;
+            const itemTaxes = basePrice * ((ivaPct + icuiPct + ibuaPct) / 100) * effectiveQty;
+            const itemTotal = itemSubtotal + itemTaxes;
+
+            if (item.entryType === 'purchase') {
+                acc.subtotalOrderValue += itemSubtotal;
+                acc.taxesOrderValue += itemTaxes;
+                acc.totalOrderValue += itemTotal;
+            } else if (item.entryType === 'return') {
+                acc.subtotalOrderValue -= itemSubtotal;
+                acc.taxesOrderValue -= itemTaxes;
+                acc.totalOrderValue -= itemTotal;
+            }
+            return acc;
+        }, { subtotalOrderValue: 0, taxesOrderValue: 0, totalOrderValue: 0 });
     }, [receiveList]);
 
     const handleConfirmReceive = async () => {
@@ -685,16 +854,13 @@ export default function ReceiveInventoryPage() {
                 const ibuaPct = Number(item.ibua || 0);
                 const discountPct = Number(item.discount || 0);
 
-                // Cálculo Secuencial de montos para trazabilidad
-                const priceAfterIVA = basePrice * (1 + (ivaPct / 100));
-                const priceAfterICUI = priceAfterIVA * (1 + (icuiPct / 100));
-                const priceAfterIBUA = priceAfterICUI * (1 + (ibuaPct / 100));
-                const priceAfterDTO = priceAfterIBUA * (1 - (discountPct / 100));
-
-                const unitIvaAmount = priceAfterIVA - basePrice;
-                const unitIcuiAmount = priceAfterICUI - priceAfterIVA;
-                const unitIbuaAmount = priceAfterIBUA - priceAfterICUI;
-                const unitDiscountAmount = priceAfterIBUA - priceAfterDTO;
+                // Cálculo Aditivo de montos para trazabilidad
+                const unitIvaAmount = basePrice * (ivaPct / 100);
+                const unitIcuiAmount = basePrice * (icuiPct / 100);
+                const unitIbuaAmount = basePrice * (ibuaPct / 100);
+                
+                const priceWithTaxes = basePrice + unitIvaAmount + unitIcuiAmount + unitIbuaAmount;
+                const unitDiscountAmount = priceWithTaxes * (discountPct / 100);
 
                 // Conversión de Libras a Kilos (LB -> KG): 1 LB = 0.5 KG.
                 const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
@@ -725,7 +891,8 @@ export default function ReceiveInventoryPage() {
                 paymentSource: JSON.stringify(mixedPayments),
                 freightCost: freightCost,
                 totalWeight: totalWeight,
-                supplierId: selectedGlobalSupplier ? Number(selectedGlobalSupplier) : null
+                supplierId: selectedGlobalSupplier ? Number(selectedGlobalSupplier) : null,
+                editReceptionId: editReceptionId
             };
 
             console.log("🚀 INTENTANDO SINCRONIZAR. PAYLOAD BRUTO:", payload);
@@ -747,12 +914,38 @@ export default function ReceiveInventoryPage() {
             localStorage.removeItem('org-pos-reception-supplier');
             setReceiveList([]);
 
+            // Reproducir sonido de éxito (Beep alegre)
+            try {
+                const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+                const oscillator = audioCtx.createOscillator();
+                const gainNode = audioCtx.createGain();
+                
+                oscillator.connect(gainNode);
+                gainNode.connect(audioCtx.destination);
+                
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(880, audioCtx.currentTime);
+                oscillator.frequency.setValueAtTime(1108.73, audioCtx.currentTime + 0.1);
+                
+                gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0.5, audioCtx.currentTime + 0.05);
+                gainNode.gain.linearRampToValueAtTime(0, audioCtx.currentTime + 0.3);
+                
+                oscillator.start(audioCtx.currentTime);
+                oscillator.stop(audioCtx.currentTime + 0.3);
+            } catch (e) {
+                console.error("Audio no soportado");
+            }
+
             // SINCRONIZACIÓN GLOBAL: Notificar que productos y dashboard cambiaron
             broadcastRevalidate('PRODUCT_UPDATE');
             broadcastRevalidate('DASHBOARD_UPDATE');
             if (!bypassExpense) broadcastRevalidate('EXPENSE_UPDATE');
 
-            router.push('/dashboard');
+            // Retrasar redirección 1.5s para que se vea la notificación verde y se escuche el sonido
+            setTimeout(() => {
+                router.push('/dashboard');
+            }, 1500);
         } catch (err: any) {
             console.error("💥 ERROR CAPTURADO EN CATCH:", err);
             
@@ -844,17 +1037,44 @@ export default function ReceiveInventoryPage() {
                             <span className="font-medium uppercase text-[10px] tracking-tight">Historial</span>
                         </Button>
                     </Link>
-                    <Button
-                        onPress={() => setIsScannerOpen(true)}
-                        className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center gap-2 hidden md:flex"
-                    >
-                        <Barcode size={16} />
-                        <span className="font-medium uppercase text-[10px] tracking-tight">Cámara</span>
-                    </Button>
+                    {viewMode === 'active' && (
+                        <Button
+                            variant="flat"
+                            color="danger"
+                            onPress={() => {
+                                if (receiveList.length > 0) {
+                                    setIsClearConfirmOpen(true);
+                                } else {
+                                    setViewMode('pending');
+                                }
+                            }}
+                            className="h-10 px-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center gap-2"
+                        >
+                            <ArrowDownLeft size={16} />
+                            <span className="font-medium uppercase text-[10px] tracking-tight hidden md:inline">Volver</span>
+                        </Button>
+                    )}
+                    {viewMode === 'active' && (
+                        <Button
+                            onPress={() => setIsScannerOpen(true)}
+                            className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center gap-2 hidden md:flex"
+                        >
+                            <Barcode className="text-zinc-900 dark:text-white" size={16} />
+                            <span className="font-medium text-[10px] tracking-tight text-zinc-900 dark:text-zinc-300 uppercase hidden md:inline">ESCANEAR CÓDIGO</span>
+                        </Button>
+                    )}
                 </div>
             </div>
 
-            {/* GRID PRINCIPAL: REORDENADO PARA MOBILE FIRST */}
+            {viewMode === 'pending' ? (
+                <div className="flex-1 overflow-auto p-4 md:p-8 bg-zinc-100/50 dark:bg-[#09090b]">
+                    <PendingOrdersView 
+                        onLoadOrder={loadOrderIntoList} 
+                        onGoToFreeMode={() => setViewMode('active')} 
+                    />
+                </div>
+            ) : (
+            <>
             <div className="flex-1 overflow-hidden flex flex-col lg:flex-row p-2 md:p-4 gap-3 md:gap-4">
                 
                 {/* COLUMNA DE CONTROL (IZQUIERDA EN DESKTOP, ARRIBA EN MÓVIL) */}
@@ -877,7 +1097,7 @@ export default function ReceiveInventoryPage() {
                                         items={filteredSuppliers}
                                         selectedKey={selectedGlobalSupplier || undefined}
                                         inputValue={supplierSearchTerm}
-                                        onInputChange={setSupplierSearchTerm}
+                                        onInputChange={(v) => setSupplierSearchTerm(v.toUpperCase())}
                                         onSelectionChange={(key) => {
                                             setSelectedGlobalSupplier(key ? String(key) : '');
                                             setSelectedOrderId(null);
@@ -888,7 +1108,7 @@ export default function ReceiveInventoryPage() {
                                         }}
                                         inputProps={{
                                             classNames: {
-                                                inputWrapper: "h-9 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-inner focus-within:border-emerald-500 transition-all",
+                                                inputWrapper: "h-9 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 border-none rounded-2xl shadow-none transition-all",
                                                 input: "font-medium text-[9px] uppercase"
                                             }
                                         }}
@@ -954,7 +1174,7 @@ export default function ReceiveInventoryPage() {
                     </div>
 
                     {/* TARJETA 2: BÚSQUEDA Y ESCÁNER (Sticky en Mobile) */}
-                    <div className="sticky top-0 z-50 bg-white dark:bg-zinc-950 rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-3 md:p-4 flex flex-col gap-3">
+                    <div className="sticky top-0 z-50 bg-white dark:bg-zinc-900 rounded-2xl border-2 border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15),0_8px_30px_rgb(0,0,0,0.2)] p-3 md:p-4 flex flex-col gap-3">
                         <div className="flex justify-between items-center px-1">
                             <label className="text-[9px] font-medium text-gray-400 uppercase tracking-widest tracking-tight">Buscar Producto</label>
                             <div className="flex gap-2">
@@ -963,6 +1183,12 @@ export default function ReceiveInventoryPage() {
                                     className="text-[10px] font-medium text-blue-500 hover:text-blue-600 transition-colors uppercase tracking-tight flex items-center gap-1"
                                 >
                                     <Plus size={12} strokeWidth={3} /> Ítem Libre
+                                </button>
+                                <button 
+                                    onClick={() => setIsInvoiceReaderOpen(true)}
+                                    className="text-[10px] font-medium text-emerald-500 hover:text-emerald-600 transition-colors uppercase tracking-tight flex items-center gap-1"
+                                >
+                                    <Sparkles size={12} strokeWidth={3} /> Leer Factura
                                 </button>
                                 <button 
                                     onClick={() => setIsProductModalOpen(true)}
@@ -979,7 +1205,7 @@ export default function ReceiveInventoryPage() {
                                 className="w-full"
                                 items={filteredProductsSearch}
                                 inputValue={searchQuery}
-                                onInputChange={setSearchQuery}
+                                onInputChange={(v) => setSearchQuery(v.toUpperCase())}
                                 onSelectionChange={(key) => {
                                     if (!key) return;
                                     const p = products.find(prod => prod.barcode === String(key));
@@ -1000,7 +1226,7 @@ export default function ReceiveInventoryPage() {
                                 }
                                 inputProps={{
                                     classNames: {
-                                        inputWrapper: "h-12 md:h-14 bg-[var(--bg-elevated)] border border-[var(--border)] shadow-inner rounded-2xl focus-within:border-[var(--accent)] transition-all px-4",
+                                        inputWrapper: "h-12 md:h-14 bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 border-none shadow-none rounded-2xl transition-all px-4",
                                         input: "text-xs md:text-sm font-medium tracking-widest tracking-tight uppercase text-[var(--text-primary)]"
                                     }
                                 }}
@@ -1082,9 +1308,19 @@ export default function ReceiveInventoryPage() {
                         
                         {/* BOTTOM ACTION BAR (Desktop) */}
                         <div className="hidden md:flex p-4 border-t border-gray-100 dark:border-white/5 bg-gray-50 dark:bg-zinc-950 items-center justify-between">
-                            <div className="flex flex-col">
-                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Total a Pagar</span>
-                                <span className="text-2xl font-medium tracking-tight text-zinc-900 dark:text-zinc-50">${formatCurrency(totalOrderValue)}</span>
+                            <div className="flex items-center gap-6">
+                                <div className="flex flex-col">
+                                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Subtotal</span>
+                                    <span className="text-lg font-medium tracking-tight text-gray-700 dark:text-zinc-300">${formatCurrency(subtotalOrderValue)}</span>
+                                </div>
+                                <div className="flex flex-col">
+                                    <span className="text-[9px] text-gray-500 font-bold uppercase tracking-widest">Impuestos</span>
+                                    <span className="text-lg font-medium tracking-tight text-amber-600 dark:text-amber-500">${formatCurrency(taxesOrderValue)}</span>
+                                </div>
+                                <div className="flex flex-col pl-4 border-l border-gray-200 dark:border-white/10">
+                                    <span className="text-[10px] text-emerald-600 dark:text-emerald-500 font-bold uppercase tracking-widest">Total a Pagar</span>
+                                    <span className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-50">${formatCurrency(totalOrderValue)}</span>
+                                </div>
                             </div>
                             <Button 
                                 onPress={() => setIsSyncConfirmOpen(true)} 
@@ -1101,9 +1337,15 @@ export default function ReceiveInventoryPage() {
 
             {/* BARRA DE ACCIÓN FIJA INFERIOR - Compacta para Mobile */}
             <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-3 p-2 bg-white/95 dark:bg-zinc-950/95 border-t border-gray-200 dark:border-white/10 shadow-[0_-5px_20px_rgba(0,0,0,0.1)] md:hidden">
-                <div className="flex flex-col pl-2">
-                    <span className="text-[8px] text-gray-400 font-medium uppercase tracking-tighter tracking-tight">Total Pagar</span>
-                    <span className="text-lg font-medium tracking-tight text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 leading-tight">${formatCurrency(totalOrderValue)}</span>
+                <div className="flex flex-col pl-2 gap-0.5">
+                    <div className="flex items-center gap-1 opacity-60">
+                        <span className="text-[8px] font-bold uppercase tracking-widest text-zinc-500">Subtotal:</span>
+                        <span className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100">${formatCurrency(subtotalOrderValue)}</span>
+                    </div>
+                    <div className="flex items-baseline gap-1">
+                        <span className="text-[10px] text-emerald-600 font-bold uppercase tracking-tight">Total:</span>
+                        <span className="text-lg font-medium tracking-tight text-zinc-900 dark:text-zinc-100 leading-none">${formatCurrency(totalOrderValue)}</span>
+                    </div>
                 </div>
                 <div className="flex items-center gap-2">
                     <Button 
@@ -1150,8 +1392,8 @@ export default function ReceiveInventoryPage() {
                             <ModalHeader className="font-medium uppercase tracking-tight">Limpiar Lista</ModalHeader>
                             <ModalBody className="text-sm font-medium">¿Estás seguro de que deseas eliminar todos los productos de la lista actual? Esta acción no se puede deshacer.</ModalBody>
                             <ModalFooter>
-                                <Button variant="flat" onPress={onClose} className="font-medium uppercase tracking-tight text-xs">Cancelar</Button>
-                                <Button color="danger" onPress={handleClearList} className="font-medium uppercase tracking-tight text-xs">Limpiar Todo</Button>
+                                <Button variant="light" onPress={() => setIsClearConfirmOpen(false)}>Cancelar</Button>
+                                <Button color="danger" onPress={() => { handleClearList(); setViewMode('pending'); }}>Sí, Volver y Vaciar</Button>
                             </ModalFooter>
                         </>
                     )}
@@ -1213,27 +1455,53 @@ export default function ReceiveInventoryPage() {
                                 ) : (
                                     <div className="grid gap-3 py-2">
                                         {pendingOrders.map((order) => (
-                                            <button 
-                                                key={order.id} 
-                                                onClick={() => loadOrderIntoList(order)} 
-                                                className="w-full flex items-center justify-between p-4 rounded-2xl border border-gray-100 dark:border-white/5 hover:border-emerald-500 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:shadow-emerald-500/10 transition-all bg-gray-50/50 dark:bg-[#18181b]/50 group active:scale-[0.98]"
-                                            >
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-2xl bg-white dark:bg-zinc-950 flex items-center justify-center shadow-inner group-hover:text-zinc-900 dark:text-zinc-100 transition-colors">
-                                                        <span className="text-[10px] font-medium tracking-tight">#{order.id}</span>
+                                            <div key={`${order.source}-${order.id}`} className="w-full flex items-center justify-between p-3 rounded-2xl border border-gray-100 dark:border-white/5 hover:border-emerald-500 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all bg-gray-50/50 dark:bg-[#18181b]/50 group relative">
+                                                <button 
+                                                    onClick={() => order.orderItems && order.orderItems.length > 0 ? loadOrderIntoList(order.supplierId, order.orderItems) : null} 
+                                                    className="flex-1 flex items-center justify-between text-left active:scale-[0.98] mr-2"
+                                                    disabled={!order.orderItems || order.orderItems.length === 0}
+                                                >
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-2xl bg-white dark:bg-zinc-950 flex items-center justify-center shadow-inner group-hover:text-zinc-900 dark:text-zinc-100 transition-colors">
+                                                            <span className="text-[10px] font-medium tracking-tight">
+                                                                {order.source === 'expense' ? 'EG' : order.source === 'confirmed' ? 'SM' : 'PR'}
+                                                            </span>
+                                                        </div>
+                                                        <div className="flex flex-col text-left">
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="text-xs font-medium uppercase tracking-tight text-gray-900 dark:text-zinc-200">
+                                                                    {order.source === 'expense' ? 'Egreso a Proveedor' : order.source === 'confirmed' ? 'Pedido Inteligente' : 'Preventa/Borrador'}
+                                                                </span>
+                                                            </div>
+                                                            <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">{new Date(order.createdAt).toLocaleDateString()} • {order.itemCount} Referencias</span>
+                                                        </div>
                                                     </div>
-                                                    <div className="flex flex-col text-left">
-                                                        <span className="text-xs font-medium uppercase tracking-tight text-gray-900 dark:text-zinc-200">Factura de Compra</span>
-                                                        <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">{new Date(order.createdAt).toLocaleDateString()} • {order.orderItems.length} Referencias</span>
+                                                    <div className="flex flex-col items-end mr-3">
+                                                        <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 tabular-nums tracking-tight">${formatCurrency(order.estimatedCost)}</span>
+                                                        {order.orderItems && order.orderItems.length > 0 ? (
+                                                            <div className="flex items-center gap-1 text-[8px] text-gray-400 font-medium uppercase group-hover:text-emerald-600 transition-colors tracking-tighter">
+                                                                <span>Importar Referencias</span><Plus size={10} strokeWidth={3} />
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex items-center gap-1 text-[8px] text-gray-400 font-medium uppercase tracking-tighter">
+                                                                <span>Sin Referencias Detalladas</span>
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                </div>
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 tabular-nums tracking-tight">${formatCurrency(order.estimatedCost)}</span>
-                                                    <div className="flex items-center gap-1 text-[8px] text-gray-400 font-medium uppercase group-hover:text-zinc-900 dark:text-zinc-100 transition-colors tracking-tighter">
-                                                        <span>Importar</span><Plus size={10} strokeWidth={3} />
-                                                    </div>
-                                                </div>
-                                            </button>
+                                                </button>
+                                                {/* Botón Chulear */}
+                                                <Button 
+                                                    isIconOnly 
+                                                    size="sm" 
+                                                    variant="flat" 
+                                                    color="success" 
+                                                    className="rounded-xl bg-emerald-50 text-emerald-600 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-400 dark:hover:bg-emerald-500/20"
+                                                    onPress={() => handleDismissOrder(order.id, order.source)}
+                                                    title="Marcar como recibido / Omitir"
+                                                >
+                                                    <Check size={16} strokeWidth={3} />
+                                                </Button>
+                                            </div>
                                         ))}
                                     </div>
                                 )}
@@ -1395,6 +1663,14 @@ export default function ReceiveInventoryPage() {
                     )}
                 </ModalContent>
             </Modal>
+            <InvoiceReaderModal
+                isOpen={isInvoiceReaderOpen}
+                onOpenChange={setIsInvoiceReaderOpen}
+                supplierId={selectedGlobalSupplier}
+                onExtractedItems={handleInvoiceMatch}
+            />
+            </>
+            )}
         </div>
     );
 }

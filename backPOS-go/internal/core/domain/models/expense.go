@@ -23,6 +23,8 @@ type Expense struct {
 	PaidAmount      float64        `gorm:"type:decimal(10,2);default:0;column:paid_amount" json:"paidAmount"`
 	RemainingAmount float64        `gorm:"type:decimal(10,2);default:0;column:remaining_amount" json:"remainingAmount"`
 
+	IsRestocked     bool           `gorm:"default:false;column:is_restocked" json:"isRestocked"`
+
 	CreatedByDNI  string         `gorm:"not null;index;column:createdByDni" json:"createdByDni"`
 	Creator       Employee       `gorm:"foreignKey:CreatedByDNI;references:DNI" json:"creator,omitempty"`
 	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`

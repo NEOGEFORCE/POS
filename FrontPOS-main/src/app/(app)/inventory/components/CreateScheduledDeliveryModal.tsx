@@ -8,6 +8,8 @@ import {
 import { Truck, DollarSign, Calendar, Save, Building2 } from 'lucide-react';
 import { useApi } from '@/hooks/use-api';
 import { apiFetch } from '@/lib/api-error';
+import { formatInputCOP } from '@/lib/utils';
+import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 
 interface CreateScheduledDeliveryModalProps {
@@ -18,6 +20,8 @@ interface CreateScheduledDeliveryModalProps {
 
 export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSuccess }: CreateScheduledDeliveryModalProps) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const token = user?.token;
   const { data: suppliers, isLoading: loadingSuppliers } = useApi<any[]>('/suppliers/all-suppliers');
   
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -45,7 +49,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
           totalEstimated: parseFloat(formData.totalEstimated) || 0,
           itemCount: 0 
         })
-      });
+      }, token || undefined);
 
       toast({ variant: 'success', title: 'ÉXITO', description: "Entrega programada registrada" });
       onSuccess();
@@ -59,7 +63,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
       });
     } catch (error) {
       console.error("Error creating delivery:", error);
-      toast({ variant: 'destructive', title: 'ERROR', description: "Error al registrar la entrega" });
+      toast({ variant: 'destructive', title: 'ERROR', description: (error as Error).message || "Error al registrar la entrega" });
     } finally {
       setIsSubmitting(false);
     }
@@ -100,10 +104,13 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
                   startContent={<Building2 size={16} className="text-gray-400" />}
                   isLoading={loadingSuppliers}
                   defaultItems={suppliers || []}
+                  onInputChange={(value) => {
+                    setFormData(prev => ({ ...prev, supplierName: value, supplierId: '' }));
+                  }}
                   onSelectionChange={(key) => {
                     const s = suppliers?.find(sup => String(sup.id) === String(key));
                     if (s) {
-                      setFormData({ ...formData, supplierId: String(s.id), supplierName: s.name });
+                      setFormData(prev => ({ ...prev, supplierId: String(s.id), supplierName: s.name }));
                     }
                   }}
                   className="max-w-full"
@@ -125,6 +132,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
 
               <div className="grid grid-cols-2 gap-4">
                 {/* VALOR ESTIMADO */}
+                {/* VALOR ESTIMADO */}
                 <div className="flex flex-col gap-1.5">
                   <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Valor Estimado</label>
                   <Input
@@ -133,8 +141,11 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
                     placeholder="Monto aproximado"
                     variant="flat"
                     startContent={<DollarSign size={16} className="text-zinc-900 dark:text-zinc-100" />}
-                    value={formData.totalEstimated}
-                    onValueChange={(v) => setFormData({ ...formData, totalEstimated: v })}
+                    value={formData.totalEstimated ? formatInputCOP(formData.totalEstimated) : ''}
+                    onValueChange={(v) => {
+                      const cleaned = formatInputCOP(v);
+                      setFormData({ ...formData, totalEstimated: cleaned.replace(/\./g, '') })
+                    }}
                     classNames={{
                         inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-transparent focus-within:border-emerald-500 transition-all",
                         input: "font-medium text-zinc-900 dark:text-zinc-100 text-sm"

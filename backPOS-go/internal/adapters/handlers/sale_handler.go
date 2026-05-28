@@ -187,6 +187,43 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})
 }
 
+type AddSaleItemsReq struct {
+	Items          []models.SaleDetail `json:"items"`
+	CashAmount     float64             `json:"cashAmount"`
+	TransferAmount float64             `json:"transferAmount"`
+	TransferSource string              `json:"transferSource"`
+	EmployeeDNI    string              `json:"employeeDni"`
+}
+
+func (h *SaleHandler) AddItems(c *gin.Context) {
+	saleIDStr := c.Param("id")
+	var saleID uint
+	fmt.Sscanf(saleIDStr, "%d", &saleID)
+
+	var req AddSaleItemsReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos inválidos", "details": err.Error()})
+		return
+	}
+
+	if len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No hay productos para agregar"})
+		return
+	}
+
+	err := h.service.AddItemsToSale(saleID, req.Items, req.CashAmount, req.TransferAmount, req.TransferSource, req.EmployeeDNI)
+	if err != nil {
+		if containsBusinessError(err.Error()) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Venta actualizada correctamente"})
+}
+
 func containsBusinessError(msg string) bool {
 	businessErrors := []string{
 		"insuficiente",

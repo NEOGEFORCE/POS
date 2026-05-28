@@ -39,6 +39,7 @@ interface UniversalPaymentModalProps {
   flowType?: "in" | "out";
   reason?: string;
   onReasonChange?: (reason: string) => void;
+  isAbono?: boolean;
 }
 
 export default function UniversalPaymentModal({
@@ -56,7 +57,8 @@ export default function UniversalPaymentModal({
   showCreditTab = true,
   flowType = "in",
   reason,
-  onReasonChange
+  onReasonChange,
+  isAbono = false
 }: UniversalPaymentModalProps) {
   const isProcessingRef = useRef(false);
   const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'credit'>('cash');
@@ -120,7 +122,7 @@ export default function UniversalPaymentModal({
     ? currentDialogVal 
     : (Number(cashTendered) > 0 
         ? Number(cashTendered) 
-        : (totalAlreadyPaid > 0 ? 0 : remainingDebt));
+        : (totalAlreadyPaid > 0 || isAbono ? 0 : remainingDebt));
         
   const actualPayment = Math.min(amountToPayRaw, remainingDebt);
 
@@ -163,19 +165,19 @@ export default function UniversalPaymentModal({
       // Si el usuario digita un valor, lo tomamos en cuenta al procesar.
       if (currentDialogVal > 0) {
         if (activePaymentTab === 'cash') {
-          finalCash += currentDialogVal;
+          finalCash += isAbono ? actualPayment : currentDialogVal;
           finalTendered = currentDialogVal;
         } else if (activePaymentTab === 'NEQUI') {
-          finalNequi += currentDialogVal;
+          finalNequi += isAbono ? actualPayment : currentDialogVal;
         } else if (activePaymentTab === 'DAVIPLATA') {
-          finalDaviplata += currentDialogVal;
+          finalDaviplata += isAbono ? actualPayment : currentDialogVal;
         } else if (activePaymentTab === 'credit') {
           finalCredit += currentDialogVal;
         }
       } else if (finalTendered > 0 && activePaymentTab === 'cash') {
-        finalCash += remainingDebt; // Cash payment added via quick buttons
-      } else {
-        // Autocompletar el resto con el mtodo activo si no digitaron nada
+        finalCash += isAbono ? Math.min(finalTendered, remainingDebt) : remainingDebt; // Cash payment added via quick buttons
+      } else if (!isAbono) {
+        // Autocompletar el resto con el mtodo activo si no digitaron nada (Solo si NO es abono)
         if (activePaymentTab === 'cash') {
           finalCash += remainingDebt;
           finalTendered = finalTendered > 0 ? finalTendered : remainingDebt;
@@ -189,18 +191,20 @@ export default function UniversalPaymentModal({
       }
 
       // Autocompletar monto faltante a EFECTIVO (solicitud del usuario: "si hay venta de 2000 y pagan 1000 nequi, el resto efectivo")
-      const totalCoveredSoFar = finalCash + finalNequi + finalDaviplata + finalCredit;
-      const leftToPay = totalToPay - totalCoveredSoFar;
-      if (leftToPay > 0) {
-        finalCash += leftToPay;
-        if (finalTendered < finalCash) {
-          finalTendered = finalCash;
+      if (!isAbono) {
+        const totalCoveredSoFar = finalCash + finalNequi + finalDaviplata + finalCredit;
+        const leftToPay = totalToPay - totalCoveredSoFar;
+        if (leftToPay > 0) {
+          finalCash += leftToPay;
+          if (finalTendered < finalCash) {
+            finalTendered = finalCash;
+          }
         }
       }
   
       const totalPaid = finalCash + finalNequi + finalDaviplata + finalCredit;
       const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
-      const change = Math.max(0, effectiveCash - (totalToPay - finalNequi - finalDaviplata - finalCredit));
+      const change = Math.max(0, effectiveCash - finalCash);
     
     // Calcular transferSource principal para compatibilidad retroactiva temporal
     let mainTransferSource = "MIXTO";

@@ -32,6 +32,8 @@ type Sale struct {
 	DeletedReason  string         `gorm:"column:deletedReason" json:"deletedReason,omitempty"`
 	DeletedByDNI   string         `gorm:"column:deletedByDni" json:"deletedByDni,omitempty"`
 	DianReady      bool           `gorm:"default:false;column:dian_ready" json:"dianReady"`
+	HasReturn      bool           `gorm:"default:false;column:hasReturn" json:"hasReturn"`
+	ReturnRef      uint           `gorm:"column:returnRef" json:"returnRef,omitempty"`
 	Client         Client         `gorm:"foreignKey:ClientDNI;references:DNI" json:"client,omitempty"`
 	Employee       Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`
 	SaleDetails    []SaleDetail   `gorm:"foreignKey:SaleID" json:"details,omitempty"`
@@ -51,7 +53,7 @@ type SaleDetail struct {
 	CostPrice float64        `gorm:"type:decimal(10,2);default:0;not null;column:costPrice" json:"costPrice"`
 	Subtotal    float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`
 	ReturnedQty float64        `gorm:"-" json:"returnedQty"`
-	Product     Product        `gorm:"foreignKey:Barcode;references:Barcode;constraint:OnUpdate:CASCADE,OnDelete:RESTRICT;" json:"product,omitempty"`
+	Product     Product        `gorm:"foreignKey:Barcode;references:Barcode;constraint:false;" json:"product,omitempty"`
 	DeletedAt   gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

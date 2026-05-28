@@ -139,6 +139,53 @@ func (s *ClientService) PayCredit(payment *models.CreditPayment, saleRepo ports.
 	return client, nil
 }
 
+func (s *ClientService) DeleteCreditPayment(paymentID uint, saleRepo ports.SaleRepository) error {
+	payment, err := s.creditRepo.GetByID(paymentID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.creditRepo.Delete(paymentID); err != nil {
+		return err
+	}
+
+	client, err := s.repo.GetByDNI(payment.ClientDNI)
+	if err == nil {
+		client.CurrentCredit += payment.TotalPaid
+		s.repo.Update(client.DNI, client)
+	}
+
+	sales, err := saleRepo.GetCreditHistoryByClient(payment.ClientDNI)
+	if err != nil {
+		return err
+	}
+
+	payments, err := s.creditRepo.GetByClient(payment.ClientDNI)
+	if err != nil {
+		return err
+	}
+
+	totalAbonos := 0.0
+	for _, p := range payments {
+		totalAbonos += p.TotalPaid
+	}
+
+	for _, sale := range sales {
+		originalDebt := sale.CreditAmount
+		newDebt := 0.0
+		if totalAbonos >= originalDebt {
+			totalAbonos -= originalDebt
+			newDebt = 0.0
+		} else {
+			newDebt = originalDebt - totalAbonos
+			totalAbonos = 0.0
+		}
+		_ = saleRepo.UpdateDebt(sale.SaleID, newDebt)
+	}
+
+	return nil
+}
+
 func (s *ClientService) CreateClient(client *models.Client) error {
 	return s.repo.Save(client)
 }

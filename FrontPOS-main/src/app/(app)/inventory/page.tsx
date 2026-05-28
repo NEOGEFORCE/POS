@@ -1,12 +1,13 @@
-﻿"use client";
+"use client";
 
-import { Card, CardBody, Button, Badge, Chip, Skeleton, Modal, ModalContent, ModalHeader, ModalBody, Input } from "@heroui/react";
+import { Card, CardBody, Button, Badge, Chip, Skeleton, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input } from "@heroui/react";
 import { 
   Package, Truck, ShoppingBag, ArrowUpCircle, 
   Search, ShieldCheck, Sparkles, BarChart3, ChevronRight,
   AlertTriangle, TrendingDown, DollarSign, ArrowRight, Send, Plus, Calendar, Building2
 } from 'lucide-react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useApi } from "@/hooks/use-api";
 import { Product } from "@/lib/definitions";
 import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime } from "@/lib/utils";
@@ -15,32 +16,106 @@ import React, { useMemo, useState, useEffect } from "react";
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import CreateScheduledDeliveryModal from "./components/CreateScheduledDeliveryModal";
 
+// Interfaz unificada — igual a lo que devuelve /inventory/orders
+interface OrderDetailItem {
+  productName: string;
+  barcode: string;
+  quantity: number;
+  unitCost: number;
+}
+
 interface ExpectedOrder {
-  id: number;
+  id: number | string;
+  source: string;
+  supplierId: number;
   supplierName: string;
   expectedDate: string;
-  totalEstimated: number;
-  status: 'PENDING' | 'IN_TRANSIT' | 'RECEIVED';
+  estimatedCost: number;
+  totalEstimated?: number;
+  invoiceRef?: string;      // precio real de factura (puede ser string numérico)
   itemCount: number;
+  status?: string;
+  items?: OrderDetailItem[];
 }
 
 export default function InventoryHub() {
+  const router = useRouter();
   // Integración de datos reales
   const { data: products, isLoading, mutate } = useApi<Product[]>("/products/all-products", {
     revalidateOnFocus: true,
   });
 
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [isPreventaModalOpen, setIsPreventaModalOpen] = useState(false);
+  const getBogotaDateStr = () => {
+    return new Intl.DateTimeFormat('en-CA', { 
+      timeZone: 'America/Bogota',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).format(new Date());
+  };
 
-  // Fetch pedidos esperados para hoy con SWR (Reactividad Global)
+  const [selectedDate, setSelectedDate] = useState(getBogotaDateStr());
+  const [isPreventaModalOpen, setIsPreventaModalOpen] = useState(false);
+  const [selectedOrderDetail, setSelectedOrderDetail] = useState<ExpectedOrder | null>(null);
+  const [loadingOrderDetail, setLoadingOrderDetail] = useState(false);
+  const [orderDetailItems, setOrderDetailItems] = useState<OrderDetailItem[]>([]);
+
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
+
+  const handleOpenOrderDetail = async (order: ExpectedOrder) => {
+    setSelectedOrderDetail(order);
+    setOrderDetailItems([]);
+    setLoadingOrderDetail(true);
+    try {
+      const token = Cookies.get('org-pos-token');
+      const res = await fetch(`${API_BASE}/inventory/orders/${order.id}/items`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setOrderDetailItems(Array.isArray(data) ? data : (data.items || []));
+      }
+    } catch (err) {
+      console.error('Error loading order detail:', err);
+    } finally {
+      setLoadingOrderDetail(false);
+    }
+  };
+
+  // Siempre derivar un YYYY-MM-DD limpio desde selectedDate en zona Bogotá.
+  // selectedDate ya viene del input type="date" como YYYY-MM-DD, pero parsearlo
+  // con new Date() sin hora puede desplazarlo un día por UTC. Añadimos T12:00
+  // para anclar el mediodía y evitar el desfase.
+  const bogotaDateStr = useMemo(() => {
+    return Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(
+      new Date(`${selectedDate}T12:00:00`)
+    );
+  }, [selectedDate]);
+
+  // Usa el mismo endpoint que PendingOrdersView para ver TODOS los pedidos pendientes
+  // (confirmed_orders + purchase_orders + expected_orders unificados).
+  // Filtramos por fecha en el cliente para la vista de calendario.
   const { 
-    data: expectedOrdersData, 
+    data: allOrdersData, 
     isLoading: loadingOrders, 
     mutate: mutateOrders 
-  } = useApi<ExpectedOrder[]>(`/orders/expected-today?date=${selectedDate}`);
+  } = useApi<ExpectedOrder[]>(`/inventory/orders`);
 
-  const expectedOrders = expectedOrdersData || [];
+  useEffect(() => {
+    console.log("Datos del Fetch Dashboard (unified):", allOrdersData);
+    console.log("Fecha Buscada:", bogotaDateStr);
+  }, [allOrdersData, bogotaDateStr]);
+
+  // Filtro local: mostrar solo los pedidos cuya expectedDate coincida con el día
+  // seleccionado y que no estén en status dismissed/received.
+  const expectedOrders = useMemo(() => {
+    return (allOrdersData || []).filter(o => {
+      if (!o.expectedDate) return false;
+      // Comparar solo YYYY-MM-DD (ignorar hora y timezone del string ISO)
+      const orderDate = o.expectedDate.split('T')[0];
+      return orderDate === bogotaDateStr;
+    });
+  }, [allOrdersData, bogotaDateStr]);
 
   // Enviar fila a Telegram
   const sendToTelegram = async () => {
@@ -402,7 +477,7 @@ export default function InventoryHub() {
                                 </div>
                                 <div className="flex-1">
                                     <h3 className="text-sm font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tight flex items-center gap-2">
-                                        Entregas Programadas <span className="text-amber-500">{selectedDate === new Date().toISOString().split('T')[0] ? 'Hoy' : selectedDate}</span>
+                                        Entregas Programadas <span className="text-amber-500">{selectedDate === getBogotaDateStr() ? 'Hoy' : selectedDate}</span>
                                     </h3>
                                     <p className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">
                                         Logística & Recepción
@@ -441,7 +516,8 @@ export default function InventoryHub() {
                                     expectedOrders.map((order) => (
                                         <div 
                                             key={order.id}
-                                            className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl hover:bg-gray-100 dark:hover:bg-zinc-100 dark:bg-zinc-800/50 hover:border-amber-500/20 transition-all group"
+                                            onClick={() => handleOpenOrderDetail(order)}
+                                            className="flex items-center justify-between p-3 bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl hover:bg-amber-50 dark:hover:bg-amber-950/20 hover:border-amber-500/30 transition-all group cursor-pointer"
                                         >
                                             <div className="flex items-center gap-3">
                                                 <div className="h-8 w-8 rounded-2xl bg-gray-100 dark:bg-zinc-800 flex items-center justify-center text-gray-500 dark:text-zinc-400 group-hover:text-amber-500 group-hover:bg-amber-500/10 transition-colors">
@@ -452,13 +528,19 @@ export default function InventoryHub() {
                                                         {order.supplierName}
                                                     </p>
                                                     <p className="text-[9px] text-gray-500 dark:text-zinc-500 font-medium">
-                                                        {order.itemCount} ítems Â· {formatTime(order.expectedDate)}
+                                                        {order.itemCount} ítems · <span className="text-amber-500 font-bold">Ver detalle →</span>
                                                     </p>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-3">
                                                 <span className="text-xs font-medium text-zinc-900 dark:text-white tabular-nums">
-                                                    {formatCurrency(Math.round(order.totalEstimated || 0))}
+                                                    {(() => {
+                                                      const inv = parseFloat((order.invoiceRef || '').replace(/[^0-9.]/g, ''));
+                                                      const real = !isNaN(inv) && inv > 0 ? inv : null;
+                                                      return real
+                                                        ? formatCurrency(Math.round(real))
+                                                        : formatCurrency(Math.round(order.estimatedCost || order.totalEstimated || 0));
+                                                    })()}
                                                 </span>
                                                 <Chip 
                                                     size="sm" 
@@ -475,7 +557,7 @@ export default function InventoryHub() {
                                     <div className="flex flex-col items-center justify-center py-8 text-zinc-600">
                                         <Truck size={32} className="mb-2 opacity-20" />
                                         <p className="text-xs font-bold uppercase tracking-widest">
-                                            No hay recepciones para {selectedDate === new Date().toISOString().split('T')[0] ? 'hoy' : selectedDate}
+                                            No hay recepciones para {selectedDate === getBogotaDateStr() ? 'hoy' : selectedDate}
                                         </p>
                                     </div>
                                 )}
@@ -507,9 +589,13 @@ export default function InventoryHub() {
                                     </span>
                                 </div>
                                 <div className="flex justify-between text-[10px]">
-                                    <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">VALOR ESTIMADO:</span>
-                                    <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 font-medium tabular-nums">
-                                        {formatCurrency(Math.round(expectedOrders.reduce((acc, o) => acc + o.totalEstimated, 0)))}
+                                    <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">VALOR TOTAL:</span>
+                                    <span className="text-zinc-900 dark:text-zinc-100 font-medium tabular-nums">
+                                        {formatCurrency(Math.round(expectedOrders.reduce((acc, o) => {
+                                          const inv = parseFloat((o.invoiceRef || '').replace(/[^0-9.]/g, ''));
+                                          const real = !isNaN(inv) && inv > 0 ? inv : (o.estimatedCost || o.totalEstimated || 0);
+                                          return acc + real;
+                                        }, 0)))}
                                     </span>
                                 </div>
                             </div>
@@ -529,6 +615,113 @@ export default function InventoryHub() {
                 onClose={() => setIsPreventaModalOpen(false)}
                 onSuccess={handleSuccessPreventa}
             />
+
+            {/* MODAL DETALLE DEL PEDIDO */}
+            <Modal 
+                isOpen={!!selectedOrderDetail} 
+                onOpenChange={(open) => { if (!open) setSelectedOrderDetail(null); }}
+                size="2xl"
+                classNames={{
+                    base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl",
+                    header: "border-b border-gray-200 dark:border-white/10 pb-3",
+                    body: "pt-4"
+                }}
+            >
+                <ModalContent>
+                    <ModalHeader className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-500">
+                            <Truck size={18} />
+                        </div>
+                        <div>
+                            <p className="text-sm font-bold uppercase tracking-tight text-zinc-900 dark:text-white">
+                                {selectedOrderDetail?.supplierName}
+                            </p>
+                            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mt-0.5">
+                                Detalle del Pedido · En Camino
+                            </p>
+                        </div>
+                    </ModalHeader>
+                    <ModalBody className="pb-6">
+                        {/* Resumen */}
+                        <div className="grid grid-cols-3 gap-3 mb-4">
+                            <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-3 flex flex-col">
+                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Ítems</span>
+                                <span className="text-lg font-black text-zinc-900 dark:text-white">{selectedOrderDetail?.itemCount || orderDetailItems.length}</span>
+                            </div>
+                            <div className="bg-amber-50 dark:bg-amber-950/30 rounded-2xl p-3 flex flex-col border border-amber-200/50 dark:border-amber-500/20">
+                                <span className="text-[9px] font-bold text-amber-600 uppercase tracking-widest mb-1">Valor Est.</span>
+                                <span className="text-lg font-black text-amber-600 dark:text-amber-400">
+                                    ${formatCurrency(Math.round(selectedOrderDetail?.estimatedCost || selectedOrderDetail?.totalEstimated || 0))}
+                                </span>
+                            </div>
+                            <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-3 flex flex-col">
+                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Llegada</span>
+                                <span className="text-sm font-black text-zinc-900 dark:text-white">
+                                    {selectedOrderDetail?.expectedDate?.split('T')[0] || '—'}
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* Tabla de productos */}
+                        {loadingOrderDetail ? (
+                            <div className="flex flex-col gap-2">
+                                {[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full rounded-xl" />)}
+                            </div>
+                        ) : orderDetailItems.length > 0 ? (
+                            <div className="border border-gray-200 dark:border-white/10 rounded-2xl overflow-hidden">
+                                <table className="w-full text-xs">
+                                    <thead>
+                                        <tr className="bg-gray-100 dark:bg-zinc-900 border-b border-gray-200 dark:border-white/10">
+                                            <th className="text-left p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Producto</th>
+                                            <th className="text-center p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Cant.</th>
+                                            <th className="text-right p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Costo Unit.</th>
+                                            <th className="text-right p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Subtotal</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-gray-100 dark:divide-white/5">
+                                        {orderDetailItems.map((item, idx) => (
+                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-zinc-900/50 transition-colors">
+                                                <td className="p-3">
+                                                    <p className="font-medium text-zinc-900 dark:text-white truncate max-w-[200px]">{item.productName || item.barcode}</p>
+                                                    <p className="text-[9px] text-zinc-400 uppercase">{item.barcode}</p>
+                                                </td>
+                                                <td className="p-3 text-center font-bold text-amber-600 dark:text-amber-400">{item.quantity}</td>
+                                                <td className="p-3 text-right text-zinc-700 dark:text-zinc-300">${formatCurrency(item.unitCost || 0)}</td>
+                                                <td className="p-3 text-right font-bold text-zinc-900 dark:text-white">${formatCurrency((item.quantity || 0) * (item.unitCost || 0))}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                    <tfoot>
+                                        <tr className="bg-gray-50 dark:bg-zinc-900 border-t border-gray-200 dark:border-white/10">
+                                            <td colSpan={3} className="p-3 text-right font-bold uppercase text-[9px] text-zinc-500 tracking-widest">TOTAL ESTIMADO</td>
+                                            <td className="p-3 text-right font-black text-amber-600 dark:text-amber-400">
+                                                ${formatCurrency(orderDetailItems.reduce((s, i) => s + (i.quantity || 0) * (i.unitCost || 0), 0))}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center py-10 opacity-50">
+                                <Package size={32} className="mb-2" />
+                                <p className="text-xs font-bold uppercase tracking-widest">Sin detalle de productos disponible</p>
+                                <p className="text-[9px] text-zinc-500 mt-1">El pedido fue creado sin ítems individuales.</p>
+                            </div>
+                        )}
+                    </ModalBody>
+                    <ModalFooter className="border-t border-gray-200 dark:border-white/10 pt-3 flex justify-end gap-2 pb-4 px-6">
+                        <Button variant="flat" className="rounded-xl font-bold uppercase tracking-wider text-[10px]" onPress={() => setSelectedOrderDetail(null)}>
+                            Cerrar
+                        </Button>
+                        <Button color="warning" className="rounded-xl font-bold uppercase tracking-wider text-[10px] text-zinc-900 dark:text-zinc-100" onPress={() => {
+                            router.push(`/inventory/orders?edit_order=${selectedOrderDetail?.id}`);
+                            setSelectedOrderDetail(null);
+                        }}>
+                            Editar Pedido
+                        </Button>
+                    </ModalFooter>
+                </ModalContent>
+            </Modal>
 
             </div>
         </div>

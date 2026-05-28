@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"math"
@@ -430,8 +431,8 @@ func (s *ProductService) FixAllProductPrices() error {
 	return nil
 }
 
-func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool) error {
-	_, err := s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI, supplierID, freightCost, totalWeight, isEgreso)
+func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) error {
+	_, err := s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI, supplierID, freightCost, totalWeight, isEgreso, editReceptionID)
 	if err == nil {
 		// AutomatizaciÃ³n: Intentar identificar el proveedor principal para marcar preventa como recibida
 		var mainSupplierID uint
@@ -514,8 +515,11 @@ func (s *ProductService) SanitizeAllNames() (int, error) {
 }
 
 func (s *ProductService) DeleteReception(ref string, dniStr string, reason string) error {
-	// Dummy implementation for now
-	return nil
+	return s.repo.DeleteReception(ref)
+}
+
+func (s *ProductService) GetReception(receptionID string) ([]models.StockMovement, error) {
+	return s.repo.GetReception(receptionID)
 }
 
 func (s *ProductService) EditReception(ref string, dniStr string, reason string, products []models.EditReceiveItem) error {
@@ -546,7 +550,7 @@ func (s *ProductService) ScanInvoice(imageBase64, mimeType, supplierName string,
 
 	params, _ := s.repo.GetSupplierInvoiceParams(supplierID)
 
-	extractedItems, err := s.callGeminiVision(imageBase64, mimeType, supplierName, params)
+	extractedItems, err := s.callClaudeVision(imageBase64, mimeType, supplierName, params)
 	if err != nil {
 		return nil, err
 	}
@@ -662,39 +666,48 @@ func buildInvoicePrompt(supplierName string, params *models.SupplierInvoiceParam
 	return prompt
 }
 
-func (s *ProductService) callGeminiVision(imageBase64, mimeType, supplierName string, params *models.SupplierInvoiceParams) ([]models.ExtractedItem, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
+func (s *ProductService) callClaudeVision(imageBase64, mimeType, supplierName string, params *models.SupplierInvoiceParams) ([]models.ExtractedItem, error) {
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY no configurado")
+		return nil, fmt.Errorf("ANTHROPIC_API_KEY no configurado en .env")
 	}
-
-	url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey
 
 	prompt := buildInvoicePrompt(supplierName, params)
 
+	// Limpiar cabecera data:image/... del base64 si existe
+	cleanBase64 := imageBase64
 	if idx := strings.Index(imageBase64, ","); idx != -1 {
-		imageBase64 = imageBase64[idx+1:]
+		cleanBase64 = imageBase64[idx+1:]
 	}
 
+	// Determinar media_type limpio
+	cleanMime := mimeType
+	if cleanMime == "" {
+		cleanMime = "image/jpeg"
+	}
+
+	// Construir payload multimodal exacto para Claude
 	reqBody := map[string]interface{}{
-		"contents": []map[string]interface{}{
+		"model":      "claude-3-haiku-20240307",
+		"max_tokens": 2000,
+		"messages": []map[string]interface{}{
 			{
-				"parts": []map[string]interface{}{
+				"role": "user",
+				"content": []map[string]interface{}{
 					{
-						"text": prompt,
+						"type": "image",
+						"source": map[string]interface{}{
+							"type":       "base64",
+							"media_type": cleanMime,
+							"data":       cleanBase64,
+						},
 					},
 					{
-						"inline_data": map[string]interface{}{
-							"mime_type": mimeType,
-							"data":      imageBase64,
-						},
+						"type": "text",
+						"text": prompt,
 					},
 				},
 			},
-		},
-		"generationConfig": map[string]interface{}{
-			"temperature": 0.0,
-			"response_mime_type": "application/json",
 		},
 	}
 
@@ -703,38 +716,45 @@ func (s *ProductService) callGeminiVision(imageBase64, mimeType, supplierName st
 		return nil, err
 	}
 
-	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	httpReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("x-api-key", apiKey)
+	httpReq.Header.Set("anthropic-version", "2023-06-01")
+	httpReq.Header.Set("content-type", "application/json")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		var errResp map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("gemini API error (%%d): %%v", resp.StatusCode, errResp)
-	}
-
-	var geminiResp struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"content"`
-		} `json:"candidates"`
-	}
-
-	if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 
-	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("gemini devolvió respuesta vacía")
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("claude API error %d: %s", resp.StatusCode, string(body))
 	}
 
-	text := geminiResp.Candidates[0].Content.Parts[0].Text
+	var claudeResp struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(body, &claudeResp); err != nil {
+		return nil, fmt.Errorf("error parseando respuesta de Claude: %v", err)
+	}
 
+	if len(claudeResp.Content) == 0 {
+		return nil, fmt.Errorf("Claude devolvió respuesta vacía")
+	}
+
+	text := claudeResp.Content[0].Text
 	text = strings.TrimPrefix(text, "```json")
 	text = strings.TrimPrefix(text, "```")
 	text = strings.TrimSuffix(text, "```")
@@ -742,8 +762,12 @@ func (s *ProductService) callGeminiVision(imageBase64, mimeType, supplierName st
 
 	var items []models.ExtractedItem
 	if err := json.Unmarshal([]byte(text), &items); err != nil {
-		return nil, fmt.Errorf("error parseando JSON de Gemini: %v. Raw Text: %s", err, text)
+		return nil, fmt.Errorf("error parseando JSON de Claude: %v. Raw: %s", err, text)
 	}
 
 	return items, nil
+}
+
+func (s *ProductService) UnlinkSupplier(barcode string, supplierID uint) error {
+	return s.repo.UnlinkSupplier(barcode, supplierID)
 }

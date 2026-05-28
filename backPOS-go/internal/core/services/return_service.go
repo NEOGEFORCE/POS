@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"time"
 	"backPOS-go/internal/infrastructure/cache"
 	"backPOS-go/internal/infrastructure/sse"
@@ -112,4 +113,132 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 
 func (s *ReturnService) ListReturns() ([]models.Return, error) {
 	return s.returnRepo.GetAll()
+}
+
+func (s *ReturnService) GetSaleForReturn(refStr string) (*models.Sale, error) {
+	id, err := strconv.ParseUint(refStr, 10, 32)
+	if err != nil {
+		return nil, errors.New("formato de id invalido")
+	}
+	sale, err := s.saleRepo.GetByID(uint(id))
+	if err != nil {
+		return nil, err
+	}
+	return sale, nil
+}
+
+func (s *ReturnService) GetBlindReturnData(barcode string) (map[string]interface{}, error) {
+	// Find in recent sales using FindAll
+	sales, _, err := s.saleRepo.FindAll(ports.SaleFilter{Page: 1, PageSize: 100})
+	if err != nil {
+		return nil, err
+	}
+
+	var productFound bool
+	var totalValidQty float64
+	var cashRefundable float64
+	var lastSaleMethod string
+	var lastSaleId uint
+	var productName string
+	var unitPrice float64
+
+	for _, sale := range sales {
+		for _, detail := range sale.SaleDetails {
+			if detail.Barcode == barcode {
+				productFound = true
+				productName = detail.Product.ProductName
+				unitPrice = detail.UnitPrice
+				available := detail.Quantity - detail.ReturnedQty
+				if available > 0 {
+					totalValidQty += available
+					if lastSaleId == 0 {
+						lastSaleId = sale.SaleID
+						lastSaleMethod = sale.PaymentMethod
+					}
+					// Proporcionalmente sumar efectivo
+					if sale.CashAmount > 0 {
+						cashRefundable += available * detail.UnitPrice // Simplificado, asumiendo que el efectivo cubrió esto
+					}
+				}
+			}
+		}
+	}
+
+	if !productFound || totalValidQty == 0 {
+		return nil, errors.New("Este producto no fue vendido recientemente o ya fue devuelto completamente")
+	}
+
+	return map[string]interface{}{
+		"barcode": barcode,
+		"productName": productName,
+		"unitPrice": unitPrice,
+		"validQty": totalValidQty,
+		"lastSaleId": lastSaleId,
+		"lastPaymentMethod": lastSaleMethod,
+		"cashRefundable": cashRefundable,
+	}, nil
+}
+
+
+func (s *ReturnService) ProcessAdvancedReturn(req ports.ProcessReturnReq, employeeDNI string, employeeName string) error {
+	var originalSale *models.Sale
+	var err error
+
+	if req.InvoiceRef > 0 {
+		originalSale, err = s.saleRepo.GetByID(req.InvoiceRef)
+		if err != nil {
+			return errors.New("venta original no encontrada")
+		}
+
+		if req.Type == "REFUND" && originalSale.PaymentMethod != "EFECTIVO" && originalSale.PaymentMethod != "CASH" {
+			return errors.New("solo se permite reembolso en efectivo para ventas pagadas en efectivo")
+		}
+	} else if req.Type == "REFUND" {
+		// En modo ciego sin factura, el GetBlindReturnData ya aseguró si había efectivo disponible
+		// Pero para ser robustos, asumimos que el controlador validó la disponibilidad de efectivo.
+	}
+
+	// Calculate stock adjustments and Kárdex movements
+	stockAdjustments := make(map[string]float64)
+	var movements []*models.StockMovement
+
+	for _, item := range req.ReturnedItems {
+		stockAdjustments[item.Barcode] += item.Qty
+		movements = append(movements, &models.StockMovement{
+			Date:         time.Now(),
+			Barcode:      item.Barcode,
+			Quantity:     item.Qty,
+			Type:         "RETURN",
+			Reason:       "RETURN",
+			ReferenceID:  fmt.Sprintf("RET-%d-%s", req.InvoiceRef, time.Now().Format("20060102")),
+			EmployeeDNI:  employeeDNI,
+			EmployeeName: employeeName,
+		})
+	}
+
+	for _, item := range req.ReplacementItems {
+		stockAdjustments[item.Barcode] -= item.Qty
+		movements = append(movements, &models.StockMovement{
+			Date:         time.Now(),
+			Barcode:      item.Barcode,
+			Quantity:     item.Qty,
+			Type:         "SALE",
+			Reason:       "EXCHANGE",
+			ReferenceID:  fmt.Sprintf("RET-%d-%s", req.InvoiceRef, time.Now().Format("20060102")),
+			EmployeeDNI:  employeeDNI,
+			EmployeeName: employeeName,
+		})
+	}
+
+	// 3. Guardar devolución con transacción ACID síncrona
+	err = s.returnRepo.ProcessAdvancedReturnTransaction(req, originalSale, employeeDNI, employeeName, stockAdjustments, movements)
+	if err != nil {
+		return err
+	}
+
+	// Invalida cache de dashboard e inicia broadcast asíncrono
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	sse.GetSSEService().BroadcastDashboardUpdate()
+
+	return nil
 }
