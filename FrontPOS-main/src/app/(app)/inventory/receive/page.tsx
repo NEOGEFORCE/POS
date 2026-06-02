@@ -1,4 +1,4 @@
-﻿
+
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
@@ -1660,7 +1660,7 @@ export default function ReceiveInventoryPage() {
 
             <ScannerOverlay
                 isOpen={isScannerOpen}
-                onClose={() => { setIsScannerOpen(false); setScannedNotFoundCode(''); }}
+                onClose={() => { setIsScannerOpen(false); }}
                 errorTitle={scannedNotFoundCode ? "Producto Desconocido" : undefined}
                 errorMessage={scannedNotFoundCode ? `Codigo #${scannedNotFoundCode} no identificado.` : undefined}
                 onIgnoreError={() => {
