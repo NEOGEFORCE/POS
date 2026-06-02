@@ -243,7 +243,7 @@ const ProductFormModal = memo(function ProductFormModal({
     else setEditingProduct((p: any) => p ? { ...p, categoryId: numVal } : null);
   }, [addDialogOpen, setNewProduct, setEditingProduct, categories]);
 
-  // Manejador para anadir proveedores via Autocomplete (Busqueda)
+  // Manejador para añadir proveedores via Autocomplete (Busqueda)
   const handleAddSupplier = useCallback((key: any) => {
     if (!key) return;
     const id = parseInt(String(key));
@@ -258,7 +258,7 @@ const ProductFormModal = memo(function ProductFormModal({
     } else {
       setEditingProduct((p: any) => p ? { ...p, suppliers: newSuppliersPayload, supplierId: id } : null);
     }
-    // Limpiar el buscador despues de anadir
+    // Limpiar el buscador despues de añadir
     setSupplierSearchValue("");
   }, [addDialogOpen, newProduct.suppliers, editingProduct?.suppliers, setNewProduct, setEditingProduct]);
 

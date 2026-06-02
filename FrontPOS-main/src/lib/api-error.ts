@@ -58,9 +58,9 @@ const ERROR_TRANSLATIONS: Record<string, string> = {
   'token': 'Sesion Expirada: Tu ingreso ha caducado, por favor vuelve a entrar',
   'unauthorized': 'Sin Permisos: No tienes autorizacion para realizar esta operacion',
   'forbidden': 'Rol Restringido: Tu nivel de acceso no permite entrar aqui',
-  'invalid credentials': 'Datos Incorrectos: El usuario o la contrasena no coinciden',
+  'invalid credentials': 'Datos Incorrectos: El usuario o la contraseña no coinciden',
   'user not found': 'Usuario no Existe: Revisa el nombre de usuario ingresado',
-  'password too short': 'Contrasena Debil: Debe tener al menos 6 caracteres',
+  'password too short': 'Contraseña Debil: Debe tener al menos 6 caracteres',
 
   // Errores de validacion de campos (Gin/Gorm)
   'required': 'Campo Faltante: Es obligatorio completar este dato',
@@ -96,7 +96,7 @@ function humanizeFieldName(field: string): string {
     'description': 'Descripcion',
     'name': 'Nombre',
     'role': 'Nivel de Permisos',
-    'password': 'Contrasena',
+    'password': 'Contraseña',
     'tax_id': 'NIT/RUT',
     'iva': 'Impuesto IVA',
     'packMultiplier': 'Multiplicador de Pack',

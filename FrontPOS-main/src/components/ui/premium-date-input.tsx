@@ -16,11 +16,11 @@ interface PremiumDateInputProps {
   hint?: string;
   /** Tipo del input nativo: 'date' (default) o 'datetime-local' */
   type?: "date" | "datetime-local";
-  /** Tamano visual: 'sm' (h-10), 'md' (h-12, default) o 'lg' (h-14) */
+  /** Tamaño visual: 'sm' (h-10), 'md' (h-12, default) o 'lg' (h-14) */
   size?: "sm" | "md" | "lg";
   /** Color del acento (clase Tailwind, ej: 'emerald', 'rose', 'blue'). Default 'emerald'. */
   accent?: "emerald" | "rose" | "blue" | "amber" | "violet";
-  /** Si true, muestra la fecha formateada en espanol debajo */
+  /** Si true, muestra la fecha formateada en español debajo */
   showFormatted?: boolean;
   /** Min y max dates en formato ISO */
   min?: string;
@@ -75,11 +75,11 @@ function formatPretty(value: string, type: "date" | "datetime-local"): string {
 }
 
 /**
- * Input de fecha con diseno premium:
+ * Input de fecha con diseño premium:
  *   - Icono calendar a la izquierda con tile colored
  *   - Label en mayusculas con tracking
  *   - Border con focus glow del color accent
- *   - Texto auxiliar debajo mostrando la fecha formateada en espanol
+ *   - Texto auxiliar debajo mostrando la fecha formateada en español
  *   - Soporta date y datetime-local
  *
  *   <PremiumDateInput

@@ -22,7 +22,7 @@ type Tone = "accent" | "danger" | "warning" | "info";
 
 interface NotificationDotProps extends React.HTMLAttributes<HTMLSpanElement> {
   tone?: Tone;
-  /** Tamano en pixeles (default 8) */
+  /** Tamaño en pixeles (default 8) */
   size?: number;
   /** Anillo "ping" activado (default true). Off para badges silenciosos. */
   ping?: boolean;

@@ -252,7 +252,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                                             ${formatCOP(invoiceAsNumber)}
                                                         </span>
                                                     </div>
-                                                    {/* Costo Estimado → secundario, mas pequeno */}
+                                                    {/* Costo Estimado → secundario, mas pequeño */}
                                                     <div className="flex justify-between items-center text-xs text-muted-foreground">
                                                         <span className="flex items-center gap-1"><Receipt size={12} /> Estimado:</span>
                                                         <span className="font-medium">${formatCOP(group.totalEstimated)}</span>

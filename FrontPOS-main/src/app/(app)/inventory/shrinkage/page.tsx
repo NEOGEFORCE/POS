@@ -123,7 +123,7 @@ export default function ShrinkagePage() {
             Mermas y Averias
           </h1>
           <p className="text-muted-foreground mt-1">
-            Declare perdidas de inventario por vencimiento, dano o consumo interno.
+            Declare perdidas de inventario por vencimiento, daño o consumo interno.
           </p>
         </div>
       </div>
@@ -195,7 +195,7 @@ export default function ShrinkagePage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="VENCIMIENTO">Vencimiento</SelectItem>
-                        <SelectItem value="ROTURA">Rotura / Dano</SelectItem>
+                        <SelectItem value="ROTURA">Rotura / Daño</SelectItem>
                         <SelectItem value="CONSUMO_INTERNO">Consumo Interno</SelectItem>
                         <SelectItem value="HURTO">Hurto</SelectItem>
                       </SelectContent>

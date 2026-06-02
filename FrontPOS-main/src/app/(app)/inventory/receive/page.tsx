@@ -616,7 +616,7 @@ export default function ReceiveInventoryPage() {
         // Si hay items sin emparejar Ã¢â€ â€™ abrir reviewer para procesarlos uno a uno
         if (unmatched.length > 0) {
             setUnmatchedQueue(unmatched);
-            // pequeno delay para que el toast anterior se vea antes de abrir el modal
+            // pequeño delay para que el toast anterior se vea antes de abrir el modal
             setTimeout(() => {
                 setIsReviewerOpen(true);
                 toast({
@@ -1418,7 +1418,7 @@ export default function ReceiveInventoryPage() {
                                 </div>
                             </div>
 
-                            {/* COL DERECHA: TOGGLE EGRESO (Mas pequeno) */}
+                            {/* COL DERECHA: TOGGLE EGRESO (Mas pequeño) */}
                             <div className="flex flex-col gap-1 items-end pr-1">
                                 <label className="text-[9px] font-medium text-gray-400 uppercase tracking-widest mr-1">Caja</label>
                                 <button
@@ -1692,7 +1692,7 @@ export default function ReceiveInventoryPage() {
                 </ModalContent>
             </Modal>
 
-            {/* MODAL DE ORDENES PENDIENTES (Rediseno Bottom Sheet Aesthetic) */}
+            {/* MODAL DE ORDENES PENDIENTES (Rediseño Bottom Sheet Aesthetic) */}
             <Modal 
                 isOpen={isOrderModalOpen} 
                 onOpenChange={setIsOrderModalOpen} 
@@ -1826,7 +1826,7 @@ export default function ReceiveInventoryPage() {
                 apiFieldErrors={apiFieldErrors}
             />
 
-            {/* MODAL DE CONFIRMACION DE SINCRONIZACION Ã¢â‚¬â€ diseno en 3 pasos al
+            {/* MODAL DE CONFIRMACION DE SINCRONIZACION Ã¢â‚¬â€ diseño en 3 pasos al
                 estilo "Autorizar Egreso": (1) Resumen de Carga, (2) Costo de Flete,
                 (3) Pago por con soporte de pagos mixtos y validacion de cuadre. */}
             <Modal

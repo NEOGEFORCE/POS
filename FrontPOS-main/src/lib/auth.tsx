@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error("Critical Auth recovery failure", error);
       } finally {
-        // Aseguramos un pequeno respiro para que el estado de React se asiente
+        // Aseguramos un pequeño respiro para que el estado de React se asiente
         setLoading(false);
       }
     };

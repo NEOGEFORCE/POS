@@ -1283,7 +1283,7 @@ function ReturnsContent() {
                     </ModalContent>
                 </Modal>
 
-                {/* SCANNER OVERLAY (Este se mantiene oscuro por diseno de UI de camaras) */}
+                {/* SCANNER OVERLAY (Este se mantiene oscuro por diseño de UI de camaras) */}
                 {isScannerOpen && (
                     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90">
                         <div className="relative w-full max-w-2xl aspect-video bg-white dark:bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-zinc-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">

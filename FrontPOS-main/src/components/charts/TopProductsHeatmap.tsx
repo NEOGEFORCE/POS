@@ -32,7 +32,7 @@ interface TopProductsHeatmapProps {
   /** Color de saturacion maxima (default: var(--accent)) */
   color?: string;
   className?: string;
-  /** Tamano de la celda en px (default 28) */
+  /** Tamaño de la celda en px (default 28) */
   cellSize?: number;
 }
 
@@ -40,7 +40,7 @@ const ACCENT = "var(--accent, #10b981)";
 
 /** Mezcla un color con transparencia segun intensidad 0..1 */
 function intensityToOpacity(v: number): number {
-  // Pequeno lift inferior para que el 0 no sea totalmente invisible.
+  // Pequeño lift inferior para que el 0 no sea totalmente invisible.
   return Math.max(0.06, Math.min(1, v * 0.92 + 0.06));
 }
 

@@ -172,7 +172,7 @@ export default function ExpensesPage() {
   useEffect(() => { 
     loadExpenses(); 
     
-    // Escuchar actualizaciones de egresos (Incluso si ocurren en otra pestana o proceso)
+    // Escuchar actualizaciones de egresos (Incluso si ocurren en otra pestaña o proceso)
     const cleanup = setupSyncListener((event) => {
       if (event === 'EXPENSE_UPDATE' || event === 'DASHBOARD_UPDATE') {
         loadExpenses();

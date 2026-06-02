@@ -30,7 +30,7 @@ let revalidateTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingEvents = new Set<SyncEvent>();
 
 export function broadcastRevalidate(event: SyncEvent) {
-  // 1. Notificar a otras pestanas INMEDIATAMENTE
+  // 1. Notificar a otras pestañas INMEDIATAMENTE
   if (channel) {
     channel.postMessage(event);
   }

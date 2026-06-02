@@ -483,7 +483,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                 </div>
             </div>
 
-            {/* Fila 2: Entradas Principales (Rediseno 2 Filas Mobile) */}
+            {/* Fila 2: Entradas Principales (Rediseño 2 Filas Mobile) */}
             <div className="flex flex-col gap-2 pt-1">
                 {/* SUB-FILA 1: CANTIDAD, FISICO REAL Y UNIDAD (3 Columnas) */}
                 <div className="grid grid-cols-3 gap-2">

@@ -262,7 +262,7 @@ export const formatDateTime = (date: string | Date): string => {
 };
 
 /**
- * Formatea fecha + hora compacta para displays pequenos
+ * Formatea fecha + hora compacta para displays pequeños
  * "08/05 2:30 PM"
  */
 export const formatShortDateTime = (date: string | Date): string => {

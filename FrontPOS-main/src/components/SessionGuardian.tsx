@@ -12,10 +12,10 @@ export default function SessionGuardian() {
     const [isOnline, setIsOnline] = useState(true);
     const [lastActivity, setLastActivity] = useState(Date.now());
 
-    // 1. SINCRONIZACION DE LOGOUT (Multi-pestana)
+    // 1. SINCRONIZACION DE LOGOUT (Multi-pestaña)
     useEffect(() => {
         const handleStorageChange = (e: StorageEvent) => {
-            // Si detectamos que el token fue removido o cambio en otra pestana
+            // Si detectamos que el token fue removido o cambio en otra pestaña
             if (e.key === 'org-pos-token' && !e.newValue) {
                 toast({
                     title: "SESION FINALIZADA",
@@ -95,6 +95,6 @@ export default function SessionGuardian() {
     }, []);
 
     // Este componente no renderiza nada visible por defecto, 
-    // pero podemos retornar un pequeno indicador si lo deseamos.
+    // pero podemos retornar un pequeño indicador si lo deseamos.
     return null;
 }

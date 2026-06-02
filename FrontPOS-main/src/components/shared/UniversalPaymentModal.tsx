@@ -107,7 +107,7 @@ export default function UniversalPaymentModal({
       else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0) setActivePaymentTab(initialPaidAmounts.transferSource as any);
       else setActivePaymentTab('cash');
 
-      // Pequeno retardo de seguridad (300ms) para evitar capturar el Enter que abrio el modal
+      // Pequeño retardo de seguridad (300ms) para evitar capturar el Enter que abrio el modal
       const timer = setTimeout(() => setIsReady(true), 300);
       return () => clearTimeout(timer);
     }

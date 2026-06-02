@@ -17,7 +17,7 @@ export default function QuickActionsPanel() {
             shadow: ""
         },
         {
-            label: "Anadir Producto",
+            label: "Añadir Producto",
             icon: PlusCircle,
             href: "/products",
             color: "amber",

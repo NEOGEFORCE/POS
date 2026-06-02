@@ -42,7 +42,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                             className="bg-white/5 text-zinc-900 dark:text-zinc-100 text-[9px] font-medium uppercase tracking-widest rounded-2xl h-8 px-4 border border-emerald-500/20 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all tracking-tight" 
                             onPress={onAddAll}
                         >
-                            <Layers size={14} className="mr-2" /> anadir todos
+                            <Layers size={14} className="mr-2" /> añadir todos
                         </Button>
                         <Button 
                             size="sm" 

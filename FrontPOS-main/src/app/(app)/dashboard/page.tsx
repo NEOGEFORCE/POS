@@ -188,7 +188,7 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
-        // Sincronizacion Local (Entre pestanas y GlobalSyncProvider)
+        // Sincronizacion Local (Entre pestañas y GlobalSyncProvider)
         const cleanupSync = setupSyncListener((event) => {
             const dashboardEvents = [
                 'SALE_MADE', 
@@ -244,7 +244,7 @@ export default function DashboardPage() {
                             </div>
 
                             <div className="flex items-center gap-2">
-                                {/* Filtro Temporal Dinamico — diseno premium */}
+                                {/* Filtro Temporal Dinamico — diseño premium */}
                                 <div className="hidden md:flex items-center gap-2">
                                     <div className="w-[180px]">
                                         <PremiumDateInput

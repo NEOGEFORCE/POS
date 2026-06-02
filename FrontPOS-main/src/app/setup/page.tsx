@@ -58,7 +58,7 @@ export default function SetupPage() {
       toast({
         variant: "destructive",
         title: "Error de validacion",
-        description: "Las contrasenas no coinciden.",
+        description: "Las contraseñas no coinciden.",
       });
       return;
     }
@@ -185,7 +185,7 @@ export default function SetupPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label="Contrasena"
+                label="Contraseña"
                 type="password"
                 labelPlacement="outside"
                 isRequired
@@ -200,7 +200,7 @@ export default function SetupPage() {
                 }}
               />
               <Input
-                label="Confirmar Contrasena"
+                label="Confirmar Contraseña"
                 type="password"
                 labelPlacement="outside"
                 isRequired
@@ -218,7 +218,7 @@ export default function SetupPage() {
 
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/5 border border-amber-100 dark:border-amber-500/10">
               <p className="text-[9px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider leading-relaxed">
-                IMPORTANTE: Esta cuenta tendra acceso total al sistema. La contrasena debe tener al menos 6 caracteres. Asegurate de usar un correo real para la recuperacion.
+                IMPORTANTE: Esta cuenta tendra acceso total al sistema. La contraseña debe tener al menos 6 caracteres. Asegurate de usar un correo real para la recuperacion.
               </p>
             </div>
           </CardBody>

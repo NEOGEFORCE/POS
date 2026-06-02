@@ -145,7 +145,7 @@ export default function LabelsPage() {
                     <div className="mt-auto p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10 hidden lg:block">
                         <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-[0.2em] mb-1 tracking-tight">Tip Pro</p>
                         <p className="text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed tracking-tight">
-                            Agrega productos rapidamente y ajusta las cantidades antes de imprimir. El diseno esta optimizado para ahorro de tinta.
+                            Agrega productos rapidamente y ajusta las cantidades antes de imprimir. El diseño esta optimizado para ahorro de tinta.
                         </p>
                     </div>
                 </div>

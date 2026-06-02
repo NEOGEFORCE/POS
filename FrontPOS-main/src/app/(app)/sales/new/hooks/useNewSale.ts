@@ -1186,13 +1186,13 @@ export function useNewSale() {
                 // --- GESTION DE FACTURAS (V6.3 - Seguridad Primero) ---
                 const currentKey = activeCartKeyRef.current;
                 
-                // 1. Limpiamos la pestana actual
+                // 1. Limpiamos la pestaña actual
                 const updatedCarts = { ...carts, [currentKey]: [] };
                 setCarts(updatedCarts);
                 setCartCustomers(prev => ({ ...prev, [currentKey]: '0' }));
                 setSelectedCustomerDni('0');
 
-                // 2. Verificamos si queda ALGO pendiente en cualquier otra pestana
+                // 2. Verificamos si queda ALGO pendiente en cualquier otra pestaña
                 const anyTabHasItems = Object.values(updatedCarts).some(items => items.length > 0);
 
                 if (!anyTabHasItems) {
@@ -1203,8 +1203,8 @@ export function useNewSale() {
                     setActiveCartKey('Factura 1');
                     activeCartKeyRef.current = 'Factura 1';
                 } else {
-                    // Si aun hay gente esperando en otras pestanas, nos quedamos quietos
-                    // No borramos pestanas para no perder datos.
+                    // Si aun hay gente esperando en otras pestañas, nos quedamos quietos
+                    // No borramos pestañas para no perder datos.
                 }
             }
 

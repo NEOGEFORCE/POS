@@ -32,7 +32,7 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [isForgotLoading, setIsForgotLoading] = useState(false);
   const [isForgotOpen, setIsForgotOpen] = useState(false);
-  const [isVisible, setIsVisible] = useState(false); // Para mostrar/ocultar contrasena
+  const [isVisible, setIsVisible] = useState(false); // Para mostrar/ocultar contraseña
 
   // Cortinas estilo yann.uiux: al login exitoso ambos paneles salen
   // en direcciones opuestas y luego navegamos al dashboard.
@@ -86,7 +86,7 @@ export default function LoginPage() {
       toast({
         variant: "destructive",
         title: "Error de autenticacion",
-        description: error.message || "Usuario o contrasena incorrectos.",
+        description: error.message || "Usuario o contraseña incorrectos.",
       });
     } finally {
       setIsLoading(false);
@@ -226,7 +226,7 @@ export default function LoginPage() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between ml-1">
                 <label htmlFor="password" className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">
-                  Contrasena
+                  Contraseña
                 </label>
                 <button
                   type="button"
