@@ -73,7 +73,7 @@ function DigitColumn({
       aria-hidden
     >
       <motion.span
-        className="flex flex-col leading-[1em]"
+        className="flex flex-col leading-[1em] items-center"
         initial={{ y: 0 }}
         animate={{ y: `-${offset}em` }}
         transition={{
@@ -84,13 +84,13 @@ function DigitColumn({
       >
         {Array.from({ length: loops }).flatMap((_, l) =>
           RANGE.map((d) => (
-            <span key={`l${l}-${d}`} style={{ height: "1em" }}>
+            <span key={`l${l}-${d}`} className="text-center w-full" style={{ height: "1em" }}>
               {d}
             </span>
           )),
         )}
         {RANGE.slice(0, validTarget + 1).map((d) => (
-          <span key={`final-${d}`} style={{ height: "1em" }}>
+          <span key={`final-${d}`} className="text-center w-full" style={{ height: "1em" }}>
             {d}
           </span>
         ))}
