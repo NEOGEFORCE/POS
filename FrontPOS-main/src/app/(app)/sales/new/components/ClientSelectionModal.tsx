@@ -135,7 +135,7 @@ export default function ClientSelectionModal({
                                             <Search className="h-6 w-6 text-gray-300" />
                                         </div>
                                         <p className="text-[10px] font-medium text-gray-400 uppercase tracking-widest tracking-tight">
-                                            Sin resultados para su búsqueda
+                                            Sin resultados para su busqueda
                                         </p>
                                     </div>
                                 )}

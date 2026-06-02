@@ -43,9 +43,9 @@ interface ReturnsKPIsProps {
 
 export default function ReturnsKPIs({ totalReturns, totalRefunded, itemsReturned }: ReturnsKPIsProps) {
     const kpis = [
-        { label: "Total Devoluciones", val: totalReturns, icon: RotateCcw, color: "rose", desc: "Histórico" },
+        { label: "Total Devoluciones", val: totalReturns, icon: RotateCcw, color: "rose", desc: "Historico" },
         { label: "Dinero Reembolsado", val: totalRefunded, icon: TrendingDown, color: "rose", desc: "Capital devuelto" },
-        { label: "Artículos Reingresados", val: itemsReturned, icon: Package, color: "rose", desc: "Inventario restaurado" },
+        { label: "Articulos Reingresados", val: itemsReturned, icon: Package, color: "rose", desc: "Inventario restaurado" },
         { label: "Cierres Pendientes", val: "0", icon: Clock, color: "amber", desc: "Pendientes" }
     ];
 

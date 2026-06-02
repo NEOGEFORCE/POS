@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
@@ -13,7 +13,7 @@ import { extractApiError } from '@/lib/api-error';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { normalizeText } from '@/lib/utils';
 
-// Dinámicos para aligerar HMR y carga inicial
+// Dinamicos para aligerar HMR y carga inicial
 const CategoryStats = dynamic(() => import('./components/CategoryStats'), { ssr: false });
 const CategoryTable = dynamic(() => import('./components/CategoryTable'), { ssr: false });
 const CategoryFormModal = dynamic(() => import('./components/CategoryFormModal'), { ssr: false });
@@ -23,7 +23,7 @@ async function fetchCategories(token: string): Promise<Category[]> {
   const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/categories/all-categories`, {
     headers: { 'Authorization': `Bearer ${token}` }
   });
-  if (!res.ok) throw new Error('Error al cargar categorías');
+  if (!res.ok) throw new Error('Error al cargar categorias');
   const data = await res.json();
   const categories = data.map((cat: any) => ({ ...cat, productCount: cat.productCount || 0 }));
   return categories.sort((a: Category, b: Category) => a.name.localeCompare(b.name));
@@ -35,7 +35,7 @@ export default function CategoriesPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [filter, setFilter] = useState('');
 
-  // Estados de Paginación
+  // Estados de Paginacion
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -56,7 +56,7 @@ export default function CategoriesPage() {
       const data = await fetchCategories(token);
       setCategories(data);
     } catch {
-      toast({ variant: "destructive", title: "Error de conexión", description: "No se pudieron obtener las categorías" });
+      toast({ variant: "destructive", title: "Error de conexion", description: "No se pudieron obtener las categorias" });
     } finally {
       setLoading(false);
     }
@@ -65,7 +65,7 @@ export default function CategoriesPage() {
   useEffect(() => { 
     loadCategories(); 
     
-    // SINCRONIZACIÓN ZERO-F5
+    // SINCRONIZACION ZERO-F5
     const cleanup = setupSyncListener((event) => {
         if (event === 'CATEGORY_UPDATE' || event === 'PRODUCT_UPDATE' || event === 'DASHBOARD_UPDATE') {
             loadCategories();
@@ -118,10 +118,10 @@ export default function CategoriesPage() {
 
           toast({
             variant: 'destructive',
-            title: 'CATEGORÍA DUPLICADA',
+            title: 'CATEGORIA DUPLICADA',
             description: isActive
-              ? `"${name}" ya existe como una categoría activa.`
-              : `Existe un registro inactivo para "${name}". ¿Deseas reactivarlo?`,
+              ? `"${name}" ya existe como una categoria activa.`
+              : `Existe un registro inactivo para "${name}". Ã‚Â¿Deseas reactivarlo?`,
             action: !isActive ? (
               <Button
                 size="sm"
@@ -135,7 +135,7 @@ export default function CategoriesPage() {
                       body: JSON.stringify({ name, isActive: true })
                     });
                     if (!reactRes.ok) throw new Error('Fallo al reactivar');
-                    toast({ title: 'ÉXITO', description: 'CATEGORÍA REACTIVADA' });
+                    toast({ title: 'EXITO', description: 'CATEGORIA REACTIVADA' });
                     setAddDialogOpen(false);
                     loadCategories();
                     broadcastRevalidate('CATEGORY_UPDATE');
@@ -150,10 +150,10 @@ export default function CategoriesPage() {
           });
           return;
         }
-        const errorMsg = await extractApiError(res, "FALLO AL CREAR CATEGORÍA");
+        const errorMsg = await extractApiError(res, "FALLO AL CREAR CATEGORIA");
         throw new Error(errorMsg);
       }
-      toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA REGISTRADA.' });
+      toast({ variant: 'success', title: 'EXITO', description: 'CATEGORIA REGISTRADA.' });
       setAddDialogOpen(false);
       setNewCatName('');
       loadCategories();
@@ -173,7 +173,7 @@ export default function CategoriesPage() {
         body: JSON.stringify({ name: normalizeText(editingCategory.name) })
       });
       if (!res.ok) {
-        const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CATEGORÍA");
+        const errorMsg = await extractApiError(res, "FALLO AL ACTUALIZAR CATEGORIA");
         throw new Error(errorMsg);
       }
 
@@ -189,7 +189,7 @@ export default function CategoriesPage() {
         }
       }
 
-      toast({ variant: 'success', title: 'ÉXITO', description: 'NOMBRE DE CATEGORÍA SINCRONIZADO.' });
+      toast({ variant: 'success', title: 'EXITO', description: 'NOMBRE DE CATEGORIA SINCRONIZADO.' });
       setEditDialogOpen(false);
       setEditingCategory(null);
       loadCategories();
@@ -206,10 +206,10 @@ export default function CategoriesPage() {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (!res.ok) {
-        const errorMsg = await extractApiError(res, "FALLO AL ELIMINAR CATEGORÍA");
+        const errorMsg = await extractApiError(res, "FALLO AL ELIMINAR CATEGORIA");
         throw new Error(errorMsg);
       }
-      toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ELIMINADO CORRECTAMENTE.' });
+      toast({ variant: 'success', title: 'EXITO', description: 'REGISTRO ELIMINADO CORRECTAMENTE.' });
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadCategories();
@@ -217,18 +217,18 @@ export default function CategoriesPage() {
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b] flex-col gap-4">
     <Spinner color="success" size="lg" />
-    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Categorías...</p>
+    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Categorias...</p>
   </div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) - MATCHING SUPPLIERS/USERS 3-PANEL STYLE */}
       <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
 
-        {/* PANEL 1: TITULO Y BOTONES ACCIÓN */}
+        {/* PANEL 1: TITULO Y BOTONES ACCION */}
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-3">
             <div className="h-10 w-10 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 transform -rotate-2 hover:rotate-0 transition-all duration-500">
@@ -236,10 +236,10 @@ export default function CategoriesPage() {
             </div>
             <div className="flex flex-col">
               <h1 className="text-[13px] md:text-[14px] font-medium uppercase tracking-tighter leading-none tracking-tight text-zinc-900 dark:text-zinc-50">
-                CATÁLOGO DE <span className="text-zinc-900 dark:text-zinc-100 text-[14px] md:text-[15px]">CATEGORÍAS</span>
+                CATALOGO DE <span className="text-zinc-900 dark:text-zinc-100 text-[14px] md:text-[15px]">CATEGORIAS</span>
               </h1>
               <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1.5 flex items-center gap-1.5 leading-none">
-                <Sparkles size={8} className="text-zinc-900 dark:text-zinc-100" /> TAXONOMÍA MAESTRA
+                <Sparkles size={8} className="text-zinc-900 dark:text-zinc-100" /> TAXONOMIA MAESTRA
               </p>
             </div>
           </div>
@@ -262,7 +262,7 @@ export default function CategoriesPage() {
           </div>
         </div>
 
-        {/* PANEL 2: BARRA DE BÚSQUEDA NIVEL 2 */}
+        {/* PANEL 2: BARRA DE BUSQUEDA NIVEL 2 */}
         <div className="px-1">
           <Input
             size="sm"
@@ -277,7 +277,7 @@ export default function CategoriesPage() {
           />
         </div>
 
-        {/* PANEL 3: ESTADÍSTICAS INTEGRADAS EN HEADER */}
+        {/* PANEL 3: ESTADISTICAS INTEGRADAS EN HEADER */}
         <div className="px-1 pb-1">
           <CategoryStats
             total={stats.total}
@@ -288,7 +288,7 @@ export default function CategoriesPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col min-w-0">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
         <CategoryTable
           categories={paginatedCategories}
           currentPage={currentPage}
@@ -312,13 +312,13 @@ export default function CategoriesPage() {
           const val = normalizeText(name);
           if (addDialogOpen) {
             setNewCatName(name);
-            // Detección automática de categoría existente
+            // Deteccion automatica de categoria existente
             if (val.length >= 3) {
               const existing = categories.find(c => normalizeText(c.name) === val);
               if (existing) {
                 toast({
                   variant: "success",
-                  title: "CATEGORÍA DETECTADA",
+                  title: "CATEGORIA DETECTADA",
                   description: "CARGANDO DATOS EXISTENTES..."
                 });
                 setAddDialogOpen(false);
@@ -344,4 +344,9 @@ export default function CategoriesPage() {
     </div>
   );
 }
+
+
+
+
+
 

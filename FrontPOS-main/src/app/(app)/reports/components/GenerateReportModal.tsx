@@ -10,9 +10,10 @@ import {
     FileSpreadsheet, Zap, Database, Clock, 
     ShoppingCart, Wallet, Package, TrendingUp,
     Target, Tag, Send, Cloud, Check, FileDigit,
-    Users
+    Users, AlertTriangle, RefreshCw, Percent
 } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
+import { PremiumDateInput } from "@/components/ui/premium-date-input";
 
 interface GenerateReportModalProps {
     isOpen: boolean;
@@ -22,15 +23,19 @@ interface GenerateReportModalProps {
 
 const CATEGORIES = [
     { id: 'box-closure', name: 'CUADRE CAJA', icon: Wallet, color: 'text-zinc-900 dark:text-zinc-100', bg: 'bg-white/5' },
+    { id: 'cuadre-real', name: 'CUADRE REAL (Fisico)', icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
     { id: 'payments', name: 'VENTAS & PAGOS', icon: ShoppingCart, color: 'text-blue-500', bg: 'bg-blue-500/10' },
     { id: 'inventory', name: 'INVENTARIO', icon: Package, color: 'text-amber-500', bg: 'bg-amber-500/10' },
     { id: 'pnl', name: 'FINANZAS / PNL', icon: TrendingUp, color: 'text-violet-500', bg: 'bg-violet-500/10' },
+    { id: 'profitability', name: 'RENTABILIDAD (17% Target)', icon: Percent, color: 'text-emerald-600', bg: 'bg-emerald-600/10' },
+    { id: 'shrinkage', name: 'MERMAS Y AVERIAS', icon: AlertTriangle, color: 'text-rose-500', bg: 'bg-rose-500/10' },
+    { id: 'rotation', name: 'ROTACION INVENTARIO', icon: RefreshCw, color: 'text-cyan-500', bg: 'bg-cyan-500/10' },
     { id: 'cashflow', name: 'FLUJO DE CAJA (INGRESOS/EGRESOS)', icon: Database, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
     { id: 'ranking', name: 'RANKING PRODUCTOS', icon: Target, color: 'text-rose-500', bg: 'bg-rose-500/10' },
     { id: 'savings', name: 'AHORROS & COSTOS', icon: Tag, color: 'text-teal-500', bg: 'bg-teal-500/10' },
-    { id: 'vault-audit', name: 'ARQUEO GENERAL BÓVEDA', icon: Database, color: 'text-amber-600', bg: 'bg-amber-600/10' },
+    { id: 'vault-audit', name: 'ARQUEO GENERAL BOVEDA', icon: Database, color: 'text-amber-600', bg: 'bg-amber-600/10' },
     { id: 'global-credit', name: 'CARTERA GLOBAL (FIADOS)', icon: Users, color: 'text-rose-600', bg: 'bg-rose-600/10' },
-    { id: 'voids-audit', name: 'AUDITORÍA DE ANULACIONES', icon: ShieldCheck, color: 'text-blue-600', bg: 'bg-blue-600/10' },
+    { id: 'voids-audit', name: 'AUDITORIA DE ANULACIONES', icon: ShieldCheck, color: 'text-blue-600', bg: 'bg-blue-600/10' },
 ];
 
 export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }: GenerateReportModalProps) {
@@ -49,7 +54,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
     const [saveToCloud, setSaveToCloud] = useState(true);
     const [sendToTelegram, setSendToTelegram] = useState(true);
 
-    // Actualizar nombre del reporte automáticamente cuando cambie la categoría
+    // Actualizar nombre del reporte automaticamente cuando cambie la categoria
     React.useEffect(() => {
         const cat = CATEGORIES.find(c => c.id === category);
         if (cat) {
@@ -59,17 +64,8 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
     }, [category]);
 
     const handleGenerate = () => {
-        const payload = { reportName, dataSources, deliveryEmail, saveToCloud, sendToTelegram, dateFrom, dateTo };
-        if (format !== 'PDF') {
-            toast({
-                title: "FORMATO EN DESARROLLO",
-                description: `La exportación a ${format} estará disponible en la V4.2. Usando PDF por defecto.`,
-                variant: "default"
-            });
-            onGenerate(category, payload);
-        } else {
-            onGenerate(category, payload);
-        }
+        const payload = { reportName, dataSources, deliveryEmail, saveToCloud, sendToTelegram, dateFrom, dateTo, format };
+        onGenerate(category, payload);
         onOpenChange(false);
     };
 
@@ -86,7 +82,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
         <Modal 
             isOpen={isOpen} 
             onOpenChange={onOpenChange}
-            size="3xl"
+            size="4xl"
             backdrop="blur"
             scrollBehavior="inside"
             classNames={{
@@ -104,12 +100,37 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                 <span className="p-2.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><Zap size={20} /></span>
                                 Generador <span className="text-zinc-900 dark:text-zinc-100">Maestro</span>
                             </h2>
-                            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Configuración de Salida de Datos V4.0</p>
+                            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Configuracion de Salida de Datos V4.0</p>
                         </ModalHeader>
 
                         <ModalBody className="gap-4 md:gap-8">
+                            {/* CATEGORIAS A FILA COMPLETA — 3 columnas en desktop */}
+                            <div className="space-y-3">
+                                <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Seleccionar Fuente de Datos</label>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                                    {CATEGORIES.map((cat) => (
+                                        <button
+                                            key={cat.id}
+                                            onClick={() => setCategory(cat.id)}
+                                            className={`p-3 rounded-2xl border-2 transition-all flex items-start gap-2.5 text-left min-h-[64px] ${
+                                                category === cat.id
+                                                    ? 'bg-emerald-500/[0.06] border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
+                                                    : 'bg-white dark:bg-zinc-950/50 border-zinc-200 dark:border-white/5 hover:border-zinc-300 dark:hover:border-white/10'
+                                            }`}
+                                        >
+                                            <div className={`p-1.5 rounded-lg shrink-0 ${cat.bg} ${cat.color}`}>
+                                                <cat.icon size={14} />
+                                            </div>
+                                            <span className={`text-[10px] font-medium uppercase tracking-tight leading-tight pt-0.5 ${category === cat.id ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                                                {cat.name}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
-                                {/* SECCIÓN IZQUIERDA: IDENTIDAD Y CATEGORÍA */}
+                                {/* SECCION IZQUIERDA: IDENTIDAD */}
                                 <div className="space-y-6">
                                     {/* Nombre del Archivo */}
                                     <div className="space-y-2">
@@ -130,61 +151,30 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                     <div className="space-y-3">
                                         <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Rango de Fechas</label>
                                         <div className="grid grid-cols-2 gap-3">
-                                            <Input 
-                                                type="date"
+                                            <PremiumDateInput
                                                 value={dateFrom}
-                                                onValueChange={setDateFrom}
-                                                classNames={{
-                                                    inputWrapper: "bg-gray-100 dark:bg-zinc-950/80 border-2 border-transparent focus-within:!border-emerald-500/50 rounded-2xl h-12",
-                                                    input: "font-medium text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest"
-                                                }}
-                                                startContent={<Calendar size={14} className="text-gray-400 mr-1" />}
+                                                onChange={setDateFrom}
+                                                accent="emerald"
+                                                size="md"
+                                                hint="Desde"
                                             />
-                                            <Input 
-                                                type="date"
+                                            <PremiumDateInput
                                                 value={dateTo}
-                                                onValueChange={setDateTo}
-                                                classNames={{
-                                                    inputWrapper: "bg-gray-100 dark:bg-zinc-950/80 border-2 border-transparent focus-within:!border-emerald-500/50 rounded-2xl h-12",
-                                                    input: "font-medium text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest"
-                                                }}
-                                                startContent={<Calendar size={14} className="text-gray-400 mr-1" />}
+                                                onChange={setDateTo}
+                                                accent="emerald"
+                                                size="md"
+                                                hint="Hasta"
                                             />
-                                        </div>
-                                    </div>
-
-                                    {/* Seleccionar Fuente de Datos - Toggle Cards ADN Inventario */}
-                                    <div className="space-y-3">
-                                        <label className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Seleccionar Fuente de Datos</label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-2">
-                                            {CATEGORIES.map((cat) => (
-                                                <button
-                                                    key={cat.id}
-                                                    onClick={() => setCategory(cat.id)}
-                                                    className={`p-3 sm:p-4 rounded-2xl border-2 transition-all flex items-center gap-3 text-left ${
-                                                        category === cat.id 
-                                                            ? 'bg-white/5 border-emerald-500/50' 
-                                                            : 'bg-white dark:bg-zinc-950/50 border-zinc-200 dark:border-white/5 hover:border-zinc-200 dark:border-white/10'
-                                                    }`}
-                                                >
-                                                    <div className={`p-2 rounded-2xl ${cat.bg} ${cat.color}`}>
-                                                        <cat.icon size={16} />
-                                                    </div>
-                                                    <span className={`text-[10px] font-medium uppercase tracking-tight tracking-tight ${category === cat.id ? 'text-zinc-300' : 'text-zinc-500 dark:text-zinc-400'}`}>
-                                                        {cat.name}
-                                                    </span>
-                                                </button>
-                                            ))}
                                         </div>
                                     </div>
                                 </div>
 
-                                {/* SECCIÓN DERECHA: FORMATO Y SEGURIDAD */}
+                                {/* SECCION DERECHA: FORMATO Y SEGURIDAD */}
                                 <div className="space-y-6">
-                                    {/* Criterios de Exportación - Panel ADN Inventario */}
+                                    {/* Criterios de Exportacion - Panel ADN Inventario */}
                                     <div className="bg-gray-100 dark:bg-zinc-950/80 border border-gray-200 dark:border-white/5 rounded-2xl p-6 space-y-5">
                                         <label className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-                                            <ShieldCheck size={14} className="text-zinc-900 dark:text-zinc-100" /> Criterios de Exportación
+                                            <ShieldCheck size={14} className="text-zinc-900 dark:text-zinc-100" /> Criterios de Exportacion
                                         </label>
                                         
                                         {/* Radios Custom con Peer */}
@@ -221,7 +211,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                             <div className="space-y-2">
                                                 {[
                                                     { id: 'details', label: 'Incluir Listado Detallado' },
-                                                    { id: 'logs', label: 'Anexar Logs de Auditoría' },
+                                                    { id: 'logs', label: 'Anexar Logs de Auditoria' },
                                                     { id: 'api', label: 'Consolidar Uso de API' }
                                                 ].map((opt) => (
                                                     <label key={opt.id} className="flex items-center gap-3 cursor-pointer group">
@@ -288,7 +278,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 <Send size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                             </div>
                                             <span className="text-sm text-zinc-500 dark:text-zinc-400 font-medium peer-checked:text-blue-400 transition-colors flex items-center gap-2">
-                                                Notificar y Enviar PDF vía Telegram
+                                                Notificar y Enviar PDF via Telegram
                                             </span>
                                         </label>
                                     </div>

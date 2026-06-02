@@ -46,7 +46,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
     const [isDeleting, setIsDeleting] = useState<number | null>(null);
 
     const handleDeletePayment = async (id: number | string) => {
-        if (!confirm("¿Está seguro de anular este abono? El saldo de la deuda se recalculará.")) return;
+        if (!confirm("¿Esta seguro de anular este abono? El saldo de la deuda se recalculara.")) return;
         setIsDeleting(Number(id));
         const token = Cookies.get('org-pos-token');
         try {
@@ -90,7 +90,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
         }
     }, [isOpen, customer]);
 
-    // Libro Mayor: merge historySales + historyPayments cronológicamente
+    // Libro Mayor: merge historySales + historyPayments cronologicamente
     const libroMayorEntries = useMemo(() => {
         if (!data) return [];
         const entries: { date: Date; type: 'VENTA' | 'ABONO'; amount: number; detail: string; balance: number; id: number | string }[] = [];
@@ -121,7 +121,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
             });
         });
 
-        // Ordenar cronológicamente (más antiguo primero)
+        // Ordenar cronologicamente (mas antiguo primero)
         entries.sort((a, b) => a.date.getTime() - b.date.getTime());
 
         // Calcular saldo acumulado (running balance)
@@ -138,19 +138,19 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
         return entries;
     }, [data]);
 
-    // Calcular facturas pendientes cronológicas reales basado en el pool de abonos
+    // Calcular facturas pendientes cronologicas reales basado en el pool de abonos
     const dynamicPendingInvoices = useMemo(() => {
         if (!data) return [];
         let remainingPayments = data.historyPayments?.reduce((sum, p) => sum + p.totalPaid, 0) || 0;
         
-        // Clonar y ordenar facturas desde la más antigua a la más nueva
+        // Clonar y ordenar facturas desde la mas antigua a la mas nueva
         const salesOldestFirst = [...(data.historySales || [])].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         
         const pending: Sale[] = [];
         for (const sale of salesOldestFirst) {
-            // Asumimos que solo las ventas a CRÉDITO entran acá, si paymentMethod existiera. Si no, usamos creditAmount > 0
+            // Asumimos que solo las ventas a CREDITO entran aca, si paymentMethod existiera. Si no, usamos creditAmount > 0
             const saleTotal = sale.creditAmount || sale.debtPending || 0;
-            if (saleTotal <= 0) continue; // Si la venta no fue a crédito, saltar
+            if (saleTotal <= 0) continue; // Si la venta no fue a credito, saltar
             
             if (remainingPayments >= saleTotal) {
                 // Totalmente pagada
@@ -168,7 +168,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
             }
         }
         
-        // Devolver ordenadas de la más reciente a la más antigua para mostrar
+        // Devolver ordenadas de la mas reciente a la mas antigua para mostrar
         return pending.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     }, [data]);
 
@@ -217,10 +217,10 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                         <div>
                             <strong>CLIENTE:</strong> ${data.client.name}<br>
                             <strong>DNI/CC:</strong> ${data.client.dni}<br>
-                            <strong>TELÉFONO:</strong> ${data.client.phone || 'N/A'}
+                            <strong>TELEFONO:</strong> ${data.client.phone || 'N/A'}
                         </div>
                         <div class="text-right">
-                            <strong>LÍMITE CRÉDITO:</strong> $${data.client.creditLimit.toLocaleString()}<br>
+                            <strong>LIMITE CREDITO:</strong> $${data.client.creditLimit.toLocaleString()}<br>
                             <span class="total">DEUDA ACTUAL: $${data.client.currentCredit.toLocaleString()}</span>
                         </div>
                     </div>
@@ -265,8 +265,8 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                 <th>Fecha</th>
                                 <th>Tipo</th>
                                 <th>Detalle</th>
-                                <th class="text-right">Débito</th>
-                                <th class="text-right">Crédito</th>
+                                <th class="text-right">Debito</th>
+                                <th class="text-right">Credito</th>
                                 <th class="text-right">Saldo</th>
                             </tr>
                         </thead>
@@ -345,7 +345,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                             </p>
                                         </div>
                                         <div className="p-3 rounded-2xl bg-blue-500/5 border border-blue-500/10">
-                                            <span className="text-[8px] font-medium text-blue-500 uppercase tracking-[0.2em]">Límite Crédito</span>
+                                            <span className="text-[8px] font-medium text-blue-500 uppercase tracking-[0.2em]">Limite Credito</span>
                                             <p className="text-lg font-medium text-blue-600 dark:text-blue-400">
                                                 $ {data.client.creditLimit.toLocaleString()}
                                             </p>
@@ -432,7 +432,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                 <tr>
                                                                     <td colSpan={4} className="px-4 py-8 text-center text-gray-400 tracking-tight">
                                                                         <CheckCircle2 size={20} className="inline mr-2 text-zinc-900 dark:text-zinc-100" />
-                                                                        No hay deudas activas — Cliente al día
+                                                                        No hay deudas activas — Cliente al dia
                                                                     </td>
                                                                 </tr>
                                                             )}
@@ -451,7 +451,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                         <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                             <tr>
                                                                 <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
-                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Método</th>
+                                                                <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Metodo</th>
                                                                 <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Monto</th>
                                                                 <th className="px-4 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-center w-12">Anular</th>
                                                             </tr>
@@ -509,7 +509,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                     </div>
                                                 </div>
 
-                                                {/* Tabla cronológica tipo Libro Mayor */}
+                                                {/* Tabla cronologica tipo Libro Mayor */}
                                                 <ScrollShadow className="max-h-[350px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
                                                     <table className="w-full text-left text-[11px] border-separate border-spacing-0">
                                                         <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
@@ -517,10 +517,10 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Fecha</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Tipo</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Detalle</th>
-                                                                <th className="px-3 py-3 font-medium text-rose-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Débito</th>
-                                                                <th className="px-3 py-3 font-medium text-zinc-300 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Crédito</th>
+                                                                <th className="px-3 py-3 font-medium text-rose-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Debito</th>
+                                                                <th className="px-3 py-3 font-medium text-zinc-300 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Credito</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Saldo</th>
-                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-center w-8">Acción</th>
+                                                                <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-center w-8">Accion</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>

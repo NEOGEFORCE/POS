@@ -16,7 +16,7 @@ interface RankingListProps {
 }
 
 const RankingList = memo(({ products }: RankingListProps) => {
-    // Calcular el máximo para normalizar las barras de progreso
+    // Calcular el maximo para normalizar las barras de progreso
     const maxQty = products?.length > 0 ? Math.max(...products.map(p => p.quantity)) : 0;
 
     return (
@@ -31,7 +31,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
                             Top <span className="text-amber-500">Ventas</span>
                         </h3>
                         <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
-                            Productos con mayor rotación
+                            Productos con mayor rotacion
                         </p>
                     </div>
                 </div>
@@ -97,7 +97,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
 
             <div className="mt-6 pt-6 border-t border-gray-100 dark:border-white/5">
                 <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight text-center">
-                    Cálculo basado en movimientos de los últimos 30 días
+                    Calculo basado en movimientos de los ultimos 30 dias
                 </p>
             </div>
         </div>

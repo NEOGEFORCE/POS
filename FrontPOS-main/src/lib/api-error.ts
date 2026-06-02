@@ -21,104 +21,104 @@ export class ApiError extends Error {
  *   1. Estructurado (SendError): { error: { code, message, details } }
  *   2. Simple (gin.H):           { error: "mensaje" }
  * 
- * Esta función extrae el mensaje más descriptivo posible y lo traduce
+ * Esta funcion extrae el mensaje mas descriptivo posible y lo traduce
  * a un lenguaje claro para el operario.
  */
 
 // Mapa de traducciones para errores comunes de base de datos / red
 const ERROR_TRANSLATIONS: Record<string, string> = {
   // Errores de MySQL / base de datos
-  '1062': 'Registro Duplicado: Ya existe un elemento con este código o nombre',
-  'UNIQUE': 'Registro Duplicado: Este dato ya está registrado',
-  'duplicate': 'Registro Duplicado: Este dato ya está registrado',
-  'foreign key': 'Conflicto de Vínculos: Este elemento tiene información asociada que impide la acción',
-  'cannot delete': 'Bloqueo de Eliminación: Primero debes borrar o desvincular los registros relacionados',
-  'Data too long': 'Texto Demasiado Largo: Por favor, reduce la descripción o el nombre',
-  'Incorrect decimal': 'Error Numérico: Verifica que los números sean válidos',
-  'Out of range': 'Número Inválido: El valor es demasiado alto para el sistema',
-  'connection refused': 'Fallo de Conexión: No hay comunicación con el servidor central',
-  'deadline exceeded': 'Tiempo Excedido: La respuesta tardó mucho, intenta de nuevo',
+  '1062': 'Registro Duplicado: Ya existe un elemento con este codigo o nombre',
+  'UNIQUE': 'Registro Duplicado: Este dato ya esta registrado',
+  'duplicate': 'Registro Duplicado: Este dato ya esta registrado',
+  'foreign key': 'Conflicto de Vinculos: Este elemento tiene informacion asociada que impide la accion',
+  'cannot delete': 'Bloqueo de Eliminacion: Primero debes borrar o desvincular los registros relacionados',
+  'Data too long': 'Texto Demasiado Largo: Por favor, reduce la descripcion o el nombre',
+  'Incorrect decimal': 'Error Numerico: Verifica que los numeros sean validos',
+  'Out of range': 'Numero Invalido: El valor es demasiado alto para el sistema',
+  'connection refused': 'Fallo de Conexion: No hay comunicacion con el servidor central',
+  'deadline exceeded': 'Tiempo Excedido: La respuesta tardo mucho, intenta de nuevo',
   'record not found': 'No Encontrado: El registro no existe o fue eliminado por otro usuario',
-  'not found': 'Búsqueda sin Resultados: No se encontró lo que buscas',
+  'not found': 'Busqueda sin Resultados: No se encontro lo que buscas',
   
   // Errores de Inventario / POS
   'insufficient stock': 'Sin Inventario: No hay suficiente stock para realizar esta venta',
   'out of stock': 'Producto Agotado: No puedes vender este producto sin existencias',
-  'low stock': 'Advertencia: El stock está por debajo del mínimo permitido',
-  'invalid price': 'Precio Inválido: El precio de venta no puede ser menor al de costo',
-  'negative quantity': 'Cantidad Inválida: No se permiten valores negativos en este campo',
+  'low stock': 'Advertencia: El stock esta por debajo del minimo permitido',
+  'invalid price': 'Precio Invalido: El precio de venta no puede ser menor al de costo',
+  'negative quantity': 'Cantidad Invalida: No se permiten valores negativos en este campo',
   'stock cannot be negative': 'Error de Stock: El inventario no puede quedar en negativo para este producto',
-  'already exists': 'Ya Existe: Ese código o nombre ya está en uso',
-  'bad request': 'Datos Inválidos: Revisa la información ingresada',
+  'already exists': 'Ya Existe: Ese codigo o nombre ya esta en uso',
+  'bad request': 'Datos Invalidos: Revisa la informacion ingresada',
   'internal server error': 'Fallo Interno: Hubo un error en el servidor, contacta a soporte',
-  'network error': 'Error de Red: Verifica tu conexión a internet',
-  'timeout': 'Tiempo Excedido: El servidor tardó demasiado en responder',
+  'network error': 'Error de Red: Verifica tu conexion a internet',
+  'timeout': 'Tiempo Excedido: El servidor tardo demasiado en responder',
   
-  // Errores de autenticación
-  'token': 'Sesión Expirada: Tu ingreso ha caducado, por favor vuelve a entrar',
-  'unauthorized': 'Sin Permisos: No tienes autorización para realizar esta operación',
-  'forbidden': 'Rol Restringido: Tu nivel de acceso no permite entrar aquí',
-  'invalid credentials': 'Datos Incorrectos: El usuario o la contraseña no coinciden',
+  // Errores de autenticacion
+  'token': 'Sesion Expirada: Tu ingreso ha caducado, por favor vuelve a entrar',
+  'unauthorized': 'Sin Permisos: No tienes autorizacion para realizar esta operacion',
+  'forbidden': 'Rol Restringido: Tu nivel de acceso no permite entrar aqui',
+  'invalid credentials': 'Datos Incorrectos: El usuario o la contrasena no coinciden',
   'user not found': 'Usuario no Existe: Revisa el nombre de usuario ingresado',
-  'password too short': 'Contraseña Débil: Debe tener al menos 6 caracteres',
+  'password too short': 'Contrasena Debil: Debe tener al menos 6 caracteres',
 
-  // Errores de validación de campos (Gin/Gorm)
+  // Errores de validacion de campos (Gin/Gorm)
   'required': 'Campo Faltante: Es obligatorio completar este dato',
-  'unmarshal': 'Formato Erróneo: El valor ingresado no es del tipo esperado (ej: letras en un campo numérico)',
-  'unsupported format': 'Formato no Válido: Verifica los datos ingresados',
-  'json: cannot unmarshal': 'Dato Inválido: Ingresaste un texto donde se esperaba un número o viceversa',
+  'unmarshal': 'Formato Erroneo: El valor ingresado no es del tipo esperado (ej: letras en un campo numerico)',
+  'unsupported format': 'Formato no Valido: Verifica los datos ingresados',
+  'json: cannot unmarshal': 'Dato Invalido: Ingresaste un texto donde se esperaba un numero o viceversa',
 };
 
 /**
- * Convierte nombres de campos técnicos del backend a nombres amigables para el usuario.
+ * Convierte nombres de campos tecnicos del backend a nombres amigables para el usuario.
  */
 function humanizeFieldName(field: string): string {
   const fields: Record<string, string> = {
     'productName': 'Nombre del Producto',
     'product_name': 'Nombre del Producto',
-    'barcode': 'Código de Barras',
+    'barcode': 'Codigo de Barras',
     'salePrice': 'Precio de Venta',
     'sale_price': 'Precio de Venta',
     'purchasePrice': 'Precio de Compra',
     'purchase_price': 'Precio de Compra',
     'quantity': 'Cantidad/Stock',
-    'minStock': 'Stock Mínimo',
-    'min_stock': 'Stock Mínimo',
-    'categoryId': 'Categoría',
-    'category_id': 'Categoría',
+    'minStock': 'Stock Minimo',
+    'min_stock': 'Stock Minimo',
+    'categoryId': 'Categoria',
+    'category_id': 'Categoria',
     'supplierId': 'Proveedor',
     'supplier_id': 'Proveedor',
     'dni': 'Documento de Identidad',
-    'email': 'Correo Electrónico',
-    'phone': 'Teléfono',
-    'address': 'Dirección',
+    'email': 'Correo Electronico',
+    'phone': 'Telefono',
+    'address': 'Direccion',
     'amount': 'Monto/Valor',
-    'description': 'Descripción',
+    'description': 'Descripcion',
     'name': 'Nombre',
     'role': 'Nivel de Permisos',
-    'password': 'Contraseña',
+    'password': 'Contrasena',
     'tax_id': 'NIT/RUT',
     'iva': 'Impuesto IVA',
     'packMultiplier': 'Multiplicador de Pack',
     'paymentSource': 'Fuente de Pago',
     'payment_source': 'Fuente de Pago',
-    'salariesDetail': 'Detalle de Nómina',
+    'salariesDetail': 'Detalle de Nomina',
     'expensesDetail': 'Detalle de Gastos',
-    'physicalCash': 'Efectivo Físico',
-    'physical_cash': 'Efectivo Físico',
+    'physicalCash': 'Efectivo Fisico',
+    'physical_cash': 'Efectivo Fisico',
   };
 
   return fields[field] || field.replace(/([A-Z])/g, ' $1').toUpperCase();
 }
 
 /**
- * Analiza un texto de error y busca si coincide con algún error conocido para
- * devolver una descripción más humana.
+ * Analiza un texto de error y busca si coincide con algun error conocido para
+ * devolver una descripcion mas humana.
  */
 function translateError(rawError: string): string | null {
   const lower = rawError.toLowerCase();
 
-  // Bloqueo de jerga técnica (Go/JSON/GORM/MySQL)
+  // Bloqueo de jerga tecnica (Go/JSON/GORM/MySQL)
   const technicalJargon = [
     'json:', 'unmarshal', 'marshal', 'struct', 'field', 'pointer', 'nil', 
     'unexpected EOF', 'syntax error', 'mysql', 'sql', 'gorm', 'uint', 'int64'
@@ -137,10 +137,10 @@ function translateError(rawError: string): string | null {
 }
 
 /**
- * Extrae el mensaje de error más descriptivo de una respuesta HTTP fallida.
+ * Extrae el mensaje de error mas descriptivo de una respuesta HTTP fallida.
  * 
  * @param res - La respuesta HTTP del fetch
- * @param fallback - Mensaje genérico a mostrar si no se puede extraer nada
+ * @param fallback - Mensaje generico a mostrar si no se puede extraer nada
  * @returns Un string listo para mostrar al usuario en el toast
  */
 export async function extractApiError(res: Response, fallback: string): Promise<string> {
@@ -159,7 +159,7 @@ export async function extractApiError(res: Response, fallback: string): Promise<
       if (errorContext && typeof errorContext === 'object') {
         const fieldMsgs = Object.entries(errorContext).map(([key, msg]) => {
           const friendlyField = humanizeFieldName(key);
-          const friendlyMsg = typeof msg === 'string' ? (translateError(msg) || msg) : 'Dato inválido';
+          const friendlyMsg = typeof msg === 'string' ? (translateError(msg) || msg) : 'Dato invalido';
           return `${friendlyField}: ${friendlyMsg}`;
         });
         if (fieldMsgs.length > 0) return `Revisa: ${fieldMsgs.join(' | ')}`;
@@ -190,17 +190,17 @@ export async function extractApiError(res: Response, fallback: string): Promise<
     // No se pudo parsear el JSON
   }
   
-  // Usar el código HTTP para dar contexto
+  // Usar el codigo HTTP para dar contexto
   const httpMessages: Record<number, string> = {
-    400: 'Datos Incompletos: Revisa que todos los campos obligatorios estén llenos',
+    400: 'Datos Incompletos: Revisa que todos los campos obligatorios esten llenos',
     401: 'Acceso Caducado: Vuelve a ingresar tus credenciales',
-    403: 'Sin Autorización: No tienes permiso para realizar esta acción',
+    403: 'Sin Autorizacion: No tienes permiso para realizar esta accion',
     404: 'No Encontrado: Lo que buscas no existe o ha sido movido',
     409: 'Duplicado: Estos datos ya pertenecen a otro registro activo',
-    422: 'Error de Validación: Corrige los datos marcados antes de continuar',
+    422: 'Error de Validacion: Corrige los datos marcados antes de continuar',
     429: 'Sistema Ocupado: Espera unos segundos y vuelve a intentar',
-    500: 'Fallo Técnico: Hubo un error en el servidor. Intenta de nuevo.',
-    502: 'Error de Puerta de Enlace: Problemas de comunicación con el servidor',
+    500: 'Fallo Tecnico: Hubo un error en el servidor. Intenta de nuevo.',
+    502: 'Error de Puerta de Enlace: Problemas de comunicacion con el servidor',
     503: 'Servidor en Mantenimiento: Intenta en unos minutos',
   };
   
@@ -218,7 +218,7 @@ export async function apiFetch<T = any>(
   options: RequestInit & { fallbackError?: string } = {},
   token?: string
 ): Promise<T> {
-  const { fallbackError = 'OPERACIÓN FALLIDA', ...fetchOptions } = options;
+  const { fallbackError = 'OPERACION FALLIDA', ...fetchOptions } = options;
   
   const headers: Record<string, string> = {
     ...(fetchOptions.headers as Record<string, string> || {}),
@@ -239,7 +239,7 @@ export async function apiFetch<T = any>(
       headers,
     });
   } catch (networkError) {
-    throw new Error('SIN CONEXIÓN: No se pudo comunicar con el servidor. Verifica tu red.');
+    throw new Error('SIN CONEXION: No se pudo comunicar con el servidor. Verifica tu red.');
   }
   
   if (!res.ok) {
@@ -251,7 +251,7 @@ export async function apiFetch<T = any>(
     throw new ApiError(errorMsg, res.status, errorData);
   }
   
-  // Intentar parsear como JSON, si no se puede, devolver vacío
+  // Intentar parsear como JSON, si no se puede, devolver vacio
   try {
     return await res.json();
   } catch {

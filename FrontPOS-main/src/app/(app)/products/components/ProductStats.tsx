@@ -3,6 +3,7 @@
 import React, { memo } from 'react';
 import { Zap, TrendingDown, Sparkles, AlertTriangle } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { MoneyDigits, NumberDigits } from "@/components/ui/motion";
 
 interface StatsProps {
   totalCost: number;
@@ -20,8 +21,9 @@ const SPARKLINE_DATA_4 = [{val: 20}, {val: 35}, {val: 25}, {val: 45}, {val: 50}]
 const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock, totalItems }: StatsProps) => {
   const kpis = [
     { 
-      label: "INVERSIÓN", 
-      val: `$${totalCost.toLocaleString()}`, 
+      label: "INVERSION", 
+      val: totalCost, 
+      isCurrency: true,
       color: "#0ea5e9", // sky-500
       icon: TrendingDown,
       desc: "Capital total",
@@ -29,15 +31,17 @@ const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock
     },
     { 
       label: "POTENCIAL", 
-      val: `$${totalRetail.toLocaleString()}`, 
+      val: totalRetail, 
+      isCurrency: true,
       color: "#10b981", // emerald-500
       icon: Zap,
       desc: "Recaudo",
       data: SPARKLINE_DATA_2
     },
     { 
-      label: "STOCK CRÍTICO", 
+      label: "STOCK CRITICO", 
       val: criticalStock, 
+      isCurrency: false,
       color: "#f43f5e", // rose-500
       icon: AlertTriangle,
       desc: "Urgente",
@@ -47,15 +51,17 @@ const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock
     { 
       label: "BAJO STOCK", 
       val: warningStock, 
+      isCurrency: false,
       color: "#f59e0b", // amber-500
       icon: AlertTriangle,
-      desc: "Atención",
+      desc: "Atencion",
       data: SPARKLINE_DATA_4,
       alert: warningStock > 0
     },
     { 
-      label: "CATÁLOGO", 
+      label: "CATALOGO", 
       val: totalItems, 
+      isCurrency: false,
       color: "#64748b", // slate-500
       icon: Sparkles,
       desc: "Referencias",
@@ -87,7 +93,11 @@ const ProductStats = memo(({ totalCost, totalRetail, criticalStock, warningStock
              <div className="flex flex-col">
                 <span className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mb-0.5 tracking-tight">{k.label}</span>
                 <span className="text-base md:text-xl font-medium tabular-nums tracking-tighter leading-none text-zinc-900 dark:text-zinc-50 tracking-tight">
-                  {k.val}
+                  {k.isCurrency ? (
+                    <MoneyDigits value={k.val as number} />
+                  ) : (
+                    <NumberDigits value={k.val as number} />
+                  )}
                 </span>
              </div>
              <div className="p-1 rounded-2xl" style={{ backgroundColor: `${k.color}20`, color: k.color }}>

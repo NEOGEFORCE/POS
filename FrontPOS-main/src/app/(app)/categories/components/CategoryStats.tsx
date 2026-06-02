@@ -22,19 +22,19 @@ const CategoryStats = memo(({ total, topCat, totalProds }: StatsProps) => {
             val: total, 
             color: "#10b981", // emerald
             icon: Shapes,
-            desc: "Taxonomía vigente",
+            desc: "Taxonomia vigente",
             data: SPARKLINE_DATA_1
         },
         { 
-            label: "CATEGORÍA LÍDER", 
+            label: "CATEGORIA LIDER", 
             val: topCat, 
             color: "#0ea5e9", // sky
             icon: Zap,
-            desc: "Densidad máxima",
+            desc: "Densidad maxima",
             data: SPARKLINE_DATA_2
         },
         { 
-            label: "CATÁLOGO TOTAL", 
+            label: "CATALOGO TOTAL", 
             val: totalProds, 
             color: "#6366f1", // indigo
             icon: FolderTree,
@@ -42,11 +42,11 @@ const CategoryStats = memo(({ total, topCat, totalProds }: StatsProps) => {
             data: SPARKLINE_DATA_3
         },
         { 
-            label: "SISTEMA TAXONÓMICO", 
+            label: "SISTEMA TAXONOMICO", 
             val: "ACTIVO", 
             color: "#f59e0b", // amber
             icon: Sparkles,
-            desc: "Distribución V4.0",
+            desc: "Distribucion V4.0",
             data: SPARKLINE_DATA_4
         }
     ];

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -20,7 +20,7 @@ async function fetchAuditLogs(token: string): Promise<AuditLog[]> {
   });
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || "Error al obtener logs de auditoría");
+    throw new Error(errorData.error?.message || "Error al obtener logs de auditoria");
   }
   return await res.json();
 }
@@ -39,7 +39,7 @@ export default function AuditPage() {
       setLogs(data);
     } catch (err: any) {
       toast({
-        title: "Error de Auditoría",
+        title: "Error de Auditoria",
         description: err.message,
         variant: "destructive"
       });
@@ -51,7 +51,7 @@ export default function AuditPage() {
   useEffect(() => {
     loadData();
 
-    // SINCRONIZACIÓN ZERO-F5: Auditoría en tiempo real
+    // SINCRONIZACION ZERO-F5: Auditoria en tiempo real
     const cleanup = setupSyncListener((event) => {
         if (event === 'PRODUCT_UPDATE' || event === 'SALE_MADE' || event === 'EXPENSE_UPDATE' || event === 'DASHBOARD_UPDATE') {
             loadData();
@@ -62,14 +62,14 @@ export default function AuditPage() {
 
   if (authLoading || (loading && logs.length === 0)) {
     return (
-      <div className="flex h-[80vh] items-center justify-center">
+      <div className="flex-1 h-full w-full items-center justify-center">
         <Spinner size="lg" label="Cargando registros de seguridad..." color="primary" />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -80,7 +80,7 @@ export default function AuditPage() {
             </div>
             <div className="flex flex-col">
               <h1 className="text-[13px] font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter uppercase tracking-tight leading-none">
-                Seguridad & <span className="text-zinc-900 dark:text-zinc-100">Auditoría</span>
+                Seguridad & <span className="text-zinc-900 dark:text-zinc-100">Auditoria</span>
               </h1>
               <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                 <RefreshCw size={10} className="text-zinc-900 dark:text-zinc-100" /> Monitoreo V5.0
@@ -100,8 +100,8 @@ export default function AuditPage() {
             <Button
               onPress={() => {
                 toast({
-                  title: "Reporte de Auditoría",
-                  description: "Exportación a PDF en desarrollo...",
+                  title: "Reporte de Auditoria",
+                  description: "Exportacion a PDF en desarrollo...",
                   variant: "default"
                 });
               }}
@@ -114,7 +114,7 @@ export default function AuditPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-gray-100/50 dark:bg-zinc-950/20 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar gap-3 p-3 bg-gray-100/50 dark:bg-zinc-950/20 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <MaintenancePanel />
         <AuditStats logs={logs} />
         <AuditTable logs={logs} />
@@ -123,3 +123,7 @@ export default function AuditPage() {
 
   );
 }
+
+
+
+

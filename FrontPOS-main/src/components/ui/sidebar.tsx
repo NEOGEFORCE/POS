@@ -207,7 +207,7 @@ const Sidebar = React.forwardRef<
             side={side}
           >
             <SheetHeader className="sr-only">
-              <SheetTitle>Menú de Navegación</SheetTitle>
+              <SheetTitle>Menu de Navegacion</SheetTitle>
               <SheetDescription>
                 Accede a las diferentes secciones del sistema POS
               </SheetDescription>

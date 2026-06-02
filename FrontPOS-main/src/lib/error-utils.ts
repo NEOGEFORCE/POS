@@ -27,7 +27,7 @@ export function extractErrorMessage(error: unknown, fallback = "Error inesperado
           }
         }
         if (messages.length > 0) {
-          return `Error de validación: ${messages.join(' | ')}`;
+          return `Error de validacion: ${messages.join(' | ')}`;
         }
       }
 
@@ -42,13 +42,13 @@ export function extractErrorMessage(error: unknown, fallback = "Error inesperado
 
     // Case 6: HTTP status-based fallback
     const status = axiosErr.response?.status;
-    if (status === 401) return "Sesión expirada. Inicie sesión nuevamente.";
-    if (status === 403) return "No tiene permisos para realizar esta acción.";
+    if (status === 401) return "Sesion expirada. Inicie sesion nuevamente.";
+    if (status === 403) return "No tiene permisos para realizar esta accion.";
     if (status === 404) return "El recurso solicitado no fue encontrado.";
     if (status === 409) return "Conflicto: el registro ya existe o fue modificado.";
-    if (status === 422) return "Error de validación: verifique los campos ingresados.";
+    if (status === 422) return "Error de validacion: verifique los campos ingresados.";
     if (status === 500) return "Error interno del servidor. Contacte al administrador.";
-    if (status === 503) return "El servidor no está disponible. Intente más tarde.";
+    if (status === 503) return "El servidor no esta disponible. Intente mas tarde.";
   }
 
   // Fetch API response object
@@ -59,7 +59,7 @@ export function extractErrorMessage(error: unknown, fallback = "Error inesperado
   // Standard Error object
   if (error instanceof Error) {
     if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-      return "Sin conexión al servidor. Verifique su red.";
+      return "Sin conexion al servidor. Verifique su red.";
     }
     return error.message;
   }
@@ -74,7 +74,7 @@ export function extractErrorMessage(error: unknown, fallback = "Error inesperado
  * extractFetchError - For fetch() responses that are not ok.
  * Parses the response body and returns a descriptive error.
  */
-export async function extractFetchError(res: Response, fallback = "Error en la operación"): Promise<string> {
+export async function extractFetchError(res: Response, fallback = "Error en la operacion"): Promise<string> {
   try {
     const data = await res.json();
 
@@ -92,7 +92,7 @@ export async function extractFetchError(res: Response, fallback = "Error en la o
         }
       }
       if (messages.length > 0) {
-        return `Error de validación: ${messages.join(' | ')}`;
+        return `Error de validacion: ${messages.join(' | ')}`;
       }
     }
 
@@ -106,10 +106,10 @@ export async function extractFetchError(res: Response, fallback = "Error en la o
   }
 
   // HTTP status fallback
-  if (res.status === 401) return "Sesión expirada. Inicie sesión nuevamente.";
-  if (res.status === 403) return "No tiene permisos para realizar esta acción.";
+  if (res.status === 401) return "Sesion expirada. Inicie sesion nuevamente.";
+  if (res.status === 403) return "No tiene permisos para realizar esta accion.";
   if (res.status === 404) return "El recurso solicitado no fue encontrado.";
-  if (res.status === 422) return "Error de validación: verifique los campos ingresados.";
+  if (res.status === 422) return "Error de validacion: verifique los campos ingresados.";
   if (res.status === 500) return "Error interno del servidor.";
 
   return fallback;

@@ -89,18 +89,18 @@ export default function CustomerFormModal({
             </ModalHeader>
 
             <ModalBody className="px-5 md:px-12 py-3 md:py-6 gap-2 md:gap-4 pb-4 sm:pb-4">
-              {/* Sección DNI y Nombre */}
+              {/* Seccion DNI y Nombre */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4">
                 <div className="flex flex-col gap-1">
                   <Input 
-                    label="IDENTIFICACIÓN OFICIAL"
+                    label="IDENTIFICACION OFICIAL"
                     labelPlacement="inside"
                     placeholder=" "
                     value={customer?.dni || ''} 
                     onValueChange={(v) => {
                       if (!isEdit) {
                         setCustomer((p: any) => ({ ...p, dni: v }));
-                        // Auto-lookup si tiene longitud mínima
+                        // Auto-lookup si tiene longitud minima
                         if (v.length >= 5 && onLookupDni) {
                           onLookupDni(v);
                         }
@@ -136,7 +136,7 @@ export default function CustomerFormModal({
                 </div>
 
                 <Input 
-                  label="RAZÓN SOCIAL / NOMBRE"
+                  label="RAZON SOCIAL / NOMBRE"
                   labelPlacement="inside"
                   placeholder=" "
                   value={customer?.name || ''} 
@@ -150,10 +150,10 @@ export default function CustomerFormModal({
                 />
               </div>
 
-              {/* Teléfono y Dirección */}
+              {/* Telefono y Direccion */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 md:gap-4">
                 <Input 
-                  label="LÍNEA DE CONTACTO"
+                  label="LINEA DE CONTACTO"
                   labelPlacement="inside"
                   placeholder=" "
                   value={customer?.phone || ''} 
@@ -166,7 +166,7 @@ export default function CustomerFormModal({
                   }}
                 />
                 <Input 
-                  label="DIRECCIÓN FISCAL"
+                  label="DIRECCION FISCAL"
                   labelPlacement="inside"
                   placeholder=" "
                   value={customer?.address || ''} 
@@ -180,10 +180,10 @@ export default function CustomerFormModal({
                 />
               </div>
 
-              {/* Límite de Crédito - Estilo Premium Hero UI */}
+              {/* Limite de Credito - Estilo Premium Hero UI */}
               <div className="space-y-2 mt-2">
                 <label className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-widest ml-1 flex items-center gap-2">
-                    <Wallet size={14} /> CUPO DISPONIBLE DE CRÉDITO
+                    <Wallet size={14} /> CUPO DISPONIBLE DE CREDITO
                 </label>
                 <Input 
                   labelPlacement="outside"

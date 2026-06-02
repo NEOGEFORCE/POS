@@ -10,7 +10,7 @@ export interface LocalProduct {
   iva?: number;
   icui?: number;
   ibua?: number;
-  // Agrega otros campos necesarios según tu modelo
+  // Agrega otros campos necesarios segun tu modelo
 }
 
 export interface PendingSale {

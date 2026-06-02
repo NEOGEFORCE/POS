@@ -17,24 +17,32 @@ import {
   ModalFooter
 } from "@heroui/react";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { AnimatePresence, motion } from "framer-motion";
+import { useReducedMotionSafe } from "@/components/ui/motion";
 
 export default function LoginPage() {
   const { login, user } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
 
-  // Estados de UI y Autenticación
+  // Estados de UI y Autenticacion
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [forgotEmail, setForgotEmail] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isForgotLoading, setIsForgotLoading] = useState(false);
   const [isForgotOpen, setIsForgotOpen] = useState(false);
-  const [isVisible, setIsVisible] = useState(false); // Para mostrar/ocultar contraseña
+  const [isVisible, setIsVisible] = useState(false); // Para mostrar/ocultar contrasena
+
+  // Cortinas estilo yann.uiux: al login exitoso ambos paneles salen
+  // en direcciones opuestas y luego navegamos al dashboard.
+  const reducedMotion = useReducedMotionSafe();
+  const [closing, setClosing] = useState(false);
+  const [redirectTo, setRedirectTo] = useState<string | null>(null);
 
   const toggleVisibility = () => setIsVisible(!isVisible);
 
-  // Redirigir si ya está autenticado o si necesita setup
+  // Redirigir si ya esta autenticado o si necesita setup
   useEffect(() => {
     const checkSetupAndAuth = async () => {
       try {
@@ -48,10 +56,17 @@ export default function LoginPage() {
 
         if (user) {
           const role = (user.role || user.Role || "").toLowerCase();
-          if (role === 'admin' || role === 'administrador' || role === 'superadmin') {
-            router.replace('/dashboard');
+          const target = (role === 'admin' || role === 'administrador' || role === 'superadmin')
+            ? '/dashboard'
+            : '/sales/new';
+
+          // Cortinas: dispara la salida de ambos paneles y navega cuando termine.
+          // En reduced-motion el redirect es instantaneo.
+          if (reducedMotion) {
+            router.replace(target);
           } else {
-            router.replace('/sales/new');
+            setRedirectTo(target);
+            setClosing(true);
           }
         }
       } catch (error) {
@@ -59,7 +74,7 @@ export default function LoginPage() {
       }
     };
     checkSetupAndAuth();
-  }, [user, router]);
+  }, [user, router, reducedMotion]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,8 +85,8 @@ export default function LoginPage() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error de autenticación",
-        description: error.message || "Usuario o contraseña incorrectos.",
+        title: "Error de autenticacion",
+        description: error.message || "Usuario o contrasena incorrectos.",
       });
     } finally {
       setIsLoading(false);
@@ -91,8 +106,8 @@ export default function LoginPage() {
 
       const data = await response.json();
       toast({
-        title: "Petición enviada",
-        description: data.message || "Si el correo corresponde a una cuenta administrativa, recibirás instrucciones.",
+        title: "Peticion enviada",
+        description: data.message || "Si el correo corresponde a una cuenta administrativa, recibiras instrucciones.",
       });
       setIsForgotOpen(false);
       setForgotEmail('');
@@ -114,9 +129,25 @@ export default function LoginPage() {
         <ThemeToggle />
       </div>
 
-      {/* PANEL IZQUIERDO (Hero/Marketing) */}
-      <div className="hidden lg:flex w-[55%] flex-col justify-between p-12 relative overflow-hidden bg-[var(--bg-sidebar)] border-r border-[var(--border)]">
-        {/* Glow dinámico de fondo (Esmeralda) */}
+      <AnimatePresence
+        onExitComplete={() => {
+          if (redirectTo) {
+            router.replace(redirectTo);
+          }
+        }}
+      >
+        {!closing && (
+          <>
+            {/* PANEL IZQUIERDO (Hero/Marketing) — sale hacia la izquierda */}
+            <motion.div
+              key="login-splash"
+              initial={{ x: 0 }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'spring', stiffness: 90, damping: 22 }}
+              className="hidden lg:flex w-[55%] flex-col justify-between p-12 relative overflow-hidden bg-[var(--bg-sidebar)] border-r border-[var(--border)]"
+            >
+        {/* Glow dinamico de fondo (Esmeralda) */}
         <div className="absolute top-1/4 -left-1/4 w-[800px] h-[800px] bg-[var(--accent)] opacity-[0.03] dark:opacity-[0.05] blur-[120px] rounded-full pointer-events-none" />
         
         <div className="relative z-10">
@@ -127,7 +158,7 @@ export default function LoginPage() {
             Store<br/>Overview
           </h1>
           <p className="mt-6 max-w-sm text-sm text-[var(--text-secondary)] leading-relaxed">
-            Sistema inteligente de punto de venta y gestión de inventario. Todo en una única plataforma de alto rendimiento.
+            Sistema inteligente de punto de venta y gestion de inventario. Todo en una unica plataforma de alto rendimiento.
           </p>
         </div>
 
@@ -142,12 +173,19 @@ export default function LoginPage() {
             +2,000 Retailers
           </div>
         </div>
-      </div>
+      </motion.div>
 
-      {/* PANEL DERECHO (Formulario de Login) */}
-      <div className="w-full lg:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:px-24 bg-[var(--bg-app)] relative">
+      {/* PANEL DERECHO (Formulario de Login) — sale hacia la derecha */}
+            <motion.div
+              key="login-form"
+              initial={{ x: 0 }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', stiffness: 90, damping: 22 }}
+              className="w-full lg:w-[45%] flex flex-col justify-center px-8 sm:px-16 lg:px-24 bg-[var(--bg-app)] relative"
+            >
         <div className="w-full max-w-sm mx-auto">
-          {/* Cabecera Móvil (Solo visible en móviles) */}
+          {/* Cabecera Movil (Solo visible en moviles) */}
           <div className="lg:hidden mb-12 flex flex-col items-center text-center">
             <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-[var(--accent-soft)] shadow-[0_0_30px_var(--accent-soft)] mb-6 border border-[var(--accent-border)]">
               <Zap className="h-8 w-8 text-[var(--accent)]" />
@@ -188,7 +226,7 @@ export default function LoginPage() {
             <div className="space-y-1.5">
               <div className="flex items-center justify-between ml-1">
                 <label htmlFor="password" className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider">
-                  Contraseña
+                  Contrasena
                 </label>
                 <button
                   type="button"
@@ -232,13 +270,16 @@ export default function LoginPage() {
               isLoading={isLoading}
               className="w-full h-14 mt-4 font-medium tracking-wide shadow-[0_0_20px_var(--accent-soft)] transition-all active:scale-[0.98]"
             >
-              INICIAR SESIÓN
+              INICIAR SESION
             </Button>
           </form>
         </div>
-      </div>
+      </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
-      {/* Modal de Recuperación */}
+      {/* Modal de Recuperacion */}
       <Modal
         isOpen={isForgotOpen}
         onOpenChange={setIsForgotOpen}
@@ -262,7 +303,7 @@ export default function LoginPage() {
               <ModalBody className="py-6 px-6">
                 <div className="space-y-1.5">
                   <label htmlFor="forgot-email" className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-wider block ml-1">
-                    Correo Electrónico
+                    Correo Electronico
                   </label>
                   <Input
                     autoFocus

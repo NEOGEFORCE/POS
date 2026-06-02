@@ -47,7 +47,7 @@ export default function ManualWeightModal({
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <span className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">{manualWeightProduct?.productName || 'PRODUCTO'}</span>
-                                <span className="text-[9px] font-medium text-sky-500 uppercase tracking-[0.3em] mt-2 not-tracking-tight">Módulo de Pesaje Manual Maestro</span>
+                                <span className="text-[9px] font-medium text-sky-500 uppercase tracking-[0.3em] mt-2 not-tracking-tight">Modulo de Pesaje Manual Maestro</span>
                             </div>
                             <Button 
                                 isIconOnly 

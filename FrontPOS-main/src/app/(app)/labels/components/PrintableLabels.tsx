@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import { Product } from '@/lib/definitions';
@@ -17,10 +17,10 @@ interface PrintProps {
 const PrintableLabels = memo(({ printQueue }: PrintProps) => {
     return (
         <div className="hidden print:block w-full bg-white">
-            {/* Indicador de Línea de Corte (Solo Informativo) */}
+            {/* Indicador de Linea de Corte (Solo Informativo) */}
             <div className="flex items-center gap-2 mb-4 opacity-30 border-b border-dashed border-black pb-2">
                 <Scissors size={14} className="text-black" />
-                <span className="text-[10px] font-medium uppercase tracking-widest text-black tracking-tight">Formato de Impresión Central - Corte por las líneas continuas</span>
+                <span className="text-[10px] font-medium uppercase tracking-widest text-black tracking-tight">Formato de Impresion Central - Corte por las lineas continuas</span>
             </div>
 
             <div className="grid grid-cols-2 gap-x-2 gap-y-2 justify-items-center">
@@ -30,7 +30,7 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
                             key={`${item.product.barcode}-${i}`}
                             className="w-[9.8cm] h-[5.8cm] border-[5px] border-black flex flex-col bg-white text-black break-inside-avoid relative box-border overflow-hidden"
                         >
-                            {/* Franja Superior de Marca/Categoría */}
+                            {/* Franja Superior de Marca/Categoria */}
                             <div className="bg-black text-white p-2 flex justify-between items-center">
                                 <span className="text-[8px] font-medium tracking-[0.4em] uppercase tracking-tight">AUTENTICIDAD GARANTIZADA</span>
                                 <span className="text-[8px] font-medium tracking-widest uppercase">#{item.product.barcode.slice(-6)}</span>
@@ -55,10 +55,10 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
                                     </span>
                                 </div>
 
-                                {/* Footer con Código de Barras Visual */}
+                                {/* Footer con Codigo de Barras Visual */}
                                 <div className="flex items-end justify-between pt-2 border-t-4 border-black border-double">
                                     <div className="flex flex-col">
-                                        <span className="text-[7px] font-medium text-black/40 uppercase tracking-widest leading-none mb-1">CÓDIGO DE ACCESO</span>
+                                        <span className="text-[7px] font-medium text-black/40 uppercase tracking-widest leading-none mb-1">CODIGO DE ACCESO</span>
                                         <span className="text-[12px] font-medium tracking-[0.3em] font-mono text-black leading-none">{item.product.barcode}</span>
                                     </div>
                                     <div className="flex flex-col items-end">
@@ -68,7 +68,7 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
                                 </div>
                             </div>
 
-                            {/* Decoración Circular de Seguridad */}
+                            {/* Decoracion Circular de Seguridad */}
                             <div className="absolute top-1/2 left-0 w-4 h-8 bg-black rounded-r-full -translate-y-1/2 opacity-10" />
                             <div className="absolute top-1/2 right-0 w-4 h-8 bg-black rounded-l-full -translate-y-1/2 opacity-10" />
                         </div>
@@ -82,3 +82,5 @@ const PrintableLabels = memo(({ printQueue }: PrintProps) => {
 PrintableLabels.displayName = 'PrintableLabels';
 
 export default PrintableLabels;
+
+

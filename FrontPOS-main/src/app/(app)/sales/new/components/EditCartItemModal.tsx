@@ -52,7 +52,7 @@ export function EditCartItemModal({ isOpen, onOpenChange, item, onSave }: EditCa
                                 <Edit2 size={20} />
                             </div>
                             <div className="flex flex-col">
-                                <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50 tracking-tight leading-none">Editar Ítem</h2>
+                                <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-50 tracking-tight leading-none">Editar Item</h2>
                                 <p className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 mt-1 uppercase tracking-wider">{item?.productName}</p>
                             </div>
                         </ModalHeader>

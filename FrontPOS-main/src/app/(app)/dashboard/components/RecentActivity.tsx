@@ -22,7 +22,7 @@ interface RecentActivityProps {
 }
 
 export default function RecentActivity({ sales }: RecentActivityProps) {
-    // 1. Protección Anti-Crash
+    // 1. Proteccion Anti-Crash
     const safeSales = Array.isArray(sales) ? sales : [];
     const hasSales = safeSales.length > 0;
 
@@ -32,7 +32,7 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                 <div className="flex items-center gap-3">
                     <div className="bg-sky-100 dark:bg-sky-500/10 p-2.5 rounded-2xl text-sky-600 dark:text-sky-500 border border-sky-200 dark:border-sky-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><Clock size={18} /></div>
                     <div>
-                        <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Últimos Movimientos</h2>
+                        <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Ultimos Movimientos</h2>
                         <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Actividad en tiempo real</p>
                     </div>
                 </div>
@@ -54,12 +54,12 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                             <thead className="bg-gray-50 dark:bg-[#18181b]/80 text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-400 sticky top-0 z-10">
                                 <tr>
                                     <th className="w-[45%] px-6 py-3 border-b border-gray-200 dark:border-white/5 truncate">Cliente</th>
-                                    <th className="w-[25%] px-4 py-3 border-b border-gray-200 dark:border-white/5 text-center truncate">Método</th>
+                                    <th className="w-[25%] px-4 py-3 border-b border-gray-200 dark:border-white/5 text-center truncate">Metodo</th>
                                     <th className="w-[30%] px-6 py-3 border-b border-gray-200 dark:border-white/5 text-right truncate">Total</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                                {/* 2. Límite a 18 para igualar tu panel de Stock */}
+                                {/* 2. Limite a 18 para igualar tu panel de Stock */}
                                 {safeSales.slice(0, 18).map((sale) => {
                                     const source = sale.transfer_source?.toUpperCase() || "NEQUI";
                                     const hasTransfer = (sale.transfer_amount || 0) > 0;

@@ -42,9 +42,11 @@ import { apiFetch } from '@/lib/api-error';
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 import { useAuth } from '@/lib/auth';
+import { useSearchParams, useRouter } from 'next/navigation';
 import ExpenseFormModal from '@/app/(app)/expenses/components/ExpenseFormModal';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
+import { RollingDigits } from '@/components/charts/RollingDigits';
 
 interface CashierClosure {
     id: string;
@@ -90,6 +92,13 @@ export default function CashierClosurePage() {
     const [currentClosure, setCurrentClosure] = useState<CashierClosure | null>(null);
     const [loading, setLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    // MODO EDICION: si llegamos con ?edit=:id desde el reporte de cierres,
+    // cargamos el cierre historico y permitimos corregir sus valores.
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const editId = searchParams?.get('edit') || null;
+    const isEditMode = !!editId;
     const [isSendingPartial, setIsSendingPartial] = useState(false);
     const [adminUser, setAdminUser] = useState('');
     const [adminPass, setAdminPass] = useState('');
@@ -103,7 +112,7 @@ export default function CashierClosurePage() {
     const [showDetailedAudit, setShowDetailedAudit] = useState(false);
     const [isRealExpenseModalOpen, setIsRealExpenseModalOpen] = useState(false);
 
-    // --- ESTADO CONFIRMACIÓN EGRESOS ---
+    // --- ESTADO CONFIRMACION EGRESOS ---
     const [isDeleteExpenseConfirmOpen, setIsDeleteExpenseConfirmOpen] = useState(false);
     const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
 
@@ -118,7 +127,7 @@ export default function CashierClosurePage() {
                 body: JSON.stringify({ username: adminUser, password: adminPass }),
             });
 
-            if (!response.ok) throw new Error('Credenciales inválidas');
+            if (!response.ok) throw new Error('Credenciales invalidas');
 
             const data = await response.json();
             const role = data.user.role?.toUpperCase();
@@ -126,13 +135,13 @@ export default function CashierClosurePage() {
             if (role === 'ADMIN' || role === 'SUPERADMIN') {
                 setIsAuthorized(true);
                 setAdminAuthorizer(data.user.name || data.user.username);
-                toast({ title: 'AUTORIZACIÓN CONCEDIDA', description: `Verificado por ${data.user.name}`, variant: 'default' });
+                toast({ title: 'AUTORIZACION CONCEDIDA', description: `Verificado por ${data.user.name}`, variant: 'default' });
             } else {
                 throw new Error('El usuario no tiene permisos de administrador');
             }
         } catch (error: any) {
             setAuthError(error.message);
-            toast({ title: 'ERROR DE AUTORIZACIÓN', description: error.message, variant: 'destructive' });
+            toast({ title: 'ERROR DE AUTORIZACION', description: error.message, variant: 'destructive' });
         } finally {
             setIsVerifying(false);
         }
@@ -189,7 +198,7 @@ export default function CashierClosurePage() {
             }
         } catch (error) {
             console.error("Error fetching detailed report:", error);
-            toast({ variant: "destructive", title: "ERROR", description: "Fallo de conexión al servidor" });
+            toast({ variant: "destructive", title: "ERROR", description: "Fallo de conexion al servidor" });
         } finally {
             setIsFetchingDetailed(false);
         }
@@ -219,13 +228,98 @@ export default function CashierClosurePage() {
 
         setLoading(true);
         try {
+            // MODO EDICION: cargar cierre historico desde su detalle ampliado
+            if (isEditMode && editId) {
+                let c: any = null;
+
+                // Intento principal: endpoint nuevo /full-detail (incluye ventas y egresos del turno)
+                try {
+                    const data = await apiFetch(`/dashboard/cashier-history/${editId}/full-detail`, { method: 'GET' }, token);
+                    c = data?.closure || data;
+                } catch (errFull) {
+                    // Fallback: backend antiguo sin esa ruta. Cargamos toda la lista
+                    // y filtramos el id en el cliente para no bloquear la edicion.
+                    try {
+                        const list = await apiFetch('/dashboard/cashier-history', { method: 'GET' }, token);
+                        if (Array.isArray(list)) {
+                            c = list.find((x: any) => String(x?.id) === String(editId)) || null;
+                        }
+                    } catch (errList) {
+                        console.error('Fallback de carga de cierre fallo:', errList);
+                    }
+                }
+
+                if (c) {
+                    // Inferir valores legacy: cierres antiguos pueden tener
+                    // totalCash/openingCash/expectedCash en 0 aunque physicalCash
+                    // y totalSales si existan. Cuando un cierre ya esta cerrado,
+                    // el "esperado" debe ser el "real" (ya cuadro en su dia).
+                    const enriched: any = { ...c };
+                    if (!enriched.expectedCash || enriched.expectedCash === 0) {
+                        enriched.expectedCash = enriched.physicalCash || 0;
+                    }
+                    if (!enriched.totalCash || enriched.totalCash === 0) {
+                        // Aproximacion: lo que entro en efectivo = lo fisico + egresos en efectivo - apertura
+                        const cashOut = (enriched.totalExpenses || 0);
+                        enriched.totalCash = Math.max(
+                            0,
+                            (enriched.physicalCash || 0) + cashOut - (enriched.openingCash || 0),
+                        );
+                    }
+
+                    setCurrentClosure(enriched);
+
+                    console.info('[ClosureEdit] Cierre cargado:', {
+                        id: enriched.id,
+                        physicalCash: enriched.physicalCash,
+                        expectedCash: enriched.expectedCash,
+                        totalCash: enriched.totalCash,
+                        totalSales: enriched.totalSales,
+                        totalExpenses: enriched.totalExpenses,
+                    });
+
+                    // Precargar arqueo fisico
+                    if (enriched.physicalCash !== undefined) {
+                        setActualCashInput(String(Math.round(enriched.physicalCash || 0)));
+                    }
+
+                    // Precargar grilla de monedas conocidas
+                    setCoins({
+                        '500/1000': enriched.coins1000 ? String(enriched.coins1000) : '',
+                        '200':      enriched.coins200  ? String(enriched.coins200)  : '',
+                        '100':      enriched.coins100  ? String(enriched.coins100)  : '',
+                    });
+
+                    // Precargar nota / responsable visible
+                    if (enriched.authorizedBy) {
+                        setClosingNote(`Editando cierre #${enriched.id} — autorizado originalmente por ${enriched.authorizedBy}`);
+                    } else {
+                        setClosingNote(`Editando cierre #${enriched.id} — corrige los valores y guarda los cambios.`);
+                    }
+
+                    toast({
+                        title: `EDITANDO CIERRE #${enriched.id}`,
+                        description: 'Datos cargados del cierre historico. Corrige y guarda.',
+                        variant: 'default'
+                    });
+                } else {
+                    toast({
+                        title: 'NO SE PUDO CARGAR EL CIERRE',
+                        description: `El cierre #${editId} no se encontro. Verifica que el backend este actualizado.`,
+                        variant: 'destructive',
+                    });
+                }
+                return;
+            }
+
+            // MODO NORMAL: cargar el cierre EN VIVO del turno actual
             const data = await apiFetch('/dashboard/cashier-closure', { method: 'GET' }, token);
             setCurrentClosure(data);
         } catch (err: any) {
             console.error("Error al cargar cierre:", err);
             toast({ 
                 variant: "destructive", 
-                title: "Error de Auditoría", 
+                title: "Error de Auditoria", 
                 description: err.message || "No se pudieron cargar los datos de la caja." 
             });
             setLoading(false);
@@ -258,7 +352,7 @@ export default function CashierClosurePage() {
         const hasUsedGrid = Object.values(bills).some(v => v !== '') || Object.values(coins).some(v => v !== '');
         
         // Solo actualizamos si el total de la grilla es distinto al input actual
-        // y si la grilla tiene algún valor.
+        // y si la grilla tiene algun valor.
         if (hasUsedGrid) {
             const sumStr = sum.toString();
             if (actualCashInput !== sumStr) {
@@ -267,7 +361,7 @@ export default function CashierClosurePage() {
         }
     }, [bills, coins]);
 
-    // Cálculos dinámicos basados en la base de datos
+    // Calculos dinamicos basados en la base de datos
     const efectivoEnCaja = (currentClosure?.totalCash ?? 0) + 
                           (currentClosure?.totalCreditCollected ?? 0) + 
                           (currentClosure?.openingCash ?? 0);
@@ -276,7 +370,7 @@ export default function CashierClosurePage() {
         .filter((e: any) => e.paymentSource === 'EFECTIVO')
         .reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
 
-    // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja física)
+    // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja fisica)
     const totalEgresosEfectivo = dbCashExpenses;
 
     // Variables de apoyo para la UI
@@ -289,7 +383,7 @@ export default function CashierClosurePage() {
     
     const actualCash = parseFloat(actualCashInput) || 0;
     
-    // Diferencia real: Dinero en mano - Dinero que debería haber
+    // Diferencia real: Dinero en mano - Dinero que deberia haber
     const difference = actualCash - expectedCash;
 
     const getStatus = () => {
@@ -302,14 +396,15 @@ export default function CashierClosurePage() {
     const status = getStatus();
 
     const handleCloseRegister = async () => {
-        // Si hay faltante y NO está autorizado Y NO es admin, abrir modal de admin
-        if (status === 'SHORTAGE' && !isAuthorized && !isAdmin) {
+        // En modo edicion no exigimos reautorizacion (el admin ya entro a /reports y edito)
+        // Si hay faltante y NO esta autorizado Y NO es admin, abrir modal de admin
+        if (!isEditMode && status === 'SHORTAGE' && !isAuthorized && !isAdmin) {
             setShowAuthModal(true);
             return;
         }
 
 
-        // Nota: Ya no es obligatorio justificar porque el sistema requiere autorización administrativa directa.
+        // Nota: Ya no es obligatorio justificar porque el sistema requiere autorizacion administrativa directa.
 
 
         setIsSubmitting(true);
@@ -343,21 +438,76 @@ export default function CashierClosurePage() {
         };
 
         try {
+            // MODO EDICION: actualizar cierre historico con PUT
+            if (isEditMode && editId) {
+                // GORM Updates con map[string]interface{} usa los keys literalmente
+                // como nombres de columna. Estos nombres deben coincidir con la BD:
+                //   - physical_cash, total_nequi_real, total_daviplata_real son
+                //     columnas explicitas declaradas con gorm:"column:..."
+                //   - total_expenses, expected_cash, cash_bills, authorized_by son
+                //     conversiones automaticas snake_case de TotalExpenses, etc.
+                //   - coins100/200/1000 NO llevan underscore (GORM no separa entre
+                //     letra y numero consecutivos)
+                const updatePayload: any = {
+                    physical_cash: actualCash,
+                    expected_cash: currentClosure?.expectedCash || 0,
+                    total_expenses: totalSalidasEfectivo,
+                    total_nequi_real: currentClosure?.totalNequi || 0,
+                    total_daviplata_real: currentClosure?.totalDaviplata || 0,
+                    difference: difference,
+                    coins100: c100,
+                    coins200: c200,
+                    coins1000: cCombined,
+                    cash_bills: totalBills,
+                    authorized_by: closureData.authorizedBy,
+                };
+
+                const res = await fetch(
+                    `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/cashier-history/${editId}`,
+                    {
+                        method: 'PUT',
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(updatePayload),
+                    }
+                );
+
+                if (!res.ok) {
+                    const errData = await res.json().catch(() => ({}));
+                    throw new Error(errData.userMessage || 'Error al actualizar el cierre');
+                }
+
+                toast({
+                    title: `CIERRE #${editId} ACTUALIZADO`,
+                    description: 'Los cambios se guardaron correctamente.',
+                    variant: 'default',
+                });
+
+                broadcastRevalidate('CLOSURE_MADE');
+
+                // Volver al historial de cierres en /reports
+                setTimeout(() => router.push('/reports'), 1500);
+                return;
+            }
+
+            // MODO NORMAL: cerrar caja (crear cierre nuevo)
             await apiFetch('/dashboard/cashier-closure/close', {
                 method: 'POST',
                 body: JSON.stringify(closureData),
                 fallbackError: 'Error al procesar el cierre'
             }, token);
 
-            toast({ title: "Caja Cerrada", description: "El cierre de caja ha sido exitoso. Sesión finalizada para cambio de turno.", variant: "default" });
+            toast({ title: "Caja Cerrada", description: "El cierre de caja ha sido exitoso. Sesion finalizada para cambio de turno.", variant: "default" });
             
-            // LIMPIEZA AUTOMÁTICA TRAS ÉXITO
+            // LIMPIEZA AUTOMATICA TRAS EXITO
             confirmReset(); 
 
-            // MEGA-SPRINT: Expulsión forzosa tras cierre de caja
+            // MEGA-SPRINT: Expulsion forzosa tras cierre de caja
             setTimeout(() => {
                 logout();
-            }, 2000); // Dar 2 segundos para leer el mensaje de éxito
+            }, 2000); // Dar 2 segundos para leer el mensaje de exito
         } catch (error: any) {
             toast({ title: "FALLO DE CIERRE", description: error.message, variant: "destructive" });
         } finally {
@@ -460,11 +610,11 @@ export default function CashierClosurePage() {
                 fallbackError: 'FALLO AL REGISTRAR EGRESO'
             }, token);
 
-            toast({ variant: "success", title: "ÉXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
+            toast({ variant: "success", title: "EXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
             const { broadcastRevalidate } = await import('@/lib/revalidate');
             broadcastRevalidate('EXPENSE_UPDATE');
             setIsRealExpenseModalOpen(false);
-            fetchCurrent(); // Refrescar auditoría para ver el nuevo gasto
+            fetchCurrent(); // Refrescar auditoria para ver el nuevo gasto
         } catch (err: any) {
             toast({ variant: "destructive", title: "ERROR", description: err.message });
         }
@@ -503,7 +653,7 @@ export default function CashierClosurePage() {
         return (
             <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white rounded-[2rem] border border-black/5 dark:border-white/5 m-2 md:m-4">
                 <Skeleton className="h-12 w-12 rounded-2xl bg-zinc-200 dark:bg-zinc-800" />
-                <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-widest animate-pulse">Sincronizando Auditoría...</p>
+                <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-widest animate-pulse">Sincronizando Auditoria...</p>
             </div>
         );
     }
@@ -512,7 +662,31 @@ export default function CashierClosurePage() {
         <div className="flex flex-col w-full bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 p-1 md:p-3 pt-0 md:pt-0 gap-3 md:gap-4 pb-10">
 
 
-            
+            {/* BANNER DE MODO EDICION */}
+            {isEditMode && (
+                <div className="bg-blue-500/10 border border-blue-500/30 rounded-2xl px-4 py-3 flex items-center justify-between gap-4 mx-2">
+                    <div className="flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-2xl bg-blue-500/20 text-blue-500 flex items-center justify-center shrink-0">
+                            <RefreshCw size={16} />
+                        </div>
+                        <div className="flex flex-col">
+                            <span className="text-[11px] font-bold text-blue-500 uppercase tracking-tighter">Modo Edicion — Cierre #{editId}</span>
+                            <span className="text-[9px] font-medium text-blue-500/80 uppercase tracking-widest">Estas corrigiendo un cierre historico. Al guardar se actualizara el registro.</span>
+                        </div>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => router.push('/reports')}
+                        className="bg-blue-500/10 text-blue-500 font-medium uppercase text-[9px] tracking-widest rounded-xl"
+                        startContent={<ArrowLeft size={12} />}
+                    >
+                        Volver
+                    </Button>
+                </div>
+            )}
+
+
             {/* HEADER COMPACTO */}
             <div className="flex items-center justify-between shrink-0 px-2">
                 <div className="flex items-center gap-3">
@@ -532,7 +706,7 @@ export default function CashierClosurePage() {
                                         <TrendingDown size={10} /> CIERRE: {formatShortDateTime(currentClosure.endDate)}
                                     </span>
                                 </>
-                            ) : 'Auditoría en Tiempo Real'}
+                            ) : 'Auditoria en Tiempo Real'}
                         </p>
                     </div>
                 </div>
@@ -552,27 +726,27 @@ export default function CashierClosurePage() {
 
             {/* CONTENEDOR PRINCIPAL */}
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_380px] gap-3 md:gap-4 flex-1 lg:min-h-0 lg:overflow-hidden px-1">
-                {/* BLOQUE IZQUIERDO: AUDITORÍA Y EGRESOS */}
+                {/* BLOQUE IZQUIERDO: AUDITORIA Y EGRESOS */}
                 <div className="flex-1 flex flex-col lg:min-h-0 gap-4 lg:overflow-y-auto scrollbar-hide">
                     
                     {/* 1. BALANCE TICKET (SIEMPRE VISIBLE) */}
                     <section className="shrink-0 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl border border-gray-200 dark:border-emerald-500/10 p-4 md:p-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <div className="flex flex-col items-center justify-center relative z-10">
                             <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2">
-                                {theoreticalBalance < 0 ? 'Déficit de Operación (Ventas < Gastos)' : 'Efectivo Final Esperado'}
+                                {theoreticalBalance < 0 ? 'Deficit de Operacion (Ventas < Gastos)' : 'Efectivo Final Esperado'}
                             </span>
                             <span className={`text-5xl md:text-7xl font-medium tabular-nums tracking-tighter drop-shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${theoreticalBalance < 0 ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-50'}`}>
-                                ${formatCurrency(expectedCash)}
+                                $<RollingDigits value={Math.round(expectedCash || 0)} format={(n) => formatCurrency(n)} duration={1.6} />
                             </span>
                         </div>
                         <div className="flex flex-col gap-1 md:gap-2 mt-6 max-w-md mx-auto">
                             <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
                                 <span className="text-[9px] font-bold text-gray-600 dark:text-zinc-500 uppercase tracking-widest">Entradas Efectivo</span>
-                                <span className="text-md font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100">+{formatCurrency(efectivoEnCaja)}</span>
+                                <span className="text-md font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100">+<RollingDigits value={Math.round(efectivoEnCaja || 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                             </div>
                             <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
                                 <span className="text-[9px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Efectivo</span>
-                                <span className="text-md font-medium text-rose-700 dark:text-rose-500">-{formatCurrency(totalEgresosEfectivo)}</span>
+                                <span className="text-md font-medium text-rose-700 dark:text-rose-500">-<RollingDigits value={Math.round(totalEgresosEfectivo || 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                             </div>
                         </div>
                     </section>
@@ -627,7 +801,7 @@ export default function CashierClosurePage() {
                         </div>
                     </section>
 
-                    {/* 3. AUDITORÍA DETALLADA (SOLO ADMIN) */}
+                    {/* 3. AUDITORIA DETALLADA (SOLO ADMIN) */}
                     {isAdmin ? (
                         <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-500">
                             {/* INGRESOS DIGITALES */}
@@ -639,15 +813,15 @@ export default function CashierClosurePage() {
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-500/5 border border-blue-200 dark:border-blue-500/10 flex flex-col gap-1 items-center text-center">
                                         <span className="text-[9px] font-medium text-blue-700 dark:text-blue-400 uppercase">Nequi</span>
-                                        <span className="text-lg font-medium text-blue-800 dark:text-white">${formatCurrency(currentClosure?.totalNequi ?? 0)}</span>
+                                        <span className="text-lg font-medium text-blue-800 dark:text-white">$<RollingDigits value={Math.round(currentClosure?.totalNequi ?? 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                                     </div>
                                     <div className="p-4 rounded-2xl bg-purple-50 dark:bg-purple-500/5 border border-purple-200 dark:border-purple-500/10 flex flex-col gap-1 items-center text-center">
                                         <span className="text-[9px] font-medium text-purple-700 dark:text-purple-400 uppercase">Daviplata</span>
-                                        <span className="text-lg font-medium text-purple-800 dark:text-white">${formatCurrency(currentClosure?.totalDaviplata ?? 0)}</span>
+                                        <span className="text-lg font-medium text-purple-800 dark:text-white">$<RollingDigits value={Math.round(currentClosure?.totalDaviplata ?? 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                                     </div>
                                     <div className="p-4 rounded-2xl bg-gray-100 dark:bg-zinc-500/5 border border-gray-200 dark:border-zinc-500/10 flex flex-col gap-1 items-center text-center">
                                         <span className="text-[9px] font-medium text-gray-600 dark:text-zinc-500 uppercase">Otros</span>
-                                        <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50">${formatCurrency((currentClosure?.totalBancolombia ?? 0) + (currentClosure?.totalOtherTransfer ?? 0))}</span>
+                                        <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50">$<RollingDigits value={Math.round((currentClosure?.totalBancolombia ?? 0) + (currentClosure?.totalOtherTransfer ?? 0))} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                                     </div>
                                 </div>
                             </section>
@@ -656,7 +830,7 @@ export default function CashierClosurePage() {
                             <section className="space-y-4">
                                 <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/5 pb-2">
                                     <Briefcase size={14} className="text-gray-500 dark:text-zinc-500" />
-                                    <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Créditos y Abonos</h3>
+                                    <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Creditos y Abonos</h3>
                                 </div>
                                 <div className="card-base border-none/40 border border-gray-200 dark:border-white/10 rounded-2xl p-4 md:p-6">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -689,12 +863,12 @@ export default function CashierClosurePage() {
                     ) : (
                         <div className="p-6 card-base border-none/40 border border-gray-200 dark:border-white/5 rounded-2xl text-center">
                             <Lock size={20} className="mx-auto text-zinc-500 dark:text-zinc-400 mb-2" />
-                            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest">Auditoría de Ventas restringida a Administradores</p>
+                            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest">Auditoria de Ventas restringida a Administradores</p>
                         </div>
                     )}
                 </div>
 
-                {/* BLOQUE DERECHO: INTERACCIÓN CAJERO (SCROLLABLE) */}
+                {/* BLOQUE DERECHO: INTERACCION CAJERO (SCROLLABLE) */}
                 <div className="bg-white border border-gray-200 dark:bg-[#18181b]/60 dark:border-white/5 rounded-2xl p-5 md:p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden">
                     
                     <div className="flex-1 flex flex-col gap-6">
@@ -775,7 +949,7 @@ export default function CashierClosurePage() {
                         </div>
                     </div>
 
-                    {/* FOOTER DE ACCIÓN */}
+                    {/* FOOTER DE ACCION */}
                     <div className="shrink-0 pt-2 flex flex-col gap-3 border-t border-black/5 dark:border-white/5">
                         <div className={`flex items-center justify-between p-4 rounded-2xl border transition-all duration-500 ${
                             status === 'BALANCED' ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-200 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:border-emerald-500/20 dark:text-zinc-100' :
@@ -783,7 +957,7 @@ export default function CashierClosurePage() {
                             'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-300 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:border-emerald-500/20 dark:text-zinc-100'
                         }`}>
                             <div className="flex flex-col">
-                                <span className="text-[10px] font-medium uppercase tracking-[0.2em] opacity-60">Situación de Caja</span>
+                                <span className="text-[10px] font-medium uppercase tracking-[0.2em] opacity-60">Situacion de Caja</span>
                                 <span className="text-sm font-medium uppercase flex items-center gap-2">
                                     {status === 'PENDING' ? 'ESPERANDO CONTEO' : 
                                      status === 'BALANCED' ? 'CAJA CUADRADA' : 
@@ -823,10 +997,13 @@ export default function CashierClosurePage() {
                                 onPress={handleCloseRegister}
                                 isDisabled={status === 'PENDING' || isSubmitting}
                                 className={`flex-1 h-16 rounded-2xl font-medium text-xl uppercase tracking-widest tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
+                                    isEditMode ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30' :
                                     (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5'
                                 } text-white`}
                             >
-                                {isSubmitting ? 'PROCESANDO...' : (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'AUTORIZAR' : 'CERRAR CAJA'}
+                                {isSubmitting ? 'PROCESANDO...' :
+                                 isEditMode ? `GUARDAR CAMBIOS #${editId}` :
+                                 (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'AUTORIZAR' : 'CERRAR CAJA'}
                             </Button>
 
                         </div>
@@ -834,7 +1011,7 @@ export default function CashierClosurePage() {
                 </div>
             </div>
 
-            {/* MODAL DE AUTORIZACIÓN (DISEÑO ULTRA-PREMIUM) */}
+            {/* MODAL DE AUTORIZACION (DISEÑO ULTRA-PREMIUM) */}
             <Modal 
                 isOpen={showAuthModal} 
                 onOpenChange={setShowAuthModal} 
@@ -908,7 +1085,7 @@ export default function CashierClosurePage() {
                 </ModalContent>
             </Modal>
 
-            {/* MODAL DE CONFIRMACIÓN DE REINICIO (DISEÑO ULTRA-PREMIUM) */}
+            {/* MODAL DE CONFIRMACION DE REINICIO (DISEÑO ULTRA-PREMIUM) */}
             <Modal 
                 isOpen={isResetOpen} 
                 onOpenChange={onResetOpenChange}
@@ -938,8 +1115,8 @@ export default function CashierClosurePage() {
                             <ModalBody>
                                 <div className="space-y-4">
                                     <p className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed">
-                                        ESTÁS A PUNTO DE BORRAR TODOS LOS BILLETES Y MONEDAS QUE HAS INGRESADO. 
-                                        <span className="block mt-2 text-rose-500/80">ESTA ACCIÓN NO SE PUEDE DESHACER.</span>
+                                        ESTAS A PUNTO DE BORRAR TODOS LOS BILLETES Y MONEDAS QUE HAS INGRESADO. 
+                                        <span className="block mt-2 text-rose-500/80">ESTA ACCION NO SE PUEDE DESHACER.</span>
                                     </p>
                                 </div>
                             </ModalBody>
@@ -955,7 +1132,7 @@ export default function CashierClosurePage() {
                                     onPress={() => { confirmReset(); onClose(); }}
                                     className="bg-rose-600 hover:bg-rose-500 text-white font-medium text-xs uppercase tracking-[0.1em] px-10 h-12 rounded-2xl transition-all duration-300 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 active:scale-95"
                                 >
-                                    SÍ, BORRAR TODO
+                                    SI, BORRAR TODO
                                 </Button>
                             </ModalFooter>
                         </>
@@ -973,13 +1150,13 @@ export default function CashierClosurePage() {
                 isOpen={isDeleteExpenseConfirmOpen}
                 onOpenChange={setIsDeleteExpenseConfirmOpen}
                 title="Eliminar Egreso"
-                description="¿ESTÁS SEGURO DE ELIMINAR ESTE EGRESO DE LA BASE DE DATOS? ESTA ACCIÓN NO SE PUEDE DESHACER."
+                description="¿ESTAS SEGURO DE ELIMINAR ESTE EGRESO DE LA BASE DE DATOS? ESTA ACCION NO SE PUEDE DESHACER."
                 onConfirm={confirmDeleteExpense}
                 type="danger"
-                confirmText="SÍ, ELIMINAR"
+                confirmText="SI, ELIMINAR"
             />
 
-            {/* MODAL REPORTE DETALLADO (TICKET TÉRMICO) */}
+            {/* MODAL REPORTE DETALLADO (TICKET TERMICO) */}
             <Modal 
                 isOpen={isDetailedOpen} 
                 onOpenChange={onDetailedOpenChange}
@@ -992,7 +1169,7 @@ export default function CashierClosurePage() {
                         <>
                             <ModalHeader className="flex flex-col gap-1">
                                 <span className="text-xl font-medium tracking-tight uppercase tracking-tighter text-zinc-900 dark:text-white">Reporte Detallado de Turno</span>
-                                <span className="text-[10px] text-zinc-500 uppercase font-medium">Control de Auditoría Interna</span>
+                                <span className="text-[10px] text-zinc-500 uppercase font-medium">Control de Auditoria Interna</span>
                             </ModalHeader>
                             <ModalBody>
                                 <div className="bg-white p-6 rounded-2xl border-2 border-dashed border-zinc-200 font-mono text-zinc-900">
@@ -1009,7 +1186,7 @@ export default function CashierClosurePage() {
                                         <div className="grid grid-cols-4 text-[9px] font-medium uppercase border-b border-zinc-200 pb-2">
                                             <div className="col-span-1">HORA</div>
                                             <div className="col-span-1">TIPO</div>
-                                            <div className="col-span-1">MÉTODO</div>
+                                            <div className="col-span-1">METODO</div>
                                             <div className="col-span-1 text-right">TOTAL</div>
                                         </div>
 
@@ -1040,7 +1217,7 @@ export default function CashierClosurePage() {
                                         <div className="h-px bg-zinc-200 my-4 border-dashed border-t" />
                                         
                                         <div className="space-y-1">
-                                            <p className="text-[10px] font-medium uppercase tracking-tight text-zinc-500 dark:text-zinc-400">Balance por Método:</p>
+                                            <p className="text-[10px] font-medium uppercase tracking-tight text-zinc-500 dark:text-zinc-400">Balance por Metodo:</p>
                                             {Object.entries(detailedReport?.totals || {}).map(([method, total]) => (
                                                 <div key={method} className="flex justify-between text-[11px] font-medium uppercase">
                                                     <span>{method}</span>

@@ -4,6 +4,7 @@ import React from 'react';
 import { Card, CardBody, Progress, Chip } from "@heroui/react";
 import { Wallet, ArrowUpRight, ArrowDownRight, Smartphone, Coins } from 'lucide-react';
 import { formatCurrency } from "@/lib/utils";
+import { MoneyDigits } from "@/components/ui/motion";
 
 interface CashFlowWidgetProps {
     data?: {
@@ -67,17 +68,17 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                                         <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">{method.label}</span>
                                     </div>
                                     <span className={`text-[11px] font-medium tracking-tight font-['DM_Mono'] ${mBalance >= 0 ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>
-                                        ${formatCurrency(mBalance)}
+                                        <MoneyDigits value={mBalance} />
                                     </span>
                                 </div>
                                 <div className="flex justify-between items-center text-[9px] font-bold uppercase tracking-tight font-['DM_Mono']">
                                     <div className="flex items-center gap-1 text-zinc-900 dark:text-zinc-100/50">
                                         <ArrowUpRight size={10} />
-                                        <span>+${formatCurrency(mIncome)}</span>
+                                        <span>+<MoneyDigits value={mIncome} /></span>
                                     </div>
                                     <div className="flex items-center gap-1 text-rose-500/50">
                                         <ArrowDownRight size={10} />
-                                        <span>-${formatCurrency(mExpense)}</span>
+                                        <span>-<MoneyDigits value={mExpense} /></span>
                                     </div>
                                 </div>
                             </div>
@@ -97,9 +98,9 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                     </div>
 
                     <div className="flex flex-col items-center justify-center p-4 bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-white/5 rounded-xl">
-                        <span className="text-[11px] font-medium tracking-widest uppercase text-zinc-500 mb-1">Balance Neto del Día</span>
+                        <span className="text-[11px] font-medium tracking-widest uppercase text-zinc-500 mb-1">Balance Neto del Dia</span>
                         <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">
-                            ${formatCurrency(balance)}
+                            <MoneyDigits value={balance} duration={1.6} />
                         </span>
                     </div>
                 </div>

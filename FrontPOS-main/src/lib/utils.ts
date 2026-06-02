@@ -16,7 +16,7 @@ export const formatCurrency = (val: number | string): string => {
         let clean = val.replace(/\./g, '');
         // Reemplazamos coma decimal por punto para que parseFloat trabaje correctamente
         clean = clean.replace(/,/g, '.');
-        // Removemos cualquier cosa que no sea número o el punto decimal resultante
+        // Removemos cualquier cosa que no sea numero o el punto decimal resultante
         clean = clean.replace(/[^\d.]/g, '');
         num = parseFloat(clean);
     } else {
@@ -31,7 +31,7 @@ export const parseCurrency = (val: string | number): number => {
     if (val === undefined || val === null) return 0;
     if (typeof val === 'number') return val;
     
-    // Eliminamos todo excepto dígitos, puntos y comas
+    // Eliminamos todo excepto digitos, puntos y comas
     let clean = val.toString().replace(/[^\d.,]/g, '');
     
     // En es-CO: "." es miles, "," es decimal.
@@ -40,14 +40,14 @@ export const parseCurrency = (val: string | number): number => {
     const hasDot = clean.includes('.');
 
     if (hasComma && hasDot) {
-        // Formato estándar es-CO: 1.000,00 -> 1000.00
+        // Formato estandar es-CO: 1.000,00 -> 1000.00
         clean = clean.replace(/\./g, '').replace(/,/g, '.');
     } else if (hasComma) {
         // Solo coma: 1000,50 -> 1000.50
         clean = clean.replace(/,/g, '.');
     } else if (hasDot) {
         // Solo punto: ¿Es miles o decimal? 
-        // Si hay múltiples puntos o el punto está lejos del final, es miles.
+        // Si hay multiples puntos o el punto esta lejos del final, es miles.
         const dots = (clean.match(/\./g) || []).length;
         const lastDotIndex = clean.lastIndexOf('.');
         const distanceFromEnd = clean.length - lastDotIndex - 1;
@@ -89,10 +89,10 @@ export const formatCOP = (val: number): string => {
 
 // Formatear input con puntos mientras escribe: "10000" -> "10.000"
 export const formatInputCOP = (val: string): string => {
-    // Remover todo excepto dígitos
+    // Remover todo excepto digitos
     const digits = val.replace(/\D/g, '');
     if (!digits) return '';
-    // Convertir a número y formatear
+    // Convertir a numero y formatear
     const num = parseInt(digits, 10);
     if (isNaN(num)) return '';
     return num.toLocaleString('es-CO');
@@ -105,12 +105,12 @@ export const parseCOP = (val: string): number => {
 };
 
 /**
- * Lógica de Semáforo Proporcional POS Pro v3.0 (Global)
+ * Logica de Semaforo Proporcional POS Pro v3.0 (Global)
  * Calcula la salud del stock basada en el porcentaje vs la meta (minStock).
  */
 export const calculateStockHealth = (stock: number, minStock: number): 'CRITICAL' | 'WARNING' | 'OPTIMAL' => {
     const s = Number(stock) || 0;
-    const m = Number(minStock) || 1; // Asumir 1 si es 0 para evitar división por cero
+    const m = Number(minStock) || 1; // Asumir 1 si es 0 para evitar division por cero
 
     const percentage = (s / m) * 100;
 
@@ -130,8 +130,8 @@ export const getStockStatus = (stock: number, minStock: number): 'STABLE' | 'REO
 };
 
 /**
- * Sanitiza un valor numérico para envío a API
- * Elimina: $, espacios, puntos de miles, símbolos de moneda
+ * Sanitiza un valor numerico para envio a API
+ * Elimina: $, espacios, puntos de miles, simbolos de moneda
  * Maneja formato es-CO: "1.234,56" -> 1234.56
  * Ej: "$ 1.300" -> 1300, "2.500,50" -> 2500.5
  */
@@ -139,7 +139,7 @@ export const sanitizeNumber = (val: string | number | undefined): number => {
     if (val === undefined || val === null || val === '') return 0;
     if (typeof val === 'number') return val;
     
-    // Eliminar todo excepto dígitos, comas y puntos
+    // Eliminar todo excepto digitos, comas y puntos
     let clean = val.toString().replace(/[^\d.,]/g, '');
     
     // Detectar formato
@@ -171,7 +171,7 @@ export const sanitizeNumber = (val: string | number | undefined): number => {
 
 /**
  * Sanitiza todo el payload de un producto antes de enviar a API
- * Limpia campos numéricos que pueden venir formateados con moneda
+ * Limpia campos numericos que pueden venir formateados con moneda
  */
 export const sanitizeProductPayload = (product: any): any => {
     return {
@@ -188,7 +188,7 @@ export const sanitizeProductPayload = (product: any): any => {
 };
 
 /**
- * Formatea la cantidad de stock para visualización
+ * Formatea la cantidad de stock para visualizacion
  * - Productos pack (isPack): Siempre entero con Math.floor
  * - Productos no pesados (isWeighted === false): Entero sin decimales
  * - Productos pesados: Se muestra el valor completo
@@ -208,23 +208,23 @@ export const formatStock = (quantity: number, isPack?: boolean, isWeighted?: boo
 export const isProductWeighted = (product: any): boolean => {
     if (!product) return false;
     
-    // 1. Evaluación directa del booleano
+    // 1. Evaluacion directa del booleano
     if (typeof product.isWeighted === 'boolean') return product.isWeighted;
     
-    // 2. Evaluación de strings (Tolerancia a DB inconsistente)
+    // 2. Evaluacion de strings (Tolerancia a DB inconsistente)
     if (typeof product.isWeighted === 'string') {
         const val = product.isWeighted.toLowerCase().trim();
         return val === 'true' || val === '1' || val === 'si' || val === 'on';
     }
     
-    // 3. Evaluación de números (1 = true, 0 = false)
+    // 3. Evaluacion de numeros (1 = true, 0 = false)
     if (typeof product.isWeighted === 'number') return product.isWeighted > 0;
 
     // 4. Fallback por Unidad de Medida (Sugerido por el usuario)
     const unit = (product.unit || product.unidad || '').toString().toLowerCase().trim();
     if (['kg', 'kilogramo', 'lb', 'libra', 'gramos', 'gr', 'kgs'].includes(unit)) return true;
 
-    // 5. Última instancia: Verdad absoluta del campo
+    // 5. Ultima instancia: Verdad absoluta del campo
     return !!product.isWeighted;
 };
 
@@ -262,7 +262,7 @@ export const formatDateTime = (date: string | Date): string => {
 };
 
 /**
- * Formatea fecha + hora compacta para displays pequeños
+ * Formatea fecha + hora compacta para displays pequenos
  * "08/05 2:30 PM"
  */
 export const formatShortDateTime = (date: string | Date): string => {
@@ -290,7 +290,7 @@ export const formatTimeWithSeconds = (date: string | Date): string => {
 /**
  * Estandariza un texto para el sistema POS:
  * 1. Quita tildes y caracteres especiales (NFD)
- * 2. Convierte a MAYÚSCULAS
+ * 2. Convierte a MAYUSCULAS
  */
 export const normalizeText = (text: string | null | undefined): string => {
     if (!text) return "";
@@ -303,7 +303,7 @@ export const normalizeText = (text: string | null | undefined): string => {
 };
 
 /**
- * Sanitiza automáticamente los campos de texto de un objeto (útil para formularios)
+ * Sanitiza automaticamente los campos de texto de un objeto (util para formularios)
  */
 export const sanitizeTextFields = (obj: any, fields: string[]): any => {
     const newObj = { ...obj };

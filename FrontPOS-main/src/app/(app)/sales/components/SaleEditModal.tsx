@@ -93,7 +93,7 @@ export default function SaleEditModal({
             setLastChange(change);
             setShowSuccessScreen(true);
             broadcastRevalidate('SALE_MADE');
-            toast({ title: "✓ Actualizado", description: "El método de pago ha sido corregido." });
+            toast({ title: "✓ Actualizado", description: "El metodo de pago ha sido corregido." });
             onSuccess(change);
         } catch (err: any) {
             toast({ variant: "destructive", title: "Error", description: err.message || "Error al actualizar pago" });

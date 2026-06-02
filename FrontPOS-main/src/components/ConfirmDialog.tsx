@@ -50,9 +50,14 @@ export const ConfirmDialog = ({
         {(onClose) => (
           <>
             <ModalHeader className={`flex items-center gap-3 py-4 ${colors.text} font-medium tracking-tight`}>
-              <div className={`p-2 rounded-2xl bg-[#18181b] border ${colors.border}/20`}>
+              <motion.div
+                initial={{ rotate: -8, scale: 0.8, opacity: 0 }}
+                animate={{ rotate: 0, scale: 1, opacity: 1 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 14 }}
+                className={`p-2 rounded-2xl bg-[#18181b] border ${colors.border}/20`}
+              >
                 <Icon size={20} />
-              </div>
+              </motion.div>
               <span className="tracking-tighter uppercase">{title}</span>
             </ModalHeader>
             <ModalBody className="py-6">
@@ -61,7 +66,7 @@ export const ConfirmDialog = ({
               </p>
               {isDanger && (
                 <p className="text-zinc-500 text-[10px] uppercase font-medium tracking-widest mt-2 tracking-tight">
-                  Esta acción es irreversible. Proporcione cautela.
+                  Esta accion es irreversible. Proporcione cautela.
                 </p>
               )}
             </ModalBody>

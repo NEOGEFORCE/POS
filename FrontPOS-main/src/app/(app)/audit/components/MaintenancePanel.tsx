@@ -27,7 +27,7 @@ export default function MaintenancePanel() {
         headers: { 'Authorization': `Bearer ${user.token}` },
       });
       
-      if (!response.ok) throw new Error("Falló la generación del respaldo");
+      if (!response.ok) throw new Error("Fallo la generacion del respaldo");
       
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -67,7 +67,7 @@ export default function MaintenancePanel() {
       });
     } catch (error: any) {
       toast({
-        title: "Fallo en Envío",
+        title: "Fallo en Envio",
         description: error.message || "Error al conectar con el servidor",
         variant: "destructive"
       });
@@ -93,7 +93,7 @@ export default function MaintenancePanel() {
       
       toast({
         title: "Limpieza Completada",
-        description: `Se han eliminado ${result.records_deleted} registros históricos.`,
+        description: `Se han eliminado ${result.records_deleted} registros historicos.`,
       });
       setIsPurgeModalOpen(false);
       setPurgeDate("");
@@ -117,12 +117,12 @@ export default function MaintenancePanel() {
       }, user.token);
       
       toast({
-        title: "Normalización Exitosa",
+        title: "Normalizacion Exitosa",
         description: `${result.updatedCount} productos actualizados (tildes eliminadas).`,
       });
     } catch (error: any) {
       toast({
-        title: "Fallo en Normalización",
+        title: "Fallo en Normalizacion",
         description: error.message || "Fallo en el servidor",
         variant: "destructive"
       });
@@ -140,7 +140,7 @@ export default function MaintenancePanel() {
           </div>
           <div>
             <h3 className="text-sm font-medium uppercase text-zinc-900 dark:text-zinc-50">Mantenimiento de BD</h3>
-            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">Gestión de Respaldos y Limpieza Histórica</p>
+            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">Gestion de Respaldos y Limpieza Historica</p>
           </div>
         </div>
         
@@ -202,7 +202,7 @@ export default function MaintenancePanel() {
               </ModalHeader>
               <ModalBody>
                 <p className="text-xs text-gray-600 dark:text-gray-300">
-                  Esta acción eliminará de forma <b>permanente e irreversible</b> todas las ventas, movimientos de stock, egresos y logs de auditoría <b>anteriores</b> a la fecha seleccionada.
+                  Esta accion eliminara de forma <b>permanente e irreversible</b> todas las ventas, movimientos de stock, egresos y logs de auditoria <b>anteriores</b> a la fecha seleccionada.
                 </p>
                 <p className="text-xs font-bold text-danger">
                   Es extremadamente recomendable realizar un Respaldo Total antes de proceder.
@@ -217,10 +217,10 @@ export default function MaintenancePanel() {
                     className="mb-4"
                   />
 
-                  <label className="text-[10px] font-medium uppercase text-rose-500 mb-2 block">Confirmación Crítica</label>
-                  <p className="text-[9px] text-gray-500 mb-2 uppercase tracking-tight">Escriba <span className="font-medium text-rose-500">ELIMINAR</span> para desbloquear la acción:</p>
+                  <label className="text-[10px] font-medium uppercase text-rose-500 mb-2 block">Confirmacion Critica</label>
+                  <p className="text-[9px] text-gray-500 mb-2 uppercase tracking-tight">Escriba <span className="font-medium text-rose-500">ELIMINAR</span> para desbloquear la accion:</p>
                   <Input 
-                    placeholder="Escriba aquí..."
+                    placeholder="Escriba aqui..."
                     value={purgeConfirmation}
                     onChange={(e) => setPurgeConfirmation(e.target.value.toUpperCase())}
                     variant="bordered"

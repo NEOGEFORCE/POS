@@ -63,7 +63,7 @@ export default function AdvancedAnalyticsChart({ data }: AdvancedAnalyticsChartP
                             <TrendingUp className="h-6 w-6 text-zinc-900 dark:text-zinc-100" />
                         </div>
                         <div>
-                            <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Análisis Comparativo</h3>
+                            <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Analisis Comparativo</h3>
                             <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Ingresos vs Egresos Mensuales</p>
                         </div>
                     </div>

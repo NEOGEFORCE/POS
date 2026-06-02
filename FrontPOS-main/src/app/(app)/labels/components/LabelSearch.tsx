@@ -25,7 +25,7 @@ const LabelSearch = memo(({ filter, onFilterChange, filteredProducts, onAddToQue
                         </label>
                     </div>
                     <Input
-                        placeholder="NOMBRE O CÓDIGO..."
+                        placeholder="NOMBRE O CODIGO..."
                         value={filter} 
                         onValueChange={onFilterChange}
                         variant="faded"

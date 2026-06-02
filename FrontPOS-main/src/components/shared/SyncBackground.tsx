@@ -6,8 +6,8 @@ import { useToast } from '@/hooks/use-toast';
 import { setupSyncListener, revalidateKeysForEvent } from '@/lib/revalidate';
 
 /**
- * SyncBackground: Motor de sincronización silencioso (Ultra-Instinto)
- * Revisa periódicamente la cola de IndexedDB y sube las ventas pendientes.
+ * SyncBackground: Motor de sincronizacion silencioso (Ultra-Instinto)
+ * Revisa periodicamente la cola de IndexedDB y sube las ventas pendientes.
  */
 export default function SyncBackground() {
     const { toast } = useToast();
@@ -22,8 +22,8 @@ export default function SyncBackground() {
                 const queue = await getSyncQueue();
 
                 // Filtrar las que ya fallaron permanentemente o excedieron reintentos
-                // Nota: En la estructura actual de sync_queue, no tenemos retryCount explícito en el payload todavía,
-                // pero procesaremos la cola según el timestamp.
+                // Nota: En la estructura actual de sync_queue, no tenemos retryCount explicito en el payload todavia,
+                // pero procesaremos la cola segun el timestamp.
                 if (queue.length === 0) return;
 
                 isSyncingRef.current = true;
@@ -66,7 +66,7 @@ export default function SyncBackground() {
                     });
                 }
             } catch (err) {
-                console.error("[SYNC] Error crítico en motor de sincronización:", err);
+                console.error("[SYNC] Error critico en motor de sincronizacion:", err);
             } finally {
                 isSyncingRef.current = false;
             }
@@ -75,13 +75,13 @@ export default function SyncBackground() {
         return () => clearInterval(syncInterval);
     }, [toast]);
 
-    // Sincronización periódica del catálogo completo (Cada 5 minutos)
+    // Sincronizacion periodica del catalogo completo (Cada 5 minutos)
     const syncFullCatalog = async () => {
         try {
             const token = Cookies.get('org-pos-token');
             if (!token || !navigator.onLine) return;
 
-            console.log("[SYNC] Actualizando catálogo local para modo offline...");
+            console.log("[SYNC] Actualizando catalogo local para modo offline...");
             const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/products/all-products`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -90,10 +90,10 @@ export default function SyncBackground() {
                 const products = await res.json();
                 const { saveProductsToCache } = await import('@/lib/offline-db');
                 await saveProductsToCache(products);
-                console.log("[SYNC] Catálogo local actualizado correctamente.");
+                console.log("[SYNC] Catalogo local actualizado correctamente.");
             }
         } catch (e) {
-            console.warn("[SYNC] No se pudo actualizar el catálogo local (Servidor offline)");
+            console.warn("[SYNC] No se pudo actualizar el catalogo local (Servidor offline)");
         }
     };
 
@@ -103,13 +103,13 @@ export default function SyncBackground() {
         return () => clearInterval(catalogInterval);
     }, []);
 
-    // Listener de eventos de sincronización global (BroadcastChannel)
+    // Listener de eventos de sincronizacion global (BroadcastChannel)
     useEffect(() => {
         const cleanup = setupSyncListener((event) => {
             console.log(`[BROADCAST] Recibido evento: ${event}`);
             revalidateKeysForEvent(event);
             
-            // Si hay actualización de productos, forzar refresco de catálogo local
+            // Si hay actualizacion de productos, forzar refresco de catalogo local
             if (event === 'PRODUCT_UPDATE' || event === 'STOCK_UPDATE' || event === 'INVENTORY_UPDATE') {
                 syncFullCatalog();
             }

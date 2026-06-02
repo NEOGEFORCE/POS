@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useRef } from 'react';
 import { 
@@ -52,7 +52,7 @@ const SaleRow = React.memo(({
             className="absolute top-0 left-0 w-full flex items-center px-4 border-b border-gray-100 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 group cursor-default"
             style={style}
         >
-            <div className="w-[180px]">
+            <div className="flex-1 min-h-0 h-full w-[180px]">
                 <div className="flex items-center gap-3">
                     <div className="p-2 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl group-hover:scale-110 transition-transform">
                         <Calendar size={20} strokeWidth={2.5} />
@@ -102,7 +102,7 @@ const SaleRow = React.memo(({
                         <Eye size={20} strokeWidth={2.5} />
                     </Button>
                 </Tooltip>
-                <Tooltip content="AÑADIR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                <Tooltip content="AÃ‘ADIR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                     <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-indigo-500 dark:text-zinc-500 dark:hover:text-indigo-400 transition-colors p-2" onPress={() => onAddItems(sale)}>
                         <PackagePlus size={20} strokeWidth={2.5} />
                     </Button>
@@ -143,12 +143,12 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
     });
 
     return (
-        <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
+        <div className="flex-1 min-h-0 h-full w-full flex-1 flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
             {/* Cabecera Fija */}
             <div className="flex items-center bg-gray-50/80 dark:bg-zinc-950/80 h-10 border-b border-gray-200 dark:border-white/5 px-4 text-center">
                 <div className="w-[180px] font-medium uppercase text-[9px] tracking-widest text-zinc-500 dark:text-zinc-400 text-left">Fecha / Hora</div>
                 <div className="w-[230px] font-medium uppercase text-[9px] tracking-widest text-zinc-500 dark:text-zinc-400 text-left">Cliente / DNI</div>
-                <div className="w-[110px] font-medium uppercase text-[9px] tracking-widest text-zinc-500 dark:text-zinc-400">Método</div>
+                <div className="w-[110px] font-medium uppercase text-[9px] tracking-widest text-zinc-500 dark:text-zinc-400">Metodo</div>
                 <div className="flex-1 font-medium uppercase text-[9px] tracking-widest text-zinc-500 dark:text-zinc-400 text-right pr-8">Total</div>
                 <div className="w-[140px] text-center font-medium uppercase text-[9px] tracking-widest text-zinc-500 dark:text-zinc-400">Acciones</div>
             </div>
@@ -156,7 +156,7 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
             {/* Contenedor Virtual */}
             <div 
                 ref={parentRef}
-                className="flex-1 overflow-auto custom-scrollbar min-h-[400px] [scrollbar-gutter:stable]"
+                className="overflow-auto custom-scrollbar min-h-[400px] flex-1 min-h-0 h-full [scrollbar-gutter:stable]"
             >
                 <div
                     style={{
@@ -198,3 +198,6 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
 const HistoryIcon = ({ size, className }: { size: number, className: string }) => (
     <div className={className}><DollarSign size={size} /></div>
 );
+
+
+

@@ -36,15 +36,15 @@ interface SupplierFormModalProps {
   onLookupName?: (name: string) => void;
 }
 
-// Días de la semana para selección múltiple
-const DAYS_OF_WEEK = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+// Dias de la semana para seleccion multiple
+const DAYS_OF_WEEK = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo'];
 const DAY_SHORT_NAMES: Record<string, string> = {
   'Lunes': 'LU',
   'Martes': 'MA',
-  'Miércoles': 'MI',
+  'Miercoles': 'MI',
   'Jueves': 'JU',
   'Viernes': 'VI',
-  'Sábado': 'SA',
+  'Sabado': 'SA',
   'Domingo': 'DO'
 };
 
@@ -68,7 +68,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
         name: supplier.name || '',
         phone: supplier.phone || '',
         vendorName: supplier.vendorName || '',
-        // Usar nuevos campos multi-días, fallback a legacy si no existen
+        // Usar nuevos campos multi-dias, fallback a legacy si no existen
         visitDays: supplier.visitDays || (supplier.visitDay ? [supplier.visitDay] : []),
         deliveryDays: supplier.deliveryDays || (supplier.deliveryDay ? [supplier.deliveryDay] : []),
         restockMethod: supplier.restockMethod || '',
@@ -85,7 +85,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
     }
   }, [supplier, isOpen]);
 
-  // Toggle para días de visita (multi-select)
+  // Toggle para dias de visita (multi-select)
   const toggleVisitDay = (day: string) => {
     setLocalSupplier(prev => {
       const current = prev.visitDays || [];
@@ -96,7 +96,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
     });
   };
 
-  // Toggle para días de entrega (multi-select)
+  // Toggle para dias de entrega (multi-select)
   const toggleDeliveryDay = (day: string) => {
     setLocalSupplier(prev => {
       const current = prev.deliveryDays || [];
@@ -120,7 +120,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
     setValidationErrors([]);
     setIsSaving(true);
     try {
-      // Sanitización final antes de enviar
+      // Sanitizacion final antes de enviar
       const dataToSave = {
         ...localSupplier,
         name: normalizeText(localSupplier.name),
@@ -150,7 +150,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
               onPress={async () => {
                 try {
                   await onSave({ id: existingId, isActive: true });
-                  toast({ title: 'ÉXITO', description: 'PROVEEDOR REACTIVADO CORRECTAMENTE' });
+                  toast({ title: 'EXITO', description: 'PROVEEDOR REACTIVADO CORRECTAMENTE' });
                   onOpenChange(false);
                 } catch (e: any) {
                   toast({ variant: 'destructive', title: 'ERROR', description: 'FALLO AL REACTIVAR' });
@@ -203,9 +203,9 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                 </div>
                 <div className="flex flex-col">
                   <h2 className="text-base md:text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight leading-none">
-                    {isEdit ? "Gestión de Proveedor" : "Nuevo Proveedor"}
+                    {isEdit ? "Gestion de Proveedor" : "Nuevo Proveedor"}
                   </h2>
-                  <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest tracking-tight mt-0.5">Operación Certificada</span>
+                  <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest tracking-tight mt-0.5">Operacion Certificada</span>
                 </div>
               </div>
             </ModalHeader>
@@ -213,7 +213,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
             <ModalBody className="px-6 md:px-10 py-4 flex flex-col gap-4 overflow-hidden custom-scrollbar">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="flex flex-col gap-0.5">
-                    <label className={commonInputClasses.label}>EMPRESA / RAZÓN SOCIAL</label>
+                    <label className={commonInputClasses.label}>EMPRESA / RAZON SOCIAL</label>
                     <Input
                       placeholder=" "
                       value={localSupplier.name}
@@ -230,7 +230,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                   </div>
 
                   <div className="flex flex-col gap-0.5">
-                    <label className={commonInputClasses.label}>CONTACTO / TELÉFONO</label>
+                    <label className={commonInputClasses.label}>CONTACTO / TELEFONO</label>
                     <Input
                       placeholder=" "
                       value={localSupplier.phone}
@@ -241,12 +241,12 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                   </div>
 
                   <div className="md:col-span-2 pt-2 pb-1 border-t border-gray-100 dark:border-white/5 flex items-center justify-center">
-                    <span className="text-[8px] font-medium text-gray-400 uppercase tracking-[0.3em] tracking-tight">Logística</span>
+                    <span className="text-[8px] font-medium text-gray-400 uppercase tracking-[0.3em] tracking-tight">Logistica</span>
                   </div>
 
-                  {/* DÍAS DE VISITA - Multi-Select con botones */}
+                  {/* DIAS DE VISITA - Multi-Select con botones */}
                   <div className="md:col-span-2">
-                    <label className={commonInputClasses.label}>DÍAS DE VISITA (SELECCIÓN MÚLTIPLE)</label>
+                    <label className={commonInputClasses.label}>DIAS DE VISITA (SELECCION MULTIPLE)</label>
                     <div className="flex gap-1 mt-1.5 flex-wrap">
                       {DAYS_OF_WEEK.map((day) => {
                         const isSelected = (localSupplier.visitDays || []).includes(day);
@@ -272,14 +272,14 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                       <span className="text-[9px] text-gray-400">
                         {(localSupplier.visitDays || []).length > 0 
                           ? (localSupplier.visitDays || []).join(', ')
-                          : 'Selecciona al menos un día'}
+                          : 'Selecciona al menos un dia'}
                       </span>
                     </div>
                   </div>
 
-                  {/* DÍAS DE ENTREGA - Multi-Select con botones */}
+                  {/* DIAS DE ENTREGA - Multi-Select con botones */}
                   <div className="md:col-span-2">
-                    <label className={commonInputClasses.label}>DÍAS DE ENTREGA (SELECCIÓN MÚLTIPLE)</label>
+                    <label className={commonInputClasses.label}>DIAS DE ENTREGA (SELECCION MULTIPLE)</label>
                     <div className="flex gap-1 mt-1.5 flex-wrap">
                       {DAYS_OF_WEEK.map((day) => {
                         const isSelected = (localSupplier.deliveryDays || []).includes(day);
@@ -305,16 +305,16 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                       <span className="text-[9px] text-gray-400">
                         {(localSupplier.deliveryDays || []).length > 0 
                           ? (localSupplier.deliveryDays || []).join(', ')
-                          : 'Selecciona al menos un día'}
+                          : 'Selecciona al menos un dia'}
                       </span>
                     </div>
                   </div>
 
-                  {/* MÉTODO DE ABASTECIMIENTO */}
+                  {/* METODO DE ABASTECIMIENTO */}
                   <div className="md:col-span-2">
-                    <label className={commonInputClasses.label}>MÉTODO DE ABASTECIMIENTO PRINCIPAL</label>
+                    <label className={commonInputClasses.label}>METODO DE ABASTECIMIENTO PRINCIPAL</label>
                     <Select
-                      placeholder="Selecciona método..."
+                      placeholder="Selecciona metodo..."
                       selectedKeys={localSupplier.restockMethod ? [localSupplier.restockMethod] : []}
                       onSelectionChange={(keys) => updateField('restockMethod', Array.from(keys)[0] || '')}
                       selectorIcon={<ChevronDown className="text-gray-400 ml-2 shrink-0" size={16} />}

@@ -3,6 +3,7 @@
 import React, { memo } from 'react';
 import { TrendingDown, CreditCard, Activity, DollarSign, HandCoins, ChevronRight } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+import { MoneyDigits, NumberDigits } from "@/components/ui/motion";
 
 interface StatsProps {
   totalMonth: number;
@@ -41,7 +42,9 @@ const AnalyticalCard = ({
     chartData?: any[],
     isCurrency?: boolean,
     onClick?: () => void
-}) => (
+}) => {
+    const isNumber = typeof value === 'number';
+    return (
     <div 
         onClick={onClick}
         className={`relative group flex-1 card-base border-none dark:bg-[#18181b]/50  p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20 ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
@@ -80,8 +83,16 @@ const AnalyticalCard = ({
                         {label}
                     </span>
                     <span className="text-lg sm:text-xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight leading-none tracking-tighter tabular-nums block">
-                        {isCurrency && <span className="text-[10px] mr-0.5" style={{ color }}>$</span>}
-                        {value}
+                        {isCurrency && isNumber ? (
+                            <MoneyDigits value={value as number} />
+                        ) : isNumber ? (
+                            <NumberDigits value={value as number} />
+                        ) : (
+                            <>
+                                {isCurrency && <span className="text-[10px] mr-0.5" style={{ color }}>$</span>}
+                                {value}
+                            </>
+                        )}
                     </span>
                 </div>
             </div>
@@ -98,14 +109,15 @@ const AnalyticalCard = ({
             </div>
         </div>
     </div>
-);
+    );
+};
 
 const ExpenseStats = memo(({ totalMonth, topSource, count, totalPending, onOpenPending }: StatsProps) => {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 shrink-0 px-1">
       <AnalyticalCard 
         label="Egreso Mensual"
-        value={totalMonth.toLocaleString()}
+        value={totalMonth}
         isCurrency={true}
         subValue="Flujo proyectado"
         icon={DollarSign}
@@ -114,7 +126,7 @@ const ExpenseStats = memo(({ totalMonth, topSource, count, totalPending, onOpenP
       />
       <AnalyticalCard 
         label="Cuentas por Pagar"
-        value={totalPending.toLocaleString()}
+        value={totalPending}
         isCurrency={true}
         subValue="Deudas Activas"
         icon={HandCoins}

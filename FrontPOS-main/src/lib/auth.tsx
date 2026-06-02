@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const recoverSession = async () => {
       try {
-        // 1. Migración de localStorage a Cookies (Transición segura)
+        // 1. Migracion de localStorage a Cookies (Transicion segura)
         const legacyToken = localStorage.getItem('org-pos-token');
         const legacyUser = localStorage.getItem('org-pos-user');
 
@@ -42,7 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           currentUserStr = legacyUser;
         }
 
-        // Limpieza de localStorage (Post-migración)
+        // Limpieza de localStorage (Post-migracion)
         if (legacyToken || legacyUser) {
           localStorage.removeItem('org-pos-token');
           localStorage.removeItem('org-pos-user');
@@ -50,7 +50,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem('last-sale');
         }
 
-        // 2. Sincronización de Estado
+        // 2. Sincronizacion de Estado
         if (currentToken && currentUserStr) {
           try {
             const userData = JSON.parse(currentUserStr);
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error("Critical Auth recovery failure", error);
       } finally {
-        // Aseguramos un pequeño respiro para que el estado de React se asiente
+        // Aseguramos un pequeno respiro para que el estado de React se asiente
         setLoading(false);
       }
     };
@@ -81,7 +81,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (!response.ok) {
         const text = await response.text();
-        let errorMsg = 'Error de inicio de sesión';
+        let errorMsg = 'Error de inicio de sesion';
         try {
             const errorData = JSON.parse(text);
             if (errorData.error && typeof errorData.error === 'object') {
@@ -97,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { token, user: userData } = data;
     
     if (userData && token) {
-      // Guardar en Cookies (Seguro y Volátil) en lugar de localStorage
+      // Guardar en Cookies (Seguro y Volatil) en lugar de localStorage
       Cookies.set('org-pos-user', JSON.stringify(userData), { expires: 0.5, secure: true, sameSite: 'strict' });
       Cookies.set('org-pos-token', token, { expires: 0.5, secure: true, sameSite: 'strict' });
       
@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
-    // Limpieza profunda de sesión
+    // Limpieza profunda de sesion
     Cookies.remove('org-pos-user');
     Cookies.remove('org-pos-token');
     

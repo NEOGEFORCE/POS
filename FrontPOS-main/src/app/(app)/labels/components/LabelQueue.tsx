@@ -27,7 +27,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                 <div className="p-4 border-b border-gray-100 dark:border-white/5 flex items-center justify-between bg-gray-50/50 dark:bg-zinc-950/20">
                     <div className="flex flex-col">
                         <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest tracking-tight flex items-center gap-2">
-                             LISTA DE IMPRESIÓN
+                             LISTA DE IMPRESION
                         </span>
                         <div className="flex items-center gap-2 mt-1">
                             <Chip size="sm" color="success" variant="flat" className="h-4 font-medium text-[8px] uppercase tracking-[0.2em] tracking-tight">
@@ -42,7 +42,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                             className="bg-white/5 text-zinc-900 dark:text-zinc-100 text-[9px] font-medium uppercase tracking-widest rounded-2xl h-8 px-4 border border-emerald-500/20 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all tracking-tight" 
                             onPress={onAddAll}
                         >
-                            <Layers size={14} className="mr-2" /> añadir todos
+                            <Layers size={14} className="mr-2" /> anadir todos
                         </Button>
                         <Button 
                             size="sm" 
@@ -62,7 +62,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                         <div className="h-full flex flex-col items-center justify-center gap-4 py-20 grayscale opacity-20">
                             <Printer size={80} strokeWidth={1} />
                             <div className="flex flex-col items-center">
-                                <span className="text-xl font-medium uppercase tracking-tighter tracking-tight">Cola Vacía</span>
+                                <span className="text-xl font-medium uppercase tracking-tighter tracking-tight">Cola Vacia</span>
                                 <span className="text-[10px] font-bold uppercase tracking-widest">Busca productos para empezar</span>
                             </div>
                         </div>

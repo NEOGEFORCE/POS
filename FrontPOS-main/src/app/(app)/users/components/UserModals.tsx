@@ -99,7 +99,7 @@ export const UserFormModal = memo(({ isOpen, onOpenChange, isEdit, initialUser, 
                                         value={localUser?.dni || ''}
                                         onValueChange={(v) => {
                                             setLocalUser(p => ({ ...p, dni: v }));
-                                            // Auto-lookup para evitar duplicados y facilitar edición
+                                            // Auto-lookup para evitar duplicados y facilitar edicion
                                             if (!isEdit && v.length >= 5 && onLookupDni) {
                                                 onLookupDni(v);
                                             }
@@ -291,7 +291,7 @@ export const DeleteUserModal = memo(({ isOpen, onOpenChange, onConfirm }: Delete
                             <div className="h-16 w-16 bg-rose-500/10 text-rose-500 flex items-center justify-center rounded-2xl shadow-inner -rotate-3"><AlertTriangle size={32} /></div>
                             <div className="flex flex-col">
                                 <span className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">Revocar Acceso</span>
-                                <span className="text-[10px] font-medium text-rose-500 uppercase tracking-[0.3em] mt-3 not-tracking-tight">Acción de Auditoría</span>
+                                <span className="text-[10px] font-medium text-rose-500 uppercase tracking-[0.3em] mt-3 not-tracking-tight">Accion de Auditoria</span>
                             </div>
                         </ModalHeader>
                         <ModalBody className="p-6 md:p-10 text-center gap-6">
@@ -301,8 +301,8 @@ export const DeleteUserModal = memo(({ isOpen, onOpenChange, onConfirm }: Delete
                                 </div>
                             </div>
                             <p className="text-base font-bold text-gray-500 dark:text-zinc-400 uppercase leading-relaxed tracking-widest tracking-tight px-4">
-                                ¿Confirma la revocación permanente de permisos? <br />
-                                <span className="text-rose-500 font-medium">Este colaborador perderá toda facultad operativa en el sistema.</span>
+                                ¿Confirma la revocacion permanente de permisos? <br />
+                                <span className="text-rose-500 font-medium">Este colaborador perdera toda facultad operativa en el sistema.</span>
                             </p>
                         </ModalBody>
                         <ModalFooter className="px-6 md:px-10 py-6 border-t border-gray-100 dark:border-white/5 flex gap-4 rounded-b-[2.5rem] bg-gray-50/50 dark:bg-[#18181b]/50">
@@ -318,7 +318,7 @@ export const DeleteUserModal = memo(({ isOpen, onOpenChange, onConfirm }: Delete
                                 className="flex-1 h-12 rounded-2xl font-medium text-[10px] tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 uppercase bg-rose-500 text-white tracking-tight hover:scale-[1.02] active:scale-95 transition-all"
                                 onPress={onConfirm}
                             >
-                                SÍ, REVOCAR
+                                SI, REVOCAR
                             </Button>
                         </ModalFooter>
                     </>
@@ -421,7 +421,7 @@ export const ResetPasswordModal = memo(({ isOpen, onOpenChange, user, onConfirm 
 
 ResetPasswordModal.displayName = 'ResetPasswordModal';
 
-// COMPONENTE WRAPPER PRINCIPAL (ENTRADA ÚNICA)
+// COMPONENTE WRAPPER PRINCIPAL (ENTRADA UNICA)
 export const UserModals = memo(({ 
     isOpen, 
     onOpenChange, 

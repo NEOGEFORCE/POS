@@ -25,18 +25,18 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
 
   // Normalizar datos para la tabla basado en el tipo de reporte
   const getTableContent = () => {
-    // Caso para Alerta de Stock (Bajo del mínimo) con semáforo dinámico
+    // Caso para Alerta de Stock (Bajo del minimo) con semaforo dinamico
     if (isLowStock) {
         return {
             columns: [
                 { key: 'barcode', label: 'BARCODE' },
                 { key: 'name', label: 'PRODUCTO' },
                 { key: 'stock', label: 'EXISTENCIAS' },
-                { key: 'threshold', label: 'UMBRAL CRÍTICO' },
+                { key: 'threshold', label: 'UMBRAL CRITICO' },
                 { key: 'status', label: 'ESTADO' },
             ],
             rows: data.lowStockProducts.map((item: any, i: number) => {
-                const isCritical = item.status === 'CRITICAL' || item.status === 'CRÍTICO';
+                const isCritical = item.status === 'CRITICAL' || item.status === 'CRITICO';
                 const isWarning = item.status === 'WARNING' || item.status === 'ADVERTENCIA';
                 return {
                     id: i,
@@ -55,7 +55,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                                 : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'}
                             classNames={{ content: "text-[9px] font-medium uppercase tracking-widest" }}
                         >
-                            {isCritical ? 'CRÍTICO' : 'BAJO'}
+                            {isCritical ? 'CRITICO' : 'BAJO'}
                         </Chip>
                     )
                 };
@@ -63,7 +63,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
         };
     }
 
-    // Caso para Kárdex (Movimientos)
+    // Caso para Kardex (Movimientos)
     if (isKardex) {
         return {
             columns: [
@@ -112,7 +112,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
         }));
         return {
             columns: [
-                { key: 'method', label: 'MÉTODO' },
+                { key: 'method', label: 'METODO' },
                 { key: 'amount', label: 'TOTAL' }
             ],
             rows

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
@@ -95,7 +95,7 @@ export default function SalesHistoryPage() {
         window.print();
     }, [selectedSale]);
 
-    // Debounce búsqueda
+    // Debounce busqueda
     useEffect(() => {
         const timer = setTimeout(() => {
             setDebouncedSearch(searchQuery);
@@ -115,7 +115,7 @@ export default function SalesHistoryPage() {
         { keepPreviousData: true }
     );
 
-    // SINCRONIZACIÓN ZERO-F5
+    // SINCRONIZACION ZERO-F5
     useEffect(() => {
         const cleanup = setupSyncListener((event) => {
             if (event === 'SALE_MADE' || event === 'DASHBOARD_UPDATE') {
@@ -129,10 +129,10 @@ export default function SalesHistoryPage() {
     const totalItems = data?.total || 0;
     const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
-    if (isLoading && page === 1) return <div className="h-full w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="primary" size="lg" /></div>;
+    if (isLoading && page === 1) return <div className="flex-1 h-full w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="primary" size="lg" /></div>;
 
     return (
-        <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent transition-all duration-500 overflow-hidden relative">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent transition-all duration-500 relative">
 
             {/* HEADER SECTION: FIXED (TOP) */}
             <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200 dark:border-white/5 card-base border-none dark:bg-zinc-950/80">
@@ -143,7 +143,7 @@ export default function SalesHistoryPage() {
                         </div>
                         <div className="flex flex-col">
                             <h1 className="text-[13px] font-medium text-zinc-900 dark:text-white tracking-tighter uppercase tracking-tight leading-none">
-                                Auditoría de <span className="text-zinc-900 dark:text-zinc-100">Ventas</span>
+                                Auditoria de <span className="text-zinc-900 dark:text-zinc-100">Ventas</span>
                             </h1>
                             <p className="text-[8px] font-medium text-zinc-500 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                                 <Clock size={10} className="text-zinc-900 dark:text-zinc-100" /> Historial Maestro
@@ -155,9 +155,10 @@ export default function SalesHistoryPage() {
                         <Button
                             isIconOnly
                             onPress={() => mutate()}
-                            className="h-10 w-10 min-w-0 bg-gray-100 dark:bg-[#18181b]/50 text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+                            isLoading={isLoading}
+                            className="h-10 w-10 min-w-0 card-base border-none text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                         >
-                            <HistoryIcon size={16} />
+                            <RefreshCw size={16} />
                         </Button>
                     </div>
                 </div>
@@ -179,9 +180,9 @@ export default function SalesHistoryPage() {
             </div>
 
             {/* CONTENT SECTION (SCROLLABLE) */}
-            <div className="flex-1 min-h-0 flex flex-col gap-3 p-3 bg-transparent overflow-hidden">
+            <div className="flex flex-col gap-3 p-3 bg-transparent">
                 <SalesKPIs totalItems={totalItems} />
-                <div className="flex-1 bg-white/40 dark:bg-[#18181b]/40 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden custom-scrollbar flex flex-col min-h-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                <div className="bg-white/40 dark:bg-[#18181b]/40 border border-gray-200 dark:border-white/5 rounded-2xl flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <SalesTable
                         sales={sales}
                         onOpenPreview={(s) => { setSelectedSale(s); setIsPreviewOpen(true); }}
@@ -190,13 +191,13 @@ export default function SalesHistoryPage() {
                         onOpenDelete={(s) => { setSelectedSale(s); setIsDeleteOpen(true); }}
                     />
 
-                    {/* Footer Paginación - RESTAURACIÓN CRÍTICA */}
+                    {/* Footer Paginacion - RESTAURACION CRITICA */}
                     <div className="px-8 py-4 flex items-center justify-between border-t border-gray-200 dark:border-white/10 bg-gray-50/50 dark:bg-[#18181b]/50 mt-4 pt-4 shrink-0">
                         <div className="flex flex-col">
                             <p className="text-xs text-gray-500 dark:text-zinc-500 tracking-wider leading-none mb-1">
                                 MOSTRANDO: <span className="text-zinc-900 dark:text-zinc-50 font-bold">{((page - 1) * pageSize + 1)}-{Math.min(page * pageSize, totalItems)}</span> DE {totalItems}
                             </p>
-                            <span className="text-[8px] font-bold text-zinc-900 dark:text-zinc-100/60 uppercase tracking-widest tracking-tight">Sincronización Auditoría Activa</span>
+                            <span className="text-[8px] font-bold text-zinc-900 dark:text-zinc-100/60 uppercase tracking-widest tracking-tight">Sincronizacion Auditoria Activa</span>
                         </div>
 
                         <Pagination
@@ -247,12 +248,14 @@ export default function SalesHistoryPage() {
                 onOpenChange={setIsClientDialogOpen}
                 customers={customers}
                 onSelect={(c) => {
-                    // Si se selecciona un cliente desde el selector de la edición
+                    // Si se selecciona un cliente desde el selector de la edicion
                     if (isEditOpen && selectedSale) {
-                        // El modal de edición suele manejar su propio estado interno
+                        // El modal de edicion suele manejar su propio estado interno
                     }
                 }}
             />
         </div>
     );
 }
+
+

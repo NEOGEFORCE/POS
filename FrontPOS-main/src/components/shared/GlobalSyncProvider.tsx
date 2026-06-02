@@ -10,14 +10,14 @@ const SSE_TOAST_MAP: Record<string, { label: string; variant: 'default' | 'succe
   'NEW_SALE':          { label: '💰 Nueva venta registrada',           variant: 'success' },
   'INVENTORY_UPDATE':  { label: '📦 Inventario actualizado',           variant: 'default' },
   'EXPENSE_UPDATE':    { label: '💸 Egreso registrado',                variant: 'default' },
-  'PRODUCT_UPDATE':    { label: '🏷️ Catálogo de productos actualizado', variant: 'default' },
+  'PRODUCT_UPDATE':    { label: '🏷️ Catalogo de productos actualizado', variant: 'default' },
   'CUSTOMER_UPDATE':   { label: '👤 Base de clientes actualizada',     variant: 'default' },
   'SUPPLIER_UPDATE':   { label: '🏭 Proveedores actualizados',         variant: 'default' },
-  'CATEGORY_UPDATE':   { label: '📂 Categorías actualizadas',          variant: 'default' },
-  'AUDIT_UPDATE':      { label: '🔒 Registro de auditoría actualizado',variant: 'default' },
+  'CATEGORY_UPDATE':   { label: '📂 Categorias actualizadas',          variant: 'default' },
+  'AUDIT_UPDATE':      { label: '🔒 Registro de auditoria actualizado',variant: 'default' },
 };
 
-// Debounce para evitar spam de toasts cuando llegan múltiples eventos SSE seguidos
+// Debounce para evitar spam de toasts cuando llegan multiples eventos SSE seguidos
 const recentToasts = new Set<string>();
 function showSSEToast(eventType: string) {
   const config = SSE_TOAST_MAP[eventType];
@@ -29,7 +29,7 @@ function showSSEToast(eventType: string) {
   setTimeout(() => recentToasts.delete(eventType), 5000);
 
   toast({
-    title: 'Sincronización',
+    title: 'Sincronizacion',
     description: config.label,
     variant: config.variant === 'success' ? 'success' : 'default',
     duration: 2500,
@@ -52,7 +52,7 @@ export function GlobalSyncProvider() {
       return;
     }
 
-    // Evitar múltiples conexiones si el componente se re-monta en React Strict Mode
+    // Evitar multiples conexiones si el componente se re-monta en React Strict Mode
     if (eventSourceRef.current) return;
 
     const sseUrl = `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sse?token=${token}`;
@@ -124,7 +124,7 @@ export function GlobalSyncProvider() {
     };
 
     eventSource.onerror = (error) => {
-      console.error('[GlobalSync] 🔴 Error de conexión SSE. Reintentando en 5s...', error);
+      console.error('[GlobalSync] 🔴 Error de conexion SSE. Reintentando en 5s...', error);
       eventSource.close();
       eventSourceRef.current = null;
       setTimeout(() => {

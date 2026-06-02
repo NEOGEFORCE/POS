@@ -85,8 +85,8 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                     <ShieldCheck size={24} />
                                 </div>
                                 <div className="flex flex-col">
-                                    <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Auditoría de <span className="text-zinc-900 dark:text-zinc-100">Caja</span></h3>
-                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Sincronización de Saldo Real</p>
+                                    <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Auditoria de <span className="text-zinc-900 dark:text-zinc-100">Caja</span></h3>
+                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Sincronizacion de Saldo Real</p>
                                 </div>
                             </div>
                         </ModalHeader>
@@ -95,13 +95,13 @@ export default function AuditModal({ isOpen, onOpenChange, onConfirm }: AuditMod
                                 <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10 flex gap-3">
                                     <AlertCircle className="text-amber-500 shrink-0" size={18} />
                                     <p className="text-[11px] text-amber-700 dark:text-amber-400 font-medium leading-relaxed tracking-tight">
-                                        Introduce el total de dinero físico y digital disponible actualmente. Esto reseteará la diferencia a <span className="font-medium">$0</span> y establecerá un nuevo punto de partida.
+                                        Introduce el total de dinero fisico y digital disponible actualmente. Esto reseteara la diferencia a <span className="font-medium">$0</span> y establecera un nuevo punto de partida.
                                     </p>
                                 </div>
 
                                 {/* CALCULADORA DE EFECTIVO DETALLADA */}
                                 <div className="space-y-4 bg-gray-50 dark:bg-white/[0.02] p-5 rounded-[2rem] border border-gray-100 dark:border-white/5">
-                                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-1 mb-2 block">Conteo Físico Detallado</label>
+                                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-1 mb-2 block">Conteo Fisico Detallado</label>
                                     
                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                         <div className="space-y-1.5">

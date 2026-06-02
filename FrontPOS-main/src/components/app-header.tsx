@@ -14,6 +14,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar"
 import { LogOut } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { BackButton } from "@/components/back-button"
+import { NotificationDot } from "@/components/ui/notification-dot"
 
 export function AppHeader() {
   const { user, logout } = useAuth()
@@ -68,13 +69,13 @@ export function AppHeader() {
       </div>
 
       <div className="flex-1 flex justify-center items-center px-4">
-        {/* Espacio reservado para Búsqueda (Search) si se requiere después */}
+        {/* Espacio reservado para Busqueda (Search) si se requiere despues */}
       </div>
 
       <div className="flex items-center gap-3">
-        {/* Pequeño indicador de conexión en lugar del gigante */}
+        {/* Indicador de conexion: NotificationDot pulsante (verde online / amarillo offline) */}
         <div className="hidden sm:flex items-center gap-2 mr-2">
-           <div className={`h-2 w-2 rounded-full ${isOnline ? 'bg-[var(--accent)] shadow-[0_0_8px_var(--accent)]' : 'bg-[var(--warning)] shadow-[0_0_8px_var(--warning)]'}`} />
+           <NotificationDot tone={isOnline ? 'accent' : 'warning'} ping />
         </div>
 
         <ThemeToggle />
@@ -113,7 +114,7 @@ export function AppHeader() {
               startContent={<LogOut className="h-4 w-4" />}
               className="text-[10px] font-bold uppercase tracking-widest mt-2 text-[var(--danger)] data-[hover=true]:bg-[var(--danger)]/10"
             >
-              Cerrar Sesión
+              Cerrar Sesion
             </DropdownItem>
           </DropdownMenu>
         </Dropdown>

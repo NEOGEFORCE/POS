@@ -32,10 +32,10 @@ export async function registerAuditLog(action: AuditAction, module: string, deta
         });
 
         if (!res.ok) {
-            // Si el backend no tiene este endpoint aún, guardamos en localStorage como respaldo
+            // Si el backend no tiene este endpoint aun, guardamos en localStorage como respaldo
             const localLogs = JSON.parse(localStorage.getItem('pos_security_backups') || '[]');
             localLogs.push({ ...payload, sync_pending: true });
-            localStorage.setItem('pos_security_backups', JSON.stringify(localLogs.slice(-100))); // Guardar últimos 100
+            localStorage.setItem('pos_security_backups', JSON.stringify(localLogs.slice(-100))); // Guardar ultimos 100
         }
     } catch (error) {
         console.error("Audit log failed:", error);

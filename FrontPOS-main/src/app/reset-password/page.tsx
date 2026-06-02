@@ -31,7 +31,7 @@ function ResetPasswordForm() {
       toast({
         variant: "destructive",
         title: "Token Faltante",
-        description: "El enlace de recuperación no es válido.",
+        description: "El enlace de recuperacion no es valido.",
       });
       router.replace('/login');
     }
@@ -43,7 +43,7 @@ function ResetPasswordForm() {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Las contraseñas no coinciden.",
+        description: "Las contrasenas no coinciden.",
       });
       return;
     }
@@ -58,12 +58,12 @@ function ResetPasswordForm() {
 
       const data = await response.json();
 
-      if (!response.ok) throw new Error(data.error || "Error al restablecer la contraseña");
+      if (!response.ok) throw new Error(data.error || "Error al restablecer la contrasena");
 
       setIsSuccess(true);
       toast({
-        title: "¡Éxito!",
-        description: "Tu contraseña ha sido actualizada.",
+        title: "¡Exito!",
+        description: "Tu contrasena ha sido actualizada.",
       });
       
       setTimeout(() => {
@@ -88,8 +88,8 @@ function ResetPasswordForm() {
             <CheckCircle2 size={48} />
           </div>
         </div>
-        <h1 className="text-3xl font-medium uppercase tracking-tighter text-zinc-900 dark:text-zinc-50 mb-4">¡Contraseña Lista!</h1>
-        <p className="text-gray-500 dark:text-zinc-500 font-medium mb-8">Tu acceso ha sido restaurado. Serás redirigido al login en unos segundos...</p>
+        <h1 className="text-3xl font-medium uppercase tracking-tighter text-zinc-900 dark:text-zinc-50 mb-4">¡Contrasena Lista!</h1>
+        <p className="text-gray-500 dark:text-zinc-500 font-medium mb-8">Tu acceso ha sido restaurado. Seras redirigido al login en unos segundos...</p>
         <Button 
           color="primary" 
           className="w-full h-14 font-medium uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5"
@@ -108,7 +108,7 @@ function ResetPasswordForm() {
           <KeyRound size={40} />
         </div>
         <h1 className="text-3xl font-medium tracking-tighter text-zinc-900 dark:text-zinc-50 uppercase text-center">
-          Nueva Contraseña
+          Nueva Contrasena
         </h1>
         <p className="text-[10px] font-medium uppercase text-zinc-500 dark:text-zinc-400 tracking-[0.3em] mt-3">
           Establece una clave segura

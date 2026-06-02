@@ -92,7 +92,7 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
                                         Reportar <span className="text-rose-500">Faltante</span>
                                     </h3>
                                     <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
-                                        Notificar al área de compras
+                                        Notificar al area de compras
                                     </p>
                                 </div>
                             </div>
@@ -101,7 +101,7 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
                             <div className="p-4 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex gap-3">
                                 <AlertTriangle className="text-amber-500 shrink-0" size={18} />
                                 <p className="text-[10px] font-bold text-amber-400 uppercase leading-relaxed tracking-wide">
-                                    Use este formulario para reportar productos que los clientes piden y no están en inventario.
+                                    Use este formulario para reportar productos que los clientes piden y no estan en inventario.
                                 </p>
                             </div>
 
@@ -109,7 +109,7 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
                                 <div className="space-y-1.5">
                                     <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-2">Nombre del Producto</label>
                                     <Input
-                                        placeholder="EJ: LECHE ALQUERÍA 1L..."
+                                        placeholder="EJ: LECHE ALQUERIA 1L..."
                                         value={productName}
                                         onValueChange={setProductName}
                                         autoFocus

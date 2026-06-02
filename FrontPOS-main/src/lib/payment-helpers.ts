@@ -1,8 +1,8 @@
 import { Sale } from "./definitions";
 
 /**
- * Retorna una descripción amigable del método de pago de una venta.
- * Útil para mostrar en el historial y reportes.
+ * Retorna una descripcion amigable del metodo de pago de una venta.
+ * Util para mostrar en el historial y reportes.
  */
 export const getPaymentDescription = (sale: Sale): string => {
   if (!sale) return "EFECTIVO";
@@ -10,7 +10,7 @@ export const getPaymentDescription = (sale: Sale): string => {
   const method = sale.paymentMethod?.toUpperCase() || "EFECTIVO";
   const source = sale.transferSource?.toUpperCase() || "NEQUI";
 
-  // Si el método ya contiene el detalle (gracias a la nueva lógica de useNewSale), lo devolvemos
+  // Si el metodo ya contiene el detalle (gracias a la nueva logica de useNewSale), lo devolvemos
   if (method.includes("+") || method === "NEQUI" || method === "DAVIPLATA" || method === "FIADO") {
       return method;
   }
@@ -36,8 +36,8 @@ export const getPaymentDescription = (sale: Sale): string => {
 };
 
 /**
- * Retorna el color sugerido para el chip del método de pago.
- * Ahora es más específico según el origen de la transferencia.
+ * Retorna el color sugerido para el chip del metodo de pago.
+ * Ahora es mas especifico segun el origen de la transferencia.
  */
 export const getPaymentColor = (sale: Sale): "success" | "warning" | "primary" | "secondary" | "danger" | "default" => {
     if (!sale) return "success";

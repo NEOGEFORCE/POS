@@ -36,7 +36,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const physicalStock = item.actualPhysicalStock;
     const currentStock = item.currentStock;
 
-    // TAREA 1: Fórmula Maestra de Modificadores Secuenciales (Compuesta) - Motor Surtifamiliar v10.0
+    // TAREA 1: Formula Maestra de Modificadores Secuenciales (Compuesta) - Motor Surtifamiliar v10.0
     // 1. Costo Bruto (sin descuento): Bruto = Base * (1 + IVA + ICUI + IBUA)
     const calculateGrossCost = (basePrice: number, iva: number, icui: number, ibua: number) => {
         return basePrice * (1 + (Number(iva || 0) / 100) + (Number(icui || 0) / 100) + (Number(ibua || 0) / 100));
@@ -47,19 +47,22 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         return calculateGrossCost(basePrice, iva, icui, ibua) * (1 - (Number(discount || 0) / 100));
     };
 
-    // 2. Cálculo de PVP Sugerido: Se calcula sobre el Costo Bruto para que el descuento beneficie al supermercado
+    // 2. Calculo de PVP Sugerido: Se calcula sobre el Costo Bruto para que el descuento beneficie al supermercado
     const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number) => {
         const grossCost = calculateGrossCost(basePrice, iva, icui, ibua);
         return applyRounding(grossCost * (1 + (Number(marginPct || 0) / 100)));
     };
 
-    // Helper para formateo inicial (0 -> "")
     const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
     const formatInitialPercent = (val: number) => (val === 0 ? '' : String(val));
+    const formatInitialQty = (val: number | undefined | null) => (val === undefined || val === null || val === 0 ? '' : String(val));
 
     const effectiveQty = item.addedQuantity * (item.unit === 'LB' ? 0.5 : 1);
 
     // Local state
+    const [localQuantity, setLocalQuantity] = useState(formatInitialQty(item.addedQuantity));
+    const [localPhysical, setLocalPhysical] = useState(formatInitialQty(item.actualPhysicalStock));
+    
     const [localTotal, setLocalTotal] = useState(formatInitial(calculateGrossCost(item.newPurchasePrice, item.iva || 0, item.icui || 0, item.ibua || 0) * effectiveQty));
     const [localSubtotal, setLocalSubtotal] = useState(formatInitial(item.newPurchasePrice * effectiveQty));
     const [localCost, setLocalCost] = useState(formatInitial(calculateNetCost(item.newPurchasePrice, item.iva || 0, item.icui || 0, item.ibua || 0, item.discount || 0))); 
@@ -72,6 +75,9 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
 
     useEffect(() => {
         const basePrice = item.newPurchasePrice;
+        // Politica 3 zonas: cada linea tiene su propio costo segun entryType.
+        // BONUS (gift) y RETURN no usan costo ponderado — el costo es el base
+        // tal cual lo dejo el OCR o el cajero.
         const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
         const bruto = calculateGrossCost(basePrice, item.iva, item.icui, item.ibua);
 
@@ -122,7 +128,19 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         if (Math.abs(parsedLocalMargin - (item.marginPercentage || 0)) >= 0.01) {
             setLocalMargin(formatInitialPercent(item.marginPercentage || 30));
         }
-    }, [item.newPurchasePrice, effectiveQty, item.newSalePrice, item.iva, item.icui, item.ibua, item.discount, item.marginPercentage]);
+        
+        // Sync incoming quantities if they differ significantly from local parsed state (ignoring trailing dots)
+        const parsedLocalQty = parseFloat(localQuantity) || 0;
+        if (Math.abs(parsedLocalQty - item.addedQuantity) >= 0.001) {
+            setLocalQuantity(formatInitialQty(item.addedQuantity));
+        }
+        
+        const parsedLocalPhys = localPhysical === '' ? undefined : parseFloat(localPhysical) || 0;
+        if (item.actualPhysicalStock !== parsedLocalPhys) {
+            setLocalPhysical(formatInitialQty(item.actualPhysicalStock));
+        }
+        
+    }, [item.newPurchasePrice, effectiveQty, item.newSalePrice, item.iva, item.icui, item.ibua, item.discount, item.marginPercentage, item.addedQuantity, item.actualPhysicalStock]);
 
     const handleTotalChange = (val: string) => {
         setLocalTotal(formatInputCOP(val));
@@ -179,7 +197,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const handleCostBlur = (val: string) => {
         const neto = parseCOP(val) || 0;
         
-        // RECONSTRUCCIÓN: Obtener Base desde Neto
+        // RECONSTRUCCION: Obtener Base desde Neto
         const multiplier = (1 + (Number(item.iva || 0) / 100) 
                          + (Number(item.icui || 0) / 100) 
                          + (Number(item.ibua || 0) / 100)) 
@@ -288,12 +306,12 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
             const token = Cookies.get('org-pos-token');
             
             if (item.isMatched === false) {
-                // Lógica especial para emparejar manualmente un item no reconocido por IA
-                const productUrl = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/products/${normalizeText(editBarcode)}`;
+                // Logica especial para emparejar manualmente un item no reconocido por IA
+                const productUrl = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/products/get-products/${normalizeText(editBarcode)}`;
                 const prodRes = await fetch(productUrl, { headers: { 'Authorization': `Bearer ${token}` } });
                 
                 if (!prodRes.ok) {
-                    throw new Error("El código de barras ingresado no existe en el sistema. Crea el producto primero.");
+                    throw new Error("El codigo de barras ingresado no existe en el sistema. Crea el producto primero.");
                 }
                 const realProduct = await prodRes.json();
 
@@ -323,13 +341,13 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                     currentStock: realProduct.quantity
                 });
 
-                toast({ variant: 'success', title: 'EMPAREJADO', description: 'El producto fue emparejado y el sistema lo recordará la próxima vez.' });
+                toast({ variant: 'success', title: 'EMPAREJADO', description: 'El producto fue emparejado y el sistema lo recordara la proxima vez.' });
                 setIsEditModalOpen(false);
                 return;
             }
 
-            // Lógica normal para productos ya existentes
-            const fullProduct = await apiFetch<any>(`/products/${item.barcode}`, {}, token!);
+            // Logica normal para productos ya existentes
+            const fullProduct = await apiFetch<any>(`/products/get-products/${item.barcode}`, {}, token!);
             
             if (!fullProduct) throw new Error("Producto no encontrado");
 
@@ -339,7 +357,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                 barcode: normalizeText(editBarcode)
             };
             
-            await apiFetch(`/products/${item.barcode}`, {
+            await apiFetch(`/products/update-products/${item.barcode}`, {
                 method: 'PUT',
                 body: JSON.stringify(payload),
                 fallbackError: 'Error al actualizar producto'
@@ -362,14 +380,14 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         }
     };
 
-    let matchClasses = "bg-[var(--bg-card)] border-[var(--border)]";
-    if (item.matchStatus === 'match') matchClasses = "bg-emerald-50 dark:bg-emerald-950/20 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.1)]";
-    if (item.matchStatus === 'warning') matchClasses = "bg-amber-50 dark:bg-amber-950/20 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.1)]";
-    if (item.matchStatus === 'extra') matchClasses = "bg-rose-50 dark:bg-rose-950/20 border-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.1)]";
+    let matchClasses = "bg-white dark:bg-[#18181b] border-gray-200 dark:border-white/10";
+    if (item.matchStatus === 'match') matchClasses = "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.15)]";
+    if (item.matchStatus === 'warning') matchClasses = "bg-amber-50 dark:bg-amber-900/30 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.15)]";
+    if (item.matchStatus === 'extra') matchClasses = "bg-rose-50 dark:bg-rose-900/30 border-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.15)]";
 
     return (
         <div className={`flex flex-col gap-2 p-3 border rounded-2xl transition-all shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-[var(--accent)] ${matchClasses}`}>
-            {/* Modal Edición Rápida */}
+            {/* Modal Edicion Rapida */}
             <Modal isOpen={isEditModalOpen} onOpenChange={setIsEditModalOpen} placement="center">
                 <ModalContent className="dark:bg-zinc-950 border border-zinc-200 dark:border-white/10 rounded-2xl">
                     {(onClose) => (
@@ -385,7 +403,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                     classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
                                 />
                                 <Input
-                                    label="Código de Barras"
+                                    label="Codigo de Barras"
                                     value={editBarcode}
                                     onValueChange={setEditBarcode}
                                     classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
@@ -404,7 +422,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                 </ModalContent>
             </Modal>
 
-            {/* Fila 1: Cabecera compacta (Nombre, Código y Acciones) */}
+            {/* Fila 1: Cabecera compacta (Nombre, Codigo y Acciones) */}
             <div className="flex w-full items-center justify-between gap-2 overflow-hidden pb-1 border-b border-gray-50 dark:border-white/5">
                 <div className="flex items-center gap-2 md:gap-3 min-w-0 flex-1">
                     <div className="h-8 w-8 md:h-10 md:w-10 rounded-2xl md:rounded-2xl bg-gray-100 dark:bg-[#18181b] flex items-center justify-center text-zinc-900 dark:text-zinc-100 shrink-0 shadow-inner">
@@ -465,9 +483,9 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                 </div>
             </div>
 
-            {/* Fila 2: Entradas Principales (Rediseño 2 Filas Mobile) */}
+            {/* Fila 2: Entradas Principales (Rediseno 2 Filas Mobile) */}
             <div className="flex flex-col gap-2 pt-1">
-                {/* SUB-FILA 1: CANTIDAD, FÍSICO REAL Y UNIDAD (3 Columnas) */}
+                {/* SUB-FILA 1: CANTIDAD, FISICO REAL Y UNIDAD (3 Columnas) */}
                 <div className="grid grid-cols-3 gap-2">
                     <div className="flex flex-col gap-0.5">
                         <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Cantidad</label>
@@ -475,24 +493,21 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                             type="number"
                             inputMode="decimal"
                             size="sm"
-                            value={item.addedQuantity === 0 ? '' : String(item.addedQuantity)}
+                            value={localQuantity}
                             onValueChange={(v) => {
-                                // 5.3 Validación de decimales
+                                const allowDecimals = item.unit === 'KG' || item.unit === 'LB' || item.isWeighted;
                                 let stringVal = v;
-                                if (!item.isWeighted) {
-                                    stringVal = stringVal.replace(/[.,]/g, ''); // Remover cualquier punto o coma
-                                }
+                                if (!allowDecimals) stringVal = stringVal.replace(/[.,]/g, '');
+                                
+                                setLocalQuantity(stringVal);
+                                
                                 const numVal = Number(stringVal) || 0;
-                                // Si no es pesado, asegurar que sea entero
-                                const finalVal = !item.isWeighted ? Math.floor(numVal) : numVal;
+                                const finalVal = !allowDecimals ? Math.floor(numVal) : numVal;
                                 
                                 const newEffectiveQty = finalVal * (item.unit === 'LB' ? 0.5 : 1);
-                                
                                 const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
-                                const newTotal = bruto * newEffectiveQty;
-                                const targetSubtotal = item.newPurchasePrice * newEffectiveQty;
-                                setLocalTotal(formatInitial(newTotal));
-                                setLocalSubtotal(formatInitial(targetSubtotal));
+                                setLocalTotal(formatInitial(bruto * newEffectiveQty));
+                                setLocalSubtotal(formatInitial(item.newPurchasePrice * newEffectiveQty));
                                 
                                 onUpdate(item.lineId, { addedQuantity: finalVal });
                             }}
@@ -505,23 +520,26 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         />
                     </div>
                     <div className="flex flex-col gap-0.5">
-                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Físico Real</label>
+                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">Fisico Real</label>
                         <Input
                             type="number"
                             inputMode="decimal"
                             size="sm"
-                            value={item.actualPhysicalStock === undefined || item.actualPhysicalStock === null ? '' : String(item.actualPhysicalStock)}
+                            value={localPhysical}
                             onValueChange={(v) => {
                                 if (v === '') {
+                                    setLocalPhysical('');
                                     onUpdate(item.lineId, { actualPhysicalStock: undefined });
                                     return;
                                 }
+                                const allowDecimals = item.unit === 'KG' || item.unit === 'LB' || item.isWeighted;
                                 let stringVal = v;
-                                if (!item.isWeighted) {
-                                    stringVal = stringVal.replace(/[.,]/g, ''); // Remover cualquier punto o coma
-                                }
+                                if (!allowDecimals) stringVal = stringVal.replace(/[.,]/g, '');
+                                
+                                setLocalPhysical(stringVal);
+                                
                                 const numVal = Number(stringVal) || 0;
-                                const finalVal = !item.isWeighted ? Math.floor(numVal) : numVal;
+                                const finalVal = !allowDecimals ? Math.floor(numVal) : numVal;
                                 onUpdate(item.lineId, { actualPhysicalStock: finalVal });
                             }}
                             placeholder={String(item.currentStock)}

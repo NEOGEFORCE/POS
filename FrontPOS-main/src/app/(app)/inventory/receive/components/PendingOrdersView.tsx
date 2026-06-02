@@ -43,7 +43,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
     const router = useRouter();
     const { data: orders, isLoading, mutate } = useApi<UnifiedOrder[]>("/inventory/orders");
 
-    // Agrupar órdenes por Proveedor
+    // Agrupar ordenes por Proveedor
     const groupedOrders = useMemo(() => {
         if (!orders) return [];
 
@@ -155,11 +155,11 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <div>
                     <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">Pedidos Pendientes</h2>
-                    <p className="text-muted-foreground">Selecciona un pedido consolidado para iniciar la recepción.</p>
+                    <p className="text-muted-foreground">Selecciona un pedido consolidado para iniciar la recepcion.</p>
                 </div>
                 <Button className="bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-md gap-2" onClick={onGoToFreeMode}>
                     <Plus className="h-4 w-4" />
-                    Recepción Libre (Sin Pedido)
+                    Recepcion Libre (Sin Pedido)
                 </Button>
             </div>
 
@@ -168,7 +168,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                     <Package className="h-12 w-12 mx-auto mb-4 text-gray-300 dark:text-zinc-700" />
                     <h3 className="text-lg font-medium">No hay pedidos pendientes</h3>
                     <p className="text-muted-foreground mt-1 mb-6">Todos los pedidos han sido recibidos o no se ha generado ninguno en Smart Restock.</p>
-                    <Button variant="outline" onClick={onGoToFreeMode}>Continuar con Recepción Libre</Button>
+                    <Button variant="outline" onClick={onGoToFreeMode}>Continuar con Recepcion Libre</Button>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -202,7 +202,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                             } else if (expectedDateStr === tomorrowStr) {
                                 dateText = "Llega Mañana";
                             } else {
-                                // Evitar shifts UTC instanciando con mediodía
+                                // Evitar shifts UTC instanciando con mediodia
                                 const [y, m, d] = expectedDateStr.split('-').map(Number);
                                 const dateObj = new Date(y, m - 1, d, 12, 0, 0);
                                 const dayName = dateObj.toLocaleDateString('es-CO', { weekday: 'long' });
@@ -238,7 +238,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                             <span className="font-semibold">{group.totalItems}</span>
                                         </div>
                                         {(() => {
-                                            // Detectar si el invoice es un número (precio real) o una referencia textual
+                                            // Detectar si el invoice es un numero (precio real) o una referencia textual
                                             const invoiceStr = group.invoices.length > 0 ? group.invoices.join(", ") : "";
                                             const invoiceAsNumber = invoiceStr ? parseFloat(invoiceStr.replace(/[^0-9.]/g, '')) : NaN;
                                             const isRealPrice = !isNaN(invoiceAsNumber) && invoiceAsNumber > 0;
@@ -252,7 +252,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                                             ${formatCOP(invoiceAsNumber)}
                                                         </span>
                                                     </div>
-                                                    {/* Costo Estimado → secundario, más pequeño */}
+                                                    {/* Costo Estimado → secundario, mas pequeno */}
                                                     <div className="flex justify-between items-center text-xs text-muted-foreground">
                                                         <span className="flex items-center gap-1"><Receipt size={12} /> Estimado:</span>
                                                         <span className="font-medium">${formatCOP(group.totalEstimated)}</span>
@@ -287,7 +287,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                             className="flex-1" 
                                             onClick={() => onLoadOrder(group.supplierId, group.mergedItems)}
                                         >
-                                            Iniciar Recepción
+                                            Iniciar Recepcion
                                         </Button>
                                         <Button 
                                             variant="outline"
@@ -303,7 +303,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                             className="text-zinc-600 dark:text-zinc-400 whitespace-nowrap"
                                             onClick={() => handleMarkAsArrived(group.originalOrders)}
                                         >
-                                            ✅ Ya Llegó
+                                            ✅ Ya Llego
                                         </Button>
                                     </div>
                                 </CardContent>

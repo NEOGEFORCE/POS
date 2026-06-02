@@ -6,7 +6,7 @@ import { SWRConfig } from 'swr';
 
 export function Providers({ children }: { children: React.ReactNode }) {
     return (
-        <NextThemesProvider attribute="class" defaultTheme="system" enableSystem>
+        <NextThemesProvider attribute="class" defaultTheme="dark" forcedTheme="dark">
             <HeroUIProvider>
                 <SWRConfig value={{
                     revalidateOnFocus: true,

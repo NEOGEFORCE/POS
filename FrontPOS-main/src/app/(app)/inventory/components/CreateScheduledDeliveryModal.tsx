@@ -51,7 +51,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
         })
       }, token || undefined);
 
-      toast({ variant: 'success', title: 'ÉXITO', description: "Entrega programada registrada" });
+      toast({ variant: 'success', title: 'EXITO', description: "Entrega programada registrada" });
       onSuccess();
       onClose();
       // Reset form
@@ -90,7 +90,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
               </div>
               <div className="flex flex-col">
                 <h3 className="text-lg font-medium uppercase tracking-tight tracking-tighter text-zinc-900 dark:text-zinc-50">Programar <span className="text-amber-500">Entrega</span></h3>
-                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Nueva Preventa Logística</p>
+                <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Nueva Preventa Logistica</p>
               </div>
             </ModalHeader>
             <ModalBody className="py-6 flex flex-col gap-5">

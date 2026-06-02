@@ -3,6 +3,7 @@
 import React, { memo } from 'react';
 import { Zap, Phone, Sparkles, Building2 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
+import { NumberDigits } from "@/components/ui/motion";
 
 interface StatsProps {
   total: number;
@@ -25,11 +26,11 @@ const SupplierStats = memo(({ total, withPhone }: StatsProps) => {
       data: SPARKLINE_DATA_1
     },
     { 
-      label: "LÍNEAS DE CONTACTO", 
+      label: "LINEAS DE CONTACTO", 
       val: withPhone, 
       color: "#0ea5e9", // sky
       icon: Phone,
-      desc: "Proveedores con teléfono",
+      desc: "Proveedores con telefono",
       data: SPARKLINE_DATA_2
     },
     { 
@@ -37,7 +38,7 @@ const SupplierStats = memo(({ total, withPhone }: StatsProps) => {
       val: "ESTABLE", 
       color: "#10b981", // emerald
       icon: Sparkles,
-      desc: "Sincronización API OK",
+      desc: "Sincronizacion API OK",
       data: SPARKLINE_DATA_3
     },
     { 
@@ -70,7 +71,7 @@ const SupplierStats = memo(({ total, withPhone }: StatsProps) => {
             <span className="text-[8px] sm:text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight tracking-tight leading-none mb-1.5 pr-1">{k.label}</span>
             <div className="flex items-baseline gap-2">
               <span className="text-base sm:text-lg font-medium tabular-nums tracking-tight leading-none text-zinc-900 dark:text-zinc-50 pr-1" style={{ color: k.color }}>
-                {k.val}
+                {typeof k.val === 'number' ? <NumberDigits value={k.val} /> : k.val}
               </span>
             </div>
             <p className="text-[8px] font-bold text-gray-400 mt-2 uppercase tracking-widest">{k.desc}</p>

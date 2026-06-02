@@ -1,9 +1,9 @@
-
+﻿
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Button, Input, Badge, Spinner, Select, SelectItem, Autocomplete, AutocompleteItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Switch, Tooltip, Checkbox } from "@heroui/react";
+import { Button, Input, Badge, Spinner, Select, SelectItem, Autocomplete, AutocompleteItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Switch, Tooltip, Checkbox, Card, CardBody } from "@heroui/react";
 import Link from 'next/link';
 import {
     Search, Plus, Camera, Truck, RefreshCw,
@@ -26,8 +26,9 @@ const ReceptionRow = dynamic(() => import('./components/ReceptionRow'), { ssr: f
 const SupplierFormModal = dynamic(() => import('../../suppliers/components/SupplierFormModal'), { ssr: false });
 const ProductFormModal = dynamic(() => import('../../products/components/ProductFormModal'), { ssr: false });
 const InvoiceReaderModal = dynamic(() => import('./components/InvoiceReaderModal'), { ssr: false });
+const UnmatchedItemsReviewer = dynamic(() => import('./components/UnmatchedItemsReviewer'), { ssr: false });
 
-// Stats Component inline (mismo patrón que ProductStats)
+// Stats Component inline (mismo patron que ProductStats)
 const SPARKLINE_DATA_1 = [{ val: 40 }, { val: 30 }, { val: 45 }, { val: 20 }, { val: 50 }];
 const SPARKLINE_DATA_2 = [{ val: 10 }, { val: 25 }, { val: 15 }, { val: 40 }, { val: 35 }];
 const SPARKLINE_DATA_3 = [{ val: 50 }, { val: 45 }, { val: 55 }, { val: 60 }, { val: 40 }];
@@ -40,6 +41,13 @@ export interface ReceiveItem {
     barcode: string;
     productName: string;
     addedQuantity: number;
+    /**
+     * bonusQuantity: unidades obsequiadas/bonificadas en una promocion
+     * "Pague X, lleve Y". El usuario factura `addedQuantity` y recibe
+     * `addedQuantity + bonusQuantity` como stock real. El costo unitario
+     * se calcula ponderado: basePrice * paid / (paid + bonus).
+     */
+    bonusQuantity?: number;
     newPurchasePrice: number; // Precio Unitario BASE
     newSalePrice: number;
     marginPercentage: number;
@@ -74,6 +82,30 @@ export default function ReceiveInventoryPage() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [selectedGlobalSupplier, setSelectedGlobalSupplier] = useState<string>('');
     const [receiveList, setReceiveList] = useState<ReceiveItem[]>([]);
+
+    // Cola de items que el OCR no pudo emparejar Ã¢â‚¬â€ se procesan en el reviewer
+    // uno a uno hasta que el usuario los crea, los asigna a un existente o los salta.
+    const [unmatchedQueue, setUnmatchedQueue] = useState<any[]>([]);
+    const [isReviewerOpen, setIsReviewerOpen] = useState(false);
+
+    // Bridge OCR Reviewer Ã¢â€ â€ ProductFormModal:
+    // Cuando el reviewer pide crear un producto, guardamos el contexto del item
+    // de la factura. Cuando el ProductFormModal termina de crear, devolvemos
+    // un ExternalResolution al reviewer para que avance al siguiente item.
+    const [pendingReviewItem, setPendingReviewItem] = useState<{
+        invoiceQuantity: number;
+        invoiceName: string;
+    } | null>(null);
+    const [reviewerExternalResolution, setReviewerExternalResolution] = useState<{
+        barcode: string;
+        productName: string;
+        salePrice: number;
+        marginPercentage: number;
+        iva: number;
+        ibua: number;
+        icui: number;
+        resolutionId: number;
+    } | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
     const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
@@ -95,7 +127,7 @@ export default function ReceiveInventoryPage() {
     const [totalWeight, setTotalWeight] = useState<number>(0);
     const [freightCost, setFreightCost] = useState<number>(0);
     
-    // ESTADOS PARA CREACIÓN RÁPIDA DE PRODUCTO
+    // ESTADOS PARA CREACION RAPIDA DE PRODUCTO
     const [isProductModalOpen, setIsProductModalOpen] = useState(false);
     const [categories, setCategories] = useState<Category[]>([]);
     const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
@@ -105,12 +137,19 @@ export default function ReceiveInventoryPage() {
         minStock: '' as any, packMultiplier: '' as any
     });
 
-    // ESTADOS PARA EL ESCÁNER DE CÁMARA
+    // ESTADOS PARA EL ESCANER DE CAMARA
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [scanMode, setScanMode] = useState<'main' | 'alternate' | 'search' | 'baseProduct'>('main');
 
     // ESTADO PARA LECTOR IA DE FACTURAS
     const [isInvoiceReaderOpen, setIsInvoiceReaderOpen] = useState(false);
+
+    // ESTADO PARA AVISO DE CAMBIOS DE PRECIO
+    const [priceChangeText, setPriceChangeText] = useState<string | null>(null);
+
+    // ESTADO PARA ASOCIAR PRODUCTO MANUALMENTE
+    const [selectedAssociateProduct, setSelectedAssociateProduct] = useState<any | null>(null);
+    const [isAssociating, setIsAssociating] = useState(false);
 
     const paymentMethods = [
         { id: 'EFECTIVO', label: 'Caja', icon: Wallet },
@@ -126,15 +165,15 @@ export default function ReceiveInventoryPage() {
         return ['admin', 'administrador', 'superadmin'].includes(role);
     }, [user]);
 
-    // Si estamos cargando la sesión, asumimos admin temporalmente para no ocultar la UI si el usuario lo es
+    // Si estamos cargando la sesion, asumimos admin temporalmente para no ocultar la UI si el usuario lo es
     const showAdminControls = authLoading || isAdmin;
 
-    // Forzar false si definitivamente no es admin y ya terminó de cargar
+    // Forzar false si definitivamente no es admin y ya termino de cargar
     useEffect(() => {
         if (!authLoading && !isAdmin && bypassExpense) setBypassExpense(false);
     }, [authLoading, isAdmin, bypassExpense]);
 
-    // LÓGICA DE RECARGA PARA EDICIÓN (Viene del Historial vía URL)
+    // LOGICA DE RECARGA PARA EDICION (Viene del Historial via URL)
     useEffect(() => {
         const fetchEditReception = async () => {
             if (!editReceptionParam) return;
@@ -187,11 +226,11 @@ export default function ReceiveInventoryPage() {
                     if (mappedItems[0]?.supplierId) {
                         setSelectedGlobalSupplier(String(mappedItems[0].supplierId));
                     }
-                    // Cambiar a vista activa automáticamente
+                    // Cambiar a vista activa automaticamente
                     setViewMode('active');
                     toast({
-                        title: "MODO EDICIÓN",
-                        description: `Cargada recepción ${editReceptionParam} para edición contable.`
+                        title: "MODO EDICION",
+                        description: `Cargada recepcion ${editReceptionParam} para edicion contable.`
                     });
                 }
             } catch (e: any) {
@@ -199,7 +238,7 @@ export default function ReceiveInventoryPage() {
                 toast({
                     variant: "destructive",
                     title: "ERROR DE CARGA",
-                    description: "No se pudo obtener el detalle de la recepción: " + e.message
+                    description: "No se pudo obtener el detalle de la recepcion: " + e.message
                 });
             }
         };
@@ -232,7 +271,7 @@ export default function ReceiveInventoryPage() {
             setSuppliers(cleanSuppliers);
             setCategories(catData || []);
 
-            // ACTUALIZAR REACTIVAMENTE EL STOCK DE LA LISTA DE RECEPCIÓN LOCAL
+            // ACTUALIZAR REACTIVAMENTE EL STOCK DE LA LISTA DE RECEPCION LOCAL
             setReceiveList(prevList => {
                 if (prevList.length === 0) return prevList;
                 return prevList.map(item => {
@@ -256,7 +295,7 @@ export default function ReceiveInventoryPage() {
 
     const suppliersList = useMemo(() => suppliers, [suppliers]);
 
-    // FILTRO MANUAL BLINDADO (IDÉNTICO A EGRESOS)
+    // FILTRO MANUAL BLINDADO (IDENTICO A EGRESOS)
     const filteredSuppliers = useMemo(() => {
         if (!suppliers) return [];
         // FILTRAR "SIN PROVEEDOR" POR SEGURIDAD
@@ -268,7 +307,7 @@ export default function ReceiveInventoryPage() {
         // Prioridad 1: Empieza con el nombre (STRICT)
         const startsWithName = cleanSuppliers.filter(s => s.name.toLowerCase().startsWith(search));
 
-        // Prioridad 2: Contiene el nombre pero no empieza con él
+        // Prioridad 2: Contiene el nombre pero no empieza con el
         const containsName = cleanSuppliers.filter(s =>
             s.name.toLowerCase().includes(search) && !s.name.toLowerCase().startsWith(search)
         );
@@ -320,7 +359,7 @@ export default function ReceiveInventoryPage() {
         return cleanup;
     }, [loadData]);
 
-    // Sincronizar el término de búsqueda con el proveedor seleccionado (IDÉNTICO A EGRESOS)
+    // Sincronizar el termino de busqueda con el proveedor seleccionado (IDENTICO A EGRESOS)
     useEffect(() => {
         if (selectedGlobalSupplier && suppliers.length > 0) {
             const sup = suppliers.find(s => String(s.id) === String(selectedGlobalSupplier));
@@ -371,17 +410,17 @@ export default function ReceiveInventoryPage() {
             gain.connect(ctx.destination);
 
             if (type === 'success') {
-                // Tono máximo impacto - Doble pulso rápido
+                // Tono maximo impacto - Doble pulso rapido
                 osc.type = 'sine';
                 osc.frequency.setValueAtTime(1000, ctx.currentTime);
                 osc.frequency.exponentialRampToValueAtTime(1500, ctx.currentTime + 0.1);
-                gain.gain.setValueAtTime(1.0, ctx.currentTime); // Volumen al máximo
+                gain.gain.setValueAtTime(1.0, ctx.currentTime); // Volumen al maximo
                 gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
                 osc.start();
                 osc.stop(ctx.currentTime + 0.3);
             } else {
                 // Tono de error muy agresivo
-                osc.type = 'sawtooth'; // Onda de sierra para más rudeza
+                osc.type = 'sawtooth'; // Onda de sierra para mas rudeza
                 osc.frequency.setValueAtTime(120, ctx.currentTime);
                 gain.gain.setValueAtTime(0.8, ctx.currentTime); // Alto volumen
                 gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
@@ -408,7 +447,7 @@ export default function ReceiveInventoryPage() {
             return [{
                 lineId: newLineId,
                 barcode: `FREE-ITEM-${Date.now()}`,
-                productName: "Ítem Genérico/Libre",
+                productName: "Item Generico/Libre",
                 addedQuantity: 1,
                 newPurchasePrice: 0,
                 newSalePrice: 0,
@@ -432,7 +471,7 @@ export default function ReceiveInventoryPage() {
             const iva = Number(product.iva || 0);
             const icui = Number(product.icui || 0);
             const ibua = Number(product.ibua || 0);
-            const discount = 0; // El descuento varía semanalmente, se inicia en 0 por defecto
+            const discount = 0; // El descuento varia semanalmente, se inicia en 0 por defecto
             
             // Neto inicial para calcular margen real (Aditivo: Base * (1 + IVA + ICUI + IBUA) * (1-DTO))
             const neto = basePrice * (1 + iva/100 + icui/100 + ibua/100);
@@ -462,50 +501,238 @@ export default function ReceiveInventoryPage() {
 
 
     const handleInvoiceMatch = useCallback((items: any[]) => {
+        // Items vienen del modal con shape:
+        //   matched (isMatched=true):    ScannedItem  Ã¢â€ â€™ { barcode, productName, quantity,
+        //                                                 costUnit, pvpActual, pvpSugerido,
+        //                                                 marginUsed, iva, icui, ibua, currentStock }
+        //   unmatched (isMatched=false): UnmatchedItem Ã¢â€ â€™ { invoiceName, quantity, unitPrice, suggestions }
+        let addedCount = 0;
+        let updatedCount = 0;
+        let skippedCount = 0;
+        const unmatched: any[] = [];
+
         setReceiveList(prev => {
             const newList = [...prev];
-            
+
             items.forEach(ocr => {
-                const existIdx = newList.findIndex(item => item.barcode === ocr.sku);
-                
+                if (ocr.isMatched === false) {
+                    // Sin emparejar Ã¢â‚¬â€ encolar para el reviewer (no pierde estos items)
+                    unmatched.push({
+                        invoiceName: ocr.invoiceName || ocr.name || 'Sin nombre',
+                        quantity: Number(ocr.quantity) || 0,
+                        unitPrice: Number(ocr.unitPrice) || 0,
+                        suggestions: Array.isArray(ocr.suggestions) ? ocr.suggestions : [],
+                    });
+                    return;
+                }
+
+                const ocrBarcode: string = ocr.barcode || '';
+                const ocrQty: number = Number(ocr.quantity) || 0;
+                if (!ocrBarcode || ocrQty === 0) {
+                    skippedCount++;
+                    return;
+                }
+
+                const existIdx = newList.findIndex(item => item.barcode === ocrBarcode);
+
                 if (existIdx >= 0) {
-                    // Match: Si SKU coincide
-                    if (newList[existIdx].addedQuantity === ocr.quantity) {
-                        newList[existIdx].matchStatus = 'match'; // Verde
+                    if (Math.abs(Number(newList[existIdx].addedQuantity) - ocrQty) < 0.01) {
+                        newList[existIdx].matchStatus = 'match';
                     } else {
-                        // Difiere la cantidad
-                        newList[existIdx].addedQuantity = ocr.quantity;
-                        newList[existIdx].matchStatus = 'warning'; // Amarillo
+                        newList[existIdx].addedQuantity = ocrQty;
+                        newList[existIdx].matchStatus = 'warning';
                     }
+                    if (ocr.costUnit && Number(ocr.costUnit) > 0) {
+                        newList[existIdx].newPurchasePrice = Number(ocr.costUnit);
+                    }
+                    if (ocr.pvpSugerido && Number(ocr.pvpSugerido) > 0) {
+                        newList[existIdx].newSalePrice = Number(ocr.pvpSugerido);
+                    }
+                    if (ocr.iva !== undefined) newList[existIdx].iva = Number(ocr.iva || 0);
+                    if (ocr.icui !== undefined) newList[existIdx].icui = Number(ocr.icui || 0);
+                    if (ocr.ibua !== undefined) newList[existIdx].ibua = Number(ocr.ibua || 0);
+                    updatedCount++;
                 } else {
-                    // Extra: Producto no esperado
-                    const p = products.find(prod => prod.barcode === ocr.sku);
+                    const p = products.find(prod => prod.barcode === ocrBarcode);
                     if (p) {
+                        // Mapeo lineType (REGULAR/BONUS/RETURN del backend OCR)
+                        // Ã¢â€ â€™ entryType del carrito (purchase/gift/return).
+                        const lt = String(ocr.lineType || '').toUpperCase();
+                        const entryType: 'purchase' | 'gift' | 'return' =
+                            lt === 'BONUS' ? 'gift'
+                            : lt === 'RETURN' ? 'return'
+                            : 'purchase';
+                        // BONUS: precio se fuerza a 0; el splitter del backend
+                        // ya lo entrega asi, pero blindamos por si acaso.
+                        const isBonus = entryType === 'gift';
+                        const isReturn = entryType === 'return';
+                        const baseQty = Math.abs(Number(ocr.quantity) || 0);
                         newList.push({
                             lineId: crypto.randomUUID(),
                             barcode: p.barcode,
                             productName: p.productName,
-                            addedQuantity: ocr.quantity,
-                            newPurchasePrice: Number(p.purchasePrice),
-                            newSalePrice: Number(p.salePrice),
-                            marginPercentage: 20,
-                            entryType: 'purchase',
-                            iva: Number(p.iva || 0),
-                            icui: Number(p.icui || 0),
-                            ibua: Number(p.ibua || 0),
-                            discount: 0,
+                            addedQuantity: baseQty,
+                            newPurchasePrice: isBonus
+                                ? 0
+                                : (Number(ocr.costUnit) > 0 ? Number(ocr.costUnit) : Number(p.purchasePrice)),
+                            newSalePrice: Number(ocr.pvpSugerido) > 0
+                                ? Number(ocr.pvpSugerido)
+                                : Number(p.salePrice),
+                            marginPercentage: ocr.marginUsed ? Number(ocr.marginUsed) : 20,
+                            entryType,
+                            iva: Number(ocr.iva ?? p.iva ?? 0),
+                            icui: Number(ocr.icui ?? p.icui ?? 0),
+                            ibua: Number(ocr.ibua ?? p.ibua ?? 0),
+                            // Descuento solo aplica a lineas REGULAR; BONUS y
+                            // RETURN no llevan descuento adicional.
+                            discount: (isBonus || isReturn) ? 0 : Number(ocr.discount_percentage ?? ocr.discount ?? 0),
                             currentStock: Number(p.quantity || 0),
                             unit: p.isWeighted ? 'KG' : 'UND',
                             isWeighted: Boolean(p.isWeighted),
-                            matchStatus: 'extra' // Rojo
+                            matchStatus: 'extra',
                         });
+                        addedCount++;
+                    } else {
+                        skippedCount++;
                     }
                 }
             });
             return newList;
         });
-        toast({ title: "Factura Procesada", description: "Se han cruzado los datos correctamente." });
+
+        // Feedback de items que SI entraron al carrito
+        const parts: string[] = [];
+        if (addedCount > 0) parts.push(`${addedCount} agregados`);
+        if (updatedCount > 0) parts.push(`${updatedCount} actualizados`);
+        if (skippedCount > 0) parts.push(`${skippedCount} omitidos`);
+
+        if (parts.length > 0) {
+            toast({
+                title: 'Factura cargada al carrito',
+                description: parts.join(' Ã‚Â· '),
+            });
+        }
+
+        // Si hay items sin emparejar Ã¢â€ â€™ abrir reviewer para procesarlos uno a uno
+        if (unmatched.length > 0) {
+            setUnmatchedQueue(unmatched);
+            // pequeno delay para que el toast anterior se vea antes de abrir el modal
+            setTimeout(() => {
+                setIsReviewerOpen(true);
+                toast({
+                    variant: 'destructive',
+                    title: `${unmatched.length} ${unmatched.length === 1 ? 'producto no se encontro' : 'productos no se encontraron'}`,
+                    description: 'Revisalos uno a uno: asignalos a un producto existente o crealos en el sistema.',
+                });
+            }, 300);
+        }
     }, [products, toast]);
+
+    // Callback del UnmatchedItemsReviewer: aÃ±ade los items resueltos al carrito principal.
+    const handleUnmatchedResolved = useCallback((resolved: any[]) => {
+        if (!resolved || resolved.length === 0) {
+            setUnmatchedQueue([]);
+            return;
+        }
+
+        setReceiveList(prev => {
+            const newList = [...prev];
+            resolved.forEach((r) => {
+                // AUTO-APRENDIZAJE: Si el item no fue recien creado (fue asignado a sugerencia o manual)
+                // guardamos el alias silenciosamente para que la proxima vez el OCR lo reconozca.
+                if (!r.isNew && r.invoiceName && r.barcode && selectedGlobalSupplier) {
+                    const token = Cookies.get('org-pos-token');
+                    if (token) {
+                        fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api'}/inventory/save-alias`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                            body: JSON.stringify({
+                                supplierId: Number(selectedGlobalSupplier),
+                                invoiceName: r.invoiceName,
+                                productBarcode: r.barcode
+                            })
+                        }).catch(err => console.error("Error auto-guardando alias:", err));
+                    }
+                }
+
+                // Si ya existe en el carrito, sumar cantidad; si no, push.
+                const existIdx = newList.findIndex(item => item.barcode === r.barcode);
+                if (existIdx >= 0) {
+                    newList[existIdx].addedQuantity = Number(newList[existIdx].addedQuantity) + Number(r.addedQuantity);
+                    newList[existIdx].matchStatus = 'match';
+                } else {
+                    const p = products.find(prod => prod.barcode === r.barcode);
+                    newList.push({
+                        lineId: crypto.randomUUID(),
+                        barcode: r.barcode,
+                        productName: r.productName,
+                        addedQuantity: Number(r.addedQuantity) || 0,
+                        newPurchasePrice: Number(r.newPurchasePrice) || 0,
+                        newSalePrice: Number(r.newSalePrice) || (p ? Number(p.salePrice) : 0),
+                        marginPercentage: Number(r.marginPercentage) || 20,
+                        entryType: 'purchase',
+                        iva: Number(r.iva) || 0,
+                        icui: Number(r.icui) || 0,
+                        ibua: Number(r.ibua) || 0,
+                        discount: 0,
+                        currentStock: p ? Number(p.quantity || 0) : 0,
+                        unit: p?.isWeighted ? 'KG' : 'UND',
+                        isWeighted: Boolean(p?.isWeighted),
+                        matchStatus: r.isNew ? 'extra' : 'match',
+                    });
+                }
+            });
+            return newList;
+        });
+
+        setUnmatchedQueue([]);
+        toast({
+            variant: 'success',
+            title: `Factura completa`,
+            description: `${resolved.length} ${resolved.length === 1 ? 'item aÃ±adido' : 'items aÃ±adidos'} al carrito desde la revision.`,
+        });
+    }, [products, toast]);
+
+    // El reviewer del OCR pide abrir el ProductFormModal con datos pre-llenados
+    // de la factura. Pre-cargamos newProduct con esos valores y abrimos el modal
+    // maestro de creacion. Guardamos pendingReviewItem para que cuando se cree
+    // el producto, podamos auto-resolver el item del reviewer.
+    const handleRequestCreateFromReviewer = useCallback((prefill: {
+        productName: string;
+        purchasePrice: number;
+        iva: number;
+        ibua: number;
+        icui: number;
+        invoiceQuantity: number;
+        invoiceName: string;
+    }) => {
+        setPendingReviewItem({
+            invoiceQuantity: prefill.invoiceQuantity,
+            invoiceName: prefill.invoiceName,
+        });
+
+        // Pre-llenar newProduct con los datos del OCR
+        setNewProduct({
+            barcode: '',
+            productName: prefill.productName,
+            quantity: '' as any,
+            isWeighted: false,
+            purchasePrice: prefill.purchasePrice as any,
+            salePrice: '' as any,
+            categoryId: 0,
+            marginPercentage: 20,
+            minStock: '' as any,
+            packMultiplier: '' as any,
+            iva: prefill.iva || 0,
+            icui: prefill.icui || 0,
+            ibua: prefill.ibua || 0,
+            // Asociar al proveedor de la factura para futuro alias automatico
+            supplierId: Number(selectedGlobalSupplier) || undefined,
+        } as any);
+
+        setApiFieldErrors({});
+        setIsProductModalOpen(true);
+    }, [selectedGlobalSupplier]);
 
     const fetchPendingOrders = async () => {
         if (!selectedGlobalSupplier) {
@@ -546,7 +773,7 @@ export default function ReceiveInventoryPage() {
             }
         } catch (err) {
             console.error(err);
-            toast({ title: "Error", description: "Ocurrió un error en la conexión", variant: "destructive" });
+            toast({ title: "Error", description: "Ocurrio un error en la conexion", variant: "destructive" });
         }
     };
 
@@ -566,7 +793,7 @@ export default function ReceiveInventoryPage() {
             // Notificar a todo el sistema que hay un nuevo proveedor
             broadcastRevalidate('SUPPLIER_UPDATE');
 
-            toast({ variant: 'success', title: "ÉXITO", description: "PROVEEDOR CREADO Y SELECCIONADO" });
+            toast({ variant: 'success', title: "EXITO", description: "PROVEEDOR CREADO Y SELECCIONADO" });
         }
     };
 
@@ -585,8 +812,6 @@ export default function ReceiveInventoryPage() {
                 method: 'POST', body: JSON.stringify(data), fallbackError: 'FALLO AL CREAR PRODUCTO'
             }, token!);
 
-            toast({ variant: 'success', title: 'ÉXITO', description: 'PRODUCTO CREADO Y AGREGADO A LA LISTA.' });
-            
             // Cerrar modal y limpiar
             setIsProductModalOpen(false);
             setNewProduct({ 
@@ -595,23 +820,47 @@ export default function ReceiveInventoryPage() {
                 marginPercentage: 20, minStock: '' as any, packMultiplier: '' as any 
             });
 
-            // 1. Agregar a la lista local de productos para que las búsquedas funcionen
+            // 1. Agregar a la lista local de productos para que las busquedas funcionen
             setProducts(prev => [...prev, createdProduct]);
-            
-            // 2. AGREGAR AUTOMÁTICAMENTE A LA RECEPCIÓN
-            addToReceive(createdProduct);
+
+            // 2. Si la creacion fue iniciada desde el reviewer del OCR,
+            //    NO agregamos al carrito directamente Ã¢â‚¬â€ disparamos external
+            //    resolution para que el reviewer avance al siguiente item y
+            //    el carrito reciba el item correctamente formateado.
+            if (pendingReviewItem) {
+                setReviewerExternalResolution({
+                    barcode: createdProduct.barcode,
+                    productName: createdProduct.productName,
+                    salePrice: Number(createdProduct.salePrice) || 0,
+                    marginPercentage: Number(createdProduct.marginPercentage) || 20,
+                    iva: Number((createdProduct as any).iva) || 0,
+                    ibua: Number((createdProduct as any).ibua) || 0,
+                    icui: Number((createdProduct as any).icui) || 0,
+                    resolutionId: Date.now(),
+                });
+                setPendingReviewItem(null);
+                toast({
+                    variant: 'success',
+                    title: 'PRODUCTO CREADO Y EMPAREJADO',
+                    description: `"${createdProduct.productName}" se asigno al item de la factura.`,
+                });
+            } else {
+                // Flujo normal: el usuario abrio el modal manualmente desde la pagina
+                toast({ variant: 'success', title: 'EXITO', description: 'PRODUCTO CREADO Y AGREGADO A LA LISTA.' });
+                addToReceive(createdProduct);
+            }
 
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             if (err instanceof ApiError && err.status === 409) {
-                toast({ variant: 'destructive', title: 'PRODUCTO DUPLICADO', description: 'El código ya pertenece a un producto activo.' });
+                toast({ variant: 'destructive', title: 'PRODUCTO DUPLICADO', description: 'El codigo ya pertenece a un producto activo.' });
                 return;
             }
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
                 setApiFieldErrors(err.data.error.fields);
-                toast({ variant: 'destructive', title: 'ERROR DE VALIDACIÓN', description: 'Revisa los campos marcados en rojo' });
+                toast({ variant: 'destructive', title: 'ERROR DE VALIDACION', description: 'Revisa los campos marcados en rojo' });
             } else {
-                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO EN OPERACIÓN' });
+                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO EN OPERACION' });
             }
         }
     };
@@ -663,7 +912,7 @@ export default function ReceiveInventoryPage() {
     }, [isProductModalOpen, scanMode, handleCodeSubmit]);
 
     const loadOrderIntoList = (supplierId: number, items: any[]) => {
-        console.log("Orden seleccionada - ID Proveedor:", supplierId, "Ítems recibidos:", items);
+        console.log("Orden seleccionada - ID Proveedor:", supplierId, "Items recibidos:", items);
         // Establecer proveedor
         setSelectedGlobalSupplier(String(supplierId));
         
@@ -708,11 +957,11 @@ export default function ReceiveInventoryPage() {
             });
             setReceiveList(newLines);
             setViewMode('active');
-            toast({ title: "Pedido Cargado", description: `Se han añadido ${newLines.length} productos para revisión.` });
+            toast({ title: "Pedido Cargado", description: `Se han aÃ±adido ${newLines.length} productos para revision.` });
         }, 100);
     };
 
-    // Función para confirmar borrado de lista
+    // Funcion para confirmar borrado de lista
     const handleClearList = useCallback(() => {
         setReceiveList([]);
         localStorage.removeItem('org-pos-reception-list');
@@ -826,16 +1075,16 @@ export default function ReceiveInventoryPage() {
     }, [receiveList]);
 
     const handleConfirmReceive = async () => {
-        console.log("🚀 INICIANDO PROCESO DE SINCRONIZACIÓN...");
+        console.log("Ã°Å¸Å¡â‚¬ INICIANDO PROCESO DE SINCRONIZACION...");
         
         if (receiveList.length === 0) {
-            console.warn("⚠️ ABORTO: La lista de recepción está vacía.");
-            toast({ variant: 'destructive', title: "LISTA VACÍA", description: "No hay productos para sincronizar" });
+            console.warn("Ã¢Å¡Â Ã¯Â¸Â ABORTO: La lista de recepcion esta vacia.");
+            toast({ variant: 'destructive', title: "LISTA VACIA", description: "No hay productos para sincronizar" });
             return;
         }
 
         if (!selectedGlobalSupplier) {
-            console.warn("⚠️ ABORTO: No se ha seleccionado proveedor.");
+            console.warn("Ã¢Å¡Â Ã¯Â¸Â ABORTO: No se ha seleccionado proveedor.");
             toast({
                 variant: 'destructive',
                 title: "PROVEEDOR REQUERIDO",
@@ -854,22 +1103,30 @@ export default function ReceiveInventoryPage() {
                 const ibuaPct = Number(item.ibua || 0);
                 const discountPct = Number(item.discount || 0);
 
-                // Cálculo Aditivo de montos para trazabilidad
+                // Calculo Aditivo de montos para trazabilidad
                 const unitIvaAmount = basePrice * (ivaPct / 100);
                 const unitIcuiAmount = basePrice * (icuiPct / 100);
                 const unitIbuaAmount = basePrice * (ibuaPct / 100);
-                
+
                 const priceWithTaxes = basePrice + unitIvaAmount + unitIcuiAmount + unitIbuaAmount;
                 const unitDiscountAmount = priceWithTaxes * (discountPct / 100);
 
-                // Conversión de Libras a Kilos (LB -> KG): 1 LB = 0.5 KG.
+                // Conversion de Libras a Kilos (LB -> KG): 1 LB = 0.5 KG.
                 const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
                 const finalQuantity = Number(item.addedQuantity) * quantityModifier;
 
+                // Politica 3 zonas: cada linea de carrito tiene su propio
+                // entryType. NO se aplica costo ponderado entre lineas:
+                //   - REGULAR (purchase): suma stock, costo base, suma a cuentas por pagar
+                //   - BONUS   (gift):     suma stock, costo $0, no afecta cuentas por pagar
+                //   - RETURN  (return):   resta stock (qty negativa), resta cuentas por pagar
+                const isReturn = item.entryType === 'return';
+                const isGift = item.entryType === 'gift';
+
                 return {
                     barcode: item.barcode,
-                    addedQuantity: item.entryType === 'return' ? -finalQuantity : finalQuantity,
-                    newPurchasePrice: (item.entryType === 'gift') ? 0 : basePrice,
+                    addedQuantity: isReturn ? -finalQuantity : finalQuantity,
+                    newPurchasePrice: isGift ? 0 : basePrice,
                     newSalePrice: Number(item.newSalePrice),
                     supplierId: selectedGlobalSupplier !== 'none' ? Number(selectedGlobalSupplier) : null,
                     iva: unitIvaAmount,
@@ -880,6 +1137,7 @@ export default function ReceiveInventoryPage() {
                     ibuaPct: ibuaPct,
                     discountPct: discountPct,
                     discount: unitDiscountAmount,
+                    lineType: isReturn ? 'RETURN' : isGift ? 'BONUS' : 'REGULAR',
                     actualPhysicalStock: (item.actualPhysicalStock !== undefined && item.actualPhysicalStock !== null) ? Number(item.actualPhysicalStock) : null
                 };
             });
@@ -895,7 +1153,7 @@ export default function ReceiveInventoryPage() {
                 editReceptionId: editReceptionId
             };
 
-            console.log("🚀 INTENTANDO SINCRONIZAR. PAYLOAD BRUTO:", payload);
+            console.log("Ã°Å¸Å¡â‚¬ INTENTANDO SINCRONIZAR. PAYLOAD BRUTO:", payload);
 
             const result = await apiFetch('/products/bulk-receive', {
                 method: 'POST',
@@ -903,18 +1161,18 @@ export default function ReceiveInventoryPage() {
                 fallbackError: 'ERROR AL SINCRONIZAR INVENTARIO'
             }, token);
 
-            console.log("✅ SINCRONIZACIÓN EXITOSA:", result);
+            console.log("Ã¢Å“â€¦ SINCRONIZACION EXITOSA:", result);
 
             toast({
                 variant: 'success',
-                title: "OPERACIÓN EXITOSA",
+                title: "OPERACION EXITOSA",
                 description: bypassExpense ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : "INVENTARIO Y EGRESO SINCRONIZADOS"
             });
             localStorage.removeItem('org-pos-reception-list');
             localStorage.removeItem('org-pos-reception-supplier');
             setReceiveList([]);
 
-            // Reproducir sonido de éxito (Beep alegre)
+            // Reproducir sonido de exito (Beep alegre)
             try {
                 const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
                 const oscillator = audioCtx.createOscillator();
@@ -937,17 +1195,43 @@ export default function ReceiveInventoryPage() {
                 console.error("Audio no soportado");
             }
 
-            // SINCRONIZACIÓN GLOBAL: Notificar que productos y dashboard cambiaron
+            // SINCRONIZACION GLOBAL: Notificar que productos y dashboard cambiaron
             broadcastRevalidate('PRODUCT_UPDATE');
             broadcastRevalidate('DASHBOARD_UPDATE');
             if (!bypassExpense) broadcastRevalidate('EXPENSE_UPDATE');
 
-            // Retrasar redirección 1.5s para que se vea la notificación verde y se escuche el sonido
-            setTimeout(() => {
-                router.push('/dashboard');
-            }, 1500);
+            // Detectar cambios de precio
+            const changedItems = receiveList.filter(item => {
+                const oldProduct = products.find(p => p.barcode === item.barcode);
+                const oldPrice = oldProduct ? Number(oldProduct.salePrice) : 0;
+                return Number(item.newSalePrice) !== oldPrice;
+            });
+
+            if (changedItems.length > 0) {
+                let msg = "Â¡Hola! Se actualizaron los precios de venta de estos productos:\n\n";
+                changedItems.forEach((item, idx) => {
+                    const oldProduct = products.find(p => p.barcode === item.barcode);
+                    const oldPrice = oldProduct ? Number(oldProduct.salePrice) : 0;
+                    msg += `${idx + 1}. ${item.productName}\n   Antes: $${oldPrice}\n   NUEVO PRECIO: $${item.newSalePrice}\n\n`;
+                });
+                msg += "Por favor actualizar las etiquetas de los estantes. Â¡Gracias!";
+                setPriceChangeText(msg);
+                
+                // Enviar notificacion a Telegram automaticamente en segundo plano
+                apiFetch('/notifications/telegram/text', {
+                    method: 'POST',
+                    body: JSON.stringify({ message: msg })
+                }, token).catch(e => console.error("Error al enviar telegram automatico", e));
+
+                // No redirigir aun, la modal se encarga de hacerlo al cerrar
+            } else {
+                // Retrasar redireccion 1.5s para que se vea la notificacion verde y se escuche el sonido
+                setTimeout(() => {
+                    router.push('/dashboard');
+                }, 1500);
+            }
         } catch (err: any) {
-            console.error("💥 ERROR CAPTURADO EN CATCH:", err);
+            console.error("Ã°Å¸â€™Â¥ ERROR CAPTURADO EN CATCH:", err);
             
             // Error details logged to console above (L659)
             const errorRaw = err.data || err.response?.data || err.message || err;
@@ -957,7 +1241,7 @@ export default function ReceiveInventoryPage() {
             
             toast({ 
                 variant: 'destructive', 
-                title: "FALLO DE SINCRONIZACIÓN", 
+                title: "FALLO DE SINCRONIZACION", 
                 description: errorMsg.toUpperCase(),
                 duration: 15000 
             });
@@ -968,7 +1252,7 @@ export default function ReceiveInventoryPage() {
 
     if (loading) {
         return (
-            <div className="h-screen flex items-center justify-center bg-gray-100 dark:bg-[#09090b] transition-colors duration-500">
+            <div className="min-h-screen flex items-center justify-center bg-[#09090b]">
                 <Loader2 className="h-10 w-10 animate-spin text-zinc-900 dark:text-zinc-100" />
             </div>
         );
@@ -983,14 +1267,14 @@ export default function ReceiveInventoryPage() {
     const avgMargin = totalItems > 0 ? receiveList.reduce((sum, item) => sum + (item.marginPercentage || 0), 0) / totalItems : 0;
 
     const stats = [
-        { label: "INVERSIÓN", val: `$${formatCurrency(totalOrderValue)}`, color: "#0ea5e9", icon: TrendingDown, desc: "Total orden", data: SPARKLINE_DATA_1 },
+        { label: "INVERSION", val: `$${formatCurrency(totalOrderValue)}`, color: "#0ea5e9", icon: TrendingDown, desc: "Total orden", data: SPARKLINE_DATA_1 },
         { label: "UNIDADES", val: totalUnits % 1 === 0 ? totalUnits : totalUnits.toFixed(2), color: "#10b981", icon: Package, desc: "Total de carga", data: SPARKLINE_DATA_2 },
         { label: "DESCUENTOS", val: `$${formatCurrency(totalDiscountAmount)}`, color: "#8b5cf6", icon: Zap, desc: "Ahorro total", data: SPARKLINE_DATA_3 },
         { label: "MARGEN", val: `${avgMargin.toFixed(0)}%`, color: "#f43f5e", icon: AlertTriangle, desc: "Ganancia promedio", data: SPARKLINE_DATA_4 }
     ];
 
     return (
-        <div className="flex flex-col w-full max-w-[1600px] mx-auto h-[calc(100vh-70px)] min-h-0 overflow-hidden bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
             <input
                 ref={hiddenScannerRef}
                 type="text"
@@ -1015,7 +1299,7 @@ export default function ReceiveInventoryPage() {
                             </h1>
                             <span className="text-[9px] font-medium px-2 py-0.5 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 tracking-tight">V9.0</span>
                         </div>
-                        <p className="text-[10px] text-gray-500 dark:text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Sincronización de Inventario</p>
+                        <p className="text-[10px] text-gray-500 dark:text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Sincronizacion de Inventario</p>
                     </div>
                 </div>
                 
@@ -1060,7 +1344,7 @@ export default function ReceiveInventoryPage() {
                             className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center gap-2 hidden md:flex"
                         >
                             <Barcode className="text-zinc-900 dark:text-white" size={16} />
-                            <span className="font-medium text-[10px] tracking-tight text-zinc-900 dark:text-zinc-300 uppercase hidden md:inline">ESCANEAR CÓDIGO</span>
+                            <span className="font-medium text-[10px] tracking-tight text-zinc-900 dark:text-zinc-300 uppercase hidden md:inline">ESCANEAR CODIGO</span>
                         </Button>
                     )}
                 </div>
@@ -1077,10 +1361,10 @@ export default function ReceiveInventoryPage() {
             <>
             <div className="flex-1 overflow-hidden flex flex-col lg:flex-row p-2 md:p-4 gap-3 md:gap-4">
                 
-                {/* COLUMNA DE CONTROL (IZQUIERDA EN DESKTOP, ARRIBA EN MÓVIL) */}
+                {/* COLUMNA DE CONTROL (IZQUIERDA EN DESKTOP, ARRIBA EN MOVIL) */}
                 <div className="w-full lg:w-[400px] xl:w-[450px] shrink-0 flex flex-col gap-3 md:gap-4 overflow-y-auto lg:overflow-y-auto custom-scrollbar pb-2 lg:pb-0">
                     
-                    {/* TARJETA 1: PROVEEDOR Y ACCIÓN (Layout 2 Columnas) */}
+                    {/* TARJETA 1: PROVEEDOR Y ACCION (Layout 2 Columnas) */}
                     <div className="card-base border-none rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-2 flex flex-col gap-2">
                         <div className="grid grid-cols-2 gap-2 items-center">
                             {/* COL IZQUIERDA: SELECTOR */}
@@ -1134,7 +1418,7 @@ export default function ReceiveInventoryPage() {
                                 </div>
                             </div>
 
-                            {/* COL DERECHA: TOGGLE EGRESO (Más pequeño) */}
+                            {/* COL DERECHA: TOGGLE EGRESO (Mas pequeno) */}
                             <div className="flex flex-col gap-1 items-end pr-1">
                                 <label className="text-[9px] font-medium text-gray-400 uppercase tracking-widest mr-1">Caja</label>
                                 <button
@@ -1173,7 +1457,7 @@ export default function ReceiveInventoryPage() {
                         ))}
                     </div>
 
-                    {/* TARJETA 2: BÚSQUEDA Y ESCÁNER (Sticky en Mobile) */}
+                    {/* TARJETA 2: BUSQUEDA Y ESCANER (Sticky en Mobile) */}
                     <div className="sticky top-0 z-50 bg-white dark:bg-zinc-900 rounded-2xl border-2 border-emerald-500/40 shadow-[0_0_20px_rgba(16,185,129,0.15),0_8px_30px_rgb(0,0,0,0.2)] p-3 md:p-4 flex flex-col gap-3">
                         <div className="flex justify-between items-center px-1">
                             <label className="text-[9px] font-medium text-gray-400 uppercase tracking-widest tracking-tight">Buscar Producto</label>
@@ -1182,7 +1466,7 @@ export default function ReceiveInventoryPage() {
                                     onClick={() => addFreeItem()}
                                     className="text-[10px] font-medium text-blue-500 hover:text-blue-600 transition-colors uppercase tracking-tight flex items-center gap-1"
                                 >
-                                    <Plus size={12} strokeWidth={3} /> Ítem Libre
+                                    <Plus size={12} strokeWidth={3} /> Item Libre
                                 </button>
                                 <button 
                                     onClick={() => setIsInvoiceReaderOpen(true)}
@@ -1200,8 +1484,9 @@ export default function ReceiveInventoryPage() {
                         </div>
                         <div className="relative">
                             <Autocomplete
+                                key={`search-${receiveList.length}`}
                                 ref={searchRef}
-                                placeholder="CÓDIGO O NOMBRE..."
+                                placeholder="CODIGO O NOMBRE..."
                                 className="w-full"
                                 items={filteredProductsSearch}
                                 inputValue={searchQuery}
@@ -1214,6 +1499,10 @@ export default function ReceiveInventoryPage() {
                                         toast({ variant: 'success', title: 'AGREGADO', description: p.productName });
                                     }
                                     setSearchQuery('');
+                                    // Blur explicitly just in case
+                                    if (typeof document !== 'undefined') {
+                                        (document.activeElement as HTMLElement)?.blur();
+                                    }
                                 }}
                                 startContent={<Barcode size={16} className="text-gray-400" />}
                                 endContent={
@@ -1234,7 +1523,10 @@ export default function ReceiveInventoryPage() {
                                     placement: "bottom",
                                     triggerScaleOnOpen: false,
                                     offset: 10,
-                                    className: "z-[9999]"
+                                    classNames: {
+                                        base: "z-[9999]",
+                                        content: "p-1 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 shadow-2xl",
+                                    }
                                 }}
                             >
                                 {(item) => (
@@ -1269,7 +1561,7 @@ export default function ReceiveInventoryPage() {
 
                 </div>
 
-                {/* COLUMNA DE LISTA (DERECHA EN DESKTOP, ABAJO EN MÓVIL) */}
+                {/* COLUMNA DE LISTA (DERECHA EN DESKTOP, ABAJO EN MOVIL) */}
                 <div className="flex-1 flex flex-col gap-4 overflow-hidden min-h-[300px] bg-white/50 dark:bg-[#18181b]/30 rounded-2xl border border-gray-200/50 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-2 md:p-3">
                     
                     {/* TARJETA 3: LISTA DE PRODUCTOS */}
@@ -1335,7 +1627,7 @@ export default function ReceiveInventoryPage() {
                 </div>
             </div>
 
-            {/* BARRA DE ACCIÓN FIJA INFERIOR - Compacta para Mobile */}
+            {/* BARRA DE ACCION FIJA INFERIOR - Compacta para Mobile */}
             <div className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-between gap-3 p-2 bg-white/95 dark:bg-zinc-950/95 border-t border-gray-200 dark:border-white/10 shadow-[0_-5px_20px_rgba(0,0,0,0.1)] md:hidden">
                 <div className="flex flex-col pl-2 gap-0.5">
                     <div className="flex items-center gap-1 opacity-60">
@@ -1370,7 +1662,7 @@ export default function ReceiveInventoryPage() {
                 isOpen={isScannerOpen}
                 onClose={() => { setIsScannerOpen(false); setScannedNotFoundCode(''); }}
                 errorTitle={scannedNotFoundCode ? "Producto Desconocido" : undefined}
-                errorMessage={scannedNotFoundCode ? `Código #${scannedNotFoundCode} no identificado.` : undefined}
+                errorMessage={scannedNotFoundCode ? `Codigo #${scannedNotFoundCode} no identificado.` : undefined}
                 onIgnoreError={() => {
                     setScannedNotFoundCode('');
                     setIsScannerOpen(false);
@@ -1390,17 +1682,17 @@ export default function ReceiveInventoryPage() {
                     {(onClose) => (
                         <>
                             <ModalHeader className="font-medium uppercase tracking-tight">Limpiar Lista</ModalHeader>
-                            <ModalBody className="text-sm font-medium">¿Estás seguro de que deseas eliminar todos los productos de la lista actual? Esta acción no se puede deshacer.</ModalBody>
+                            <ModalBody className="text-sm font-medium">Â¿Estas seguro de que deseas eliminar todos los productos de la lista actual? Esta accion no se puede deshacer.</ModalBody>
                             <ModalFooter>
                                 <Button variant="light" onPress={() => setIsClearConfirmOpen(false)}>Cancelar</Button>
-                                <Button color="danger" onPress={() => { handleClearList(); setViewMode('pending'); }}>Sí, Volver y Vaciar</Button>
+                                <Button color="danger" onPress={() => { handleClearList(); setViewMode('pending'); }}>Si, Volver y Vaciar</Button>
                             </ModalFooter>
                         </>
                     )}
                 </ModalContent>
             </Modal>
 
-            {/* MODAL DE ÓRDENES PENDIENTES (Rediseño Bottom Sheet Aesthetic) */}
+            {/* MODAL DE ORDENES PENDIENTES (Rediseno Bottom Sheet Aesthetic) */}
             <Modal 
                 isOpen={isOrderModalOpen} 
                 onOpenChange={setIsOrderModalOpen} 
@@ -1421,7 +1713,7 @@ export default function ReceiveInventoryPage() {
                                 <div className="flex items-center gap-3">
                                     <div className="bg-white/5 p-2 rounded-2xl text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><ShoppingBag size={24} /></div>
                                     <div className="flex flex-col">
-                                        <h2 className="text-xl font-medium uppercase tracking-tight tracking-tighter text-zinc-900 dark:text-zinc-50 leading-tight">Órdenes <span className="text-zinc-900 dark:text-zinc-100">Pendientes</span></h2>
+                                        <h2 className="text-xl font-medium uppercase tracking-tight tracking-tighter text-zinc-900 dark:text-zinc-50 leading-tight">Ordenes <span className="text-zinc-900 dark:text-zinc-100">Pendientes</span></h2>
                                         <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest tracking-tight">Carga de Documentos Existentes</p>
                                     </div>
                                 </div>
@@ -1441,7 +1733,7 @@ export default function ReceiveInventoryPage() {
                                             </div>
                                         </div>
                                         <div className="flex flex-col gap-2 max-w-[250px]">
-                                            <p className="text-xs font-medium uppercase tracking-tight text-gray-900 dark:text-zinc-300 leading-tight">No hay órdenes pendientes para este proveedor</p>
+                                            <p className="text-xs font-medium uppercase tracking-tight text-gray-900 dark:text-zinc-300 leading-tight">No hay ordenes pendientes para este proveedor</p>
                                             <p className="text-[9px] font-bold text-gray-400 uppercase tracking-tighter">Puedes iniciar la carga manual de productos cerrando este panel.</p>
                                         </div>
                                         <Button 
@@ -1473,7 +1765,7 @@ export default function ReceiveInventoryPage() {
                                                                     {order.source === 'expense' ? 'Egreso a Proveedor' : order.source === 'confirmed' ? 'Pedido Inteligente' : 'Preventa/Borrador'}
                                                                 </span>
                                                             </div>
-                                                            <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">{new Date(order.createdAt).toLocaleDateString()} • {order.itemCount} Referencias</span>
+                                                            <span className="text-[9px] text-gray-400 font-bold uppercase tracking-tighter">{new Date(order.createdAt).toLocaleDateString()} Ã¢â‚¬Â¢ {order.itemCount} Referencias</span>
                                                         </div>
                                                     </div>
                                                     <div className="flex flex-col items-end mr-3">
@@ -1489,7 +1781,7 @@ export default function ReceiveInventoryPage() {
                                                         )}
                                                     </div>
                                                 </button>
-                                                {/* Botón Chulear */}
+                                                {/* Boton Chulear */}
                                                 <Button 
                                                     isIconOnly 
                                                     size="sm" 
@@ -1534,104 +1826,205 @@ export default function ReceiveInventoryPage() {
                 apiFieldErrors={apiFieldErrors}
             />
 
-            {/* MODAL DE CONFIRMACIÓN DE SINCRONIZACIÓN */}
-            <Modal isOpen={isSyncConfirmOpen} onOpenChange={setIsSyncConfirmOpen} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl" }}>
+            {/* MODAL DE CONFIRMACION DE SINCRONIZACION Ã¢â‚¬â€ diseno en 3 pasos al
+                estilo "Autorizar Egreso": (1) Resumen de Carga, (2) Costo de Flete,
+                (3) Pago por con soporte de pagos mixtos y validacion de cuadre. */}
+            <Modal
+                isOpen={isSyncConfirmOpen}
+                onOpenChange={setIsSyncConfirmOpen}
+                backdrop="blur"
+                size="4xl"
+                classNames={{
+                    base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+                    backdrop: "bg-[#18181b] ",
+                    closeButton: "absolute right-5 top-5 text-gray-400 hover:text-emerald-500 transition-colors z-[100] rounded-2xl"
+                }}
+            >
                 <ModalContent>
                     {(onClose) => (
                         <>
-                            <ModalHeader className="flex flex-col gap-1 p-6">
-                                <div className="flex items-center gap-3">
-                                    <div className="bg-white/5 p-2 rounded-2xl text-zinc-900 dark:text-zinc-100"><Package size={24} /></div>
-                                    <div className="flex flex-col">
-                                        <span className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight">Confirmar Sincronización</span>
-                                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase font-bold tracking-widest tracking-tight">Carga Maestra v9.0</span>
+                            <ModalHeader className="px-8 py-5 border-b border-gray-100 dark:border-white/5">
+                                <div className="flex items-center gap-4">
+                                    <div className="h-12 w-12 bg-emerald-500 text-white flex items-center justify-center rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                        <Package size={24} />
+                                    </div>
+                                    <div>
+                                        <h2 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-none">
+                                            Confirmar <span className="text-emerald-500">Sincronizacion</span>
+                                        </h2>
+                                        <p className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1">Carga Maestra de Inventario</p>
                                     </div>
                                 </div>
                             </ModalHeader>
-                            <ModalBody className="p-6 pb-2">
-                                <div className="flex flex-col gap-4">
-                                    <div className="p-4 bg-gray-50 dark:bg-[#18181b]/50 rounded-2xl border border-gray-100 dark:border-white/5">
-                                        <p className="text-sm text-gray-600 dark:text-zinc-400 leading-relaxed font-medium">
-                                            Estás a punto de sincronizar la carga de <span className="text-zinc-900 dark:text-zinc-50 font-medium underline decoration-emerald-500/30 underline-offset-4">{receiveList.length} referencias</span> al inventario global.
-                                        </p>
+
+                            <ModalBody className="px-8 py-8">
+                                {/* ALERTA BYPASS Ã¢â‚¬â€ banda full-width arriba de los pasos */}
+                                {bypassExpense && (
+                                    <div className="mb-6 p-4 bg-rose-500/10 border-2 border-rose-500/50 rounded-2xl flex items-start gap-3 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.1)]">
+                                        <AlertTriangle className="text-rose-500 shrink-0 mt-0.5" size={24} />
+                                        <div className="flex flex-col">
+                                            <span className="text-[12px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-wider">Ã¢Å¡Â Ã¯Â¸Â ALERTA DE CAJA: BYPASS ACTIVADO</span>
+                                            <p className="text-[11px] font-bold text-rose-600/90 dark:text-rose-400 leading-tight mt-1">
+                                                Solo se actualizara el inventario fisico. <span className="underline decoration-2">NO se registrara salida de dinero</span> ni egresos en la contabilidad.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                    {/* COL 1: RESUMEN DE CARGA */}
+                                    <div className="space-y-6">
+                                        <div className="space-y-3">
+                                            <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">1. Resumen de Carga</label>
+                                            <Card className="bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                                <CardBody className="p-5 space-y-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="h-12 w-12 bg-emerald-500/10 text-emerald-500 flex items-center justify-center rounded-2xl">
+                                                            <Package size={20} />
+                                                        </div>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-3xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tabular-nums leading-none">
+                                                                {receiveList.length}
+                                                            </span>
+                                                            <span className="text-[9px] font-bold text-gray-400 uppercase tracking-widest mt-1">Referencias</span>
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="pt-3 border-t border-gray-200 dark:border-white/5 space-y-1">
+                                                        <span className="text-[8px] font-bold text-gray-400 uppercase tracking-widest">Total Estimado</span>
+                                                        <p className="text-2xl font-medium text-emerald-500 tabular-nums tracking-tight">
+                                                            ${formatCurrency(expectedTotal)}
+                                                        </p>
+                                                        {freightCost > 0 && (
+                                                            <p className="text-[9px] font-medium text-amber-500 uppercase tracking-widest">
+                                                                incluye flete ${formatCurrency(freightCost)}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </CardBody>
+                                            </Card>
+                                        </div>
                                     </div>
 
-                                    {bypassExpense && (
-                                        <div className="p-4 bg-rose-500/10 border-2 border-rose-500/50 rounded-2xl flex items-start gap-3 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.1)]">
-                                            <AlertTriangle className="text-rose-500 shrink-0 mt-0.5" size={24} />
-                                            <div className="flex flex-col">
-                                                <span className="text-[12px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-tight tracking-wider">⚠️ ALERTA DE CAJA: BYPASS ACTIVADO</span>
-                                                <p className="text-[11px] font-bold text-rose-600/90 dark:text-rose-400 leading-tight mt-1">
-                                                    Solo se actualizará el inventario físico. <span className="underline decoration-2">NO se registrará salida de dinero</span> ni egresos en la contabilidad.
-                                                </p>
-                                            </div>
+                                    {/* COL 2: COSTO DE FLETE */}
+                                    <div className="space-y-6">
+                                        <div className="space-y-3">
+                                            <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">2. Costo de Flete</label>
+                                            <Input
+                                                placeholder="0"
+                                                inputMode="decimal"
+                                                value={String(freightCost || '')}
+                                                onValueChange={(v) => setFreightCost(Number(v) || 0)}
+                                                onFocus={(e) => e.target.select()}
+                                                isDisabled={bypassExpense}
+                                                startContent={<span className="text-xl font-medium text-amber-500">$</span>}
+                                                classNames={{
+                                                    inputWrapper: `h-16 ${bypassExpense ? 'bg-gray-100 dark:bg-zinc-900 opacity-50' : 'bg-amber-50/50 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20'} rounded-2xl px-6`,
+                                                    input: "font-medium text-2xl text-zinc-900 dark:text-zinc-50 tabular-nums"
+                                                }}
+                                            />
+                                            <p className="text-[8px] font-bold text-amber-500 uppercase tracking-widest pl-1">
+                                                {bypassExpense ? "Deshabilitado por bypass" : "Suma al egreso (opcional)"}
+                                            </p>
                                         </div>
-                                    )}
+                                    </div>
 
-                                    {!bypassExpense && (
-                                        <div className="flex flex-col gap-3">
-                                            <div className="p-4 bg-white/5 border border-emerald-500/20 rounded-2xl flex items-start gap-3 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-                                                <ShieldCheck className="text-zinc-900 dark:text-zinc-100 shrink-0 mt-0.5" size={24} />
-                                                <div className="flex flex-col">
-                                                    <span className="text-[12px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-tight">CONTABILIDAD SINCRONIZADA</span>
-                                                    <p className="text-[11px] font-bold text-zinc-900 dark:text-zinc-100/80 dark:text-zinc-100/70 leading-tight mt-1">
-                                                        Se generará un egreso automático en caja por el valor total. Flujo contable estándar activo.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <div className="flex flex-col gap-2 p-4 bg-gray-50 dark:bg-[#18181b]/50 border border-gray-100 dark:border-white/5 rounded-2xl">
-                                                <span className="text-[10px] font-medium uppercase text-gray-500 tracking-widest tracking-tight mb-1">Medio de Pago</span>
-                                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                                    {paymentMethods.map(method => (
-                                                        <div key={method.id} className="relative flex flex-col bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl p-2 gap-1 focus-within:border-emerald-500 transition-all">
-                                                            <div className="flex items-center gap-1 mb-1">
-                                                                <method.icon size={12} className="text-gray-400" />
-                                                                <span className="text-[9px] font-medium uppercase text-gray-300">{method.label}</span>
-                                                            </div>
-                                                            <div className="flex items-center gap-1">
-                                                                <span className="text-zinc-900 dark:text-zinc-100 font-medium text-xs">$</span>
-                                                                <input 
-                                                                    type="number"
-                                                                    value={mixedPayments[method.id] || ''}
-                                                                    onChange={(e) => setMixedPayments(prev => ({...prev, [method.id]: Number(e.target.value) || 0}))}
-                                                                    className="bg-transparent w-full text-xs font-medium text-white outline-none"
-                                                                    placeholder="0"
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                                <div className="flex justify-between items-center px-2 py-1 mt-1 bg-white dark:bg-zinc-950 rounded-2xl">
-                                                    <span className="text-[10px] font-bold text-gray-400">Total Ingresado:</span>
-                                                    <span className={`text-[11px] font-medium ${isPaymentsValid ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>${formatCurrency(sumPayments)} / ${formatCurrency(expectedTotal)}</span>
-                                                </div>
+                                    {/* COL 3: PAGO POR Ã¢â‚¬â€ pagos mixtos por canal */}
+                                    <div className="space-y-6">
+                                        <div className="space-y-3">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">3. Pago por</label>
+                                                <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-widest">Mixto permitido</span>
                                             </div>
 
-                                            <div className="flex flex-col gap-2 p-4 bg-gray-50 dark:bg-[#18181b]/50 border border-gray-100 dark:border-white/5 rounded-2xl">
-                                                <div className="flex items-center justify-between mb-1">
-                                                    <span className="text-[10px] font-medium uppercase text-gray-500 tracking-widest tracking-tight">Costo de Flete (Opcional)</span>
-                                                    <span className="text-[10px] font-medium text-amber-500 tracking-tight">Suma al Egreso</span>
+                                            {bypassExpense ? (
+                                                <div className="flex items-center justify-center p-6 bg-gray-50 dark:bg-[#18181b]/30 border border-dashed border-gray-200 dark:border-white/5 rounded-2xl">
+                                                    <div className="text-center">
+                                                        <ShieldCheck size={28} className="text-gray-400 mx-auto mb-2" />
+                                                        <p className="text-[9px] font-medium text-gray-400 uppercase tracking-widest leading-tight">
+                                                            Bypass activo:<br />no se cobra
+                                                        </p>
+                                                    </div>
                                                 </div>
-                                                <Input
-                                                    type="number"
-                                                    variant="flat"
-                                                    placeholder="0.00"
-                                                    startContent={<span className="text-gray-400 font-medium text-xs">$</span>}
-                                                    value={String(freightCost)}
-                                                    onValueChange={(v) => setFreightCost(Number(v) || 0)}
-                                                    classNames={{
-                                                        inputWrapper: "h-11 card-base border-none border border-gray-100 dark:border-white/5 rounded-2xl",
-                                                        input: "font-medium text-sm text-zinc-900 dark:text-zinc-50"
-                                                    }}
-                                                />
-                                            </div>
+                                            ) : (
+                                                <>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        {paymentMethods.map(method => {
+                                                            const value = mixedPayments[method.id] || 0;
+                                                            const active = value > 0;
+                                                            return (
+                                                                <div
+                                                                    key={method.id}
+                                                                    className={`relative flex flex-col rounded-2xl p-3 gap-1 transition-all border-2 ${
+                                                                        active
+                                                                            ? 'bg-emerald-500/10 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
+                                                                            : 'bg-gray-50 dark:bg-[#18181b] border-gray-200 dark:border-white/5 focus-within:border-emerald-500/50'
+                                                                    }`}
+                                                                >
+                                                                    <div className="flex items-center gap-1.5 mb-1">
+                                                                        <method.icon size={12} className={active ? 'text-emerald-500' : 'text-gray-400'} />
+                                                                        <span className={`text-[9px] font-medium uppercase ${active ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-300'}`}>{method.label}</span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1">
+                                                                        <span className={`font-medium text-xs ${active ? 'text-emerald-500' : 'text-zinc-500'}`}>$</span>
+                                                                        <input
+                                                                            type="number"
+                                                                            value={mixedPayments[method.id] || ''}
+                                                                            onChange={(e) => setMixedPayments(prev => ({ ...prev, [method.id]: Number(e.target.value) || 0 }))}
+                                                                            onFocus={(e) => e.target.select()}
+                                                                            className="bg-transparent w-full text-sm font-medium text-zinc-900 dark:text-white outline-none tabular-nums"
+                                                                            placeholder="0"
+                                                                        />
+                                                                    </div>
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+
+                                                    {/* VALIDACION DE SUMA */}
+                                                    <div className={`flex justify-between items-center px-4 py-3 rounded-2xl border-2 transition-all ${
+                                                        isPaymentsValid
+                                                            ? 'bg-emerald-500/5 border-emerald-500/40'
+                                                            : 'bg-rose-500/5 border-rose-500/40'
+                                                    }`}>
+                                                        <span className={`text-[10px] font-bold uppercase tracking-widest ${isPaymentsValid ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                                            {isPaymentsValid ? 'Ã¢Å“â€œ Cuadre exacto' : 'Ã¢Å¡Â  No cuadra'}
+                                                        </span>
+                                                        <span className={`text-sm font-medium tabular-nums ${
+                                                            isPaymentsValid ? 'text-emerald-500' : 'text-rose-500'
+                                                        }`}>
+                                                            ${formatCurrency(sumPayments)} / ${formatCurrency(expectedTotal)}
+                                                        </span>
+                                                    </div>
+                                                </>
+                                            )}
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
                             </ModalBody>
-                            <ModalFooter className="p-6 pt-4 gap-3">
-                                <Button variant="flat" onPress={onClose} className="h-12 flex-1 rounded-2xl font-medium uppercase text-[11px] tracking-widest text-gray-400 bg-gray-100 dark:bg-[#18181b] transition-all hover:bg-gray-200 dark:hover:bg-zinc-100 dark:bg-zinc-800">Cancelar</Button>
-                                <Button onPress={() => { onClose(); handleConfirmReceive(); }} isDisabled={!bypassExpense && !isPaymentsValid} className="h-12 flex-1 rounded-2xl font-medium uppercase text-[11px] tracking-widest bg-emerald-500 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:bg-emerald-600 transition-all active:scale-95">Sincronizar Ahora</Button>
+
+                            <ModalFooter className="px-8 py-6 border-t border-gray-100 dark:border-white/5 bg-gray-50/30 dark:bg-[#18181b]/50">
+                                <div className="flex w-full gap-4">
+                                    <Button
+                                        variant="flat"
+                                        className="flex-1 h-12 rounded-2xl font-medium uppercase text-[10px] tracking-widest border border-gray-200 dark:border-white/5"
+                                        onPress={onClose}
+                                    >
+                                        DESCARTAR
+                                    </Button>
+                                    <Button
+                                        className={`flex-[2] h-12 font-medium uppercase text-xs tracking-[0.2em] rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
+                                            (!bypassExpense && !isPaymentsValid)
+                                                ? 'bg-gray-200 dark:bg-zinc-800 text-gray-400 cursor-not-allowed'
+                                                : 'bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-[1.02] active:scale-95'
+                                        }`}
+                                        isDisabled={!bypassExpense && !isPaymentsValid}
+                                        onPress={() => { onClose(); handleConfirmReceive(); }}
+                                    >
+                                        <Sparkles size={18} className="mr-2" />
+                                        SINCRONIZAR AHORA
+                                    </Button>
+                                </div>
                             </ModalFooter>
                         </>
                     )}
@@ -1648,8 +2041,109 @@ export default function ReceiveInventoryPage() {
                             </ModalHeader>
                             <ModalBody className="px-6 pb-6">
                                 <p className="text-sm font-medium text-gray-600 dark:text-zinc-400">
-                                    El código <span className="font-mono font-medium text-zinc-900 dark:text-zinc-50 px-2 py-1 bg-gray-100 dark:bg-zinc-800 rounded-2xl">{scannedNotFoundCode}</span> no está registrado en el inventario global.
+                                    El codigo <span className="font-mono font-medium text-zinc-900 dark:text-zinc-50 px-2 py-1 bg-gray-100 dark:bg-zinc-800 rounded-2xl">{scannedNotFoundCode}</span> no esta registrado en el inventario global.
                                 </p>
+                                <div className="mt-4 border-t border-gray-200 dark:border-white/10 pt-4">
+                                    <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest mb-2 block">
+                                        Asociar a producto existente
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <Autocomplete
+                                            aria-label="Buscar producto para asociar"
+                                            placeholder="Buscar por nombre o codigo..."
+                                            defaultItems={products}
+                                            selectedKey={selectedAssociateProduct?.barcode || null}
+                                            onSelectionChange={(key) => {
+                                                const p = products.find(prod => String(prod.barcode) === String(key));
+                                                setSelectedAssociateProduct(p || null);
+                                            }}
+                                            classNames={{
+                                                base: "w-full",
+                                                listboxWrapper: "max-h-[250px]",
+                                            }}
+                                            inputProps={{
+                                                classNames: {
+                                                    inputWrapper: "h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-2xl shadow-inner",
+                                                }
+                                            }}
+                                            popoverProps={{
+                                                classNames: {
+                                                    content: "p-1 border border-zinc-200 dark:border-white/10 bg-white dark:bg-[#18181b] shadow-2xl rounded-2xl",
+                                                }
+                                            }}
+                                        >
+                                            {(item) => (
+                                                <AutocompleteItem key={item.barcode} textValue={item.productName} className="text-[var(--text-primary)] rounded-2xl data-[hover=true]:bg-[var(--bg-card-hover)]">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] font-medium uppercase">{item.productName}</span>
+                                                        <span className="text-[8px] font-mono text-zinc-500">{item.barcode}</span>
+                                                    </div>
+                                                </AutocompleteItem>
+                                            )}
+                                        </Autocomplete>
+                                        <Button 
+                                            color="secondary" 
+                                            className="h-12 rounded-2xl font-bold uppercase text-[10px] shrink-0 w-24 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
+                                            isDisabled={!selectedAssociateProduct}
+                                            isLoading={isAssociating}
+                                            onPress={async () => {
+                                                if (!selectedAssociateProduct) return;
+                                                setIsAssociating(true);
+                                                try {
+                                                    const p = selectedAssociateProduct;
+                                                    const token = Cookies.get('org-pos-token');
+                                                    const payload = {
+                                                        ...p,
+                                                        alternateCodes: p.alternateCodes 
+                                                            ? `${p.alternateCodes},${scannedNotFoundCode}`
+                                                            : scannedNotFoundCode
+                                                    };
+                                                    await apiFetch(`/products/update-products/${p.barcode}`, {
+                                                        method: 'PUT',
+                                                        body: JSON.stringify(payload),
+                                                        fallbackError: 'Error al asociar producto'
+                                                    }, token!);
+                                                    toast({ variant: 'success', title: 'ASOCIADO', description: `Codigo asociado a ${p.productName}` });
+                                                    setNotFoundDialogOpen(false);
+                                                    setSelectedAssociateProduct(null);
+                                                    
+                                                    setReceiveList(prev => {
+                                                        const existingIdx = prev.findIndex(item => item.barcode === p.barcode || item.barcode === scannedNotFoundCode);
+                                                        if (existingIdx >= 0) {
+                                                            const newList = [...prev];
+                                                            newList[existingIdx].addedQuantity += 1;
+                                                            return newList;
+                                                        }
+                                                        return [{
+                                                            lineId: Date.now().toString(),
+                                                            barcode: p.barcode,
+                                                            productName: p.productName,
+                                                            addedQuantity: 1,
+                                                            newPurchasePrice: Number(p.purchasePrice || 0),
+                                                            newSalePrice: Number(p.salePrice || 0),
+                                                            marginPercentage: Number(p.marginPercentage || 20),
+                                                            entryType: 'purchase',
+                                                            iva: Number(p.iva || 0),
+                                                            icui: Number(p.icui || 0),
+                                                            ibua: Number(p.ibua || 0),
+                                                            discount: Number(p.discount || 0),
+                                                            currentStock: Number(p.quantity || 0),
+                                                            unit: p.isWeighted ? 'KG' : 'UND',
+                                                            isWeighted: Boolean(p.isWeighted),
+                                                            actualPhysicalStock: null
+                                                        }, ...prev];
+                                                    });
+                                                } catch (e) {
+                                                    console.error(e);
+                                                } finally {
+                                                    setIsAssociating(false);
+                                                }
+                                            }}
+                                        >
+                                            Asociar
+                                        </Button>
+                                    </div>
+                                </div>
                             </ModalBody>
                             <ModalFooter className="p-6 pt-0 gap-3">
                                 <Button variant="flat" onPress={onClose} className="h-12 flex-1 rounded-2xl font-medium uppercase text-xs tracking-widest">Cerrar</Button>
@@ -1669,8 +2163,62 @@ export default function ReceiveInventoryPage() {
                 supplierId={selectedGlobalSupplier}
                 onExtractedItems={handleInvoiceMatch}
             />
+            <UnmatchedItemsReviewer
+                isOpen={isReviewerOpen}
+                onOpenChange={setIsReviewerOpen}
+                items={unmatchedQueue}
+                supplierId={selectedGlobalSupplier}
+                onResolved={handleUnmatchedResolved}
+                onRequestCreateNewProduct={handleRequestCreateFromReviewer}
+                externalResolution={reviewerExternalResolution}
+                onExternalResolutionConsumed={() => setReviewerExternalResolution(null)}
+                products={products}
+            />
+
+            <Modal isOpen={!!priceChangeText} onOpenChange={(open) => {
+                if (!open) {
+                    setPriceChangeText(null);
+                    router.push('/dashboard');
+                }
+            }} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl" }}>
+                <ModalContent>
+                    {(onClose) => (
+                        <>
+                            <ModalHeader className="flex flex-col gap-1 p-6">
+                                <div className="flex items-center gap-2">
+                                    <Sparkles className="text-emerald-500" size={20} />
+                                    <span className="font-medium uppercase tracking-tight text-lg">Cambios de Precio</span>
+                                </div>
+                                <p className="text-xs text-zinc-500 dark:text-zinc-400 font-normal normal-case">
+                                    Se detectaron cambios en los precios de venta. Â¿Deseas enviar el resumen a tus empleados para actualizar las etiquetas?
+                                </p>
+                            </ModalHeader>
+                            <ModalBody className="px-6 pb-6">
+                                <div className="bg-zinc-100 dark:bg-zinc-900 p-4 rounded-xl max-h-60 overflow-y-auto font-mono text-[10px] sm:text-xs whitespace-pre-wrap border border-zinc-200 dark:border-white/5">
+                                    {priceChangeText}
+                                </div>
+                            </ModalBody>
+                            <ModalFooter className="p-6 pt-0 gap-3">
+                                <Button variant="flat" onPress={onClose} className="h-12 flex-1 rounded-2xl font-medium uppercase text-xs tracking-widest">
+                                    Omitir
+                                </Button>
+                                <Button color="success" onPress={() => {
+                                    window.open(`https://wa.me/?text=${encodeURIComponent(priceChangeText || '')}`, '_blank');
+                                    onClose();
+                                }} className="h-12 flex-[2] rounded-2xl font-medium uppercase text-xs tracking-widest text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] bg-green-500 hover:bg-green-600">
+                                    Enviar por WhatsApp
+                                </Button>
+                            </ModalFooter>
+                        </>
+                    )}
+                </ModalContent>
+            </Modal>
             </>
             )}
         </div>
     );
 }
+
+
+
+

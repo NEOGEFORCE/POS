@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Card, Button, Input, Textarea, Skeleton } from "@heroui/react";
 import {
@@ -38,7 +38,7 @@ export default function CashRegisterPage() {
   });
   const { toast } = useToast();
 
-  // SINCRONIZACIÓN ZERO-F5: Caja reacciona a ventas y gastos
+  // SINCRONIZACION ZERO-F5: Caja reacciona a ventas y gastos
   useEffect(() => {
     const cleanup = setupSyncListener((event) => {
         if (event === 'SALE_MADE' || event === 'EXPENSE_UPDATE') {
@@ -98,8 +98,8 @@ export default function CashRegisterPage() {
     if (status === 'SHORTAGE' && !closingNote.trim()) {
       toast({
         variant: 'destructive',
-        title: 'JUSTIFICACIÓN REQUERIDA',
-        description: 'Debes escribir una justificación para el faltante.',
+        title: 'JUSTIFICACION REQUERIDA',
+        description: 'Debes escribir una justificacion para el faltante.',
       });
       return;
     }
@@ -146,7 +146,7 @@ export default function CashRegisterPage() {
     } catch (err: any) {
       toast({
         variant: 'destructive',
-        title: 'FALLO DE CONEXIÓN',
+        title: 'FALLO DE CONEXION',
         description: err.message || 'Ha ocurrido un error inesperado.',
         duration: 15000
       });
@@ -158,7 +158,7 @@ export default function CashRegisterPage() {
   const salidasTotales = (closure?.totalExpenses || 0) + (closure?.totalReturns || 0);
 
   return (
-    <div className="flex flex-col w-full bg-white dark:bg-zinc-950 text-white p-3 md:p-6 gap-6">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto custom-scrollbar bg-white dark:bg-zinc-950 text-white p-3 md:p-6 gap-6 relative">
 
       {/* HEADER */}
       <div className="flex items-center gap-3 shrink-0">
@@ -243,20 +243,20 @@ export default function CashRegisterPage() {
             <div className="w-full h-px bg-zinc-100 dark:bg-zinc-800 my-4 border-b border-dashed border-zinc-700" />
 
             <div className="flex flex-col bg-blue-500/10 p-4 rounded-2xl border border-blue-500/20">
-              <span className="text-[12px] font-medium text-blue-400 uppercase tracking-[0.2em] mb-1">Efectivo Físico Esperado</span>
+              <span className="text-[12px] font-medium text-blue-400 uppercase tracking-[0.2em] mb-1">Efectivo Fisico Esperado</span>
               <span className="text-4xl font-medium tracking-tight tracking-tighter text-blue-500 tabular-nums">{formatCurrency(expectedCash)}</span>
             </div>
           </div>
         </div>
 
-        {/* BLOQUE DERECHO: INTERACCIÓN CAJERO */}
+        {/* BLOQUE DERECHO: INTERACCION CAJERO */}
         <div className="bg-[#18181b] border border-zinc-200 dark:border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col gap-6 md:gap-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative">
 
           {/* Input Gigante */}
           <div className="flex flex-col gap-2 relative z-10">
             <label className="text-[12px] md:text-sm font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400 flex items-center gap-2">
               <Banknote size={16} className="text-zinc-900 dark:text-zinc-100" />
-              Efectivo Real en el Cajón
+              Efectivo Real en el Cajon
             </label>
             <Input
               type="number"
@@ -296,7 +296,7 @@ export default function CashRegisterPage() {
               </div>
             </div>
 
-            {/* SECCIÓN DE RETIRO DE CIERRE */}
+            {/* SECCION DE RETIRO DE CIERRE */}
             <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-4 mt-2 flex flex-col gap-3">
               <label className="text-[10px] font-medium uppercase tracking-widest text-rose-500 flex items-center gap-2">
                 <TrendingDown size={14} /> Retiro de Caja (Dinero que sale para otro turno/gerencia)
@@ -317,13 +317,13 @@ export default function CashRegisterPage() {
                   classNames={{ inputWrapper: "bg-white dark:bg-zinc-950 border-rose-500/20", input: "font-bold text-zinc-500 dark:text-zinc-400 text-xs" }}
                 />
               </div>
-              <p className="text-[9px] text-zinc-500 tracking-tight">Este monto se registrará como un gasto del turno actual y se restará del saldo esperado.</p>
+              <p className="text-[9px] text-zinc-500 tracking-tight">Este monto se registrara como un gasto del turno actual y se restara del saldo esperado.</p>
             </div>
           </div>
 
-          {/* Calculadora Rápida */}
+          {/* Calculadora Rapida */}
           <div className="flex flex-col gap-3 relative z-10">
-            <label className="text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-500">Calculadora Rápida (Opcional)</label>
+            <label className="text-[10px] font-medium uppercase tracking-[0.2em] text-zinc-500">Calculadora Rapida (Opcional)</label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {['100000', '50000', '20000', '10000', '5000', '2000', '1000'].map(bill => (
                 <Input
@@ -353,11 +353,11 @@ export default function CashRegisterPage() {
             </div>
           </div>
 
-          {/* Cartel Dinámico de Descuadre */}
+          {/* Cartel Dinamico de Descuadre */}
           <div className="mt-auto flex flex-col gap-4 relative z-10">
             {status === 'PENDING' && (
               <div className="h-24 md:h-32 border-2 border-dashed border-zinc-200 dark:border-white/10 rounded-2xl flex items-center justify-center text-center p-4">
-                <span className="text-zinc-500 font-medium uppercase tracking-widest text-xs">Cuenta el dinero físico e ingrésalo arriba</span>
+                <span className="text-zinc-500 font-medium uppercase tracking-widest text-xs">Cuenta el dinero fisico e ingresalo arriba</span>
               </div>
             )}
 
@@ -384,7 +384,7 @@ export default function CashRegisterPage() {
                     </div>
                     <div>
                       <h2 className="text-2xl md:text-3xl font-medium text-rose-500 uppercase tracking-tight tracking-tighter">Faltante</h2>
-                      <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mt-1">Dinero faltante en físico</p>
+                      <p className="text-[10px] font-bold text-rose-400 uppercase tracking-widest mt-1">Dinero faltante en fisico</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -392,7 +392,7 @@ export default function CashRegisterPage() {
                   </div>
                 </div>
                 <Textarea
-                  placeholder="Justificación del faltante (Obligatorio)..."
+                  placeholder="Justificacion del faltante (Obligatorio)..."
                   value={closingNote}
                   onValueChange={setClosingNote}
                   classNames={{
@@ -412,7 +412,7 @@ export default function CashRegisterPage() {
                     </div>
                     <div>
                       <h2 className="text-2xl md:text-3xl font-medium text-amber-500 uppercase tracking-tight tracking-tighter">Sobrante</h2>
-                      <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mt-1">Dinero extra en físico</p>
+                      <p className="text-[10px] font-bold text-amber-400 uppercase tracking-widest mt-1">Dinero extra en fisico</p>
                     </div>
                   </div>
                   <div className="text-right">
@@ -431,7 +431,7 @@ export default function CashRegisterPage() {
               </div>
             )}
 
-            {/* BOTÓN DE CIERRE IRREVERSIBLE */}
+            {/* BOTON DE CIERRE IRREVERSIBLE */}
             <Button
               onPress={handleCloseRegister}
               isDisabled={status === 'PENDING' || (status === 'SHORTAGE' && !closingNote.trim()) || isSubmitting}
@@ -451,5 +451,7 @@ export default function CashRegisterPage() {
     </div>
   );
 }
+
+
 
 

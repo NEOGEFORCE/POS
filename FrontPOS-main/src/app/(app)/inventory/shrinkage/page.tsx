@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect, useRef } from "react";
 import { ScannerOverlay } from "@/components/ScannerOverlay";
@@ -42,7 +42,7 @@ export default function ShrinkagePage() {
   const { toast } = useToast();
 
   useEffect(() => {
-    // Mantener focus en el input para lectura de pistola láser rápida
+    // Mantener focus en el input para lectura de pistola laser rapida
     if (!isScannerOpen && !selectedProduct && inputRef.current) {
       inputRef.current.focus();
     }
@@ -60,7 +60,7 @@ export default function ShrinkagePage() {
       setSelectedProduct(data);
       setBarcodeInput("");
     } catch (err) {
-      toast({ title: "No encontrado", description: `No existe producto con código: ${barcode}`, variant: "destructive" });
+      toast({ title: "No encontrado", description: `No existe producto con codigo: ${barcode}`, variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -91,7 +91,7 @@ export default function ShrinkagePage() {
         throw new Error(errorData.error?.message || "Fallo al registrar merma");
       }
 
-      toast({ title: "Éxito", description: "Merma registrada correctamente" });
+      toast({ title: "EXITO", description: "Merma registrada correctamente" });
 
       const newRecord: ShrinkageRecord = {
         id: Date.now().toString(),
@@ -115,15 +115,15 @@ export default function ShrinkagePage() {
   };
 
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto custom-scrollbar p-6 space-y-6">
+      <div className="shrink-0 flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold tracking-tight text-red-500 flex items-center gap-2">
             <AlertTriangle className="h-8 w-8" />
-            Mermas y Averías
+            Mermas y Averias
           </h1>
           <p className="text-muted-foreground mt-1">
-            Declare pérdidas de inventario por vencimiento, daño o consumo interno.
+            Declare perdidas de inventario por vencimiento, dano o consumo interno.
           </p>
         </div>
       </div>
@@ -139,7 +139,7 @@ export default function ShrinkagePage() {
               <div className="flex gap-2">
                 <Input
                   ref={inputRef}
-                  placeholder="Escanear o ingresar código..."
+                  placeholder="Escanear o ingresar codigo..."
                   value={barcodeInput}
                   onChange={(e) => setBarcodeInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -162,7 +162,7 @@ export default function ShrinkagePage() {
                 <div className="flex justify-between items-start">
                   <div>
                     <h3 className="font-semibold text-xl">{selectedProduct.productName}</h3>
-                    <p className="text-sm text-muted-foreground font-mono mt-1">Cód: {selectedProduct.barcode}</p>
+                    <p className="text-sm text-muted-foreground font-mono mt-1">Cod: {selectedProduct.barcode}</p>
                   </div>
                   <div className="text-right">
                     <p className="text-sm text-muted-foreground mb-1">Stock Actual</p>
@@ -195,7 +195,7 @@ export default function ShrinkagePage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="VENCIMIENTO">Vencimiento</SelectItem>
-                        <SelectItem value="ROTURA">Rotura / Daño</SelectItem>
+                        <SelectItem value="ROTURA">Rotura / Dano</SelectItem>
                         <SelectItem value="CONSUMO_INTERNO">Consumo Interno</SelectItem>
                         <SelectItem value="HURTO">Hurto</SelectItem>
                       </SelectContent>
@@ -206,7 +206,7 @@ export default function ShrinkagePage() {
                 <div className="space-y-2">
                   <label className="text-sm font-medium">Notas Adicionales (Opcional)</label>
                   <Input 
-                    placeholder="Detalles específicos..." 
+                    placeholder="Detalles especificos..." 
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     className="bg-background/50"
@@ -224,7 +224,7 @@ export default function ShrinkagePage() {
                     className="gap-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-red-500/20"
                   >
                     <Trash2 className="h-4 w-4" />
-                    Registrar Pérdida
+                    Registrar Perdida
                   </Button>
                 </div>
               </div>
@@ -292,3 +292,6 @@ export default function ShrinkagePage() {
     </div>
   );
 }
+
+
+

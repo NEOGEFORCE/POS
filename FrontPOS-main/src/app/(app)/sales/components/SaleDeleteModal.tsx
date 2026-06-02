@@ -26,8 +26,8 @@ export default function SaleDeleteModal({ isOpen, onOpenChange, sale, onSuccess 
         if (!sale) return;
         if (!reason.trim()) {
             toast({
-                title: "JUSTIFICACIÓN REQUERIDA",
-                description: "Debes explicar por qué estás anulando esta venta.",
+                title: "JUSTIFICACION REQUERIDA",
+                description: "Debes explicar por que estas anulando esta venta.",
                 variant: "destructive"
             });
             return;
@@ -97,23 +97,23 @@ export default function SaleDeleteModal({ isOpen, onOpenChange, sale, onSuccess 
                         <ModalHeader className="flex flex-col gap-1">
                             <div className="flex items-center gap-2 text-rose-500">
                                 <AlertTriangle size={20} />
-                                <h2 className="text-sm font-medium uppercase tracking-tighter tracking-tight">Confirmar Anulación Crítica</h2>
+                                <h2 className="text-sm font-medium uppercase tracking-tighter tracking-tight">Confirmar Anulacion Critica</h2>
                             </div>
                         </ModalHeader>
                         <ModalBody className="py-6">
                             <div className="bg-rose-500/5 border border-rose-500/20 rounded-2xl p-4 mb-4">
                                 <p className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-widest leading-relaxed">
-                                    Esta acción es permanente. Al anular la venta <span className="font-medium text-rose-700 dark:text-rose-300">#{sale?.id}</span>:
+                                    Esta accion es permanente. Al anular la venta <span className="font-medium text-rose-700 dark:text-rose-300">#{sale?.id}</span>:
                                 </p>
                                 <ul className="mt-2 space-y-1">
                                     <li className="text-[10px] font-medium text-rose-500/80 uppercase flex items-center gap-2">
-                                        <div className="h-1 w-1 bg-rose-500 rounded-2xl" /> Se restaurará el stock automáticamente
+                                        <div className="h-1 w-1 bg-rose-500 rounded-2xl" /> Se restaurara el stock automaticamente
                                     </li>
                                     <li className="text-[10px] font-medium text-rose-500/80 uppercase flex items-center gap-2">
-                                        <div className="h-1 w-1 bg-rose-500 rounded-2xl" /> Se revertirá la deuda del cliente
+                                        <div className="h-1 w-1 bg-rose-500 rounded-2xl" /> Se revertira la deuda del cliente
                                     </li>
                                     <li className="text-[10px] font-medium text-rose-500/80 uppercase flex items-center gap-2">
-                                        <div className="h-1 w-1 bg-rose-500 rounded-2xl" /> Se notificará a gerencia vía Telegram
+                                        <div className="h-1 w-1 bg-rose-500 rounded-2xl" /> Se notificara a gerencia via Telegram
                                     </li>
                                 </ul>
                             </div>
@@ -127,7 +127,7 @@ export default function SaleDeleteModal({ isOpen, onOpenChange, sale, onSuccess 
                                 </div>
 
                                 <Textarea
-                                    label="JUSTIFICACIÓN DE LA ANULACIÓN"
+                                    label="JUSTIFICACION DE LA ANULACION"
                                     placeholder="EJ: ERROR EN REGISTRO DE MONTO / PRODUCTO EQUIVOCADO..."
                                     variant="bordered"
                                     value={reason}

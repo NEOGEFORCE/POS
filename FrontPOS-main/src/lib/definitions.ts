@@ -58,7 +58,7 @@ export type Product = {
   netProfit?: number;
   alternateCodes?: string;
   
-  // Lógica de Empaques
+  // Logica de Empaques
   isPack?: boolean;
   baseProductBarcode?: string;
   packMultiplier?: number;
@@ -69,7 +69,7 @@ export type Product = {
 };
 
 
-export type ExpenseCategory = 'Proveedores' | 'Servicios Públicos' | 'Daños y Arreglos' | 'Otros';
+export type ExpenseCategory = 'Proveedores' | 'Servicios Publicos' | 'Danos y Arreglos' | 'Otros';
 
 export type Expense = {
   id: string;
@@ -82,7 +82,7 @@ export type Expense = {
   lenderName?: string;
   status?: 'PAID' | 'PENDING';
   taxAmount?: number;
-  creator?: User; // El usuario que registró el gasto
+  creator?: User; // El usuario que registro el gasto
 };
 
 export type Sale = {
@@ -133,7 +133,7 @@ export type Supplier = {
   // Campos legacy (compatibilidad)
   visitDay?: string;
   deliveryDay?: string;
-  // Nuevos campos multi-días
+  // Nuevos campos multi-dias
   visitDays?: string[];
   deliveryDays?: string[];
   restockMethod?: string;

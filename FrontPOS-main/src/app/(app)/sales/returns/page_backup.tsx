@@ -74,7 +74,7 @@ function ReturnsContent() {
         return type;
     };
 
-    // --- LÓGICA DE NEGOCIO (Intacta) ---
+    // --- LOGICA DE NEGOCIO (Intacta) ---
     const fetchRecentSales = async () => {
         const token = Cookies.get('org-pos-token');
         try {
@@ -196,7 +196,7 @@ function ReturnsContent() {
                             }
                         }
                     }
-                    throw new Error('No se encontró venta ni producto recientemente vendido');
+                    throw new Error('No se encontro venta ni producto recientemente vendido');
                 }
             }
         } catch (err: any) {
@@ -220,9 +220,9 @@ function ReturnsContent() {
         })));
         setSearchId(saleData.id.toString());
         setIsResultsDialogOpen(false);
-        // Al cargar una venta, asumimos que estamos en un retorno específico de esa factura
+        // Al cargar una venta, asumimos que estamos en un retorno especifico de esa factura
         // Pero el usuario quiere que sea "general". Si cargamos una venta, nos limitamos solo a esa por seguridad,
-        // pero limpiaremos la selección global para evitar confusiones.
+        // pero limpiaremos la seleccion global para evitar confusiones.
         setSelectedProductMain(null);
     };
 
@@ -286,7 +286,7 @@ function ReturnsContent() {
                     max = prod ? prod.quantity : 999999;
                 } else {
                     if (item.isManual) {
-                        // El límite para retorno manual es el total de unidades vendidas históricamente detectadas
+                        // El limite para retorno manual es el total de unidades vendidas historicamente detectadas
                         max = item.totalAvailable || (item.cashAvailable || 0) + (productSoldStats?.transfer || 0);
                     } else {
                         const alreadyReturned = item.returnedQty || 0;
@@ -297,7 +297,7 @@ function ReturnsContent() {
                 const finalQty = Math.min(Math.max(0, qty), max);
 
                 if (!isExchange && qty > max && max >= 0) {
-                    toast({ variant: 'destructive', title: 'ERROR', description: 'LÍMITE EXCEDIDO' });
+                    toast({ variant: 'destructive', title: 'ERROR', description: 'LIMITE EXCEDIDO' });
                 }
 
                 return { ...item, returnQty: finalQty, cartQuantity: finalQty };
@@ -341,7 +341,7 @@ function ReturnsContent() {
 
                 const newQty = (existing.returnQty || existing.cartQuantity || 0) + 1;
                 if (!isExchange && newQty > max) {
-                    toast({ variant: 'destructive', title: 'ERROR', description: 'LÍMITE ALCANZADO' });
+                    toast({ variant: 'destructive', title: 'ERROR', description: 'LIMITE ALCANZADO' });
                     return prev;
                 }
                 return prev.map(i => i.barcode === p.barcode ?
@@ -371,16 +371,16 @@ function ReturnsContent() {
     const totalExchange = exchangeItems.reduce((acc, item) => acc + (item.unitPrice * (item.cartQuantity || 0)), 0);
     const balance = totalReturned - totalExchange;
 
-    // Cálculo del pool de efectivo disponible para reembolso
+    // Calculo del pool de efectivo disponible para reembolso
     const cashRefundablePool = returningItems.reduce((acc, item) => {
         if (sale) {
-            // En una venta específica, el límite es el monto pagado en efectivo en esa venta
+            // En una venta especifica, el limite es el monto pagado en efectivo en esa venta
             const saleCashAmount = Number(sale.cashAmount) || 0;
             const saleTotal = Number(sale.total) || 1;
             // Proporcionalmente o simplemente el total de efectivo de la factura
             return saleCashAmount;
         } else {
-            // En modo global, sumamos el valor de las unidades que fueron históricamente en efectivo
+            // En modo global, sumamos el valor de las unidades que fueron historicamente en efectivo
             return acc + (item.unitPrice * Math.min(item.returnQty || 0, item.cashAvailable || 0));
         }
     }, 0);
@@ -404,7 +404,7 @@ function ReturnsContent() {
         change: number;
     }) => {
         if (returningItems.every(i => i.returnQty === 0)) {
-            toast({ variant: 'destructive', title: 'SISTEMA', description: 'SELECCIONA ARTÍCULOS' });
+            toast({ variant: 'destructive', title: 'SISTEMA', description: 'SELECCIONA ARTICULOS' });
             return;
         }
 
@@ -423,7 +423,7 @@ function ReturnsContent() {
                     }
 
                     if (i.returnQty > max) {
-                        throw new Error(`La cantidad de ${i.productName} excede el límite permitido (${max}).`);
+                        throw new Error(`La cantidad de ${i.productName} excede el limite permitido (${max}).`);
                     }
 
                     return {
@@ -450,7 +450,7 @@ function ReturnsContent() {
                 reason: returnReason,
                 returnType: returnType,
                 details: allDetails,
-                // Inyectamos la información del motor de pagos
+                // Inyectamos la informacion del motor de pagos
                 cashAmount: paymentData.cash,
                 transferAmount: paymentData.transfer,
                 transferSource: paymentData.transferSource,
@@ -466,15 +466,15 @@ function ReturnsContent() {
 
             if (!res.ok) {
                 const errorData = await res.json().catch(() => ({}));
-                throw new Error(errorData.error || 'Error al procesar la devolución');
+                throw new Error(errorData.error || 'Error al procesar la devolucion');
             }
 
             setLastChange(paymentData.change);
             setReturnDialogOpen(false);
             setShowSuccessScreen(false);
-            toast({ variant: 'success', description: '✅ Devolución procesada: Inventario y caja actualizados' });
+            toast({ variant: 'success', description: '✅ Devolucion procesada: Inventario y caja actualizados' });
 
-            // Auto-reset y revalidación inmediata
+            // Auto-reset y revalidacion inmediata
             fetchRecentSales();
             fetchRecentReturns();
             setSale(null);
@@ -483,7 +483,7 @@ function ReturnsContent() {
             setExchangeItems([]);
             setReturnReason('');
             
-            // Emitir señales de sincronización y revalidación inmediata
+            // Emitir señales de sincronizacion y revalidacion inmediata
             broadcastRevalidate('PRODUCT_UPDATE');
             broadcastRevalidate('STOCK_UPDATE');
 
@@ -597,10 +597,10 @@ function ReturnsContent() {
                         </div>
                         <div className="flex flex-col">
                             <h1 className="text-[13px] font-medium text-zinc-900 dark:text-white tracking-tighter uppercase tracking-tight leading-none">
-                                Gestión de <span className="text-rose-500">Devoluciones</span>
+                                Gestion de <span className="text-rose-500">Devoluciones</span>
                             </h1>
                             <p className="text-[8px] font-medium text-zinc-500 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
-                                <History size={10} className="text-rose-500" /> Auditoría de Reintegros
+                                <History size={10} className="text-rose-500" /> Auditoria de Reintegros
                             </p>
                         </div>
                     </div>
@@ -651,7 +651,7 @@ function ReturnsContent() {
                     <div className="relative group/prod z-[200]">
                         <Input
                             placeholder="PRODUCTO O BARCODE..."
-                            aria-label="Buscar producto o código de barras"
+                            aria-label="Buscar producto o codigo de barras"
                             value={productSearch}
                             onValueChange={setProductSearch}
                             classNames={{
@@ -727,7 +727,7 @@ function ReturnsContent() {
                                 <h3 className="text-zinc-900 dark:text-zinc-100 text-[12px] font-medium uppercase tracking-[0.2em] flex items-center gap-2">
                                     <RotateCcw size={16} /> REINGRESANDO
                                 </h3>
-                                <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none">Artículos para stock</p>
+                                <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none">Articulos para stock</p>
                             </CardHeader>
                             <CardBody className="p-0">
                                 {returningItems.length > 0 ? (
@@ -785,7 +785,7 @@ function ReturnsContent() {
                                 ) : (
                                     <div className="flex flex-col items-center justify-center py-20 opacity-20 tracking-tight font-medium text-gray-400 uppercase tracking-[0.4em] text-center">
                                         <RotateCcw size={64} className="mb-4" />
-                                        <span>Buscando Devolución</span>
+                                        <span>Buscando Devolucion</span>
                                     </div>
                                 )}
                             </CardBody>
@@ -816,7 +816,7 @@ function ReturnsContent() {
                             </CardHeader>
                             <CardBody className="p-2 space-y-2">
                                 <div className="space-y-1">
-                                    <label className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.2em] pl-1 block tracking-tight">Gestión</label>
+                                    <label className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.2em] pl-1 block tracking-tight">Gestion</label>
                                     <Select
                                         size="sm"
                                         aria-label="Tipo de retorno"
@@ -862,7 +862,7 @@ function ReturnsContent() {
                                         </SelectItem>
                                         <SelectItem
                                             key="EXCHANGE"
-                                            textValue="Cambio por Artículo"
+                                            textValue="Cambio por Articulo"
                                             className="group p-2 rounded-2xl hover:bg-blue-500/10 transition-colors"
                                         >
                                             <div className="flex items-center gap-3">
@@ -882,8 +882,8 @@ function ReturnsContent() {
                                         <div className="relative z-[200]">
                                             <Input
                                                 size="sm"
-                                                placeholder="BUSCAR ARTÍCULO..."
-                                                aria-label="Buscar artículo para cambio"
+                                                placeholder="BUSCAR ARTICULO..."
+                                                aria-label="Buscar articulo para cambio"
                                                 label="PRODUCTO PARA CAMBIO"
                                                 labelPlacement="outside"
                                                 value={exchangeSearch}
@@ -964,7 +964,7 @@ function ReturnsContent() {
                                         </div>
                                         <div className="text-center">
                                             <p className="text-xs font-medium uppercase text-zinc-900 dark:text-zinc-50 tracking-widest tracking-tight">MODALIDAD DE REEMBOLSO ACTIVA</p>
-                                            <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-widest mt-1 max-w-[200px] mx-auto">El valor de los items retornados se reintegrará al pool de caja.</p>
+                                            <p className="text-[10px] font-bold text-gray-400 dark:text-zinc-600 uppercase tracking-widest mt-1 max-w-[200px] mx-auto">El valor de los items retornados se reintegrara al pool de caja.</p>
                                         </div>
                                     </div>
                                 )}
@@ -988,13 +988,13 @@ function ReturnsContent() {
                     <div className="mt-4 px-1 pb-4 animate-in fade-in slide-in-from-bottom-5 duration-700">
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-                            {/* COLUMNA IZQUIERDA: VENTAS PARA GESTIÓN */}
+                            {/* COLUMNA IZQUIERDA: VENTAS PARA GESTION */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3 pl-1">
                                     <div className="h-6 w-6 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 shadow-inner">
                                         <History size={14} />
                                     </div>
-                                    <h3 className="text-[10px] font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">Ventas para Gestión</h3>
+                                    <h3 className="text-[10px] font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">Ventas para Gestion</h3>
                                     <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
 
@@ -1008,7 +1008,7 @@ function ReturnsContent() {
                                             <TableColumn>FACTURA</TableColumn>
                                             <TableColumn>CLIENTE</TableColumn>
                                             <TableColumn align="end">TOTAL</TableColumn>
-                                            <TableColumn align="center" width={60}>ACCIÓN</TableColumn>
+                                            <TableColumn align="center" width={60}>ACCION</TableColumn>
                                         </TableHeader>
                                         <TableBody emptyContent="SIN VENTAS">
                                             {recentSales.slice(0, 10).map((s) => (
@@ -1043,13 +1043,13 @@ function ReturnsContent() {
                                 </Card>
                             </div>
 
-                            {/* COLUMNA DERECHA: AUDITORÍA DEVOLUCIONES */}
+                            {/* COLUMNA DERECHA: AUDITORIA DEVOLUCIONES */}
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3 pl-1">
                                     <div className="h-6 w-6 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-500 shadow-inner">
                                         <RotateCcw size={14} className="rotate-180" />
                                     </div>
-                                    <h3 className="text-[10px] font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">Auditoría Devoluciones</h3>
+                                    <h3 className="text-[10px] font-medium uppercase tracking-[0.3em] text-zinc-500 dark:text-zinc-400">Auditoria Devoluciones</h3>
                                     <div className="h-px flex-1 bg-gradient-to-r from-gray-100 to-transparent dark:from-zinc-800" />
                                 </div>
 
@@ -1144,7 +1144,7 @@ function ReturnsContent() {
                     </div>
                 )}
 
-                {/* BARRA INFERIOR DE ACCIÓN (FIXED) */}
+                {/* BARRA INFERIOR DE ACCION (FIXED) */}
                 {(returningItems.length > 0 || exchangeItems.length > 0) && (
                     <div className="fixed bottom-0 left-0 right-0 z-40 animate-in slide-in-from-bottom-full duration-500 px-2 pb-2">
                         <div className="card-base border-none dark:bg-zinc-950/90 p-2 border border-gray-200 dark:border-white/10 flex items-center justify-between max-w-7xl mx-auto w-full rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all">
@@ -1182,13 +1182,13 @@ function ReturnsContent() {
                                 onPress={() => setReturnDialogOpen(true)}
                                 isDisabled={(returningItems.length === 0 && exchangeItems.length === 0)}
                             >
-                                <span className="uppercase tracking-[0.2em]">{balance >= 0 ? 'PROCESAR DEVOLUCIÓN' : 'COBRAR EXCEDENTE Y FINALIZAR'}</span>
+                                <span className="uppercase tracking-[0.2em]">{balance >= 0 ? 'PROCESAR DEVOLUCION' : 'COBRAR EXCEDENTE Y FINALIZAR'}</span>
                             </Button>
                         </div>
                     </div>
                 )}
 
-                {/* MODAL: CONFIRMAR DEVOLUCIÓN (Optimizado Mobile) */}
+                {/* MODAL: CONFIRMAR DEVOLUCION (Optimizado Mobile) */}
                 <UniversalPaymentModal
                     isOpen={returnDialogOpen}
                     onOpenChange={setReturnDialogOpen}
@@ -1206,7 +1206,7 @@ function ReturnsContent() {
                     flowType="out"
                 />
 
-                {/* MODAL: RESULTADOS BÚSQUEDA */}
+                {/* MODAL: RESULTADOS BUSQUEDA */}
                 <Modal isOpen={isResultsDialogOpen} onOpenChange={setIsResultsDialogOpen} backdrop="blur" size="4xl" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]", header: "border-b border-gray-100 dark:border-white/5 p-8", body: "p-8", footer: "border-t border-gray-100 dark:border-white/5 p-8" }}>
                     <ModalContent>
                         {(onClose) => (
@@ -1221,12 +1221,12 @@ function ReturnsContent() {
                                 </ModalHeader>
                                 <ModalBody>
                                     <div className="rounded-[2rem] border border-gray-200 dark:border-white/5 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-                                        <Table aria-label="Resultados búsqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-[#18181b] text-gray-500 dark:text-zinc-400 font-medium uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
+                                        <Table aria-label="Resultados busqueda" removeWrapper isCompact classNames={{ th: "bg-gray-100 dark:bg-[#18181b] text-gray-500 dark:text-zinc-400 font-medium uppercase text-[10px] tracking-widest h-12", td: "py-4 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-transparent", tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-l-4 border-transparent hover:border-emerald-500 cursor-pointer transition-colors group" }}>
                                             <TableHeader>
                                                 <TableColumn>ID</TableColumn>
                                                 <TableColumn>CLIENTE</TableColumn>
                                                 <TableColumn align="end">TOTAL</TableColumn>
-                                                <TableColumn align="center">ACCIÓN</TableColumn>
+                                                <TableColumn align="center">ACCION</TableColumn>
                                             </TableHeader>
                                             <TableBody>
                                                 {searchResults.map((s) => (
@@ -1283,13 +1283,13 @@ function ReturnsContent() {
                     </ModalContent>
                 </Modal>
 
-                {/* SCANNER OVERLAY (Este se mantiene oscuro por diseño de UI de cámaras) */}
+                {/* SCANNER OVERLAY (Este se mantiene oscuro por diseno de UI de camaras) */}
                 {isScannerOpen && (
                     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/90">
                         <div className="relative w-full max-w-2xl aspect-video bg-white dark:bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-zinc-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                             <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-10 pointer-events-none">
                                 <h2 className="text-white font-medium uppercase tracking-widest text-sm flex items-center gap-2">
-                                    <Camera className="h-5 w-5 text-rose-500" /> Escáner Activo
+                                    <Camera className="h-5 w-5 text-rose-500" /> Escaner Activo
                                 </h2>
                             </div>
                             <ScannerOverlay

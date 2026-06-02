@@ -48,7 +48,7 @@ const CategoryFormModal = memo(({
       await onSave();
     } catch (error: any) {
       console.error(error);
-      toast({ variant: 'destructive', title: 'ERROR', description: error?.message || 'FALLO AL GUARDAR CATEGORÍA' });
+      toast({ variant: 'destructive', title: 'ERROR', description: error?.message || 'FALLO AL GUARDAR CATEGORIA' });
     } finally {
       setIsSaving(false);
     }
@@ -79,10 +79,10 @@ const CategoryFormModal = memo(({
             <ModalHeader className="px-5 md:px-12 py-6 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-[#18181b]/50 rounded-t-[2rem]">
               <div className="flex flex-col min-w-0">
                 <h2 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight leading-none">
-                  {isEdit ? "Gestión de Categoría" : "Nueva Categoría"}
+                  {isEdit ? "Gestion de Categoria" : "Nueva Categoria"}
                 </h2>
                 <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest mt-2 flex items-center gap-2">
-                  <ShieldCheck size={12} /> PROTOCOLO TAXONÓMICO
+                  <ShieldCheck size={12} /> PROTOCOLO TAXONOMICO
                 </p>
               </div>
             </ModalHeader>
@@ -119,7 +119,7 @@ const CategoryFormModal = memo(({
                     />
                   )}
                   <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight px-2">
-                    * El nombre se normalizará automáticamente a mayúsculas para mantener la integridad del catálogo.
+                    * El nombre se normalizara automaticamente a mayusculas para mantener la integridad del catalogo.
                   </p>
                 </div>
               </div>

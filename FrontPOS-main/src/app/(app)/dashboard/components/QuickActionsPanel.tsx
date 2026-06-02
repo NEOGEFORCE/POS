@@ -17,7 +17,7 @@ export default function QuickActionsPanel() {
             shadow: ""
         },
         {
-            label: "Añadir Producto",
+            label: "Anadir Producto",
             icon: PlusCircle,
             href: "/products",
             color: "amber",
@@ -54,8 +54,8 @@ export default function QuickActionsPanel() {
                         <Landmark size={20} strokeWidth={2.5} className="text-zinc-900 dark:text-zinc-100" />
                     </div>
                     <div>
-                        <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Acciones Rápidas</h3>
-                        <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Gestión Inmediata</p>
+                        <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Acciones Rapidas</h3>
+                        <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Gestion Inmediata</p>
                     </div>
                 </div>
 
@@ -85,7 +85,7 @@ export default function QuickActionsPanel() {
                 <div className="mt-6 p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10">
                     <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-[0.2em] mb-1">Tip de Eficiencia</p>
                     <p className="text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed tracking-tight">
-                        Usa las acciones rápidas para reducir el tiempo de atención en caja. "Zero-Friction" es la clave.
+                        Usa las acciones rapidas para reducir el tiempo de atencion en caja. "Zero-Friction" es la clave.
                     </p>
                 </div>
             </CardBody>

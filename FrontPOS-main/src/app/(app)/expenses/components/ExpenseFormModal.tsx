@@ -1,4 +1,4 @@
-﻿import React, { memo, useState, useEffect } from 'react';
+import React, { memo, useState, useEffect } from 'react';
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   Button, Input, Autocomplete, AutocompleteItem, Card, CardBody, Switch, cn
@@ -40,6 +40,10 @@ interface LocalExpenseState {
   linkedOrderId?: number;
   creator?: any;
   taxAmount: number;
+  cashAmount: number;
+  nequiAmount: number;
+  daviplataAmount: number;
+  fondoAmount: number;
 }
 
 interface PurchaseOrder {
@@ -57,9 +61,9 @@ interface PurchaseOrder {
 
 const CATEGORIES = [
   { id: 'Proveedores', label: 'Proveedores', icon: Building2, color: 'sky' },
-  { id: 'Servicios Públicos', label: 'Servicios Públicos', icon: Zap, color: 'amber' },
-  { id: 'Nómina', label: 'Nómina', icon: Briefcase, color: 'emerald' },
-  { id: 'Daños / Arreglos', label: 'Daños / Arreglos', icon: Layers, color: 'rose' },
+  { id: 'Servicios Publicos', label: 'Servicios Publicos', icon: Zap, color: 'amber' },
+  { id: 'Nomina', label: 'Nomina', icon: Briefcase, color: 'emerald' },
+  { id: 'Danos / Arreglos', label: 'Danos / Arreglos', icon: Layers, color: 'rose' },
   { id: 'Otros Gastos', label: 'Otros Gastos', icon: HandCoins, color: 'gray' }
 ];
 
@@ -115,9 +119,17 @@ const ExpenseFormModal = memo(({
   }, [localExpense, isOpen, isEdit]);
 
   useEffect(() => {
+    const defaultMixed = {
+      cashAmount: 0,
+      nequiAmount: 0,
+      daviplataAmount: 0,
+      fondoAmount: 0
+    };
+
     if (isOpen && initialExpense) {
       setLocalExpense({
         ...initialExpense,
+        ...defaultMixed,
         description: initialExpense.description || '',
         amount: initialExpense.amount || '',
         paymentSource: initialExpense.paymentSource || 'EFECTIVO',
@@ -126,7 +138,11 @@ const ExpenseFormModal = memo(({
         lenderName: initialExpense.lenderName || '',
         status: initialExpense.status || 'PAID',
         isManualDescription: true,
-        taxAmount: initialExpense.taxAmount || 0
+        taxAmount: initialExpense.taxAmount || 0,
+        cashAmount: (initialExpense as any).cashAmount || 0,
+        nequiAmount: (initialExpense as any).nequiAmount || 0,
+        daviplataAmount: (initialExpense as any).daviplataAmount || 0,
+        fondoAmount: (initialExpense as any).fondoAmount || 0
       });
       // Sincronizar el input con el nombre del proveedor si existe
       const sName = suppliers?.find((s: any) => s.id === initialExpense.supplierId)?.name || '';
@@ -141,11 +157,12 @@ const ExpenseFormModal = memo(({
         lenderName: '',
         status: 'PAID',
         isManualDescription: false,
-        taxAmount: 0
+        taxAmount: 0,
+        ...defaultMixed
       });
       setSupplierInputValue('');
     }
-    // Resetear estado de envío al abrir/cerrar
+    // Resetear estado de envio al abrir/cerrar
     setIsSubmitting(false);
   }, [isOpen, initialExpense, suppliers]);
 
@@ -161,7 +178,7 @@ const ExpenseFormModal = memo(({
     // Prioridad 1: Empieza con el nombre (STRICT)
     const startsWithName = cleanSuppliers.filter(s => s.name.toLowerCase().startsWith(search));
     
-    // Prioridad 2: Contiene el nombre pero no empieza con él
+    // Prioridad 2: Contiene el nombre pero no empieza con el
     const containsName = cleanSuppliers.filter(s => 
         s.name.toLowerCase().includes(search) && !s.name.toLowerCase().startsWith(search)
     );
@@ -176,7 +193,7 @@ const ExpenseFormModal = memo(({
     return [...startsWithName, ...containsName, ...matchesId];
   }, [suppliers, supplierInputValue]);
 
-  // Lógica de Autocompletado y Bloqueo
+  // Logica de Autocompletado y Bloqueo
   useEffect(() => {
     if (isEdit) return;
 
@@ -190,15 +207,15 @@ const ExpenseFormModal = memo(({
           description: `${supplierName} - PAGO DE PROVEEDOR`.toUpperCase(),
         }));
       }
-    } else if (localExpense.category === 'Nómina') {
+    } else if (localExpense.category === 'Nomina') {
       if (!localExpense.isManualDescription) {
         setLocalExpense((prev: LocalExpenseState) => ({
           ...prev,
-          description: 'PAGO DE NÓMINA',
+          description: 'PAGO DE NOMINA',
         }));
       }
     } else {
-      // Si no es proveedores o nómina y no ha sido editado manualmente, vaciar para que el usuario escriba
+      // Si no es proveedores o nomina y no ha sido editado manualmente, vaciar para que el usuario escriba
       if (!localExpense.isManualDescription) {
         setLocalExpense((prev: LocalExpenseState) => ({ ...prev, description: '' }));
       }
@@ -218,7 +235,7 @@ const ExpenseFormModal = memo(({
       if (field === 'description') {
         newState.isManualDescription = true;
       }
-      // SMART AUTOFILL: Si es préstamo de proveedor, sugerir el nombre del proveedor como acreedor
+      // SMART AUTOFILL: Si es prestamo de proveedor, sugerir el nombre del proveedor como acreedor
       if (field === 'paymentSource' && value === 'PRESTAMO' && prev.category === 'Proveedores') {
         const supplierName = suppliers?.find((s: any) => s.id === prev.supplierId)?.name || '';
         if (supplierName) {
@@ -235,16 +252,22 @@ const ExpenseFormModal = memo(({
     });
   };
 
-  // CÁLCULO AUTOMÁTICO 4x1000 PARA NEQUI
+  // CALCULO AUTOMATICO 4x1000 PARA NEQUI
   useEffect(() => {
-    const amountNum = Number(localExpense.amount) || 0;
+    let nequiBase = 0;
     if (localExpense.paymentSource === 'NEQUI') {
-      const tax = Math.ceil(amountNum * 0.004); // 4x1000
+      nequiBase = Number(localExpense.amount) || 0;
+    } else if (localExpense.paymentSource === 'MIXTO') {
+      nequiBase = Number(localExpense.nequiAmount) || 0;
+    }
+    
+    if (nequiBase > 0) {
+      const tax = Math.ceil(nequiBase * 0.004); // 4x1000
       setLocalExpense(prev => ({ ...prev, taxAmount: tax }));
     } else {
       setLocalExpense(prev => ({ ...prev, taxAmount: 0 }));
     }
-  }, [localExpense.paymentSource, localExpense.amount]);
+  }, [localExpense.paymentSource, localExpense.amount, localExpense.nequiAmount]);
 
   const handleSaveSupplier = async (supplierData: Partial<Supplier>) => {
     const token = Cookies.get('org-pos-token');
@@ -257,12 +280,12 @@ const ExpenseFormModal = memo(({
 
       await mutateSuppliers();
 
-      // El backend de Go usa 'id' (minúscula) por el tag json, pero verificamos ambos
+      // El backend de Go usa 'id' (minuscula) por el tag json, pero verificamos ambos
       const supplierId = newSupplier?.id || newSupplier?.ID;
       const supplierName = newSupplier?.name || supplierData.name || '';
 
       if (supplierId) {
-        // Actualizamos ID y Concepto de una vez para que no quede vacío
+        // Actualizamos ID y Concepto de una vez para que no quede vacio
         setLocalExpense((prev: any) => ({
           ...prev,
           supplierId: supplierId,
@@ -274,10 +297,10 @@ const ExpenseFormModal = memo(({
         
         setSupplierInputValue(supplierName);
         setIsSupplierModalOpen(false);
-        toast({ title: 'ÉXITO', description: 'PROVEEDOR CREADO Y SELECCIONADO' });
+        toast({ title: 'EXITO', description: 'PROVEEDOR CREADO Y SELECCIONADO' });
       } else {
-        console.error('El backend no devolvió ID:', newSupplier);
-        throw new Error('EL SERVIDOR NO DEVOLVIÓ EL ID DEL PROVEEDOR');
+        console.error('El backend no devolvio ID:', newSupplier);
+        throw new Error('EL SERVIDOR NO DEVOLVIO EL ID DEL PROVEEDOR');
       }
     } catch (error: any) {
       console.error('Error in handleSaveSupplier:', error);
@@ -354,10 +377,10 @@ const ExpenseFormModal = memo(({
               <ModalBody className="px-8 py-8">
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
-                  {/* COL 1: CLASIFICACIÓN */}
+                  {/* COL 1: CLASIFICACION */}
                   <div className="space-y-6">
                     <div className="space-y-3">
-                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">1. Clasificación</label>
+                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">1. Clasificacion</label>
                       <div className="grid grid-cols-2 gap-2">
                         {CATEGORIES.map(cat => (
                           <button
@@ -398,7 +421,7 @@ const ExpenseFormModal = memo(({
                           inputValue={supplierInputValue}
                           onInputChange={(value) => setSupplierInputValue(value)}
                           selectedKey={localExpense.supplierId ? String(localExpense.supplierId) : null}
-                          menuTrigger="focus" // Apertura inmediata para móvil
+                          menuTrigger="focus" // Apertura inmediata para movil
                           onSelectionChange={(key) => {
                             if (!key) {
                               updateField('supplierId', null);
@@ -452,11 +475,12 @@ const ExpenseFormModal = memo(({
                       <Input
                         placeholder="0"
                         inputMode="decimal"
+                        isReadOnly={localExpense.paymentSource === 'MIXTO'}
                         value={localExpense.amount ? formatCurrency(localExpense.amount) : ''}
                         onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('amount', parseCurrency(v))}
                         startContent={<span className="text-xl font-medium text-rose-500">$</span>}
-                        classNames={{ inputWrapper: "h-16 bg-rose-50/50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl px-6", input: "font-medium text-2xl text-zinc-900 dark:text-zinc-50 tabular-nums" }}
+                        classNames={{ inputWrapper: `h-16 bg-rose-50/50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl px-6 ${localExpense.paymentSource === 'MIXTO' ? 'opacity-80' : ''}`, input: "font-medium text-2xl text-zinc-900 dark:text-zinc-50 tabular-nums" }}
                       />
                     </div>
                     <div className="space-y-3">
@@ -483,11 +507,43 @@ const ExpenseFormModal = memo(({
                       </div>
                     </div>
 
+                    {/* Campos de Pago Mixto */}
+                    {localExpense.paymentSource === 'MIXTO' && (
+                      <div className="mt-4 grid grid-cols-2 gap-4 p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-400">
+                        {[
+                          { id: 'cashAmount', label: 'Caja', icon: Wallet }, 
+                          { id: 'nequiAmount', label: 'Nequi', icon: Zap }, 
+                          { id: 'daviplataAmount', label: 'Daviplata', icon: Zap }, 
+                          { id: 'fondoAmount', label: 'Fondo', icon: Landmark }
+                        ].map(field => (
+                          <div key={field.id} className="space-y-1.5">
+                            <label className="text-[9px] font-medium text-gray-500 uppercase tracking-widest">{field.label}</label>
+                            <Input
+                              placeholder="0"
+                              inputMode="decimal"
+                              value={(localExpense as any)[field.id] ? formatCurrency((localExpense as any)[field.id]) : ''}
+                              onFocus={(e) => e.target.select()}
+                              onValueChange={(v) => {
+                                const num = parseCurrency(v) || 0;
+                                setLocalExpense((prev: any) => {
+                                  const newState = { ...prev, [field.id]: num };
+                                  newState.amount = (newState.cashAmount || 0) + (newState.nequiAmount || 0) + (newState.daviplataAmount || 0) + (newState.fondoAmount || 0);
+                                  return newState;
+                                });
+                              }}
+                              startContent={<field.icon size={12} className="text-gray-400" />}
+                              classNames={{ inputWrapper: "h-10 bg-white dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-xl px-3", input: "font-medium text-sm text-zinc-900 dark:text-zinc-50 tabular-nums" }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     {/* Campo de Acreedor - DISEÑO DE ALTO IMPACTO (ROJO) */}
                     {localExpense.paymentSource === 'PRESTAMO' && (
                       <div className="mt-4 p-4 bg-rose-500/10 border border-rose-500/30 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-400">
                         <label className="block text-[10px] font-medium text-rose-500 mb-1.5 uppercase tracking-widest px-1">
-                          ACREEDOR / QUIÉN PRESTA EL DINERO *
+                          ACREEDOR / QUIEN PRESTA EL DINERO *
                         </label>
                         <Input
                           placeholder="NOMBRE DEL ACREEDOR..."
@@ -505,7 +561,7 @@ const ExpenseFormModal = memo(({
                         />
                         <p className="text-[8px] font-medium text-rose-600 dark:text-rose-400 uppercase mt-2 px-1 tracking-tighter flex items-center gap-1.5">
                           <span className="w-1.5 h-1.5 rounded-2xl bg-rose-500 animate-pulse" />
-                          ESTE GASTO SE REGISTRARÁ COMO DEUDA PENDIENTE
+                          ESTE GASTO SE REGISTRARA COMO DEUDA PENDIENTE
                         </p>
                       </div>
                     )}
@@ -579,12 +635,12 @@ const ExpenseFormModal = memo(({
                       });
                       if (!result.isValid) {
                         setValidationErrors(result.errors);
-                        toast({ title: "Validación Fallida", description: "Campos incompletos", variant: "destructive" });
+                        toast({ title: "Validacion Fallida", description: "Campos incompletos", variant: "destructive" });
                         return;
                       }
                       setValidationErrors([]);
 
-                      // Validar Prestamista si es Préstamo
+                      // Validar Prestamista si es Prestamo
                       if (localExpense.paymentSource === 'PRESTAMO' && !localExpense.lenderName?.trim()) {
                         toast({ variant: 'destructive', title: 'DATOS FALTANTES', description: 'EL NOMBRE DEL PRESTAMISTA ES OBLIGATORIO' });
                         return;
@@ -592,8 +648,25 @@ const ExpenseFormModal = memo(({
 
                       setIsSubmitting(true);
                       try {
+                        let finalPaymentSource = localExpense.paymentSource;
+                        if (localExpense.paymentSource === 'MIXTO') {
+                          const parts = [];
+                          if (localExpense.nequiAmount > 0) parts.push(`NEQUI: $${formatCurrency(localExpense.nequiAmount)}`);
+                          if (localExpense.daviplataAmount > 0) parts.push(`DAVIPLATA: $${formatCurrency(localExpense.daviplataAmount)}`);
+                          if (localExpense.cashAmount > 0) parts.push(`CAJA: $${formatCurrency(localExpense.cashAmount)}`);
+                          if (localExpense.fondoAmount > 0) parts.push(`FONDO: $${formatCurrency(localExpense.fondoAmount)}`);
+                          finalPaymentSource = parts.join(' / ');
+                          if (!finalPaymentSource) finalPaymentSource = 'MIXTO';
+                        }
+
+                        const baseAmount = Number(localExpense.amount) || 0;
+                        const gmf = localExpense.taxAmount || 0;
+                        
                         const payload = {
                           ...localExpense,
+                          paymentSource: finalPaymentSource,
+                          amount: baseAmount + gmf,
+                          taxAmount: 0, // Se envia en 0 para evitar doble suma en el backend, ya que el amount incluye el GMF
                           linkedOrderId: selectedOrderId,
                           status: localExpense.paymentSource === 'PRESTAMO' ? 'PENDING' : 'PAID'
                         };

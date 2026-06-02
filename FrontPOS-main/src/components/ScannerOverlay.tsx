@@ -77,7 +77,7 @@ export function ScannerOverlay({
             return;
         }
 
-        // CONFIGURACIÓN OPTIMIZADA PARA MÁXIMA VELOCIDAD Y PRECISIÓN
+        // CONFIGURACION OPTIMIZADA PARA MAXIMA VELOCIDAD Y PRECISION
         const config = {
             fps: 25,
             qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
@@ -96,12 +96,12 @@ export function ScannerOverlay({
         };
 
         const onScanSuccess = (decodedText: string) => {
-            // EVITAR SATURACIÓN: Si ya estamos procesando un código, ignorar el resto
+            // EVITAR SATURACION: Si ya estamos procesando un codigo, ignorar el resto
             if (isProcessingRef.current) return;
             
             isProcessingRef.current = true;
             
-            // Feedback visual y táctil inmediato
+            // Feedback visual y tactil inmediato
             setFlashActive(true);
             if (navigator.vibrate) navigator.vibrate(80);
             setTimeout(() => setFlashActive(false), 300);
@@ -166,7 +166,7 @@ export function ScannerOverlay({
                         throw new Error("No cameras found");
                     }
                 } catch (fallbackErr) {
-                    console.error("Error al iniciar cámara:", fallbackErr);
+                    console.error("Error al iniciar camara:", fallbackErr);
                     setInitError(String(fallbackErr));
                 }
             }
@@ -213,25 +213,25 @@ export function ScannerOverlay({
                         <div className="h-16 w-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mb-4 border border-amber-500/20">
                             <AlertCircle className="h-8 w-8 text-amber-500" />
                         </div>
-                        <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">CÁMARA BLOQUEADA POR SEGURIDAD</h3>
+                        <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">CAMARA BLOQUEADA POR SEGURIDAD</h3>
                         <p className="text-[10px] font-bold text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
-                            El navegador bloquea la cámara en conexiones <span className="text-amber-500 font-medium">HTTP</span>.
+                            El navegador bloquea la camara en conexiones <span className="text-amber-500 font-medium">HTTP</span>.
                             <br/><br/>
-                            Para usar la cámara desde esta IP (<span className="text-white underline">{typeof window !== 'undefined' ? window.location.hostname : ''}</span>), necesitas configurar <span className="text-zinc-100 font-medium tracking-tight text-[11px]">HTTPS</span> o acceder vía <span className="text-sky-400 font-medium tracking-tight text-[11px]">localhost</span>.
+                            Para usar la camara desde esta IP (<span className="text-white underline">{typeof window !== 'undefined' ? window.location.hostname : ''}</span>), necesitas configurar <span className="text-zinc-100 font-medium tracking-tight text-[11px]">HTTPS</span> o acceder via <span className="text-sky-400 font-medium tracking-tight text-[11px]">localhost</span>.
                         </p>
                         <button onClick={onClose} className="px-8 h-12 bg-white text-black rounded-2xl font-medium uppercase text-xs active:scale-95 transition-all"> ENTENDIDO </button>
                     </div>
                 )}
 
-                {/* ERROR DE INICIALIZACIÓN (Permisos denegados, etc) */}
+                {/* ERROR DE INICIALIZACION (Permisos denegados, etc) */}
                 {initError && !isInsecure && (
                     <div className="absolute inset-0 z-[100] bg-zinc-950 flex flex-col items-center justify-center p-8 text-center">
                         <div className="h-16 w-16 rounded-2xl bg-rose-500/10 flex items-center justify-center mb-4 border border-rose-500/20">
                             <AlertCircle className="h-8 w-8 text-rose-500" />
                         </div>
-                        <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">ERROR DE CÁMARA</h3>
+                        <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">ERROR DE CAMARA</h3>
                         <p className="text-[10px] font-bold text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
-                            No se pudo acceder a la cámara. Asegúrate de haber concedido los permisos necesarios.
+                            No se pudo acceder a la camara. Asegurate de haber concedido los permisos necesarios.
                             <br/><br/>
                             <span className="text-rose-500/50 font-mono text-[8px] break-all">{initError}</span>
                         </p>
@@ -241,19 +241,19 @@ export function ScannerOverlay({
 
                 <div id={uniqueId} ref={elementRef} className="w-full h-full object-cover min-h-[250px] min-w-[250px]"></div>
 
-                {/* INTERFAZ VISUAL DEL ESCÁNER (Omnidireccional / Full-Screen) */}
+                {/* INTERFAZ VISUAL DEL ESCANER (Omnidireccional / Full-Screen) */}
                 <div className="absolute inset-0 pointer-events-none z-10">
                     <div className={`absolute left-0 right-0 h-0.5 bg-zinc-800 border border-white/5 shadow-[0_0_15px_3px_rgba(16,185,129,0.8)] animate-[scan_2s_ease-in-out_infinite] ${flashActive ? 'hidden' : ''}`}></div>
                 </div>
 
-                {/* TOP BAR: Título + Flash + Cerrar */}
+                {/* TOP BAR: Titulo + Flash + Cerrar */}
                 <div className="absolute top-6 left-6 right-6 flex justify-between items-center z-20 pointer-events-auto">
                     <h2 id="scanner-title" className="text-white font-medium uppercase tracking-widest text-sm drop-shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center gap-2 bg-black/40 px-4 py-2 rounded-2xl">
                         <ScanLine className="h-5 w-5 text-zinc-100" />
-                        {title || 'ESCÁNER RÁPIDO'}
+                        {title || 'ESCANER RAPIDO'}
                     </h2>
                     <div className="flex items-center gap-2">
-                        {/* BOTÓN DE FLASH / LINTERNA */}
+                        {/* BOTON DE FLASH / LINTERNA */}
                         <button
                             onClick={toggleTorch}
                             className={`h-10 w-10 rounded-2xl  flex items-center justify-center transition-all border ${
@@ -352,7 +352,7 @@ export function ScannerOverlay({
                 #reader__dashboard_section_csr, 
                 #reader__dashboard_section_swaplink,
                 #reader__status_span { display: none !important; }
-                /* Ocultar el cuadro rojo que trae la librería por defecto cuando le pasas un qrbox */
+                /* Ocultar el cuadro rojo que trae la libreria por defecto cuando le pasas un qrbox */
                 #qr-shaded-region { border-color: rgba(0,0,0,0.5) !important; }
             `}} />
         </div>,

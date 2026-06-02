@@ -2,7 +2,7 @@
 
 import React, { useState, useRef } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Spinner } from "@heroui/react";
-import { Upload, Sparkles, AlertTriangle, Check, X, ShieldCheck, Image as ImageIcon, Camera } from 'lucide-react';
+import { Upload, Sparkles, AlertTriangle, Check, X, ShieldCheck, Image as ImageIcon, Camera, Receipt, CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Cookies from 'js-cookie';
 
@@ -25,6 +25,10 @@ export default function InvoiceReaderModal({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
+  // Pistas fiscales — el usuario indica que impuestos buscar antes del OCR
+  const [expectIVA, setExpectIVA] = useState(false);
+  const [expectIBUA, setExpectIBUA] = useState(false);
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
@@ -43,24 +47,58 @@ export default function InvoiceReaderModal({
     }
   };
 
-  // Valida que la respuesta sea JSON antes de parsearla
+  // Valida que la respuesta sea JSON antes de parsearla.
+  // Extrae mensaje de error robusto: soporta shape {error:string},
+  // {error:{message,...}}, {userMessage}, {message}.
   const safeJson = async (res: Response) => {
     if (!res.ok) {
-       const errData = await res.json().catch(() => ({}));
-       throw new Error(errData.error || errData.message || `Fallo en el servidor: ${res.status}`);
+      let errMsg = `Error ${res.status} ${res.statusText || ''}`.trim();
+      try {
+        const text = await res.text();
+        // Loguear el body crudo para diagnostico cuando falla
+        console.error('[OCR] response body:', text);
+        try {
+          const errData = JSON.parse(text);
+          if (typeof errData?.error === 'string') {
+            errMsg = errData.error;
+          } else if (typeof errData?.error?.message === 'string') {
+            errMsg = errData.error.message;
+          } else if (typeof errData?.userMessage === 'string') {
+            errMsg = errData.userMessage;
+          } else if (typeof errData?.message === 'string') {
+            errMsg = errData.message;
+          }
+        } catch {
+          // body no es JSON (HTML 404 del SPA fallback) — usar texto crudo abreviado
+          if (text && !text.startsWith('<')) {
+            errMsg = text.slice(0, 200);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+      throw new Error(errMsg);
     }
-    const contentType = res.headers.get("content-type");
-    if (!contentType || !contentType.includes("application/json")) {
-      throw new Error("El servidor no devolvió JSON válido. Posible error de ruta (404).");
+    const contentType = res.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      throw new Error('El servidor no devolvio JSON valido. Posible error de ruta (404).');
     }
     return res.json();
   };
 
   const handleProcess = async () => {
-    if (!selectedFile || !previewUrl) return;
-    if (!supplierId || supplierId === 'none') {
-        toast({ title: 'Atención', description: 'Selecciona un proveedor antes de leer la factura.', variant: 'destructive' });
-        return;
+    // Validaciones explicitas con feedback claro al usuario.
+    if (!selectedFile || !previewUrl) {
+      toast({ title: 'Falta archivo', description: 'Toma una foto o sube una imagen de la factura primero.', variant: 'destructive' });
+      return;
+    }
+    if (!supplierId || supplierId === 'none' || supplierId === '') {
+      toast({ title: 'Falta proveedor', description: 'Selecciona un proveedor antes de leer la factura.', variant: 'destructive' });
+      return;
+    }
+    if (isProcessing) {
+      // Doble click protection
+      return;
     }
 
     setIsProcessing(true);
@@ -98,49 +136,108 @@ export default function InvoiceReaderModal({
       const payload = {
         supplierId: Number(supplierId),
         imageBase64: base64Image,
-        mimeType: selectedFile.type || 'image/jpeg'
+        mimeType: 'image/jpeg', // El canvas toDataURL siempre lo convierte a image/jpeg
+        // Pistas fiscales del usuario — el backend ajusta el system prompt
+        // para forzar a Claude a extraer estos porcentajes por linea.
+        expectedTaxes: {
+          iva: expectIVA,
+          ibua: expectIBUA,
+          icui: false,
+        },
       };
 
       const headers = {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
+        'Authorization': `Bearer ${token}`,
       };
 
-      let data: any = null;
+      // Endpoint real del backend Go (ProductHandler.ScanInvoice).
+      // El handler ya limpia el prefijo "data:image/...;base64," internamente
+      // y usa Claude vision para extraer items.
+      const ocrUrl = `${apiUrl}/inventory/scan-invoice`;
+      const res = await fetch(ocrUrl, { method: 'POST', headers, body: JSON.stringify(payload) });
+      const data = await safeJson(res);
 
-      // ── INTENTO 1: OCR Estándar ─────────────────────────────────────────
-      try {
-        const ocrUrl = `${apiUrl}/inventory/process-invoice`;
-        console.log("Enviando OCR a URL:", ocrUrl);
-        const res1 = await fetch(ocrUrl, { method: 'POST', headers, body: JSON.stringify(payload) });
-        data = await safeJson(res1);
-        console.log("[Pipeline] OCR Estándar exitoso:", data);
-      } catch (ocrError: any) {
-        // ── FALLBACK: Claude AI ─────────────────────────────────────────────
-        console.warn("[Pipeline] OCR Estándar falló, activando IA de respaldo...", ocrError?.message);
-        const aiUrl = `${apiUrl}/inventory/invoice-ai`;
-        console.log("Enviando OCR a URL:", aiUrl);
-        const res2 = await fetch(aiUrl, { method: 'POST', headers, body: JSON.stringify(payload) });
-        data = await safeJson(res2);
-        console.log("[Pipeline] Claude AI exitoso:", data);
+      // ── TAREA 1: Auditoria inmediata de la respuesta cruda ──────────────
+      // eslint-disable-next-line no-console
+      console.log("📦 RESPUESTA CRUDA DEL OCR:", data);
+
+      // ── TAREA 2: Feedback visual de resultados ──────────────────────────
+      // El backend retorna { totalDetected, totalMatched, scannedItems, unmatched }.
+      // (Algunas versiones legacy pueden usar unmatchedItems en lugar de unmatched.)
+      const scannedItems: any[] = Array.isArray(data?.scannedItems) ? data.scannedItems : [];
+      const unmatchedRaw: any[] = Array.isArray(data?.unmatched)
+        ? data.unmatched
+        : Array.isArray(data?.unmatchedItems)
+          ? data.unmatchedItems
+          : [];
+
+      const totalItems = scannedItems.length + unmatchedRaw.length;
+
+      if (totalItems === 0) {
+        toast({
+          variant: 'destructive',
+          title: 'Sin productos detectados',
+          description: 'El OCR proceso la imagen pero no logro extraer productos. Verifica que la foto sea clara y que la factura tenga items legibles.',
+        });
+        setIsProcessing(false);
+        return;
       }
 
-      // ── Procesar resultado final ────────────────────────────────────────
+      if (scannedItems.length === 0 && unmatchedRaw.length > 0) {
+        toast({
+          variant: 'default',
+          title: `Detectados ${unmatchedRaw.length} items sin emparejar`,
+          description: 'El OCR leyo productos pero ninguno se pudo emparejar con tu inventario. Revisa los nombres en el panel de no-emparejados.',
+        });
+      } else {
+        toast({
+          variant: 'success',
+          title: `¡Exito! ${scannedItems.length} ${scannedItems.length === 1 ? 'producto' : 'productos'} detectados`,
+          description: unmatchedRaw.length > 0
+            ? `${unmatchedRaw.length} items sin emparejar requieren revision.`
+            : 'Cargados al carrito de recepcion para revision.',
+        });
+      }
+
+      // ── TAREA 3: Inyeccion al padre con shape consistente ───────────────
+      // Pasamos AMBOS arrays con flag isMatched para que el carrito sepa
+      // que pintar en verde (match), amarillo (warning) o rojo (extra).
+      // Defaults fiscales: si el usuario marco "buscar IVA"/"buscar IBUA" y
+      // el OCR no extrajo el porcentaje para algun item, sugerimos los
+      // valores tipicos colombianos (19% IVA, 20% IBUA) como fallback —
+      // el usuario aun puede ajustarlos en el reviewer/carrito.
+      const fillTaxDefaults = (item: any) => {
+        const out = { ...item };
+        const ivaFromOcr = Number(item.iva_percentage ?? item.IVA ?? item.iva ?? 0);
+        const ibuaFromOcr = Number(item.ibua_percentage ?? item.IBUA ?? item.ibua ?? 0);
+        const icuiFromOcr = Number(item.icui_percentage ?? item.ICUI ?? item.icui ?? 0);
+
+        out.iva_percentage = ivaFromOcr > 0
+          ? ivaFromOcr
+          : (expectIVA ? 19 : 0);
+        out.ibua_percentage = ibuaFromOcr > 0
+          ? ibuaFromOcr
+          : (expectIBUA ? 20 : 0);
+        out.icui_percentage = icuiFromOcr;
+        return out;
+      };
+
       const itemsToReview = [
-        ...(data.scannedItems || data.items || []).map((item: any) => ({ ...item, isMatched: true })),
-        ...(data.unmatchedItems || []).map((item: any) => ({ ...item, isMatched: false }))
+        ...scannedItems.map((item: any) => ({ ...fillTaxDefaults(item), isMatched: true })),
+        ...unmatchedRaw.map((item: any) => ({ ...fillTaxDefaults(item), isMatched: false })),
       ];
 
-      toast({ variant: 'success', title: 'Lectura Completada', description: `Se detectaron ${itemsToReview.length} ítems.` });
       onExtractedItems(itemsToReview);
       onOpenChange(false);
       setSelectedFile(null);
       setPreviewUrl(null);
 
     } catch (err: any) {
-      // Ambos intentos fallaron
-      const errorText = err?.message || (typeof err === 'string' ? err : 'Error al leer la factura. Verifica tu conexión.');
-      console.error("[Pipeline] Ambos intentos fallaron:", errorText);
+      const errorText = (err && typeof err === 'object' && 'message' in err)
+        ? String(err.message)
+        : (typeof err === 'string' ? err : 'Error al leer la factura. Verifica tu conexion.');
+      console.error('[OCR] Fallo:', errorText, err);
       toast({ variant: 'destructive', title: 'Error OCR', description: errorText });
     } finally {
       setIsProcessing(false);
@@ -214,6 +311,86 @@ export default function InvoiceReaderModal({
                   )}
                 </div>
               )}
+
+              {/* Pistas fiscales — solo visibles cuando ya hay archivo seleccionado */}
+              {selectedFile && !isProcessing && (
+                <div className="mt-4 p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-900/40 border border-zinc-200 dark:border-white/5">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Receipt size={14} className="text-emerald-500" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-700 dark:text-zinc-300">
+                      Impuestos esperados en esta factura
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Toggle Card IVA — boton clickable, estado por color emerald */}
+                    <button
+                      type="button"
+                      onClick={() => setExpectIVA(v => !v)}
+                      aria-pressed={expectIVA}
+                      className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
+                        expectIVA
+                          ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
+                          : 'bg-[#121214] border-white/5 text-zinc-400 hover:border-emerald-500/20'
+                      }`}
+                    >
+                      <CheckCircle2
+                        size={22}
+                        className={`shrink-0 transition-all ${
+                          expectIVA ? 'text-emerald-400 fill-emerald-500/20' : 'text-zinc-600'
+                        }`}
+                      />
+                      <div className="flex flex-col">
+                        <span className={`text-[11px] font-semibold uppercase tracking-tight ${
+                          expectIVA ? 'text-emerald-400' : 'text-zinc-200'
+                        }`}>
+                          Buscar IVA
+                        </span>
+                        <span className={`text-[9px] font-medium uppercase tracking-widest ${
+                          expectIVA ? 'text-emerald-500/70' : 'text-zinc-500'
+                        }`}>
+                          5% / 19% tipicos
+                        </span>
+                      </div>
+                    </button>
+
+                    {/* Toggle Card IBUA / ICUI */}
+                    <button
+                      type="button"
+                      onClick={() => setExpectIBUA(v => !v)}
+                      aria-pressed={expectIBUA}
+                      className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
+                        expectIBUA
+                          ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
+                          : 'bg-[#121214] border-white/5 text-zinc-400 hover:border-emerald-500/20'
+                      }`}
+                    >
+                      <CheckCircle2
+                        size={22}
+                        className={`shrink-0 transition-all ${
+                          expectIBUA ? 'text-emerald-400 fill-emerald-500/20' : 'text-zinc-600'
+                        }`}
+                      />
+                      <div className="flex flex-col">
+                        <span className={`text-[11px] font-semibold uppercase tracking-tight ${
+                          expectIBUA ? 'text-emerald-400' : 'text-zinc-200'
+                        }`}>
+                          Buscar IBUA / ICUI
+                        </span>
+                        <span className={`text-[9px] font-medium uppercase tracking-widest ${
+                          expectIBUA ? 'text-emerald-500/70' : 'text-zinc-500'
+                        }`}>
+                          Bebidas · 8% / 16% / 18% / 20%
+                        </span>
+                      </div>
+                    </button>
+                  </div>
+                  {(expectIVA || expectIBUA) && (
+                    <p className="text-[9px] font-medium text-emerald-600 dark:text-emerald-400 mt-2 ml-1 uppercase tracking-widest">
+                      ✓ El OCR forzara la extraccion de estos porcentajes por linea
+                    </p>
+                  )}
+                </div>
+              )}
             </ModalBody>
             <ModalFooter className="border-t border-gray-100 dark:border-white/5">
               <Button variant="light" onPress={onClose} isDisabled={isProcessing} className="rounded-xl text-[10px] uppercase tracking-widest font-medium">
@@ -221,8 +398,7 @@ export default function InvoiceReaderModal({
               </Button>
               <Button 
                 color="success" 
-                onPress={handleProcess} 
-                isDisabled={!selectedFile || isProcessing || !supplierId}
+                onPress={handleProcess}
                 isLoading={isProcessing}
                 className="rounded-xl text-[10px] uppercase tracking-widest font-medium text-white shadow-lg"
               >

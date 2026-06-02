@@ -165,12 +165,6 @@ export default function DevolucionesPage() {
   }
 
   const procesarDevolucion = async () => {
-    const isTransferencia = currentSale?.paymentMethod?.toLowerCase().includes("transfer") ||
-      currentSale?.paymentMethod?.toLowerCase().includes("nequi") ||
-      currentSale?.paymentMethod?.toLowerCase().includes("daviplata") ||
-      currentSale?.paymentMethod?.toLowerCase().includes("credito") ||
-      currentSale?.paymentMethod?.toLowerCase().includes("fiado")
-
     if (isTransferencia && saldo > 0) {
       alert("Este pago no fue en efectivo → el cliente debe llevarse productos por un valor igual o mayor. No se puede entregar dinero de la caja.")
       return
@@ -181,7 +175,11 @@ export default function DevolucionesPage() {
 
   const confirmarDevolucion = async () => {
     setIsPaymentModalOpen(false)
-    const tipo = saldo >= 0 ? "REFUND" : "EXCHANGE"
+    // Tipo correcto: EXCHANGE si hay productos de reemplazo o si el cliente
+    // paga diferencia (saldo<0). REFUND solo si es devolucion pura sin
+    // intercambio. El backend usa este tipo para decidir si crea Expense
+    // (REFUND → egreso de caja) o miniSale (EXCHANGE con chargeAmount).
+    const tipo = (replacements.length > 0 || saldo < 0) ? "EXCHANGE" : "REFUND"
     setLoading(true)
     try {
       await apiFetch("/sales/returns", {
@@ -214,7 +212,7 @@ export default function DevolucionesPage() {
       })
       setScreen("confirmado")
     } catch (e: any) {
-      alert(e.message || "Error al procesar la devolución")
+      alert(e.message || "Error al procesar la devolucion")
     } finally {
       setLoading(false)
     }
@@ -229,14 +227,30 @@ export default function DevolucionesPage() {
     setTab("factura")
   }
 
-  const isTransferencia = currentSale?.paymentMethod?.toLowerCase().includes("transfer") ||
-    currentSale?.paymentMethod?.toLowerCase().includes("nequi") ||
-    currentSale?.paymentMethod?.toLowerCase().includes("daviplata")
+  // isTransferencia: true cuando la venta original NO fue en efectivo puro.
+  // Cubre todos los metodos donde la politica prohibe REFUND y obliga a
+  // EXCHANGE (cliente debe llevarse otro producto). El backend valida lo
+  // mismo, pero tambien se chequea aqui para deshabilitar la UI antes de
+  // que el cajero confirme una operacion que el servidor va a rechazar.
+  const isTransferencia = (() => {
+    const m = (currentSale?.paymentMethod || '').toLowerCase()
+    if (!m) return false
+    if (m === 'efectivo' || m === 'cash') return false
+    return (
+      m.includes('transfer') || m.includes('nequi') || m.includes('daviplata') ||
+      m.includes('bancolombia') || m.includes('tarjeta') || m.includes('card') ||
+      m.includes('credito') || m.includes('credito') || m.includes('fiado') ||
+      m.includes('mixto')
+    )
+  })()
+  // refundBloqueado: el cajero intenta entregar dinero de caja por una venta
+  // que no fue en efectivo. Activa overlay de bloqueo + boton disabled.
+  const refundBloqueado = isTransferencia && saldo > 0
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
 
-      {/* PANTALLA BÚSQUEDA */}
+      {/* PANTALLA BUSQUEDA */}
       {screen === "busqueda" && (
         <div>
           <div className="flex items-center justify-between mb-5">
@@ -272,7 +286,7 @@ export default function DevolucionesPage() {
                 <Receipt className="w-5 h-5 text-muted-foreground flex-shrink-0" />
                 <input value={facturaInput} onChange={e => setFacturaInput(e.target.value.toUpperCase())}
                   onKeyDown={e => e.key === "Enter" && buscarFactura()}
-                  placeholder="Número de factura o escanea el código…"
+                  placeholder="Numero de factura o escanea el codigo…"
                   className="flex-1 bg-transparent text-base outline-none placeholder:text-muted-foreground" />
                 <button onClick={() => buscarFactura()}
                   disabled={loading}
@@ -282,7 +296,7 @@ export default function DevolucionesPage() {
               </div>
 
               <div className="flex flex-col gap-2 mb-3">
-                <p className="text-sm font-medium text-muted-foreground">Últimas transacciones</p>
+                <p className="text-sm font-medium text-muted-foreground">Ultimas transacciones</p>
                   <div className="flex gap-2 items-center">
                     <input 
                       type="datetime-local" 
@@ -301,7 +315,7 @@ export default function DevolucionesPage() {
                 </div>
                 <div className="border border-border rounded-xl overflow-hidden">
                 <div className="grid grid-cols-4 gap-3 px-4 py-2 text-xs text-muted-foreground uppercase tracking-wide border-b border-border">
-                  <span>Factura</span><span>Hora</span><span className="text-right">Total</span><span className="text-right">Método</span>
+                  <span>Factura</span><span>Hora</span><span className="text-right">Total</span><span className="text-right">Metodo</span>
                 </div>
                 {recentSales.map(sale => (
                   <div key={sale.id} onClick={() => buscarFactura(String(sale.id))}
@@ -334,7 +348,7 @@ export default function DevolucionesPage() {
               <div className="flex items-start gap-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl mb-4">
                 <AlertTriangle className="w-4 h-4 text-amber-700 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                 <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
-                  El sistema buscará en las últimas 100 ventas para verificar si el producto fue comprado, cómo se pagó y cuántas unidades son válidas para devolver.
+                  El sistema buscara en las ultimas 100 ventas para verificar si el producto fue comprado, como se pago y cuantas unidades son validas para devolver.
                 </p>
               </div>
               <div className="relative">
@@ -368,7 +382,7 @@ export default function DevolucionesPage() {
         </div>
       )}
 
-      {/* PANTALLA DEVOLUCIÓN ACTIVA */}
+      {/* PANTALLA DEVOLUCION ACTIVA */}
       {screen === "devolucion" && (
         <div>
           <div className="flex items-center gap-3 mb-4">
@@ -416,7 +430,7 @@ export default function DevolucionesPage() {
                 <div key={i} className="flex items-center gap-2 py-2.5 border-b border-border last:border-0">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{item.productName}</p>
-                    <p className="text-xs text-muted-foreground">{fmt(item.unitPrice)} · compró {item.maxQty}</p>
+                    <p className="text-xs text-muted-foreground">{fmt(item.unitPrice)} · compro {item.maxQty}</p>
                   </div>
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button onClick={() => cambiarQty(i, -1)}
@@ -464,7 +478,7 @@ export default function DevolucionesPage() {
               {replacements.length === 0 ? (
                 <div className="text-center py-6 text-muted-foreground text-sm">
                   <PackageX className="w-6 h-6 mx-auto mb-2 opacity-50" />
-                  Si quiere otro producto<br />escanéalo aquí
+                  Si quiere otro producto<br />escanealo aqui
                 </div>
               ) : (
                 replacements.map((r, i) => (
@@ -496,7 +510,7 @@ export default function DevolucionesPage() {
                   : <Check className="w-6 h-6 text-muted-foreground" />}
                 <div>
                   <p className={`text-sm font-medium ${saldo > 0 ? "text-green-700 dark:text-green-400" : saldo < 0 ? "text-red-700 dark:text-red-400" : ""}`}>
-                    {saldo > 0 ? "Entrégarle al cliente" : saldo < 0 ? "El cliente paga la diferencia" : "Cambio exacto — sin cobro ni reembolso"}
+                    {saldo > 0 ? "Entregarle al cliente" : saldo < 0 ? "El cliente paga la diferencia" : "Cambio exacto — sin cobro ni reembolso"}
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {saldo > 0 ? "Se descuenta de caja · REEMBOLSO" : saldo < 0 ? "Abre el modal de pago · CAMBIO" : "CAMBIO sin diferencia"}
@@ -510,17 +524,43 @@ export default function DevolucionesPage() {
           )}
 
           {totalDev > 0 && (
-            <button onClick={procesarDevolucion} disabled={loading}
-              className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-medium text-sm ${
-                saldo > 0 ? "bg-green-700 hover:bg-green-800"
-                : saldo < 0 ? "bg-blue-700 hover:bg-blue-800"
-                : "bg-emerald-600 hover:bg-emerald-700"
-              }`}>
-              <Check className="w-4 h-4" />
-              {loading ? "Procesando..." : saldo > 0 ? `Confirmar reembolso de ${fmt(saldo)}`
-                : saldo < 0 ? `Cobrar ${fmt(Math.abs(saldo))} al cliente`
-                : "Confirmar cambio exacto"}
-            </button>
+            <>
+              {refundBloqueado && (
+                <div className="flex items-start gap-3 p-4 bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-xl mb-3">
+                  <AlertTriangle className="w-5 h-5 text-red-700 dark:text-red-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex flex-col gap-1">
+                    <p className="text-sm font-semibold text-red-700 dark:text-red-400">
+                      Reembolso en efectivo bloqueado
+                    </p>
+                    <p className="text-xs text-red-700 dark:text-red-400 leading-relaxed">
+                      El cliente pago con <span className="font-semibold uppercase">{currentSale?.paymentMethod}</span>.
+                      Debe llevarse productos por al menos <span className="font-semibold">{fmt(totalDev)}</span> —
+                      escanea mas articulos en "Se lleva" hasta que el saldo sea cero o negativo.
+                    </p>
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={procesarDevolucion}
+                disabled={loading || refundBloqueado}
+                title={refundBloqueado
+                  ? "Pago original no fue en efectivo: solo cambio por otro producto permitido"
+                  : ""}
+                className={`w-full flex items-center justify-center gap-2 py-3 rounded-xl text-white font-medium text-sm transition-colors ${
+                  refundBloqueado
+                    ? "bg-gray-400 dark:bg-zinc-700 cursor-not-allowed opacity-70"
+                    : saldo > 0 ? "bg-green-700 hover:bg-green-800"
+                    : saldo < 0 ? "bg-blue-700 hover:bg-blue-800"
+                    : "bg-emerald-600 hover:bg-emerald-700"
+                }`}>
+                <Check className="w-4 h-4" />
+                {loading ? "Procesando..."
+                  : refundBloqueado ? `Completa productos por ${fmt(saldo)} mas para liberar el cambio`
+                  : saldo > 0 ? `Confirmar reembolso de ${fmt(saldo)}`
+                  : saldo < 0 ? `Cobrar ${fmt(Math.abs(saldo))} al cliente`
+                  : "Confirmar cambio exacto"}
+              </button>
+            </>
           )}
         </div>
       )}
@@ -545,7 +585,7 @@ export default function DevolucionesPage() {
             </button>
             <button onClick={nuevaDevolucion}
               className="flex items-center gap-2 px-4 py-2 text-sm bg-emerald-600 hover:bg-emerald-700 transition-colors text-white rounded-lg font-medium">
-              <Plus className="w-4 h-4" /> Nueva devolución
+              <Plus className="w-4 h-4" /> Nueva devolucion
             </button>
           </div>
         </div>
@@ -556,7 +596,7 @@ export default function DevolucionesPage() {
         <ModalContent className="bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/10 shadow-2xl">
           <ModalHeader className="border-b border-gray-100 dark:border-white/5 pb-4">
             <div className="flex flex-col gap-1">
-              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Confirmar Devolución</h2>
+              <h2 className="text-xl font-bold text-gray-900 dark:text-white">Confirmar Devolucion</h2>
               <p className="text-sm font-medium text-gray-500">
                 {saldo > 0 ? "Reembolso o Saldo a Favor" : saldo < 0 ? "Cobro Adicional" : "Cambio Exacto"}
               </p>
@@ -576,7 +616,7 @@ export default function DevolucionesPage() {
               {saldo < 0 && (
                 <div className="flex flex-col gap-3">
                   <label className="text-xs font-bold uppercase tracking-wider text-gray-500">
-                    Método de Pago del Excedente
+                    Metodo de Pago del Excedente
                   </label>
                   <div className="grid grid-cols-2 gap-2">
                     <button
@@ -636,7 +676,7 @@ export default function DevolucionesPage() {
               className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-bold h-12 rounded-xl text-sm"
               onPress={confirmarDevolucion}
             >
-              Confirmar Transacción
+              Confirmar Transaccion
             </Button>
           </ModalFooter>
         </ModalContent>

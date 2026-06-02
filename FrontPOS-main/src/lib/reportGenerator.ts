@@ -56,26 +56,26 @@ export const generatePDFReport = async ({
   doc.setDrawColor(...theme.colors.black);
   doc.setLineWidth(theme.lineWeight.border);
   
-  // Título Principal
+  // Titulo Principal
   doc.setTextColor(...theme.colors.black);
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(22);
   doc.text(title.toUpperCase(), 15, 20);
 
-  // Subtítulo
+  // Subtitulo
   if (subtitle) {
     doc.setFontSize(10);
     doc.setFont('helvetica', 'normal');
     doc.text(subtitle.toUpperCase(), 15, 27);
   }
 
-  // Metadatos de impresión
+  // Metadatos de impresion
   const today = new Date().toLocaleString();
   doc.setFontSize(8);
-  doc.text(`AUDITORÍA OFICIAL: ${today}`, pageWidth - 15, 15, { align: 'right' });
+  doc.text(`AUDITORIA OFICIAL: ${today}`, pageWidth - 15, 15, { align: 'right' });
   doc.text(`ID REPORTE: ${Math.random().toString(36).substring(7).toUpperCase()}`, pageWidth - 15, 20, { align: 'right' });
 
-  // Línea divisoria gruesa (Fase 1)
+  // Linea divisoria gruesa (Fase 1)
   doc.setLineWidth(theme.lineWeight.separator);
   doc.line(15, 32, pageWidth - 15, 32);
 
@@ -88,7 +88,7 @@ export const generatePDFReport = async ({
     summary.forEach((item, index) => {
       const xPos = 15 + (index * boxWidth);
       
-      // Rectángulo con borde negro
+      // Rectangulo con borde negro
       doc.setDrawColor(...theme.colors.black);
       doc.setLineWidth(theme.lineWeight.grid);
       doc.rect(xPos, currentY, boxWidth, boxHeight);
@@ -114,7 +114,7 @@ export const generatePDFReport = async ({
   }
 
   // --- Table (Enterprise Grid Theme) ---
-  // Sanitizar datos para evitar saltos de línea extraños (Fase 3)
+  // Sanitizar datos para evitar saltos de linea extranos (Fase 3)
   const sanitizedBody = data.map(item => 
     columns.map(c => {
       const val = item[c.dataKey];
@@ -157,11 +157,11 @@ export const generatePDFReport = async ({
     }, {}),
     margin: { left: 15, right: 15 },
     didDrawPage: (data: any) => {
-        const str = `Página ${doc.getNumberOfPages()}`;
+        const str = `Pagina ${doc.getNumberOfPages()}`;
         doc.setFontSize(7);
         doc.setTextColor(...theme.colors.grayDark);
         doc.text(str, pageWidth - 15, doc.internal.pageSize.height - 10, { align: 'right' });
-        doc.text("SUPERMERCADO SURTIFAMILIAR - DOCUMENTO DE AUDITORÍA OFICIAL", 15, doc.internal.pageSize.height - 10);
+        doc.text("SUPERMERCADO SURTIFAMILIAR - DOCUMENTO DE AUDITORIA OFICIAL", 15, doc.internal.pageSize.height - 10);
     }
   });
 
@@ -186,28 +186,28 @@ export const generatePDFReport = async ({
     try {
       let caption = `ðŸ“Š ${title}\n${subtitle || ''}`;
 
-      // Lógica de Plantillas Premium para Telegram
-      if (title.toUpperCase().includes('ARQUEO GENERAL DE BÓVEDA')) {
+      // Logica de Plantillas Premium para Telegram
+      if (title.toUpperCase().includes('ARQUEO GENERAL DE BOVEDA')) {
         const dataMap = data.reduce((acc: any, curr: any) => {
           acc[curr.label] = curr.amount;
           return acc;
         }, {});
 
-        caption = `ðŸ¦ ARQUEO GENERAL DE BÓVEDA
+        caption = `ðŸ¦ ARQUEO GENERAL DE BOVEDA
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 ðŸ“… FECHA: ${new Date().toLocaleString('es-CO')}
 
 ðŸ–¥ï¸ 1. CAJAS EN PISO (Registradoras)
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-â–«ï¸ Esperado (Sistema):  ${dataMap['Cajas en Piso (Teórico)'] || '$0'}
-â–«ï¸ Reportado (Cajero):  ${dataMap['Cajas en Piso (Físico)'] || '$0'}
+â–«ï¸ Esperado (Sistema):  ${dataMap['Cajas en Piso (Teorico)'] || '$0'}
+â–«ï¸ Reportado (Cajero):  ${dataMap['Cajas en Piso (Fisico)'] || '$0'}
 ðŸ‘‰ DESCUADRE CAJAS:     ${dataMap['Descuadre Cajas'] || '$0'}
 
-ðŸ—„ï¸ 2. FONDO / BÓVEDA
+ðŸ—„ï¸ 2. FONDO / BOVEDA
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-â–«ï¸ Saldo Intacto:       ${dataMap['Fondo Bóveda/Caja Fuerte'] || '$0'}
+â–«ï¸ Saldo Intacto:       ${dataMap['Fondo Boveda/Caja Fuerte'] || '$0'}
 
-ðŸ’Ž 3. EFECTIVO TOTAL FÍSICO (LOCAL)
+ðŸ’Ž 3. EFECTIVO TOTAL FISICO (LOCAL)
 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 ðŸ’° TOTAL A CONTAR:      ${dataMap['TOTAL EFECTIVO EN LOCAL'] || '$0'}
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`;
@@ -215,7 +215,7 @@ export const generatePDFReport = async ({
         caption = `ðŸ“¦ REPORTE DE INVENTARIO
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 ðŸ“… FECHA: ${new Date().toLocaleDateString('es-CO')}
-ðŸ“Š ESTADO: Auditoría Valorizada
+ðŸ“Š ESTADO: Auditoria Valorizada
 ${summary ? summary.map(s => `â–«ï¸ ${s.label}: ${s.value}`).join('\n') : ''}
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•`;
       } else if (title.toUpperCase().includes('RESULTADOS') || title.toUpperCase().includes('PNL')) {
@@ -246,7 +246,7 @@ ${summary ? summary.map(s => `â–«ï¸ ${s.label}: ${s.value}`).join('\n') 
         throw new Error(errorData.message || `Error ${response.status}`);
       }
       
-      // Notificar éxito
+      // Notificar exito
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('telegram-success', { 
           detail: { message: 'Reporte enviado a Telegram exitosamente' }
@@ -277,7 +277,7 @@ ${summary ? summary.map(s => `â–«ï¸ ${s.label}: ${s.value}`).join('\n') 
       }
     }
   } else {
-    // Si no se envía a Telegram, igual registramos en el historial
+    // Si no se envia a Telegram, igual registramos en el historial
     const token = typeof window !== 'undefined' ? (await import('js-cookie')).default.get('org-pos-token') : '';
     await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/reports/history`, {
         method: 'POST',
@@ -294,10 +294,10 @@ ${summary ? summary.map(s => `â–«ï¸ ${s.label}: ${s.value}`).join('\n') 
       }).catch(err => console.error("Error registrando historial:", err));
   }
 
-  // Limpiar el nombre del archivo de caracteres inválidos
+  // Limpiar el nombre del archivo de caracteres invalidos
   const safeFilename = filename.replace(/[/\\?%*:|"<>]/g, '-').replace(/\.pdf$/i, '');
   
-  // Siempre descargar el PDF localmente con extensión limpia
+  // Siempre descargar el PDF localmente con extension limpia
   doc.save(`${safeFilename}.pdf`);
   return pdfBlob;
 };

@@ -22,7 +22,7 @@ export default function AuditStats({ logs }: AuditStatsProps) {
       description: "Eventos registrados"
     },
     {
-      title: "Acciones Críticas",
+      title: "Acciones Criticas",
       value: criticalActions,
       icon: <ShieldAlert size={18} />,
       color: "rose",
@@ -34,14 +34,14 @@ export default function AuditStats({ logs }: AuditStatsProps) {
       value: uniqueUsers,
       icon: <Fingerprint size={18} />,
       color: "blue",
-      description: "Huellas digitales únicas"
+      description: "Huellas digitales unicas"
     },
     {
       title: "Alcance",
-      value: `${modules} Módulos`,
+      value: `${modules} Modulos`,
       icon: <Zap size={18} />,
       color: "amber",
-      description: "Áreas bajo monitoreo"
+      description: "Areas bajo monitoreo"
     }
   ];
 

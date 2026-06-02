@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -62,11 +62,11 @@ const CategoryTable = memo(({
         switch (columnKey) {
             case "identity":
                 return (
-                    <div className="flex items-center gap-4 py-0.5">
+                    <div className="flex-1 min-h-0 h-full flex items-center gap-4 py-0.5">
                         <div className="h-10 w-10 shrink-0 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-2 group-hover:rotate-0 transition-transform">
                             <LayoutGrid size={20} strokeWidth={2.5} />
                         </div>
-                        <div className="flex flex-col min-w-0">
+                        <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full">
                             <span className="text-xs md:text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase leading-tight tracking-tight truncate max-w-[200px] group-hover:text-zinc-900 dark:text-zinc-100 transition-colors">
                                 {category.name}
                             </span>
@@ -90,7 +90,7 @@ const CategoryTable = memo(({
                 if (!isAdmin) return <div className="flex justify-end pr-4"><span className="text-[7px] font-medium text-gray-400 uppercase tracking-widest tracking-tight opacity-50">Solo Lectura</span></div>;
                 return (
                     <div className="flex justify-end gap-1.5 md:gap-2 px-1">
-                        <Tooltip content="EDITAR CATEGORÍA" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                        <Tooltip content="EDITAR CATEGORIA" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button 
                                 isIconOnly 
                                 size="sm" 
@@ -120,18 +120,18 @@ const CategoryTable = memo(({
     }, [isAdmin, onEdit, onDelete]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
+        <div className="flex-1 min-h-0 h-full w-full bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
             
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full relative">
                 {!isMobile ? (
-                    <div className="flex-1 overflow-x-auto w-full custom-scrollbar">
+                    <div className="overflow-auto overscroll-contain w-full custom-scrollbar flex-1 min-h-0 h-full">
                         <Table 
                             isCompact 
                             removeWrapper 
-                            aria-label="Jerarquía de Categorías Maestras"
+                            aria-label="Jerarquia de Categorias Maestras"
                             classNames={{ 
                                 base: "flex-1 overflow-hidden",
-                                wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
+                                wrapper: "overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none flex-1 min-h-0 h-full",
                                 th: "bg-gray-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
                                 td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-6", 
                                 tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-pointer group h-10" 
@@ -140,14 +140,14 @@ const CategoryTable = memo(({
                             <TableHeader>
                                 <TableColumn align="start">DEPARTAMENTO MAESTRO</TableColumn>
                                 <TableColumn align="center">DENSIDAD DE STOCK</TableColumn>
-                                <TableColumn align="end">ACCIONES DE GESTIÓN</TableColumn>
+                                <TableColumn align="end">ACCIONES DE GESTION</TableColumn>
                             </TableHeader>
                             <TableBody 
                                 items={categories} 
                                 emptyContent={
                                     <EmptyState 
                                         title="Sin departamentos registrados" 
-                                        description="No hemos encontrado categorías en este catálogo. Registra una nueva para comenzar a organizar tu inventario."
+                                        description="No hemos encontrado categorias en este catalogo. Registra una nueva para comenzar a organizar tu inventario."
                                         icon={<IconCategory size={48} className="text-gray-300" />}
                                     />
                                 }
@@ -163,11 +163,11 @@ const CategoryTable = memo(({
                         </Table>
                     </div>
                 ) : (
-                    <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-zinc-950/40 custom-scrollbar">
+                    <div className="overflow-y-auto p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-zinc-950/40 custom-scrollbar flex-1 min-h-0 h-full">
                         {categories.length === 0 ? (
                             <EmptyState 
                                 title="Sin resultados" 
-                                description="No hay categorías que coincidan con tu búsqueda."
+                                description="No hay categorias que coincidan con tu busqueda."
                                 compact
                             />
                         ) : (
@@ -177,7 +177,7 @@ const CategoryTable = memo(({
                                         <div className="h-10 w-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10 shrink-0 transform -rotate-1">
                                             <LayoutGrid size={18} strokeWidth={2.5} />
                                         </div>
-                                        <div className="flex flex-col min-w-0">
+                                        <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
                                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-none truncate pr-2">
                                                 {c.name}
                                             </span>
@@ -231,7 +231,7 @@ const CategoryTable = memo(({
                 )}
             </div>
 
-            {/* PAGINACIÓN FIJA - SYNCED WITH SUPPLIERS/USERS */}
+            {/* PAGINACION FIJA - SYNCED WITH SUPPLIERS/USERS */}
             {totalFiltered > 0 && (
                 <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
                     <div className="flex items-center gap-2 font-medium">
@@ -289,3 +289,6 @@ const CategoryTable = memo(({
 
 CategoryTable.displayName = 'CategoryTable';
 export default CategoryTable;
+
+
+

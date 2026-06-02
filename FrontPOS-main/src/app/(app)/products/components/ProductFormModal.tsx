@@ -57,7 +57,7 @@ const ProductFormModal = memo(function ProductFormModal({
   apiFieldErrors = {}
 }: ProductFormModalProps) {
   const { toast } = useToast();
-  // Estado de errores de validación
+  // Estado de errores de validacion
   const [validationErrors, setValidationErrors] = useState<FieldError[]>([]);
   const [quickSupplierOpen, setQuickSupplierOpen] = useState(false);
   const [quickCategoryOpen, setQuickCategoryOpen] = useState(false);
@@ -66,12 +66,12 @@ const ProductFormModal = memo(function ProductFormModal({
   const [isLoadingPrices, setIsLoadingPrices] = useState(false);
   const [duplicateFound, setDuplicateFound] = useState<Product | null>(null);
   
-  // Estado para búsqueda de producto base en modo pack
+  // Estado para busqueda de producto base en modo pack
   const [searchTerm, setSearchTerm] = useState("");
   const [supplierSearchValue, setSupplierSearchValue] = useState("");
   const [categorySearchValue, setCategorySearchValue] = useState("");
 
-  // Limpiar estado de duplicados al abrir/cerrar y sincronizar búsquedas
+  // Limpiar estado de duplicados al abrir/cerrar y sincronizar busquedas
   useEffect(() => {
     if (!isOpen) {
       setDuplicateFound(null);
@@ -79,7 +79,7 @@ const ProductFormModal = memo(function ProductFormModal({
       setCategorySearchValue("");
       setSearchTerm("");
     } else if (editingProduct && !addDialogOpen) {
-      // Sincronizar nombre de categoría al editar
+      // Sincronizar nombre de categoria al editar
       const cat = categories.find(c => String(c.id) === String(editingProduct.categoryId));
       if (cat) setCategorySearchValue(cat.name);
 
@@ -91,7 +91,7 @@ const ProductFormModal = memo(function ProductFormModal({
     }
   }, [isOpen, editingProduct, addDialogOpen, categories, allProducts]);
   
-  // Sincronizar searchTerm con el código base si cambia externamente (ej: por scanner)
+  // Sincronizar searchTerm con el codigo base si cambia externamente (ej: por scanner)
   useEffect(() => {
     const currentBarcode = addDialogOpen ? newProduct.baseProductBarcode : editingProduct?.baseProductBarcode;
     if (currentBarcode) {
@@ -100,13 +100,13 @@ const ProductFormModal = memo(function ProductFormModal({
     }
   }, [newProduct.baseProductBarcode, editingProduct?.baseProductBarcode, allProducts, addDialogOpen]);
 
-  // Combinar errores de validación local y errores de API
+  // Combinar errores de validacion local y errores de API
   const getFieldError = useCallback((fieldName: string): string | undefined => {
-    // Buscar en errores de API primero (más prioritarios)
+    // Buscar en errores de API primero (mas prioritarios)
     if (apiFieldErrors[fieldName]) {
       return apiFieldErrors[fieldName];
     }
-    // Buscar en errores de validación local
+    // Buscar en errores de validacion local
     const localError = validationErrors.find(e => 
       e.field?.toLowerCase().includes(fieldName.toLowerCase()) ||
       e.message?.toLowerCase().includes(fieldName.toLowerCase())
@@ -119,7 +119,7 @@ const ProductFormModal = memo(function ProductFormModal({
     return !!getFieldError(fieldName);
   }, [getFieldError]);
 
-  // Memoizar valores derivados para evitar recálculos
+  // Memoizar valores derivados para evitar recalculos
   const isPack = useMemo(() => 
     addDialogOpen ? (newProduct as any).isPack : (editingProduct as any)?.isPack, 
     [addDialogOpen, newProduct, editingProduct]
@@ -131,7 +131,7 @@ const ProductFormModal = memo(function ProductFormModal({
     [allProducts]
   );
   
-  // Filtro real para el buscador de producto base (se mantiene por lógica de packs)
+  // Filtro real para el buscador de producto base (se mantiene por logica de packs)
   const filteredBaseProducts = useMemo(() => {
     if (!searchTerm) return baseProducts.slice(0, 50);
     const term = searchTerm.toLowerCase();
@@ -142,7 +142,7 @@ const ProductFormModal = memo(function ProductFormModal({
     return filtered.slice(0, 50); // Limitar para rendimiento
   }, [baseProducts, searchTerm]);
   
-  // Filtrado explícito para proveedores (Mejora la respuesta del buscador)
+  // Filtrado explicito para proveedores (Mejora la respuesta del buscador)
   const filteredSuppliers = useMemo(() => {
     if (!supplierSearchValue) return suppliers;
     const term = supplierSearchValue.toLowerCase();
@@ -152,7 +152,7 @@ const ProductFormModal = memo(function ProductFormModal({
     );
   }, [suppliers, supplierSearchValue]);
 
-  // Filtrado explícito para categorías
+  // Filtrado explicito para categorias
   const filteredCategories = useMemo(() => {
     if (!categorySearchValue) return categories;
     const term = categorySearchValue.toLowerCase();
@@ -162,7 +162,7 @@ const ProductFormModal = memo(function ProductFormModal({
     );
   }, [categories, categorySearchValue]);
 
-  // Lógica reactiva para detección de duplicados
+  // Logica reactiva para deteccion de duplicados
   useEffect(() => {
     if (!addDialogOpen || !isOpen) {
       setDuplicateFound(null);
@@ -207,7 +207,7 @@ const ProductFormModal = memo(function ProductFormModal({
     if (active && active.blur) active.blur();
   }, []);
 
-  // Callbacks estables para Select de Proveedor (Múltiple)
+  // Callbacks estables para Select de Proveedor (Multiple)
   const handleSupplierChange = useCallback((keys: any) => {
     const selectedIds = Array.from(keys) as string[];
     const suppliersPayload = selectedIds.map(id => ({ id: parseInt(id) }));
@@ -228,7 +228,7 @@ const ProductFormModal = memo(function ProductFormModal({
     }
   }, [addDialogOpen, setNewProduct, setEditingProduct]);
 
-  // Callbacks estables para Select de Categoría
+  // Callbacks estables para Select de Categoria
   const handleCategoryChange = useCallback((key: any) => {
     if (!key) return;
     const numVal = parseInt(String(key)) || 0;
@@ -243,7 +243,7 @@ const ProductFormModal = memo(function ProductFormModal({
     else setEditingProduct((p: any) => p ? { ...p, categoryId: numVal } : null);
   }, [addDialogOpen, setNewProduct, setEditingProduct, categories]);
 
-  // Manejador para añadir proveedores vía Autocomplete (Búsqueda)
+  // Manejador para anadir proveedores via Autocomplete (Busqueda)
   const handleAddSupplier = useCallback((key: any) => {
     if (!key) return;
     const id = parseInt(String(key));
@@ -258,7 +258,7 @@ const ProductFormModal = memo(function ProductFormModal({
     } else {
       setEditingProduct((p: any) => p ? { ...p, suppliers: newSuppliersPayload, supplierId: id } : null);
     }
-    // Limpiar el buscador después de añadir
+    // Limpiar el buscador despues de anadir
     setSupplierSearchValue("");
   }, [addDialogOpen, newProduct.suppliers, editingProduct?.suppliers, setNewProduct, setEditingProduct]);
 
@@ -288,7 +288,7 @@ const ProductFormModal = memo(function ProductFormModal({
       return;
     }
 
-    // Buscar el producto base para calcular el costo automáticamente
+    // Buscar el producto base para calcular el costo automaticamente
     const baseProduct = allProducts.find((p: Product) => p.barcode === barcode);
     
     if (addDialogOpen) {
@@ -356,7 +356,7 @@ const ProductFormModal = memo(function ProductFormModal({
       // Usar el token del cookie para la auth
       const token = Cookies.get('org-pos-token');
       const data = await apiFetch<ProductSupplierPrice[]>(`/products/compare-prices/${barcode}`, {
-        fallbackError: 'Error al obtener histórica de precios'
+        fallbackError: 'Error al obtener historica de precios'
       }, token!);
       setSupplierPrices(data);
     } catch (error) {
@@ -367,7 +367,7 @@ const ProductFormModal = memo(function ProductFormModal({
   }, []);
 
   useEffect(() => {
-    // Debounce para evitar ráfaga de peticiones mientras el usuario escribe en otros campos
+    // Debounce para evitar rafaga de peticiones mientras el usuario escribe en otros campos
     const handler = setTimeout(() => {
       if (editingProduct?.barcode && editingProduct.barcode.length >= 3) {
         fetchSupplierPrices(editingProduct.barcode);
@@ -379,7 +379,7 @@ const ProductFormModal = memo(function ProductFormModal({
     return () => clearTimeout(handler);
   }, [editingProduct?.barcode, fetchSupplierPrices]);
 
-  // Handler para guardar un proveedor rápido sin salir del flujo de productos
+  // Handler para guardar un proveedor rapido sin salir del flujo de productos
   const handleQuickSupplierSave = async (supplier: any) => {
     const token = Cookies.get('org-pos-token');
     try {
@@ -411,7 +411,7 @@ const ProductFormModal = memo(function ProductFormModal({
       }
       
       setQuickSupplierOpen(false);
-      setSupplierSearchValue(""); // Limpiar buscador tras creación exitosa
+      setSupplierSearchValue(""); // Limpiar buscador tras creacion exitosa
     } catch (err: any) {
       toast({ variant: 'destructive', title: 'ERROR', description: err.message });
     }
@@ -425,7 +425,7 @@ const ProductFormModal = memo(function ProductFormModal({
         body: JSON.stringify({ name: normalizeText(newCategoryName) }),
       }, token!);
       
-      toast({ variant: 'success', title: 'ÉXITO', description: 'CATEGORÍA CREADA' });
+      toast({ variant: 'success', title: 'EXITO', description: 'CATEGORIA CREADA' });
       
       const { broadcastRevalidate } = await import('@/lib/revalidate');
       broadcastRevalidate('CATEGORY_UPDATE');
@@ -447,7 +447,7 @@ const ProductFormModal = memo(function ProductFormModal({
   };
 
 
-  // CLASES COMPARTIDAS PARA INPUTS (Optimizado para móvil)
+  // CLASES COMPARTIDAS PARA INPUTS (Optimizado para movil)
   const itemInputClass = {
     label: "text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight text-center w-full mb-0.5",
     inputWrapper: "h-9 bg-gray-50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 rounded-2xl group-data-[focus=true]:border-emerald-500 transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5",
@@ -488,16 +488,16 @@ const ProductFormModal = memo(function ProductFormModal({
                   <h2 className="text-base md:text-lg font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter uppercase leading-none">
                     {addDialogOpen ? "Protocolo " : "Modificar "} <span className="text-zinc-900 dark:text-zinc-100">Producto</span>
                   </h2>
-                  <p className="text-[7px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] mt-0.5 tracking-tight opacity-80">Edición Compacta v5.2</p>
+                  <p className="text-[7px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] mt-0.5 tracking-tight opacity-80">Edicion Compacta v5.2</p>
                 </div>
               </div>
             </ModalHeader>
 
             <ModalBody className="px-6 md:px-10 py-3 md:py-2 pb-32 md:pb-0 gap-0 custom-scrollbar overflow-x-hidden">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
-                {/* COLUMNA IZQUIERDA: IDENTIDAD Y VALORIZACIÓN */}
+                {/* COLUMNA IZQUIERDA: IDENTIDAD Y VALORIZACION */}
                 <div className="flex flex-col gap-3">
-                  {/* 1. SECCIÓN IDENTIDAD (Compacta) */}
+                  {/* 1. SECCION IDENTIDAD (Compacta) */}
               <div className="flex flex-col sm:flex-row items-center sm:items-stretch gap-4">
                 <div className="relative group/photo shrink-0">
                   <div className="h-20 w-20 rounded-2xl bg-gray-50 dark:bg-[#18181b] border-2 border-dashed border-gray-200 dark:border-white/10 flex items-center justify-center overflow-hidden transition-all group-hover/photo:border-emerald-500 shadow-inner group-hover/photo:scale-[1.02] duration-300">
@@ -537,7 +537,7 @@ const ProductFormModal = memo(function ProductFormModal({
 
                 <div className="flex-1 w-full grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="flex flex-col justify-center gap-0.5">
-                    <label className={`${itemInputClass.label} flex items-center gap-1`}><Barcode size={10} className="text-zinc-900 dark:text-zinc-100" /> CÓDIGO</label>
+                    <label className={`${itemInputClass.label} flex items-center gap-1`}><Barcode size={10} className="text-zinc-900 dark:text-zinc-100" /> CODIGO</label>
                     <div className="relative">
                       <Input
                         value={addDialogOpen ? newProduct.barcode : (editingProduct?.barcode || '')}
@@ -587,7 +587,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         <div className="flex-1 text-center sm:text-left">
                           <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest tracking-tight">Producto ya registrado</p>
                           <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight">{duplicateFound.productName}</h4>
-                          <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-400 mt-0.5">El código ingresado ya está asignado a este producto.</p>
+                          <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-400 mt-0.5">El codigo ingresado ya esta asignado a este producto.</p>
                         </div>
                         <Button
                           size="sm"
@@ -605,11 +605,11 @@ const ProductFormModal = memo(function ProductFormModal({
                 </AnimatePresence>
 
 
-              {/* 1.1 CÓDIGOS ALTERNOS */}
+              {/* 1.1 CODIGOS ALTERNOS */}
               <div className="bg-gray-50/50 dark:bg-[#18181b] p-2 rounded-2xl border border-gray-100/50 dark:border-white/5">
                 <div className="flex flex-col gap-0.5">
                   <label className={`${itemInputClass.label} flex items-center justify-center gap-1`}>
-                    <Barcode size={10} className="text-zinc-900 dark:text-zinc-100" /> CÓDIGOS ALTERNOS (Separados por coma)
+                    <Barcode size={10} className="text-zinc-900 dark:text-zinc-100" /> CODIGOS ALTERNOS (Separados por coma)
                   </label>
                   <div className="relative">
                     <Input
@@ -635,7 +635,7 @@ const ProductFormModal = memo(function ProductFormModal({
                 </div>
               </div>
 
-              {/* 2. VALORIZACIÓN (Inline compacto) */}
+              {/* 2. VALORIZACION (Inline compacto) */}
               <div className="grid grid-cols-3 gap-2 bg-gray-50/50 dark:bg-[#18181b] p-2 rounded-2xl border border-gray-100/50 dark:border-white/5">
                 <div className="flex flex-col gap-0.5">
                   <label className={`${itemInputClass.label} ${hasFieldError('purchasePrice') ? 'text-rose-500' : ''}`}>COSTO</label>
@@ -792,7 +792,7 @@ const ProductFormModal = memo(function ProductFormModal({
                 </div>
               </div>
 
-              {/* 2.1 IMPUESTOS (Persistencia Automática) */}
+              {/* 2.1 IMPUESTOS (Persistencia Automatica) */}
               <div className="grid grid-cols-3 gap-2 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 p-2 rounded-2xl border border-emerald-500/10 mt-2 mb-1">
                 <div className="flex flex-col gap-0.5">
                   <label className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-[0.15em] tracking-tight text-center w-full mb-0.5">IVA %</label>
@@ -909,7 +909,7 @@ const ProductFormModal = memo(function ProductFormModal({
                                   <div className="flex items-center gap-1">
                                     <Check size={8} className="text-zinc-900 dark:text-zinc-100" strokeWidth={4} />
                                     <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight leading-none">
-                                      OPCIÓN RECOMENDADA
+                                      OPCION RECOMENDADA
                                     </span>
                                   </div>
                                 )}
@@ -924,9 +924,9 @@ const ProductFormModal = memo(function ProductFormModal({
               </div>
               </div> {/* <-- Cierre de la Columna Izquierda */}
 
-              {/* COLUMNA DERECHA: LOGÍSTICA Y STOCK */}
+              {/* COLUMNA DERECHA: LOGISTICA Y STOCK */}
               <div className="flex flex-col gap-3">
-                {/* 3. LOGÍSTICA & STOCK */}
+                {/* 3. LOGISTICA & STOCK */}
                 <div className="grid grid-cols-2 gap-3 bg-gray-50/20 dark:bg-black/10 p-3 rounded-2xl border border-gray-100/50 dark:border-white/5">
                   <div className="flex flex-col gap-1.5">
                     <label className={itemInputClass.label}>PROVEEDORES (BUSCAR Y AÑADIR)</label>
@@ -969,7 +969,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         </Button>
                       </div>
                       
-                      {/* Visualización de proveedores seleccionados */}
+                      {/* Visualizacion de proveedores seleccionados */}
                       <div className="flex flex-wrap gap-1.5 p-2 min-h-[40px] bg-gray-50/30 dark:bg-[#18181b] rounded-2xl border border-dashed border-gray-200 dark:border-white/5">
                         {((addDialogOpen ? newProduct.suppliers : editingProduct?.suppliers) || []).length === 0 ? (
                           <span className="text-[8px] font-bold text-gray-400 uppercase tracking-tight m-auto">Sin proveedores vinculados</span>
@@ -995,10 +995,10 @@ const ProductFormModal = memo(function ProductFormModal({
                   </div>
 
                   <div className="flex flex-col gap-0.5">
-                    <label className={itemInputClass.label}>CATEGORÍA</label>
+                    <label className={itemInputClass.label}>CATEGORIA</label>
                     <div className="flex gap-1.5 items-center">
                       <Autocomplete
-                        aria-label="Seleccionar categoría"
+                        aria-label="Seleccionar categoria"
                         placeholder="BUSCAR..."
                         inputValue={categorySearchValue}
                         onInputChange={setCategorySearchValue}
@@ -1062,7 +1062,7 @@ const ProductFormModal = memo(function ProductFormModal({
                   </div>
 
                   <div className="flex flex-col gap-0.5">
-                    <label className={`text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full mb-0.5 ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`}>STOCK MÍNIMO</label>
+                    <label className={`text-xs font-medium uppercase tracking-widest tracking-tight text-center w-full mb-0.5 ${hasFieldError('minStock') ? 'text-rose-600' : 'text-rose-500'}`}>STOCK MINIMO</label>
                     <Input
                       type="number"
                       step={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "any" : "1"}
@@ -1086,7 +1086,7 @@ const ProductFormModal = memo(function ProductFormModal({
                     )}
                   </div>
                 </div>
-              {/* 4. CONFIGURACIÓN ESPECIAL (Compacta) */}
+              {/* 4. CONFIGURACION ESPECIAL (Compacta) */}
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="flex-1 flex flex-col gap-2 p-3 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl border border-gray-100 dark:border-white/5">
                   <div className="flex items-center justify-between">
@@ -1324,7 +1324,7 @@ const ProductFormModal = memo(function ProductFormModal({
       </ModalContent>
     </Modal>
 
-    {/* SUB-MODAL: CREACIÓN RÁPIDA DE PROVEEDOR (FUERA DEL MODAL PADRE PARA EVITAR CONFLICTOS DE OVERLAY) */}
+    {/* SUB-MODAL: CREACION RAPIDA DE PROVEEDOR (FUERA DEL MODAL PADRE PARA EVITAR CONFLICTOS DE OVERLAY) */}
     <SupplierFormModal
       isOpen={quickSupplierOpen}
       onOpenChange={setQuickSupplierOpen}
@@ -1333,7 +1333,7 @@ const ProductFormModal = memo(function ProductFormModal({
       supplier={null}
     />
 
-    {/* SUB-MODAL: CREACIÓN RÁPIDA DE CATEGORÍA (FUERA DEL MODAL PADRE PARA EVITAR CONFLICTOS DE OVERLAY) */}
+    {/* SUB-MODAL: CREACION RAPIDA DE CATEGORIA (FUERA DEL MODAL PADRE PARA EVITAR CONFLICTOS DE OVERLAY) */}
     <CategoryFormModal
       isOpen={quickCategoryOpen}
       onOpenChange={setQuickCategoryOpen}

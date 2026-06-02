@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo } from 'react';
 import { 
@@ -82,7 +82,7 @@ export default function ReceptionHistoryPage() {
         try {
             const token = Cookies.get('org-pos-token');
             await apiFetch(`/products/reception/${receptionToDelete}`, { method: 'DELETE' }, token);
-            toast({ title: "ÉXITO", description: "Recepción eliminada y stock revertido." });
+            toast({ title: "EXITO", description: "Recepcion eliminada y stock revertido." });
             mutate();
             setReceptionToDelete(null);
         } catch (err: any) {
@@ -93,7 +93,7 @@ export default function ReceptionHistoryPage() {
     };
 
     return (
-        <div className="flex flex-col h-full bg-zinc-50 dark:bg-zinc-950 p-4 md:p-6 gap-6 overflow-y-auto">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-zinc-50 dark:bg-zinc-950 p-4 md:p-6 gap-6">
             {/* HEADER */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -109,7 +109,7 @@ export default function ReceptionHistoryPage() {
                         <h1 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter">
                             Historial de <span className="text-zinc-900 dark:text-zinc-100">Recepciones</span>
                         </h1>
-                        <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Auditoría de Entradas de Mercancía</p>
+                        <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Auditoria de Entradas de Mercancia</p>
                     </div>
                 </div>
 
@@ -127,7 +127,7 @@ export default function ReceptionHistoryPage() {
             </div>
 
             {/* LISTA DE RECEPCIONES */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col flex-1 min-h-0 overflow-y-auto custom-scrollbar gap-4 pr-1">
                 {isLoading ? (
                     <div className="flex flex-col items-center justify-center py-20 gap-4">
                         <Spinner color="success" size="lg" />
@@ -137,7 +137,7 @@ export default function ReceptionHistoryPage() {
                     <Card className="card-base border-none border border-rose-200 dark:border-rose-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <CardBody className="py-16 flex flex-col items-center justify-center gap-3 text-center">
                             <p className="text-sm font-bold text-rose-500 uppercase">Error al cargar el historial</p>
-                            <p className="text-[10px] text-zinc-500">{movementsError?.message || 'Intenta cambiar la fecha o recargar la página.'}</p>
+                            <p className="text-[10px] text-zinc-500">{movementsError?.message || 'Intenta cambiar la fecha o recargar la pagina.'}</p>
                         </CardBody>
                     </Card>
                 ) : receptions.length === 0 ? (
@@ -148,7 +148,7 @@ export default function ReceptionHistoryPage() {
                             </div>
                             <div>
                                 <h3 className="text-sm font-bold text-zinc-900 dark:text-white uppercase">No hay recepciones</h3>
-                                <p className="text-[10px] text-zinc-500 mt-1">No se registraron entradas de mercancía el {displayDate}</p>
+                                <p className="text-[10px] text-zinc-500 mt-1">No se registraron entradas de mercancia el {displayDate}</p>
                             </div>
                         </CardBody>
                     </Card>
@@ -157,7 +157,7 @@ export default function ReceptionHistoryPage() {
                         <Card key={rec.id} className="card-base border-none border border-zinc-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden group hover:border-emerald-500/30 transition-all">
                             <CardBody className="p-0">
                                 <div className="flex flex-col md:flex-row">
-                                    {/* HEADER RECEPCIÓN */}
+                                    {/* HEADER RECEPCION */}
                                     <div className="p-4 md:w-64 bg-zinc-50 dark:bg-zinc-800/50 border-b md:border-b-0 md:border-r border-zinc-200 dark:border-white/5 flex flex-col justify-between gap-4">
                                         <div className="flex flex-col gap-2">
                                             <div className="flex items-center gap-2">
@@ -202,10 +202,10 @@ export default function ReceptionHistoryPage() {
                                         )}
                                     </div>
 
-                                    {/* ITEMS RECEPCIÓN */}
+                                    {/* ITEMS RECEPCION */}
                                     <div className="flex-1 p-4 overflow-x-auto">
                                         <Table 
-                                            aria-label="Items de recepción" 
+                                            aria-label="Items de recepcion" 
                                             removeWrapper 
                                             className="min-w-[400px]"
                                             classNames={{
@@ -247,7 +247,7 @@ export default function ReceptionHistoryPage() {
                 )}
             </div>
 
-            {/* MODAL CONFIRMACIÓN ELIMINAR */}
+            {/* MODAL CONFIRMACION ELIMINAR */}
             <Modal 
                 isOpen={!!receptionToDelete} 
                 onClose={() => setReceptionToDelete(null)}
@@ -260,17 +260,17 @@ export default function ReceptionHistoryPage() {
             >
                 <ModalContent>
                     <ModalHeader className="flex flex-col gap-1">
-                        <h3 className="text-lg font-medium text-rose-500 uppercase tracking-tight tracking-tighter">¿Deshacer Recepción?</h3>
+                        <h3 className="text-lg font-medium text-rose-500 uppercase tracking-tight tracking-tighter">Â¿Deshacer Recepcion?</h3>
                     </ModalHeader>
                     <ModalBody className="py-6 flex flex-col items-center text-center gap-4">
                         <div className="h-20 w-20 rounded-2xl bg-rose-500/10 text-rose-500 flex items-center justify-center">
                             <AlertTriangle size={40} />
                         </div>
                         <div className="flex flex-col gap-2">
-                            <p className="text-sm font-bold text-zinc-900 dark:text-white uppercase">¡ACCIÓN CRÍTICA!</p>
+                            <p className="text-sm font-bold text-zinc-900 dark:text-white uppercase">Â¡ACCION CRITICA!</p>
                             <p className="text-xs text-zinc-500 px-4">
-                                Al deshacer la recepción <span className="font-medium text-zinc-900 dark:text-white">{receptionToDelete}</span>, se 
-                                <span className="text-rose-500 font-bold"> restará el stock</span> ingresado y se <span className="text-rose-500 font-bold"> eliminará el egreso</span> vinculado de la caja.
+                                Al deshacer la recepcion <span className="font-medium text-zinc-900 dark:text-white">{receptionToDelete}</span>, se 
+                                <span className="text-rose-500 font-bold"> restara el stock</span> ingresado y se <span className="text-rose-500 font-bold"> eliminara el egreso</span> vinculado de la caja.
                             </p>
                         </div>
                     </ModalBody>
@@ -290,3 +290,5 @@ export default function ReceptionHistoryPage() {
         </div>
     );
 }
+
+

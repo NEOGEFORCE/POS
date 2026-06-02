@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -31,8 +31,8 @@ interface TableProps {
 const COLUMNS = [
     { name: "IDENTIDAD", uid: "identity", align: "center" },
     { name: "NIVEL ACCESO", uid: "role", align: "center" },
-    { name: "ÚLTIMA CONEXIÓN", uid: "insights", align: "center", hideOnMobile: true },
-    { name: "GESTIÓN", uid: "actions", align: "end" },
+    { name: "ULTIMA CONEXION", uid: "insights", align: "center", hideOnMobile: true },
+    { name: "GESTION", uid: "actions", align: "end" },
 ];
 
 const UserTable = memo(({
@@ -98,7 +98,7 @@ const UserTable = memo(({
                         <div className="flex items-center gap-1.5">
                             <div className={`h-1.5 w-1.5 rounded-2xl ${isOnline ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 animate-pulse' : 'bg-gray-400'}`} />
                             <span className={`text-[9px] font-medium uppercase tracking-widest tracking-tight ${isOnline ? 'text-zinc-900 dark:text-zinc-100' : 'text-gray-400'}`}>
-                                {isOnline ? "EN LÍNEA" : "DESCONECTADO"}
+                                {isOnline ? "EN LINEA" : "DESCONECTADO"}
                             </span>
                         </div>
                         <span className="text-[7px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
@@ -132,9 +132,9 @@ const UserTable = memo(({
     }, [onEdit, onDelete, onResetPassword]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
-            {/* ÁREA DE CONTENIDO PRINCIPAL */}
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
+            {/* AREA DE CONTENIDO PRINCIPAL */}
+            <div className="flex flex-col">
                 {/* VISTA DESKTOP */}
                 {!isMobile && (
                     <Table
@@ -144,7 +144,7 @@ const UserTable = memo(({
                         className="flex-1"
                         classNames={{
                             base: "flex-1 overflow-hidden",
-                            wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
+                            wrapper: "overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none flex-1 min-h-0 h-full",
                             th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
                             td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5",
                             tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 h-10 relative z-0"
@@ -171,9 +171,9 @@ const UserTable = memo(({
                     </Table>
                 )}
 
-                {/* VISTA MÓVIL CON SCROLL INTERNO (TARJETAS) */}
+                {/* VISTA MOVIL CON SCROLL INTERNO (TARJETAS) */}
                 {isMobile && (
-                    <div className="flex-1 min-h-0 overflow-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b]">
+                    <div className="overflow-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
                         {users?.map((u) => {
                             const isSuperAdmin = (u.role || (u as any).Role || u.Role || '').toLowerCase() === 'superadmin';
                             const roleDisplay = u.role || (u as any).Role || u.Role || 'EMPLEADO';
@@ -181,7 +181,7 @@ const UserTable = memo(({
 
                             return (
                                 <div key={u.id || u.dni} className={`p-4 rounded-2xl border transition-all flex items-center justify-between shrink-0 ${u.is_active ? 'card-base border-none border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'card-base border-none border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-dashed'}`}>
-                                    <div className="flex items-center gap-3">
+                                    <div className="flex-1 min-h-0 h-full w-full flex items-center gap-3">
                                         <div className="relative">
                                             <Avatar
                                                 size="sm"
@@ -225,7 +225,7 @@ const UserTable = memo(({
                 )}
             </div>
 
-            {/* PAGINACIÓN FIJA - SIEMPRE AL FINAL */}
+            {/* PAGINACION FIJA - SIEMPRE AL FINAL */}
             {totalRecords > 0 && (
                 <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
 
@@ -285,3 +285,6 @@ const UserTable = memo(({
 UserTable.displayName = 'UserTable';
 
 export default UserTable;
+
+
+

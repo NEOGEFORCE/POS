@@ -5,7 +5,7 @@ import { playNotificationSound } from "@/lib/audio-utils";
 
 /**
  * Hook puente para usar Sonner en lugar del sistema antiguo de toasts.
- * Añadimos sonido premium a cada notificación y estilos avanzados.
+ * Añadimos sonido premium a cada notificacion y estilos avanzados.
  */
 
 type ToastProps = {
@@ -16,18 +16,18 @@ type ToastProps = {
   action?: React.ReactNode;
 };
 
-// Función auxiliar para formatear los mensajes
+// Funcion auxiliar para formatear los mensajes
 function formatMessage(title?: string, description?: string) {
   let mainMessage = title || '';
   let subMessage = description || '';
 
-  // Si el title es genérico como "ERROR", preferimos usar la descripción como título
+  // Si el title es generico como "ERROR", preferimos usar la descripcion como titulo
   if (mainMessage === 'ERROR' && subMessage) {
     mainMessage = subMessage.split(':')[0] || 'Error';
     subMessage = subMessage.substring(mainMessage.length + 1).trim() || subMessage;
   }
   
-  // Limpiar mayúsculas excesivas
+  // Limpiar mayusculas excesivas
   if (mainMessage === mainMessage.toUpperCase() && mainMessage.length > 5) {
     mainMessage = mainMessage.charAt(0) + mainMessage.slice(1).toLowerCase();
   }
@@ -36,7 +36,7 @@ function formatMessage(title?: string, description?: string) {
 }
 
 function toast({ title, description, variant, duration, action }: ToastProps) {
-  // SILENCIAR NOTIFICACIONES QUE NO SEAN ERRORES (A petición del usuario)
+  // SILENCIAR NOTIFICACIONES QUE NO SEAN ERRORES (A peticion del usuario)
   if (variant !== 'destructive') {
     return;
   }
@@ -49,7 +49,7 @@ function toast({ title, description, variant, duration, action }: ToastProps) {
 
   const { mainMessage, subMessage } = formatMessage(title, description);
 
-  // Configuración de estilo premium
+  // Configuracion de estilo premium
   const premiumStyles = {
     description: subMessage,
     duration: options.duration,
@@ -62,7 +62,7 @@ function toast({ title, description, variant, duration, action }: ToastProps) {
 function useToast() {
   return {
     toast,
-    dismiss: () => {}, // Sileo se autodespide o tiene su propia lógica
+    dismiss: () => {}, // Sileo se autodespide o tiene su propia logica
   };
 }
 

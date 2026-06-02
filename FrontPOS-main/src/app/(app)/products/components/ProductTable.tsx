@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo, useEffect, useState, useCallback } from 'react';
 import {
@@ -35,7 +35,7 @@ const COLUMNS = [
     { name: "STOCK", uid: "stock", align: "center" },
     { name: "PRECIO", uid: "price", align: "start" },
     { name: "MARGEN", uid: "margin", align: "center" },
-    { name: "GESTIÓN", uid: "actions", align: "end" },
+    { name: "GESTION", uid: "actions", align: "end" },
 ];
 
 const ProductTable = memo(({
@@ -76,7 +76,7 @@ const ProductTable = memo(({
             const diffB = (b.minStock || 0) - b.quantity;
             if (diffB !== diffA) return diffB - diffA;
 
-            // 3. Rotación (Promedio de venta diaria)
+            // 3. Rotacion (Promedio de venta diaria)
             const rotA = (a as any).avgSoldPerDay || 0;
             const rotB = (b as any).avgSoldPerDay || 0;
             return rotB - rotA;
@@ -118,7 +118,7 @@ const ProductTable = memo(({
                                 <Package size={18} />
                             )}
                         </div>
-                        <div className="flex flex-col min-w-0">
+                        <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
                             <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate max-w-[180px]">
                                 {product.productName}
                             </span>
@@ -195,7 +195,7 @@ const ProductTable = memo(({
                         </div>
                         {isHighMargin && (
                             <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tighter animate-pulse">
-                                ↑ Margen Alto
+                                â†‘ Margen Alto
                             </span>
                         )}
                     </div>
@@ -225,10 +225,10 @@ const ProductTable = memo(({
     }, [isAdmin, onEdit, onDelete, onQuickUpdate, formatCOP]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden min-w-0">
+        <div className="flex-1 min-h-0 h-full w-full bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
+            <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
                 {!isMobile ? (
-                    <div className="flex-1 overflow-auto overscroll-contain custom-scrollbar min-h-0 w-full">
+                    <div className="overflow-auto overscroll-contain custom-scrollbar w-full flex-1 min-h-0 h-full">
                         <Table
                             isCompact
                             removeWrapper
@@ -267,7 +267,7 @@ const ProductTable = memo(({
                         </Table>
                     </div>
                 ) : (
-                    <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b]">
+                    <div className="overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
                         {sortedProducts.length > 0 ? (
                             sortedProducts.map((p) => {
                                 const minStock = p.minStock || 1;
@@ -298,7 +298,7 @@ const ProductTable = memo(({
                                     <div key={p.barcode} className={`relative flex flex-col gap-2 p-2.5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] card-base border-none w-full shrink-0 ${cardBorderClass} transition-transform active:scale-[0.98]`}>
                                         <div className={`absolute top-2.5 left-0 w-1 h-8 rounded-r-full z-20 ${indicatorClass}`} />
                                         
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex-1 min-h-0 h-full w-full flex items-center gap-2">
                                             <div className="h-9 w-9 rounded-2xl bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 flex items-center justify-center text-zinc-900 dark:text-zinc-100 shrink-0 shadow-inner overflow-hidden">
                                                 {p.imageUrl ? <img src={p.imageUrl} className="h-full w-full object-cover" alt="" /> : <Package size={16} />}
                                             </div>
@@ -365,7 +365,7 @@ const ProductTable = memo(({
                         ) : (
                             <EmptyState
                                 title="Sin resultados"
-                                description="No hay productos que coincidan con tu búsqueda en este dispositivo."
+                                description="No hay productos que coincidan con tu busqueda en este dispositivo."
                             />
                         )}
                     </div>
@@ -429,3 +429,4 @@ const ProductTable = memo(({
 
 ProductTable.displayName = 'ProductTable';
 export default ProductTable;
+

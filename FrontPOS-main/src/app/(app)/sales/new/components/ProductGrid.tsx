@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useMemo } from 'react';
+import React, { useRef, useMemo, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Scale, Package } from 'lucide-react';
 import { isProductWeighted, getStockStatus } from '@/lib/utils';
@@ -12,7 +12,11 @@ interface ProductGridProps {
     addToCart: (product: Product) => void;
 }
 
-const ProductItem = ({ product, onAdd }: { product: Product, onAdd: (p: Product) => void }) => {
+// ProductItem aislado y memoizado: solo se re-renderiza si cambia el
+// producto o el callback. El callback addToCart del padre debe estar
+// envuelto en useCallback para que la memo sea efectiva (verificado en
+// useNewSale.ts:677).
+const ProductItem = memo(({ product, onAdd }: { product: Product, onAdd: (p: Product) => void }) => {
     return (
         <motion.button
             whileTap={{ scale: 0.97 }}
@@ -46,11 +50,23 @@ const ProductItem = ({ product, onAdd }: { product: Product, onAdd: (p: Product)
             </span>
         </motion.button>
     );
-};
+}, (prev, next) => {
+    // Comparador shallow estable: solo re-renderiza si cambio este producto
+    // especifico (precio, stock, nombre) o el callback. Ignora cambios del
+    // resto del catalogo o del carrito en el padre.
+    return (
+        prev.onAdd === next.onAdd &&
+        prev.product.barcode === next.product.barcode &&
+        prev.product.productName === next.product.productName &&
+        prev.product.salePrice === next.product.salePrice &&
+        prev.product.quantity === next.product.quantity &&
+        prev.product.minStock === next.product.minStock
+    );
+});
 
 ProductItem.displayName = 'ProductItem';
 
-export default function ProductGrid({ products, addToCart }: ProductGridProps) {
+function ProductGridBase({ products, addToCart }: ProductGridProps) {
     const parentRef = useRef<HTMLDivElement>(null);
     const columns = 10;
     const rowCount = Math.ceil((products?.length || 0) / columns);
@@ -65,7 +81,7 @@ export default function ProductGrid({ products, addToCart }: ProductGridProps) {
     return (
         <div
             ref={parentRef}
-            className="flex-1 overflow-y-auto custom-scrollbar p-1.5 min-h-[200px] [scrollbar-gutter:stable]"
+            className="flex-1 overflow-y-auto custom-scrollbar p-1.5 min-h-0 [scrollbar-gutter:stable]"
         >
             <div
                 style={{
@@ -100,9 +116,19 @@ export default function ProductGrid({ products, addToCart }: ProductGridProps) {
             </div>
             {(!products || products.length === 0) && (
                 <div className="py-20 text-center text-default-400 tracking-tight text-sm">
-                    No se encontraron productos en esta categoría.
+                    No se encontraron productos en esta categoria.
                 </div>
             )}
         </div>
     );
 }
+
+// Export memoizado: el ProductGrid solo re-renderiza si cambia la lista de
+// productos (referencia) o la funcion addToCart (envuelta en useCallback).
+// Cambios en el carrito, searchQuery o cualquier otro state del padre no
+// afectan este componente — el filtrado real ocurre en un Web Worker
+// (useNewSale.ts) que actualiza `filteredProductsGrid` solo cuando cambia
+// el resultado.
+const ProductGrid = memo(ProductGridBase);
+ProductGrid.displayName = 'ProductGrid';
+export default ProductGrid;

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -25,7 +25,7 @@ import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api-error';
 import Cookies from 'js-cookie';
 
-// CARGA DINÁMICA DE COMPONENTES PESADOS
+// CARGA DINÃƒÂMICA DE COMPONENTES PESADOS
 const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
 const ClientSelectionModal = dynamic(() => import('./components/ClientSelectionModal'), { ssr: false });
 const ManualWeightModal = dynamic(() => import('./components/ManualWeightModal'), { ssr: false });
@@ -66,23 +66,22 @@ export default function NewSalePage() {
     const { user } = useAuth();
     const { toast } = useToast();
 
-    // Verificación de caja abierta
+    // Verificacion de caja abierta
     useEffect(() => {
         const checkRegister = async () => {
             const token = Cookies.get('org-pos-token');
             if (!token || !user?.dni) return;
 
-            try {
-                const data = await apiFetch('/dashboard/cashier-closure', { method: 'GET' }, token);
-                if (data && data.activeShiftDni && data.activeShiftDni !== user.dni) {
-                    toast({
-                        variant: "default",
-                        title: "CAJA PRINCIPAL EN USO",
-                        description: `Te uniste a la caja abierta por ${data.activeShiftName}`,
-                        className: "bg-amber-500/10 border-amber-500/20 text-amber-600"
-                    });
-                }
-            } catch (error) {
+        try {
+            const data = await apiFetch('/dashboard/cashier-closure', { method: 'GET' }, token);
+            if (data && data.activeShiftDni && data.activeShiftDni !== user.dni) {
+                toast({
+                    variant: "default",
+                    title: "CAJA PRINCIPAL EN USO",
+                    description: `Te uniste a la caja abierta por ${data.activeShiftName}`
+                });
+            }
+        } catch (error) {
                 console.error("Error comprobando estado de la caja:", error);
             }
         };
@@ -95,13 +94,13 @@ export default function NewSalePage() {
     const isScanningRef = useRef<boolean>(false);
     const autoSubmitTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    // --- AUTO-SUBMIT JALTECH POS 2D: Buffer quieto 150ms = código completo ---
+    // --- AUTO-SUBMIT JALTECH POS 2D: Buffer quieto 150ms = codigo completo ---
     // Jaltech omnidireccional completa un EAN-13 en ~130ms (10-15ms entre chars)
     useEffect(() => {
         if (autoSubmitTimer.current) clearTimeout(autoSubmitTimer.current);
         
-        // Solo auto-enviar si detectamos que viene de un escáner (isScanningRef)
-        // y tiene una longitud razonable para un código de barras.
+        // Solo auto-enviar si detectamos que viene de un escaner (isScanningRef)
+        // y tiene una longitud razonable para un codigo de barras.
         if (scannerBuffer.length >= 3 && isScanningRef.current) {
             autoSubmitTimer.current = setTimeout(() => {
                 handleCodeSubmit(scannerBuffer);
@@ -124,6 +123,14 @@ export default function NewSalePage() {
     const selectedItemIdRef = useRef(selectedItemId);
     useEffect(() => { selectedItemIdRef.current = selectedItemId; }, [selectedItemId]);
 
+    // --- AUTO-SCROLL CARRITO ---
+    const cartScrollRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (cartScrollRef.current) {
+            cartScrollRef.current.scrollTop = cartScrollRef.current.scrollHeight;
+        }
+    }, [currentCart.length]);
+
     // ATAJOS DE TECLADO ESTABILIZADOS
     useEffect(() => {
         const handleGlobalKeyDown = (e: KeyboardEvent) => {
@@ -131,14 +138,14 @@ export default function NewSalePage() {
             const diff = now - lastKeyPressTime.current;
             lastKeyPressTime.current = now;
 
-            // JALTECH POS 2D Omnidireccional: ráfagas de ~10-15ms entre chars
+            // JALTECH POS 2D Omnidireccional: rafagas de ~10-15ms entre chars
             const isFast = diff < 35;
             if (isFast) isScanningRef.current = true;
 
             const isSearchFocused = document.activeElement === searchRef.current;
             const isModalOpen = isModalOpenRef.current;
 
-            // REGLA DE ORO: Pausar motor global en búsqueda o modales
+            // REGLA DE ORO: Pausar motor global en busqueda o modales
             if (isSearchFocused && e.key !== 'Escape' && e.key !== 'Enter') return;
             if (isModalOpen && e.key !== 'Escape') return;
 
@@ -266,13 +273,13 @@ export default function NewSalePage() {
         };
     }, [handleCodeSubmit, addMiscItem, updateQuantity, setCartItemQuantity, removeFromCart, currentCart.length, showSuccessScreen, returnFocusToScanner, setIsPaymentDialogOpen, setShowSuccessScreen, setIsClientDialogOpen, setIsScannerOpen, setIsManualWeightOpen, setIsSplitDialogOpen, setIsMissingItemOpen, searchQuery]);
 
-    // --- MOTOR DE RECUPERACIÓN DE FOCO (V9.5) ---
+    // --- MOTOR DE RECUPERACIÃƒâ€œN DE FOCO (V9.5) ---
     useEffect(() => {
         const interval = setInterval(() => {
             const isModalOpen = isModalOpenRef.current;
             const isSearchFocused = document.activeElement === searchRef.current;
             
-            // Si no hay modal, ni búsqueda, y perdimos el foco del "gate"
+            // Si no hay modal, ni busqueda, y perdimos el foco del "gate"
             if (!isModalOpen && !isSearchFocused && document.activeElement !== hiddenScannerRef.current) {
                 returnFocusToScanner();
             }
@@ -282,7 +289,7 @@ export default function NewSalePage() {
 
     if (loading) {
         return (
-            <div className="flex h-screen items-center justify-center bg-gray-50 dark:bg-zinc-950">
+            <div className="flex h-full w-full items-center justify-center bg-[#09090b]">
                 <Spinner size="lg" color="success" />
             </div>
         );
@@ -292,8 +299,8 @@ export default function NewSalePage() {
     const iva = total - subtotal;
 
     return (
-        <div className="flex flex-col h-full gap-1 p-1 bg-gray-100 dark:bg-zinc-950 overflow-hidden select-none transition-colors duration-500">
-            {/* INPUT INVISIBLE PARA CAPTURA DE ESCÁNER FÍSICO */}
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full overflow-hidden select-none p-1 gap-1 relative z-10" style={{ backgroundColor: '#09090b' }}>
+            {/* INPUT INVISIBLE PARA CAPTURA DE ESCÃƒÂNER FÃƒÂSICO */}
             <input
                 ref={hiddenScannerRef}
                 type="text"
@@ -304,8 +311,9 @@ export default function NewSalePage() {
                 tabIndex={-1}
             />
 
-            <div id="pos-main-container" className="flex-1 flex flex-col gap-1 min-h-0 overflow-hidden relative">
-                <div className="flex-[7] lg:flex-[5] flex flex-col lg:flex-row gap-1 min-h-0">
+            <div id="pos-main-container" className="flex flex-col gap-1 overflow-y-auto md:overflow-hidden custom-scrollbar relative flex-1 min-h-0 h-full w-full">
+                {/* SECCIÃƒâ€œN SUPERIOR: CARRITO + NUMERIC PAD */}
+                <div className="flex-[1.6] flex flex-col lg:flex-row gap-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
                     {/* PANEL IZQUIERDO: CARRITO */}
                     <div className="flex-1 flex flex-col rounded-2xl border border-gray-200 dark:border-white/5 card-base overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] min-h-0">
                         <div className="bg-gray-50 dark:bg-[#18181b]/50 border-b border-gray-200 dark:border-white/5 p-2 shrink-0 flex justify-between items-center">
@@ -366,7 +374,7 @@ export default function NewSalePage() {
                         </div>
 
                         <div className="flex-1 overflow-hidden flex flex-col min-h-0 card-base">
-                            <div className="flex-1 overflow-y-auto custom-scrollbar px-1 [scrollbar-gutter:stable]">
+                            <div ref={cartScrollRef} className="flex-1 overflow-y-auto custom-scrollbar px-1 [scrollbar-gutter:stable]">
                                 <Table
                                     aria-label="Carrito"
                                     isCompact
@@ -378,13 +386,13 @@ export default function NewSalePage() {
                                     }}
                                 >
                                     <TableHeader>
-                                        <TableColumn>ARTÍCULO</TableColumn>
+                                        <TableColumn>ARTÃƒÂCULO</TableColumn>
                                         <TableColumn align="center">PVP</TableColumn>
                                         <TableColumn align="center">CANT</TableColumn>
                                         <TableColumn align="end">TOTAL</TableColumn>
                                         <TableColumn align="center" width={30}> </TableColumn>
                                     </TableHeader>
-                                    <TableBody emptyContent={<div className="py-10 text-gray-400 text-xs font-bold uppercase tracking-widest text-center">Carrito vacío</div>}>
+                                    <TableBody emptyContent={<div className="py-10 text-gray-400 text-xs font-bold uppercase tracking-widest text-center">Carrito vacÃƒÂ­o</div>}>
                                         {currentCart.map((item) => (
                                             <TableRow 
                                                 key={item.cartItemId} 
@@ -452,14 +460,14 @@ export default function NewSalePage() {
                         </div>
                     </div>
 
-                    {/* PANEL DERECHO: TECLADO Y ESCÁNER */}
-                    <aside className="w-[260px] flex flex-col shrink-0">
-                        <div className="flex-1 card-base rounded-2xl p-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-1 border border-gray-200 dark:border-white/5">
+                    {/* PANEL DERECHO: TECLADO Y ESCÃƒÂNER */}
+                    <aside className="w-full lg:w-[260px] flex flex-col shrink-0">
+                        <div className="flex-1 card-base rounded-2xl p-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-1 border border-gray-200 dark:border-white/5 overflow-hidden min-h-0">
                             <div className="flex items-center gap-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 px-2 py-1 rounded-2xl shadow-inner h-10 shrink-0">
                                 <Barcode className="h-4 w-4 text-zinc-900 dark:text-zinc-100 shrink-0" />
                                 <div className="relative flex-1 h-8 flex items-center px-1">
                                     <div className="font-mono font-bold text-xs text-gray-900 dark:text-zinc-100 bg-transparent flex-1 truncate">
-                                        {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÁNER...")}
+                                        {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÃƒÂNER...")}
                                     </div>
                                     {!scannerBuffer && feedbackCode && (
                                         <div className={`absolute left-0 pointer-events-none font-mono font-bold text-xs tracking-tight ${isFeedbackError ? 'text-rose-400' : 'text-zinc-900 dark:text-zinc-100/50'} animate-out fade-out duration-1000 fill-mode-forwards`}>
@@ -511,8 +519,8 @@ export default function NewSalePage() {
                     </aside>
                 </div>
 
-                {/* SECCIÓN INFERIOR: CATEGORÍAS Y PRODUCTOS */}
-                <div className="flex-[3] lg:flex-[4] flex gap-1 min-h-0 card-base rounded-2xl p-1 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                {/* SECCIÃƒâ€œN INFERIOR: CATEGORÃƒÂAS Y PRODUCTOS Ã¢â‚¬â€ flex-1 con altura mÃƒÂ­nima para no colapsar */}
+                <div className="flex-1 w-full shrink-0 flex gap-1 card-base rounded-2xl p-1 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-t border-white/10" style={{ minHeight: '320px' }}>
                     <aside className="w-28 shrink-0 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
                         <Button size="sm" className={`justify-start h-8 min-h-[32px] rounded-2xl font-bold text-[9px] px-2 ${selectedCategory === 'all' ? 'bg-emerald-500 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory('all'); returnFocusToScanner(); }}>TODOS</Button>
                         {categories.map(cat => (
@@ -532,11 +540,11 @@ export default function NewSalePage() {
                 </div>
             </div>
 
-            {/* MODALES DINÁMICOS */}
+            {/* MODALES DINÃƒÂMICOS */}
             <UniversalPaymentModal isOpen={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen} title="Cobrar Venta" client={selectedCustomer} totalToPay={total} showSuccessScreen={showSuccessScreen} submittingPayment={submitting} lastChange={lastChange} onPay={handleConfirmSale} onCloseComplete={returnFocusToScanner} />
             <ClientSelectionModal isOpen={isClientDialogOpen} onOpenChange={(open) => { setIsClientDialogOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }} clientSearch={clientSearch} setClientSearch={setClientSearch} filteredCustomers={filteredCustomers} handleClientSelect={handleClientSelect} selectedClientDni={selectedCustomerDni} />
             <ManualWeightModal isOpen={isManualWeightOpen} onOpenChange={(open) => { setIsManualWeightOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }} manualWeightProduct={manualWeightProduct} manualWeightValue={manualWeightValue} setManualWeightValue={setManualWeightValue} confirmManualWeight={confirmManualWeight} />
-            <ScannerOverlay isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onResult={(res) => { handleCodeSubmit(res); setIsScannerOpen(false); }} title="Escáner POS" />
+            <ScannerOverlay isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onResult={(res) => { handleCodeSubmit(res); setIsScannerOpen(false); }} title="Escaner POS" />
             <SplitBillDialog
                 isOpen={isSplitDialogOpen}
                 onClose={() => setIsSplitDialogOpen(false)}
@@ -570,7 +578,7 @@ export default function NewSalePage() {
                 }}
             />
 
-            {/* Modal de Confirmación de Eliminación de Factura (V8.5) */}
+            {/* Modal de Confirmacion de Eliminacion de Factura (V8.5) */}
             <Modal 
                 isOpen={isDeleteCartConfirmOpen} 
                 onOpenChange={setIsDeleteCartConfirmOpen}
@@ -587,15 +595,15 @@ export default function NewSalePage() {
                             <ModalHeader className="flex flex-col gap-1 text-rose-500 font-medium tracking-tight">
                                 <div className="flex items-center gap-2">
                                     <AlertTriangleIcon size={24} />
-                                    ¿ELIMINAR FACTURA?
+                                    Ã‚Â¿ELIMINAR FACTURA?
                                 </div>
                             </ModalHeader>
                             <ModalBody>
                                 <p className="text-white font-bold">
-                                    Esta factura contiene productos registrados. Si la elimina, se perderán los cambios y esto podría afectar la trazabilidad de su inventario.
+                                    Esta factura contiene productos registrados. Si la elimina, se perderan los cambios y esto podrÃƒÂ­a afectar la trazabilidad de su inventario.
                                 </p>
                                 <p className="text-zinc-500 dark:text-zinc-400 text-xs tracking-tight">
-                                    ¿Está seguro de que desea proceder con la eliminación total?
+                                    Ã‚Â¿Esta seguro de que desea proceder con la eliminacion total?
                                 </p>
                             </ModalBody>
                             <ModalFooter>
@@ -610,7 +618,7 @@ export default function NewSalePage() {
                                     }}
                                     className="font-medium tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20"
                                 >
-                                    SÍ, ELIMINAR FACTURA
+                                    SÃƒÂ, ELIMINAR FACTURA
                                 </Button>
                             </ModalFooter>
                         </>
@@ -620,3 +628,5 @@ export default function NewSalePage() {
         </div>
     );
 }
+
+

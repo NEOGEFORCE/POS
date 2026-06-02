@@ -22,8 +22,9 @@ import { formatCurrency } from "@/lib/utils"
 import { Sparkles, RefreshCw, AlertTriangle, Bell } from "lucide-react"
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate'
 import { Button, Skeleton, Chip } from "@heroui/react"
+import { PremiumDateInput } from "@/components/ui/premium-date-input"
 
-// Componentes estables que pueden seguir siendo dinámicos
+// Componentes estables que pueden seguir siendo dinamicos
 const DashboardKPIs = nextDynamic(() => import("./components/DashboardKPIs"), {
     loading: () => <Skeleton className="h-[160px] w-full rounded-[2rem]" />
 });
@@ -34,6 +35,12 @@ const ReportButtons = nextDynamic(() => import("./components/ReportButtons"), {
     loading: () => <Skeleton className="h-[96px] w-full rounded-2xl" />
 });
 const DateRangeModal = nextDynamic(() => import("./components/DateRangeModal"));
+const SalesAutoTourCard = nextDynamic(() => import("./components/SalesAutoTourCard"), {
+    loading: () => <Skeleton className="h-[280px] w-full rounded-2xl" />
+});
+const CategoryHeatmapCard = nextDynamic(() => import("./components/CategoryHeatmapCard"), {
+    loading: () => <Skeleton className="h-[280px] w-full rounded-2xl" />
+});
 
 type StockStatus = 'CRITICAL' | 'WARNING' | 'OPTIMAL';
 
@@ -181,7 +188,7 @@ export default function DashboardPage() {
     };
 
     useEffect(() => {
-        // Sincronización Local (Entre pestañas y GlobalSyncProvider)
+        // Sincronizacion Local (Entre pestanas y GlobalSyncProvider)
         const cleanupSync = setupSyncListener((event) => {
             const dashboardEvents = [
                 'SALE_MADE', 
@@ -209,15 +216,17 @@ export default function DashboardPage() {
     const stockHealthColor = stockHealth >= 80 ? '#10b981' : stockHealth >= 50 ? '#f59e0b' : '#ef4444';
 
     return (
-        // FIX DE SCROLL: h-[100dvh] fuerza el alto total de la ventana y overflow-y-auto habilita el scroll sin zonas muertas.
-        <main className="h-[100dvh] overflow-y-auto relative block w-full bg-gray-50/50 dark:bg-zinc-950/20">
+        // Layout liberado: el body es quien scrollea (shell con scroll natural).
+        // Antes este main forzaba h-[100dvh] overflow-y-auto, lo que creaba
+        // doble scroll y bloqueaba el comportamiento estandar.
+        <main className="relative block w-full bg-gray-50/50 dark:bg-zinc-950/20">
 
             <div className="flex flex-col w-full max-w-[1600px] mx-auto text-zinc-900 dark:text-zinc-50 transition-all duration-500 pb-32 md:pb-24 pt-4">
 
                 {/* CONTENIDO PRINCIPAL */}
                 <div className="p-4 md:p-6 flex flex-col gap-6 w-full">
                     
-                    {/* TÍTULO Y ACCIONES DE CABECERA (NO STICKY) */}
+                    {/* TITULO Y ACCIONES DE CABECERA (NO STICKY) */}
                     {!isLoading && data && (
                         <div className="flex flex-row items-center justify-between mb-2">
                             <div className="flex items-center gap-3">
@@ -235,26 +244,34 @@ export default function DashboardPage() {
                             </div>
 
                             <div className="flex items-center gap-2">
-                                {/* Filtro Temporal Dinámico */}
-                                <div className="hidden md:flex items-center gap-2 card-base border-none dark:bg-[#18181b]/50 p-1.5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-                                    <input 
-                                        type="date" 
-                                        value={dateFrom.split('T')[0]} 
-                                        onChange={(e) => setDateFrom(`${e.target.value}T00:00`)}
-                                        className="text-[10px] font-medium uppercase tracking-tight bg-transparent border-none outline-none text-gray-700 dark:text-zinc-300 w-[110px]"
-                                    />
-                                    <span className="text-gray-400 font-medium">-</span>
-                                    <input 
-                                        type="date" 
-                                        value={dateTo.split('T')[0]} 
-                                        onChange={(e) => setDateTo(`${e.target.value}T23:59`)}
-                                        className="text-[10px] font-medium uppercase tracking-tight bg-transparent border-none outline-none text-gray-700 dark:text-zinc-300 w-[110px]"
-                                    />
+                                {/* Filtro Temporal Dinamico — diseno premium */}
+                                <div className="hidden md:flex items-center gap-2">
+                                    <div className="w-[180px]">
+                                        <PremiumDateInput
+                                            value={dateFrom.split('T')[0]}
+                                            onChange={(v) => setDateFrom(`${v}T00:00`)}
+                                            accent="emerald"
+                                            size="sm"
+                                            hint="Desde"
+                                            showFormatted={false}
+                                        />
+                                    </div>
+                                    <span className="text-zinc-400 dark:text-zinc-600 font-medium text-xs">→</span>
+                                    <div className="w-[180px]">
+                                        <PremiumDateInput
+                                            value={dateTo.split('T')[0]}
+                                            onChange={(v) => setDateTo(`${v}T23:59`)}
+                                            accent="emerald"
+                                            size="sm"
+                                            hint="Hasta"
+                                            showFormatted={false}
+                                        />
+                                    </div>
                                     <Button size="sm" variant="flat" onPress={() => {
                                         const today = new Date().toISOString().split('T')[0];
                                         setDateFrom(`${today}T00:00`);
                                         setDateTo(`${today}T23:59`);
-                                    }} className="h-7 px-2 bg-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[9px] uppercase rounded-2xl">Hoy</Button>
+                                    }} className="h-10 px-3 bg-emerald-500/10 text-emerald-500 font-medium text-[9px] uppercase tracking-widest rounded-xl border border-emerald-500/20 hover:bg-emerald-500/20 transition-all">Hoy</Button>
                                 </div>
 
                                 <Button
@@ -287,7 +304,7 @@ export default function DashboardPage() {
                     ) : error || !data ? (
                         <div className="flex flex-col items-center justify-center gap-4 py-20 opacity-50">
                             <AlertTriangle className="h-12 w-12 text-rose-500" />
-                            <h3 className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">Error de Conexión</h3>
+                            <h3 className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">Error de Conexion</h3>
                             <Button onPress={() => mutate()} color="primary" className="font-medium rounded-2xl">Reintentar</Button>
                         </div>
                     ) : (
@@ -300,7 +317,7 @@ export default function DashboardPage() {
                                             <Bell size={20} fill="currentColor" />
                                         </div>
                                         <div className="flex flex-col">
-                                            <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight">Auditoría de Precios</h4>
+                                            <h4 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight">Auditoria de Precios</h4>
                                             <p className="text-[11px] text-gray-500 dark:text-zinc-400 font-medium">
                                                 <span className="font-medium text-zinc-900 dark:text-zinc-100">{data.priceChangesTodayCount} productos</span> han cambiado de precio hoy.
                                             </p>
@@ -336,7 +353,7 @@ export default function DashboardPage() {
                                     </div>
                                 </div>
 
-                                {/* DERECHA: Acciones, Ranking y Gráficas (Sticky) */}
+                                {/* DERECHA: Acciones, Ranking y Graficas (Sticky) */}
                                 <div className="lg:col-span-4 flex flex-col gap-6 sticky top-[80px]">
                                     <QuickActionsPanel />
                                     <CashFlowWidget data={data.todayCashFlow} />
@@ -350,8 +367,15 @@ export default function DashboardPage() {
                                 </div>
                             </div>
 
-                            {/* ABAJO: Gráfica Financiera y Reportes */}
+                            {/* ABAJO: Grafica Financiera y Reportes */}
                             <AdvancedAnalyticsChart data={data.monthly} />
+
+                            {/* INSPIRADO EN YANN.UIUX — Auto-tour chart + Heatmap de top productos */}
+                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+                                <SalesAutoTourCard data={data.dailySalesLast7} />
+                                <CategoryHeatmapCard topProducts={data.topProducts} dailySales={data.dailySalesLast7} />
+                            </div>
+
                             <ReportButtons onOpenRange={() => setIsRangeModalOpen(true)} />
 
                             {/* MODALES OCULTOS */}

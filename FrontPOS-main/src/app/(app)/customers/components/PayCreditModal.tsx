@@ -52,7 +52,7 @@ export default function PayCreditModal({
   const totalAlreadyPaid = numCashPaid + numTransferPaid;
   const remainingDebt = Math.max(0, totalDebt - totalAlreadyPaid);
 
-  // Valor a mostrar en el display principal (Monto que se sumará ahora o el total si está vacío)
+  // Valor a mostrar en el display principal (Monto que se sumara ahora o el total si esta vacio)
   const amountToPayRaw = currentDialogVal > 0 
     ? currentDialogVal 
     : (Number(cashTendered) > 0 
@@ -77,7 +77,7 @@ export default function PayCreditModal({
       <ModalContent>
         {() => (
           <div className="flex flex-col md:flex-row h-full overflow-hidden relative">
-            {/* Pantalla de Éxito Maestro */}
+            {/* Pantalla de Exito Maestro */}
             {showSuccessScreen && (
               <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/40 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
                 <div className="card-base border-none p-10 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-zinc-200 dark:border-white/10 w-full max-w-sm relative overflow-hidden group">
@@ -87,7 +87,7 @@ export default function PayCreditModal({
                   <h2 className="text-3xl font-medium text-zinc-900 dark:text-zinc-50 uppercase mb-2 tracking-tight tracking-tighter text-center leading-none">
                     Abono <span className="text-zinc-900 dark:text-zinc-100">Realizado</span>
                   </h2>
-                  <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100/60 dark:text-zinc-100/40 uppercase tracking-[0.4em] mb-6 tracking-tight">PROCESADO CON ÉXITO</span>
+                  <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100/60 dark:text-zinc-100/40 uppercase tracking-[0.4em] mb-6 tracking-tight">PROCESADO CON EXITO</span>
                   
                   <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 border-2 border-emerald-500/20 p-8 rounded-[2rem] text-center w-full relative overflow-hidden group-hover:scale-[1.02] transition-transform">
                     <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase mb-3 tracking-[0.3em] tracking-tight">CAMBIO A ENTREGAR</p>
@@ -104,14 +104,14 @@ export default function PayCreditModal({
               </div>
             )}
             
-            {/* Sidebar de Métodos Maestro */}
+            {/* Sidebar de Metodos Maestro */}
               <div className="w-full md:w-[220px] card-base border-none border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
                 <div className="hidden md:flex flex-col mb-8 px-2">
                   <div className="flex items-center gap-2 mb-2">
                     <div className="h-2 w-2 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 animate-pulse" />
                     <span className="text-[10px] font-medium text-gray-400 uppercase tracking-[0.2em] leading-none">Abono Seguro</span>
                   </div>
-                  <h3 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.2em] tracking-tight">MÉTODO PAGO</h3>
+                  <h3 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.2em] tracking-tight">METODO PAGO</h3>
                 </div>
                 
                 <div className="grid grid-cols-2 md:grid-cols-1 gap-1.5 md:gap-3">
@@ -140,7 +140,7 @@ export default function PayCreditModal({
                     </button>
                   ))}
                   
-                  {/* Botón Cancelar integrado en el Grid para Móvil */}
+                  {/* Boton Cancelar integrado en el Grid para Movil */}
                   <button 
                     onClick={() => onOpenChange(false)}
                     className="h-10 md:hidden px-2 rounded-2xl flex items-center justify-center gap-1.5 border border-rose-500/20 bg-rose-500/5 text-rose-500 active:scale-95 transition-all group"
@@ -152,7 +152,7 @@ export default function PayCreditModal({
                   </button>
                 </div>
 
-                {/* Botón Cancelar original para Desktop */}
+                {/* Boton Cancelar original para Desktop */}
                 <Button variant="flat" className="hidden md:flex md:mt-auto h-14 font-medium text-[10px] px-6 rounded-2xl bg-rose-500/10 text-rose-500 tracking-widest uppercase tracking-tight border border-rose-500/20" onPress={() => onOpenChange(false)}>
                   CANCELAR <X size={14} className="ml-1" />
                 </Button>
@@ -162,7 +162,7 @@ export default function PayCreditModal({
             <div className="flex-1 bg-gray-50 dark:bg-zinc-950 pt-2 md:pt-8 px-3 md:px-10 pb-3 flex flex-col relative overflow-hidden z-10">
               <header className="mb-1 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-1 md:gap-4">
                 <div className="flex flex-col min-w-0">
-                  <h1 className="text-lg md:text-3xl font-medium dark:text-white uppercase tracking-tight tracking-tighter leading-none mb-0.5 md:mb-2 text-center md:text-left">Gestión de <span className="text-zinc-900 dark:text-zinc-100">Abonos</span></h1>
+                  <h1 className="text-lg md:text-3xl font-medium dark:text-white uppercase tracking-tight tracking-tighter leading-none mb-0.5 md:mb-2 text-center md:text-left">Gestion de <span className="text-zinc-900 dark:text-zinc-100">Abonos</span></h1>
                   <div className="flex items-center justify-center md:justify-start gap-1.5">
                     <Avatar size="sm" name={client?.name} className="h-4 w-4 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 text-[6px]" />
                     <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">{client?.name} / CC: {client?.dni}</p>
@@ -297,12 +297,12 @@ export default function PayCreditModal({
                       alt={activePaymentTab}
                     />
                     <div className="text-center relative z-10">
-                      <p className="text-sm font-medium dark:text-white tracking-tight uppercase tracking-tighter">TRANSACCIÓN {activePaymentTab}</p>
+                      <p className="text-sm font-medium dark:text-white tracking-tight uppercase tracking-tighter">TRANSACCION {activePaymentTab}</p>
                       <p className="text-[14px] font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(amountToPayRaw)}</p>
                     </div>
                   </div>
 
-                  {/* Numpad para Transferencia en Móvil */}
+                  {/* Numpad para Transferencia en Movil */}
                   <div className="grid grid-cols-3 gap-2">
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
                       <Button 

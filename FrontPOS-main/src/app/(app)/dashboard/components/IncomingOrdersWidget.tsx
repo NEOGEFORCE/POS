@@ -23,7 +23,7 @@ export default function IncomingOrdersWidget() {
         refreshInterval: 300000
     });
 
-    // Solo mostrar pedidos que están PENDIENTES
+    // Solo mostrar pedidos que estan PENDIENTES
     const todayOrders = orders?.filter(order => order.status === 'PENDING') || [];
     const totalToday = todayOrders.reduce((acc, order) => acc + (order.totalEstimated || 0), 0);
 
@@ -55,11 +55,11 @@ export default function IncomingOrdersWidget() {
                     </div>
                     <div>
                         <h2 className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">
-                            Recepción de <span className="text-zinc-900 dark:text-zinc-100">Pedidos</span>
+                            Recepcion de <span className="text-zinc-900 dark:text-zinc-100">Pedidos</span>
                         </h2>
                         <div className="flex items-center gap-2 mt-1.5">
                              <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">
-                                Inversión Estimada:
+                                Inversion Estimada:
                             </p>
                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tighter tabular-nums bg-white/5 px-2 py-0.5 rounded-2xl border border-emerald-500/20">
                                 ${formatCurrency(totalToday)}
@@ -71,7 +71,7 @@ export default function IncomingOrdersWidget() {
                     onPress={() => window.location.href = '/inventory/receive'}
                     className="w-full sm:w-auto bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium uppercase text-[11px] tracking-widest rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] px-8 py-6 active:scale-95 transition-all hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5"
                 >
-                    <Plus size={16} className="mr-2" /> RECIBIR MERCANCÍA
+                    <Plus size={16} className="mr-2" /> RECIBIR MERCANCIA
                 </Button>
             </CardHeader>
             <CardBody className="p-4 md:p-8 flex flex-col gap-4 overflow-x-hidden">
@@ -80,7 +80,7 @@ export default function IncomingOrdersWidget() {
                         <Package size={48} className="mb-4 text-zinc-900 dark:text-zinc-100" />
                         <p className="text-[11px] font-medium uppercase tracking-widest mt-2 text-center">
                             No hay entregas pendientes<br/>
-                            <span className="text-[9px] font-bold text-gray-400">Todo el stock está al día</span>
+                            <span className="text-[9px] font-bold text-gray-400">Todo el stock esta al dia</span>
                         </p>
                     </div>
                 ) : todayOrders.map((order) => (

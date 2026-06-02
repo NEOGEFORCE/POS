@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
@@ -18,7 +18,7 @@ import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { normalizeText } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
 
-// Dinámicos para aligerar HMR y carga inicial
+// Dinamicos para aligerar HMR y carga inicial
 const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
 const CustomerFormModal = dynamic(() => import('./components/CustomerFormModal'), { ssr: false });
 const DeleteCustomerModal = dynamic(() => import('./components/DeleteCustomerModal'), { ssr: false });
@@ -57,7 +57,7 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
           <Users size={20} />
         </div>
         <div className="flex flex-col">
-          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">GESTIÓN DE <span className="text-zinc-900 dark:text-zinc-100">CLIENTES</span></h1>
+          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">GESTION DE <span className="text-zinc-900 dark:text-zinc-100">CLIENTES</span></h1>
           <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1 tracking-tight leading-none">Directorio Maestro V4.2</p>
         </div>
       </div>
@@ -83,7 +83,7 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
     </div>
     <Input
       size="sm"
-      placeholder="RASTREAR POR NOMBRE / IDENTIFICACIÓN..."
+      placeholder="RASTREAR POR NOMBRE / IDENTIFICACION..."
       value={filter}
       onValueChange={onSearch}
       classNames={{
@@ -104,7 +104,7 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [filter, setFilter] = useState('');
 
-  // Paginación (Sincronizada con Users/Suppliers)
+  // Paginacion (Sincronizada con Users/Suppliers)
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
 
@@ -142,7 +142,7 @@ export default function CustomersPage() {
   useEffect(() => { 
     loadCustomers(); 
     
-    // SINCRONIZACIÓN ZERO-F5 (Clientes y Ventas afectan créditos)
+    // SINCRONIZACION ZERO-F5 (Clientes y Ventas afectan creditos)
     const cleanup = setupSyncListener((event) => {
         if (event === 'CUSTOMER_UPDATE' || event === 'SALE_MADE' || event === 'DASHBOARD_UPDATE') {
             loadCustomers();
@@ -151,7 +151,7 @@ export default function CustomersPage() {
     return cleanup;
   }, [loadCustomers]);
 
-  // Lógica de Filtrado y Paginación
+  // Logica de Filtrado y Paginacion
   const filteredCustomers = useMemo(() => {
     return customers.filter(c =>
       c.name.toLowerCase().includes(filter.toLowerCase()) ||
@@ -172,7 +172,7 @@ export default function CustomersPage() {
     return { totalDebt, withDebt, totalClients: customers.length };
   }, [customers]);
 
-  // La lógica de suma ahora la maneja el UniversalPaymentModal
+  // La logica de suma ahora la maneja el UniversalPaymentModal
 
   const handlePayCredit = async (paymentData: {
     cash: number;
@@ -222,7 +222,7 @@ export default function CustomersPage() {
     finally { setSubmittingPayment(false); }
   };
 
-  // Lógica de búsqueda rápida (Lookup) por DNI para evitar duplicados y facilitar edición
+  // Logica de busqueda rapida (Lookup) por DNI para evitar duplicados y facilitar edicion
   const handleLookupCustomer = useCallback(async (dni: string) => {
     const token = Cookies.get('org-pos-token');
     const existing = customers.find(c => c.dni === dni);
@@ -234,7 +234,7 @@ export default function CustomersPage() {
       setEditDialogOpen(true);
       return;
     }
-    // Si no está local, podríamos buscar en API, pero por ahora local es suficiente
+    // Si no esta local, podriamos buscar en API, pero por ahora local es suficiente
     toast({ variant: "success", title: "DNI DISPONIBLE", description: "PUEDE PROCEDER CON EL REGISTRO" });
   }, [customers, toast]);
 
@@ -255,7 +255,7 @@ export default function CustomersPage() {
         const errorMsg = await extractApiError(res, "FALLO AL CREAR CLIENTE");
         throw new Error(errorMsg);
       }
-      toast({ variant: "success", title: "ÉXITO", description: "CLIENTE REGISTRADO EN MAESTRO" }); setAddDialogOpen(false);
+      toast({ variant: "success", title: "EXITO", description: "CLIENTE REGISTRADO EN MAESTRO" }); setAddDialogOpen(false);
       setNewClient({ dni: '', name: '', phone: '', address: '', creditLimit: '' as any }); loadCustomers();
       broadcastRevalidate('CUSTOMER_UPDATE');
     } catch (err: any) { toast({ variant: "destructive", title: "Error", description: err.message || "FALLO AL CREAR" }); }
@@ -299,15 +299,13 @@ export default function CustomersPage() {
     } catch (err: any) { toast({ variant: "destructive", title: "Error al borrar", description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
-  // Teclado ahora se maneja en el UniversalPaymentModal
-
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b] flex-col gap-4">
     <Spinner color="success" size="lg" />
     <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse tracking-tight">Sincronizando Directorio...</p>
   </div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) - PARIDAD TOTAL CON USERS/SUPPLIERS */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -326,7 +324,7 @@ export default function CustomersPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
         <CustomerTable
           customers={currentCustomers}
           onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setPayCreditDialogOpen(true); }}
@@ -346,14 +344,14 @@ export default function CustomersPage() {
 
 
 
-      {/* Modals con carga dinámica */}
+      {/* Modals con carga dinamica */}
       <UniversalPaymentModal
         isOpen={payCreditDialogOpen}
         onOpenChange={(open) => {
           setPayCreditDialogOpen(open);
           if (!open) setShowSuccessScreen(false);
         }}
-        title="Gestión de Abonos"
+        title="Gestion de Abonos"
         client={payingClient}
         totalToPay={Number(payingClient?.currentCredit || 0)}
         showSuccessScreen={showSuccessScreen}
@@ -389,4 +387,9 @@ export default function CustomersPage() {
     </div>
   );
 }
+
+
+
+
+
 

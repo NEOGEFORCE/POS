@@ -48,8 +48,8 @@ const DeleteSupplierModal = memo(({
                 <AlertTriangle size={40} />
               </div>
               <p className="text-sm md:text-base font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed tracking-tight px-4">
-                ¿Confirma la depuración del registro? <br />
-                <span className="text-rose-500 font-medium text-xs">Esta acción afectará la trazabilidad histórica de despachos.</span>
+                ¿Confirma la depuracion del registro? <br />
+                <span className="text-rose-500 font-medium text-xs">Esta accion afectara la trazabilidad historica de despachos.</span>
               </p>
             </ModalBody>
             <ModalFooter className="px-6 md:px-10 py-6 border-t border-gray-100 dark:border-white/5 flex gap-4 rounded-b-[2.5rem] bg-gray-50/50 dark:bg-[#18181b]/50">
@@ -65,7 +65,7 @@ const DeleteSupplierModal = memo(({
                 className="flex-1 h-12 rounded-2xl font-medium text-[10px] tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 uppercase bg-rose-500 text-white tracking-tight hover:scale-[1.02] active:scale-95 transition-all" 
                 onPress={onConfirm}
               >
-                SÍ, PURGAR
+                SI, PURGAR
               </Button>
             </ModalFooter>
           </>

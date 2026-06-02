@@ -32,7 +32,7 @@ interface ExpectedOrder {
   expectedDate: string;
   estimatedCost: number;
   totalEstimated?: number;
-  invoiceRef?: string;      // precio real de factura (puede ser string numérico)
+  invoiceRef?: string;      // precio real de factura (puede ser string numerico)
   itemCount: number;
   status?: string;
   items?: OrderDetailItem[];
@@ -40,7 +40,7 @@ interface ExpectedOrder {
 
 export default function InventoryHub() {
   const router = useRouter();
-  // Integración de datos reales
+  // Integracion de datos reales
   const { data: products, isLoading, mutate } = useApi<Product[]>("/products/all-products", {
     revalidateOnFocus: true,
   });
@@ -82,10 +82,10 @@ export default function InventoryHub() {
     }
   };
 
-  // Siempre derivar un YYYY-MM-DD limpio desde selectedDate en zona Bogotá.
+  // Siempre derivar un YYYY-MM-DD limpio desde selectedDate en zona Bogota.
   // selectedDate ya viene del input type="date" como YYYY-MM-DD, pero parsearlo
-  // con new Date() sin hora puede desplazarlo un día por UTC. Añadimos T12:00
-  // para anclar el mediodía y evitar el desfase.
+  // con new Date() sin hora puede desplazarlo un dia por UTC. Añadimos T12:00
+  // para anclar el mediodia y evitar el desfase.
   const bogotaDateStr = useMemo(() => {
     return Intl.DateTimeFormat('en-CA', { timeZone: 'America/Bogota' }).format(
       new Date(`${selectedDate}T12:00:00`)
@@ -106,14 +106,25 @@ export default function InventoryHub() {
     console.log("Fecha Buscada:", bogotaDateStr);
   }, [allOrdersData, bogotaDateStr]);
 
-  // Filtro local: mostrar solo los pedidos cuya expectedDate coincida con el día
-  // seleccionado y que no estén en status dismissed/received.
+  // Filtro local: mostrar solo los pedidos cuya expectedDate coincida con el dia
+  // seleccionado y que NO esten ya completados/recibidos/descartados. Cuando
+  // el backend marca un pedido como RECEIVED (por ejemplo tras registrar el
+  // egreso del proveedor), se oculta automaticamente al refrescar via SSE.
   const expectedOrders = useMemo(() => {
+    const closedStatuses = new Set([
+      'RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED',
+    ]);
     return (allOrdersData || []).filter(o => {
       if (!o.expectedDate) return false;
       // Comparar solo YYYY-MM-DD (ignorar hora y timezone del string ISO)
       const orderDate = o.expectedDate.split('T')[0];
-      return orderDate === bogotaDateStr;
+      if (orderDate !== bogotaDateStr) return false;
+      // Excluir pedidos ya cerrados (case-insensitive — el backend mezcla
+      // 'PENDING' uppercase de purchase_orders con 'pending' lowercase de
+      // confirmed_orders).
+      const status = (o.status || '').toUpperCase();
+      if (closedStatuses.has(status)) return false;
+      return true;
     });
   }, [allOrdersData, bogotaDateStr]);
 
@@ -143,7 +154,7 @@ export default function InventoryHub() {
   // Escuchar actualizaciones globales
   useEffect(() => {
     const cleanup = setupSyncListener((event) => {
-        if (['PRODUCT_UPDATE', 'STOCK_UPDATE', 'SALE_MADE', 'DASHBOARD_UPDATE', 'CATEGORY_UPDATE', 'SUPPLIER_UPDATE'].includes(event)) {
+        if (['PRODUCT_UPDATE', 'STOCK_UPDATE', 'SALE_MADE', 'DASHBOARD_UPDATE', 'CATEGORY_UPDATE', 'SUPPLIER_UPDATE', 'INVENTORY_UPDATE', 'EXPENSE_UPDATE'].includes(event)) {
             mutate();
             mutateOrders();
         }
@@ -151,7 +162,7 @@ export default function InventoryHub() {
     return cleanup;
   }, [mutate, mutateOrders]);
   
-  // Cálculos en tiempo real con useMemo
+  // Calculos en tiempo real con useMemo
   const stats = useMemo(() => {
     if (!products || products.length === 0) {
       return {
@@ -199,7 +210,7 @@ export default function InventoryHub() {
       totalCostValue: Math.round(totalCostValue),
       totalSaleValue: Math.round(totalSaleValue),
       totalItems: products.length,
-      criticalItems: criticalItems.slice(0, 8), // Top 8 críticos
+      criticalItems: criticalItems.slice(0, 8), // Top 8 criticos
       healthPercentage
     };
   }, [products]);
@@ -217,7 +228,7 @@ export default function InventoryHub() {
 
     const modules: ModuleConfig[] = [
         {
-            title: "Carga de Mercancía",
+            title: "Carga de Mercancia",
             description: "Registrar entradas de productos y facturas de proveedores.",
             icon: Truck,
             href: "/inventory/receive",
@@ -229,7 +240,7 @@ export default function InventoryHub() {
         },
         {
             title: "Pedidos Inteligentes",
-            description: "Generar órdenes de compra basadas en predicción de stock e IA.",
+            description: "Generar ordenes de compra basadas en prediccion de stock e IA.",
             icon: ShoppingBag,
             href: "/inventory/orders",
             colorClass: "bg-amber-500",
@@ -239,7 +250,7 @@ export default function InventoryHub() {
             shortcut: "P"
         },
         {
-            title: "Auditoría & Ajustes",
+            title: "Auditoria & Ajustes",
             description: "Corregir niveles de stock y realizar conteos manuales.",
             icon: ShieldCheck,
             href: "/audit",
@@ -252,8 +263,8 @@ export default function InventoryHub() {
     ];
 
     return (
-        <div className="h-full w-full overflow-y-auto bg-transparent text-zinc-900 dark:text-white transition-all duration-500 relative scroll-smooth custom-scrollbar">
-            <div className="flex flex-col gap-6 min-h-max w-full max-w-[1200px] mx-auto p-3 md:p-4 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex flex-col flex-1 w-full max-w-[1600px] mx-auto bg-transparent text-zinc-900 dark:text-white transition-all duration-500 relative scroll-smooth">
+            <div className="flex flex-col flex-1 w-full max-w-[1200px] mx-auto p-3 md:p-4 animate-in fade-in slide-in-from-bottom-4 duration-500 gap-6">
             
             {/* HEADER HUB */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
@@ -278,14 +289,14 @@ export default function InventoryHub() {
 
             {/* DASHBOARD INTELIGENTE - DATOS EN TIEMPO REAL */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-3">
-                {/* Valorización Costo */}
+                {/* Valorizacion Costo */}
                 <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
                         <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
                             <DollarSign size={16} />
                         </div>
                         <div className="flex flex-col min-w-0">
-                            <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-wider tracking-tight">Inversión (Costo)</span>
+                            <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-wider tracking-tight">Inversion (Costo)</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-20 rounded" />
                             ) : (
@@ -297,7 +308,7 @@ export default function InventoryHub() {
                     </CardBody>
                 </Card>
 
-                {/* Valorización Venta */}
+                {/* Valorizacion Venta */}
                 <Card className="bg-blue-500/5 dark:bg-[#18181b] border border-blue-500/10 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
                         <div className="h-8 w-8 rounded-2xl bg-blue-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-blue-500/20 -rotate-3">
@@ -335,14 +346,14 @@ export default function InventoryHub() {
                     </CardBody>
                 </Card>
                 
-                {/* Ítems Críticos */}
+                {/* Items Criticos */}
                 <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
                         <div className="h-8 w-8 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 -rotate-3">
                             <AlertTriangle size={16} />
                         </div>
                         <div className="flex flex-col">
-                            <span className="text-[8px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-wider tracking-tight">Críticos</span>
+                            <span className="text-[8px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-wider tracking-tight">Criticos</span>
                             {isLoading ? (
                                 <Skeleton className="h-5 w-10 rounded" />
                             ) : (
@@ -374,7 +385,7 @@ export default function InventoryHub() {
                 </Card>
             </div>
 
-            {/* PANEL DE ÍTEMS CRÍTICOS - ACTIONABLE UI */}
+            {/* PANEL DE ITEMS CRITICOS - ACTIONABLE UI */}
             {stats.criticalItems.length > 0 && (
                 <Card className="bg-rose-50 dark:bg-rose-950/20 border-2 border-rose-500/10 dark:border-rose-500/20 rounded-2xl overflow-hidden animate-pulse-subtle shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/5">
                     <CardBody className="p-3">
@@ -430,7 +441,7 @@ export default function InventoryHub() {
                 </Card>
             )}
 
-            {/* GRID DE MÓDULOS */}
+            {/* GRID DE MODULOS */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 {modules.map((mod) => (
                     <Link key={mod.href} href={mod.href} className="group">
@@ -454,7 +465,7 @@ export default function InventoryHub() {
                                     Acceder <ChevronRight size={12} />
                                 </div>
 
-                                {/* Decoración de fondo */}
+                                {/* Decoracion de fondo */}
                                 <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                                     <mod.icon size={60} strokeWidth={1} />
                                 </div>
@@ -464,7 +475,7 @@ export default function InventoryHub() {
                 ))}
             </div>
 
-            {/* PANEL LOGÍSTICO PANORÁMICO - RECEPCIÓN DE MERCANCÍA */}
+            {/* PANEL LOGISTICO PANORAMICO - RECEPCION DE MERCANCIA */}
             <Card className="w-full bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden">
                 <CardBody className="p-0">
                     <div className="flex flex-col lg:flex-row">
@@ -480,7 +491,7 @@ export default function InventoryHub() {
                                         Entregas Programadas <span className="text-amber-500">{selectedDate === getBogotaDateStr() ? 'Hoy' : selectedDate}</span>
                                     </h3>
                                     <p className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">
-                                        Logística & Recepción
+                                        Logistica & Recepcion
                                     </p>
                                 </div>
                                 <div className="flex items-center gap-2">
@@ -528,7 +539,7 @@ export default function InventoryHub() {
                                                         {order.supplierName}
                                                     </p>
                                                     <p className="text-[9px] text-gray-500 dark:text-zinc-500 font-medium">
-                                                        {order.itemCount} ítems · <span className="text-amber-500 font-bold">Ver detalle →</span>
+                                                        {order.itemCount} items · <span className="text-amber-500 font-bold">Ver detalle →</span>
                                                     </p>
                                                 </div>
                                             </div>
@@ -564,11 +575,11 @@ export default function InventoryHub() {
                             </div>
                         </div>
 
-                        {/* LADO DERECHO (30%) - CENTRO DE ACCIÓN */}
+                        {/* LADO DERECHO (30%) - CENTRO DE ACCION */}
                         <div className="lg:w-[30%] p-4 lg:p-5 bg-gray-50 dark:bg-[#18181b]/30 flex flex-col justify-center">
                             <h4 className="text-xs font-medium text-zinc-900 dark:text-white uppercase tracking-widest mb-4 flex items-center gap-2">
                                 <Sparkles size={12} className="text-zinc-900 dark:text-zinc-100" />
-                                Reporte Logístico
+                                Reporte Logistico
                             </h4>
                             
                             <Button
@@ -583,7 +594,7 @@ export default function InventoryHub() {
                             {/* Stats mini */}
                             <div className="mt-6 pt-4 border-t border-gray-200 dark:border-white/10 space-y-2">
                                 <div className="flex justify-between text-[10px]">
-                                    <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">TOTAL EN TRÁNSITO:</span>
+                                    <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">TOTAL EN TRANSITO:</span>
                                     <span className="text-zinc-900 dark:text-white font-medium tabular-nums">
                                         {expectedOrders.length} PEDIDO{expectedOrders.length !== 1 ? 'S' : ''}
                                     </span>
@@ -607,7 +618,7 @@ export default function InventoryHub() {
             {/* FOOTER INFO */}
             <div className="flex items-center justify-center gap-2 py-4 opacity-30">
                 <ShieldCheck size={12} />
-                <span className="text-[8px] font-medium uppercase tracking-[0.4em] tracking-tight">Seguridad & Auditoría Activa</span>
+                <span className="text-[8px] font-medium uppercase tracking-[0.4em] tracking-tight">Seguridad & Auditoria Activa</span>
             </div>
 
             <CreateScheduledDeliveryModal 
@@ -645,7 +656,7 @@ export default function InventoryHub() {
                         {/* Resumen */}
                         <div className="grid grid-cols-3 gap-3 mb-4">
                             <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-3 flex flex-col">
-                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Ítems</span>
+                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Items</span>
                                 <span className="text-lg font-black text-zinc-900 dark:text-white">{selectedOrderDetail?.itemCount || orderDetailItems.length}</span>
                             </div>
                             <div className="bg-amber-50 dark:bg-amber-950/30 rounded-2xl p-3 flex flex-col border border-amber-200/50 dark:border-amber-500/20">
@@ -705,7 +716,7 @@ export default function InventoryHub() {
                             <div className="flex flex-col items-center justify-center py-10 opacity-50">
                                 <Package size={32} className="mb-2" />
                                 <p className="text-xs font-bold uppercase tracking-widest">Sin detalle de productos disponible</p>
-                                <p className="text-[9px] text-zinc-500 mt-1">El pedido fue creado sin ítems individuales.</p>
+                                <p className="text-[9px] text-zinc-500 mt-1">El pedido fue creado sin items individuales.</p>
                             </div>
                         )}
                     </ModalBody>

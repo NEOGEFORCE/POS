@@ -27,13 +27,13 @@ export const initDB = () => {
   if (!dbPromise) {
     dbPromise = openDB<POSSurvivalDB>('pos-survival-db', 1, {
       upgrade(db) {
-        // Almacén de catálogo (para buscar productos offline)
+        // Almacen de catalogo (para buscar productos offline)
         if (!db.objectStoreNames.contains('catalog')) {
           const catalogStore = db.createObjectStore('catalog', { keyPath: 'barcode' });
           catalogStore.createIndex('by-name', 'name');
         }
 
-        // Almacén de ventas/gastos pendientes de enviar al servidor
+        // Almacen de ventas/gastos pendientes de enviar al servidor
         if (!db.objectStoreNames.contains('sync_queue')) {
           const queueStore = db.createObjectStore('sync_queue', { keyPath: 'id' });
           queueStore.createIndex('by-timestamp', 'timestamp');
@@ -51,15 +51,15 @@ export const saveProductsToCache = async (products: Product[]) => {
   if (!db) return;
 
   const tx = db.transaction('catalog', 'readwrite');
-  // Vaciamos la caché anterior para evitar basura
+  // Vaciamos la cache anterior para evitar basura
   await tx.objectStore('catalog').clear();
   
-  // Guardamos el catálogo fresco
+  // Guardamos el catalogo fresco
   for (const product of products) {
     await tx.store.put(product);
   }
   await tx.done;
-  console.log('[SurvivalDB] 📦 Catálogo cacheado exitosamente:', products.length, 'productos.');
+  console.log('[SurvivalDB] 📦 Catalogo cacheado exitosamente:', products.length, 'productos.');
 };
 
 export const getCachedProducts = async (): Promise<Product[]> => {
@@ -80,7 +80,7 @@ export const addToSyncQueue = async (type: 'SALE' | 'EXPENSE', payload: any) => 
   const db = await initDB();
   if (!db) return;
 
-  // Generamos un ID temporal único localmente basado en el tiempo y un sufijo aleatorio
+  // Generamos un ID temporal unico localmente basado en el tiempo y un sufijo aleatorio
   const localId = `offline-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
   
   await db.add('sync_queue', {
@@ -90,7 +90,7 @@ export const addToSyncQueue = async (type: 'SALE' | 'EXPENSE', payload: any) => 
     timestamp: Date.now()
   });
 
-  console.log(`[SurvivalDB] 📥 Añadido a la bóveda de sincronización [${type}]:`, localId);
+  console.log(`[SurvivalDB] 📥 Añadido a la boveda de sincronizacion [${type}]:`, localId);
   return localId;
 };
 
@@ -104,7 +104,7 @@ export const removeFromSyncQueue = async (id: string) => {
   const db = await initDB();
   if (!db) return;
   await db.delete('sync_queue', id);
-  console.log(`[SurvivalDB] 📤 Eliminado de la bóveda de sincronización:`, id);
+  console.log(`[SurvivalDB] 📤 Eliminado de la boveda de sincronizacion:`, id);
 };
 
 export const clearSyncQueue = async () => {

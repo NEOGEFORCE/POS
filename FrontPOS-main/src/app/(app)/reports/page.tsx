@@ -21,7 +21,7 @@ import Cookies from 'js-cookie';
 import nextDynamic from "next/dynamic";
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
-// Componentes dinámicos
+// Componentes dinamicos
 const DateRangeModal = nextDynamic(() => import("../dashboard/components/DateRangeModal"));
 const GenerateReportModal = nextDynamic(() => import("./components/GenerateReportModal"));
 const ClosuresHistory = nextDynamic(() => import("./components/ClosuresHistory"));
@@ -69,92 +69,85 @@ export default function ReportsPage() {
     setLoadingReport(type);
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
-      
-      // Fallback para los que aún requieren generación en Frontend (Inventario y Cierres)
-      if (type === 'inventory' || type === 'box-closure' || type === 'savings') {
+
+      // Categorias que SIEMPRE pasan por el backend export unificado.
+      // Incluye todas las nuevas: cuadre-real, profitability, shrinkage, rotation
+      const backendCategories = [
+        'box-closure', 'cuadre-real', 'cuadre-real-day', 'payments',
+        'inventory', 'pnl', 'cashflow', 'ranking', 'savings',
+        'vault-audit', 'global-credit', 'voids-audit',
+        'profitability', 'shrinkage', 'rotation',
+      ];
+
+      // Solo dejamos el fallback frontend si la categoria no es soportada por el backend
+      // (por seguridad, mantenemos el fallback jsPDF como red de seguridad).
+      if (!backendCategories.includes(type)) {
           let url = '';
           let title = '';
-          if (type === 'inventory') { url = `${baseUrl}/products/inventory`; title = 'Inventario Actual'; }
-          if (type === 'box-closure') { url = `${baseUrl}/cashier-history?from=${dateFrom}&to=${dateTo}`; title = 'Reporte de Cierres de Caja'; }
           if (type === 'savings') { url = `${baseUrl}/inventory/savings-opportunities`; title = 'Ahorros y Costos'; }
-          
+          if (!url) {
+            throw new Error(`Tipo de reporte desconocido: ${type}`);
+          }
+
           const res = await fetch(url, { headers: getHeaders() });
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Fallo al generar reporte");
-          
-          let columns: any[] = [];
-          let formattedData: any[] = [];
-          if (type === 'inventory') {
-             columns = [
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Stock', dataKey: 'stock' },
-              { header: 'Costo', dataKey: 'cost' },
-              { header: 'Venta', dataKey: 'price' }
-            ];
-            formattedData = (data || []).map((p: any) => ({
-              name: p.name || p.nombre,
-              stock: p.stock !== undefined ? p.stock : (p.cantidad || 0),
-              cost: `$${formatCurrency(p.costPrice || p.precioCosto || 0)}`,
-              price: `$${formatCurrency(p.salePrice || p.precioVenta || 0)}`
-            }));
-          } else if (type === 'box-closure') {
-             columns = [
-              { header: 'ID', dataKey: 'id' },
-              { header: 'Cajero', dataKey: 'createdBy' },
-              { header: 'Esperado', dataKey: 'expected' },
-              { header: 'Real', dataKey: 'real' },
-              { header: 'Diff', dataKey: 'diff' }
-            ];
-            formattedData = (data || []).map((item: any) => ({
-              ...item,
-              expected: `$${formatCurrency(item.expectedCash)}`,
-              real: `$${formatCurrency(item.totalCashReal)}`,
-              diff: `$${formatCurrency(item.difference)}`
-            }));
-          } else if (type === 'savings') {
-             columns = [
-              { header: 'Producto', dataKey: 'name' },
-              { header: 'Proveedor', dataKey: 'supplier' },
-              { header: 'Mejor Precio', dataKey: 'price' }
-            ];
-            formattedData = (data || []).map((s: any) => ({
-              name: s.productName || s.name || s.ProductName,
-              supplier: s.supplierName || s.supplier || s.SupplierName,
-              price: `$${formatCurrency(s.bestPrice || s.price || s.BestPrice || 0)}`
-            }));
-          }
-          
+
           generatePDFReport({
-            title: title,
-            subtitle: `Generado hoy`,
+            title,
+            subtitle: 'Generado hoy',
             filename: customOptions?.reportName || type,
-            columns: columns,
-            data: formattedData,
+            columns: [],
+            data: Array.isArray(data) ? data : [],
             sendToTelegram: customOptions?.sendToTelegram
           });
           setLoadingReport(null);
           return;
       }
-      
-      // NUEVO FLUJO CENTRALIZADO EN EL BACKEND (GO)
+
+      // FLUJO CENTRALIZADO EN EL BACKEND (Go)
       const format = customOptions?.format || 'PDF';
       const sendTelegram = customOptions?.sendToTelegram ? 'true' : 'false';
-      
-      const url = `${baseUrl}/dashboard/reports/export?type=${type}&from=${dateFrom}&to=${dateTo}&format=${format}&telegram=${sendTelegram}`;
-      
+
+      const params = new URLSearchParams({
+        type,
+        from: dateFrom,
+        to: dateTo,
+        format,
+        telegram: sendTelegram,
+      });
+
+      // Parametro extra para rentabilidad: target margin (default 0.17)
+      if (type === 'profitability') {
+        params.set('target', String(customOptions?.target ?? 0.17));
+      }
+
+      const url = `${baseUrl}/dashboard/reports/export?${params.toString()}`;
+
       const res = await fetch(url, { headers: getHeaders() });
       if (!res.ok) {
-        let errData;
-        try { errData = await res.json(); } catch(e) {}
-        throw new Error(errData?.error || "Fallo al exportar reporte (Posible 404/500)");
+        let errMsg = `Error ${res.status} al exportar reporte`;
+        try {
+          const errData = await res.json();
+          errMsg = errData?.error || errData?.userMessage || errMsg;
+        } catch {
+          // Respuesta no es JSON (p.ej. HTML del SPA fallback) → mantener el mensaje generico
+        }
+        throw new Error(errMsg);
       }
-      
+
       const blob = await res.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      
-      const extension = format === 'EXCEL' ? 'xlsx' : 'pdf';
+
+      const extensionMap: Record<string, string> = {
+        EXCEL: 'xlsx',
+        XLSX: 'xlsx',
+        CSV: 'csv',
+        PDF: 'pdf',
+      };
+      const extension = extensionMap[format] || 'pdf';
       a.download = `${customOptions?.reportName || type}.${extension}`;
       document.body.appendChild(a);
       a.click();
@@ -163,10 +156,10 @@ export default function ReportsPage() {
 
       toast({
         title: "Reporte Generado",
-        description: `Descargado exitosamente. ${customOptions?.sendToTelegram ? 'Se envió copia por Telegram.' : ''}`,
+        description: `Descargado exitosamente.${customOptions?.sendToTelegram ? ' Se envio copia por Telegram.' : ''}`,
         variant: "default"
       });
-      
+
     } catch (error: any) {
       console.error(error);
       toast({
@@ -180,7 +173,7 @@ export default function ReportsPage() {
   };
 
   return (
-    <div className="flex flex-col w-full h-full max-w-[1600px] mx-auto bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col w-full max-w-[1600px] mx-auto bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
       
       {/* HEADER */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -218,33 +211,36 @@ export default function ReportsPage() {
       </div>
 
       {/* CONTENT */}
-      <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar bg-gray-100/50 dark:bg-zinc-950/20 p-4">
+      <div className="bg-gray-100/50 dark:bg-zinc-950/20 p-4">
         <div className="flex flex-col gap-6 max-w-full">
           
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
             <MetricCard label="Ventas Hoy" value="$1.2M" subValue="120 Transacciones" trend="+12%" />
             <MetricCard label="Cajas Cerradas" value="08" subValue="Turno Mañana/Tarde" trend="Auditado" />
-            <MetricCard label="Riesgo Cartera" value="$4.5M" subValue="15 Clientes Fiados" trend="Crítico" />
+            <MetricCard label="Riesgo Cartera" value="$4.5M" subValue="15 Clientes Fiados" trend="Critico" />
             <MetricCard label="Valor Stock" value="$82M" subValue="1.2k Productos" trend="Actualizado" />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[1fr_384px] gap-8 items-start">
-            <div className="flex-1 flex flex-col min-w-0 gap-8 overflow-hidden">
+            <div className="flex-1 flex flex-col min-w-0 gap-8">
                <ClosuresHistory />
             </div>
 
             <aside className="sticky top-0 flex flex-col gap-6 pb-10 xl:pb-0">
                <Card className="card-base p-6 md:p-8">
                   <div className="flex flex-col gap-6 text-center">
-                    <h3 className="text-2xl font-medium tracking-tight uppercase tracking-tighter">Acceso <span className="opacity-40">Rápido</span></h3>
+                    <h3 className="text-2xl font-medium tracking-tight uppercase tracking-tighter">Acceso <span className="opacity-40">Rapido</span></h3>
                     <Tabs
                       aria-label="Quick Report Type"
                       color="success"
                       selectedKey={quickCategory}
                       onSelectionChange={(k) => setQuickCategory(String(k))}
-                      classNames={{ tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-2xl w-full", cursor: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5", tabContent: "font-medium text-[10px] uppercase tracking-tight tracking-widest" }}
+                      classNames={{ tabList: "bg-gray-100 dark:bg-zinc-950/50 p-1 rounded-2xl w-full overflow-x-auto", cursor: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5", tabContent: "font-medium text-[10px] uppercase tracking-tight tracking-widest" }}
                     >
-                      <Tab key="box-closure" title="Caja" />
+                      <Tab key="cuadre-real" title="Real" />
+                      <Tab key="profitability" title="Margen" />
+                      <Tab key="shrinkage" title="Mermas" />
+                      <Tab key="rotation" title="Rotacion" />
                       <Tab key="payments" title="Ventas" />
                       <Tab key="inventory" title="Stock" />
                       <Tab key="cashflow" title="Flujo" />

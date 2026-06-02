@@ -39,7 +39,7 @@ export default function DeleteCustomerModal({
               </div>
               <div className="flex flex-col">
                 <span className="text-xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">Protocolo de Purga</span>
-                <span className="text-[10px] font-medium text-rose-500 uppercase tracking-[0.3em] mt-3 not-tracking-tight">Acción Irreversible</span>
+                <span className="text-[10px] font-medium text-rose-500 uppercase tracking-[0.3em] mt-3 not-tracking-tight">Accion Irreversible</span>
               </div>
             </ModalHeader>
             <ModalBody className="p-6 md:p-10 flex flex-col items-center text-center gap-6">
@@ -47,7 +47,7 @@ export default function DeleteCustomerModal({
                 <AlertTriangle size={40} />
               </div>
               <p className="text-sm md:text-base font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed tracking-tight px-4">
-                ¿Confirma la eliminación definitiva de este <br/>
+                ¿Confirma la eliminacion definitiva de este <br/>
                 <span className="text-rose-500 font-medium">Registro Maestro</span> en la base de datos de clientes?
               </p>
             </ModalBody>
@@ -64,7 +64,7 @@ export default function DeleteCustomerModal({
                 className="flex-1 h-12 rounded-2xl font-medium uppercase text-[10px] shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 tracking-tight tracking-widest hover:scale-[1.02] active:scale-95 transition-all bg-rose-500 text-white" 
                 onPress={onConfirm}
               >
-                SÍ, PURGAR CUENTA
+                SI, PURGAR CUENTA
               </Button>
             </ModalFooter>
           </>

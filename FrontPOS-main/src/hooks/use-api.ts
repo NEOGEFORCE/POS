@@ -15,7 +15,7 @@ const fetcher = async (url: string) => {
   });
 
   if (res.status === 401) {
-    // Limpieza global de sesión por expiración o token inválido
+    // Limpieza global de sesion por expiracion o token invalido
     Cookies.remove('org-pos-token');
     Cookies.remove('org-pos-user');
     window.location.href = '/login?expired=true';

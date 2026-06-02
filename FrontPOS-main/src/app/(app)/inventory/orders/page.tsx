@@ -27,8 +27,8 @@ interface SuggestedOrder {
   bestSupplierName: string;
   daysUntilNextVisit?: number;
   minShelfStock?: number;
-  pendingOrderQty?: number;     // Cantidad ya en tánsito (pedidos confirmados pendientes)
-  transitDetail?: string;       // Nombre del proveedor del pedido en tránsito
+  pendingOrderQty?: number;     // Cantidad ya en tansito (pedidos confirmados pendientes)
+  transitDetail?: string;       // Nombre del proveedor del pedido en transito
   alert?: string;
   alertType?: string;
   isHighRotation?: boolean;
@@ -44,7 +44,7 @@ interface MissingItem {
 const getNextDays = (count: number) => {
   const days = [];
   const today = new Date();
-  const dayNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+  const dayNames = ["Dom", "Lun", "Mar", "Mie", "Jue", "Vie", "Sab"];
   
   for (let i = 0; i < count; i++) {
     const d = new Date(today);
@@ -146,7 +146,7 @@ export default function SmartRestockPage() {
         
         setItems(uniqueItems);
         
-        // El input numérico de cantidad a pedir debe inicializarse vacío
+        // El input numerico de cantidad a pedir debe inicializarse vacio
         const initialQts: Record<string, number> = {};
         setQuantities(initialQts);
       } else {
@@ -176,7 +176,7 @@ export default function SmartRestockPage() {
             const barcode = orderItem.productId;
             newQuantities[barcode] = orderItem.quantity;
             
-            // Si el item del pedido no está en las sugerencias, lo agregamos
+            // Si el item del pedido no esta en las sugerencias, lo agregamos
             if (!mergedData.some(item => item.barcode === barcode)) {
               mergedData.push({
                 barcode: barcode,
@@ -275,7 +275,7 @@ export default function SmartRestockPage() {
       });
       if (res.ok) {
         setMissingItems(prev => prev.filter(item => item.id !== id));
-        toast({ title: "Éxito", description: "Faltante resuelto" });
+        toast({ title: "Exito", description: "Faltante resuelto" });
       }
     } catch (err) { }
   };
@@ -287,7 +287,7 @@ export default function SmartRestockPage() {
   };
 
   const handleUnlinkSupplier = async (barcode: string, supplierId: string) => {
-    if (!window.confirm("¿Seguro que deseas desligar este producto de este proveedor? No volverá a aparecer en sus sugerencias.")) {
+    if (!window.confirm("¿Seguro que deseas desligar este producto de este proveedor? No volvera a aparecer en sus sugerencias.")) {
       return;
     }
     try {
@@ -297,7 +297,7 @@ export default function SmartRestockPage() {
         body: JSON.stringify({ supplierId: parseInt(supplierId) })
       });
       if (res.ok) {
-        toast({ title: "Éxito", description: "Producto desvinculado del proveedor" });
+        toast({ title: "Exito", description: "Producto desvinculado del proveedor" });
         // Update both local states to remove the item
         setItems(prev => prev.filter(item => item.barcode !== barcode));
         setOrderItems(prev => prev.filter(item => item.barcode !== barcode));
@@ -319,7 +319,7 @@ export default function SmartRestockPage() {
         body: JSON.stringify({ minStock: parseFloat(editMinStockValue) })
       });
       if (res.ok) {
-        toast({ title: "Éxito", description: "Stock base actualizado" });
+        toast({ title: "Exito", description: "Stock base actualizado" });
         const val = parseFloat(editMinStockValue);
         setItems(prev => prev.map(item => item.barcode === barcode ? { ...item, minStock: val } : item));
         setOrderItems(prev => prev.map(item => item.barcode === barcode ? { ...item, minStock: val } : item));
@@ -339,7 +339,7 @@ export default function SmartRestockPage() {
   const currentItems = useMemo(() => {
     const arr = selectedSupplier === "global" ? items : orderItems;
     return [...arr].sort((a, b) => {
-      // 1. Determinar el estado de 'a' (1: Crítico, 2: Advertencia, 3: Óptimo)
+      // 1. Determinar el estado de 'a' (1: Critico, 2: Advertencia, 3: Optimo)
       let statusA = 3;
       if (a.stock <= 0) statusA = 1;
       else if (a.stock <= (a.minStock || 0)) statusA = 2;
@@ -352,7 +352,7 @@ export default function SmartRestockPage() {
       // 3. Ordenar por estado
       if (statusA !== statusB) return statusA - statusB;
 
-      // 4. Si tienen el mismo estado, ordenar por rotación / ventas
+      // 4. Si tienen el mismo estado, ordenar por rotacion / ventas
       if (a.isHighRotation && !b.isHighRotation) return -1;
       if (!a.isHighRotation && b.isHighRotation) return 1;
       if (b.suggested !== a.suggested) return (b.suggested || 0) - (a.suggested || 0);
@@ -413,12 +413,12 @@ export default function SmartRestockPage() {
     return Object.values(groups).sort((a, b) => b.items.length - a.items.length);
   }, [paginatedItems]);
 
-  // Manejar el submit de un grupo específico
+  // Manejar el submit de un grupo especifico
   const handleConfirmGroup = async (groupName: string, supplierId: number, groupItems: SuggestedOrder[]) => {
     const form = groupForms[groupName] || { date: '', invoiceRef: '' };
     
     if (!form.date) {
-      toast({ title: "Atención", description: "Debes seleccionar una Fecha de Entrega.", variant: "destructive" });
+      toast({ title: "Atencion", description: "Debes seleccionar una Fecha de Entrega.", variant: "destructive" });
       return;
     }
 
@@ -432,7 +432,7 @@ export default function SmartRestockPage() {
       };
     }).filter(i => i.quantity > 0);
 
-    // Se permite enviar orden con 0 items para logística de entregas programadas
+    // Se permite enviar orden con 0 items para logistica de entregas programadas
 
     const groupTotal = itemsToOrder.reduce((acc, item) => acc + (item.quantity * item.unit_cost), 0);
 
@@ -454,7 +454,7 @@ export default function SmartRestockPage() {
       });
 
       if (res.ok) {
-        toast({ title: "Éxito", description: `Pedido de ${groupName} confirmado.` });
+        toast({ title: "Exito", description: `Pedido de ${groupName} confirmado.` });
         
         // Clear quantities of confirmed items from state
         setQuantities(prev => {
@@ -465,7 +465,7 @@ export default function SmartRestockPage() {
           return next;
         });
 
-        // Limpiar estados de edición
+        // Limpiar estados de edicion
         setEditOrderId(null);
         setEditingOrderData(null);
 
@@ -483,15 +483,15 @@ export default function SmartRestockPage() {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#f8f9fa] dark:bg-[#09090b] relative">
-      <div className="flex-1 overflow-hidden flex flex-col p-3 md:p-6 pb-24 md:pb-6">
+    <div className="flex flex-col bg-[#f8f9fa] dark:bg-[#09090b] relative">
+      <div className="flex flex-col p-3 md:p-6 pb-24 md:pb-6">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 shrink-0">
           <div>
             <h1 className="text-xl md:text-2xl font-bold text-zinc-900 dark:text-white uppercase tracking-tight flex items-center gap-2">
               <ShoppingBag className="text-amber-500" size={24} />
               Pedidos Inteligentes
             </h1>
-            <p className="text-xs text-zinc-500 uppercase tracking-widest mt-1">Radar Global y Generación de Órdenes</p>
+            <p className="text-xs text-zinc-500 uppercase tracking-widest mt-1">Radar Global y Generacion de Ordenes</p>
           </div>
 
           <div className="flex items-center gap-2 bg-white dark:bg-zinc-950 p-1.5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_4px_20px_rgb(0,0,0,0.05)] w-full md:w-auto">
@@ -533,7 +533,7 @@ export default function SmartRestockPage() {
             <div className="flex items-center gap-2">
               <AlertTriangle className="text-amber-500" size={16} />
               <span className="text-xs font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wide">
-                Modo Edición Activo: Editando pedido del proveedor {editingOrderData?.supplier?.name || '...'}.
+                Modo Edicion Activo: Editando pedido del proveedor {editingOrderData?.supplier?.name || '...'}.
               </span>
             </div>
             <Button 
@@ -548,7 +548,7 @@ export default function SmartRestockPage() {
                 router.push('/inventory');
               }}
             >
-              Cancelar Edición
+              Cancelar Edicion
             </Button>
           </div>
         )}
@@ -578,17 +578,17 @@ export default function SmartRestockPage() {
         </div>
 
         {/* CENTRAL AREA: Grouped Suggestions */}
-        <div className="flex flex-col min-h-0 flex-1">
-            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden h-full flex flex-col">
-              <CardBody className="p-0 flex flex-col flex-1 min-h-0 overflow-hidden">
-                <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-6 flex flex-col gap-8 min-h-0">
+        <div className="flex flex-col">
+            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden flex flex-col">
+              <CardBody className="p-0 flex flex-col overflow-hidden">
+                <div className="overflow-y-auto custom-scrollbar p-3 md:p-6 flex flex-col gap-8">
                   
                   {loading ? (
                     <div className="flex justify-center p-10"><Skeleton className="h-8 w-32 rounded-lg" /></div>
                   ) : groupedBySupplier.length === 0 ? (
                     <div className="flex flex-col justify-center items-center h-full opacity-50 p-10">
                       <CheckCircle size={48} className="text-emerald-500 mb-4" />
-                      <p className="text-sm font-bold uppercase tracking-widest">Stock Óptimo</p>
+                      <p className="text-sm font-bold uppercase tracking-widest">Stock Optimo</p>
                     </div>
                   ) : (
                     <div className="space-y-6">
@@ -611,7 +611,7 @@ export default function SmartRestockPage() {
                               {group.items.length === 0 ? (
                                 <div className="flex flex-col justify-center items-center opacity-70 p-10">
                                   <CheckCircle size={40} className="text-emerald-500 mb-3" />
-                                  <p className="text-sm font-bold uppercase tracking-widest text-emerald-600">Stock Óptimo</p>
+                                  <p className="text-sm font-bold uppercase tracking-widest text-emerald-600">Stock Optimo</p>
                                   <p className="text-[10px] text-zinc-500 mt-2 text-center max-w-xs">Puedes programar una entrega manualmente asignando la fecha abajo.</p>
                                 </div>
                               ) : (
@@ -625,7 +625,7 @@ export default function SmartRestockPage() {
                                       <div className="flex-1 min-w-0">
                                         <div className="flex items-center gap-2 mb-1">
                                           <p className="font-medium truncate text-sm">{item.productName}</p>
-                                          {isCritical && !inTransit && <Badge color="danger" className="h-5 text-[10px] px-1.5 shrink-0">Crítico</Badge>}
+                                          {isCritical && !inTransit && <Badge color="danger" className="h-5 text-[10px] px-1.5 shrink-0">Critico</Badge>}
                                           {coveredByTransit && (
                                             <span className="inline-flex items-center gap-1 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-500/30 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0">
                                               <Truck size={9} />
@@ -635,7 +635,7 @@ export default function SmartRestockPage() {
                                           {inTransit && !coveredByTransit && (
                                             <span className="inline-flex items-center gap-1 bg-sky-100 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400 border border-sky-300 dark:border-sky-500/30 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0">
                                               <Package size={9} />
-                                              {item.pendingOrderQty} EN TRÁNSITO
+                                              {item.pendingOrderQty} EN TRANSITO
                                             </span>
                                           )}
                                           {item.alert && !coveredByTransit && (
@@ -647,7 +647,7 @@ export default function SmartRestockPage() {
                                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500 uppercase font-medium">
                                           <span>REF: {item.barcode}</span>
                                           <span>Stock: <strong className={item.stock <= 0 ? "text-red-500" : "text-zinc-900 dark:text-zinc-100"}>{item.stock}</strong></span>
-                                          {inTransit && <span className="text-amber-600 dark:text-amber-400 font-bold">Efectivo: {effectiveStock} (con tránsito)</span>}
+                                          {inTransit && <span className="text-amber-600 dark:text-amber-400 font-bold">Efectivo: {effectiveStock} (con transito)</span>}
                                           {editingMinStock === item.barcode ? (
                                             <div className="flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-0.5 rounded-md border border-amber-500/50">
                                               <span className="text-[10px]">Stock Base:</span>
@@ -675,21 +675,21 @@ export default function SmartRestockPage() {
                                               <Edit2 size={10} className="text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                                             </div>
                                           )}
-                                          {item.minShelfStock !== undefined && <span>Mín. Estante: {item.minShelfStock}</span>}
-                                          <span>Venta prom.: {Number(item.avgDailySales || 0).toFixed(1)}/día</span>
+                                          {item.minShelfStock !== undefined && <span>Min. Estante: {item.minShelfStock}</span>}
+                                          <span>Venta prom.: {Number(item.avgDailySales || 0).toFixed(1)}/dia</span>
                                         </div>
                                         
                                         {selectedSupplier !== "global" && item.bestSupplierId && item.bestSupplierId.toString() !== selectedSupplier && (
                                           <div className="mt-2 flex items-center gap-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 p-2 rounded-lg w-fit">
                                             <AlertTriangle size={14} className="text-amber-500 shrink-0" />
                                             <p className="text-[10px] md:text-[11px] font-bold text-amber-700 dark:text-amber-400 m-0 leading-tight">
-                                              💡 RECOMENDACIÓN: No pidas con este proveedor. Con <span className="uppercase">{item.bestSupplierName}</span> sale más económico ({formatCurrency(item.lowestPrice || 0)}).
+                                              💡 RECOMENDACION: No pidas con este proveedor. Con <span className="uppercase">{item.bestSupplierName}</span> sale mas economico ({formatCurrency(item.lowestPrice || 0)}).
                                             </p>
                                           </div>
                                         )}
                                       </div>
                                       
-                                      {/* CONTROLES: Si ya está cubierto por tránsito, mostrar badge. Si no, mostrar +/- */}
+                                      {/* CONTROLES: Si ya esta cubierto por transito, mostrar badge. Si no, mostrar +/- */}
                                       <div className="flex items-center gap-2">
                                         {coveredByTransit ? (
                                           <div className="flex items-center gap-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-500/20 px-4 py-2 rounded-xl">
@@ -761,7 +761,7 @@ export default function SmartRestockPage() {
                                     </PopoverTrigger>
                                     <PopoverContent className="p-3 w-72 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl">
                                       <div className="flex flex-col gap-3 w-full">
-                                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest text-center mt-1">Días de Llegada</p>
+                                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest text-center mt-1">Dias de Llegada</p>
                                         <div className="grid grid-cols-3 gap-2">
                                           {getNextDays(6).map(d => (
                                             <button

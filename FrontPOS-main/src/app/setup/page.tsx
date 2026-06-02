@@ -36,13 +36,13 @@ export default function SetupPage() {
       try {
         const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/check-setup`);
         const data = await res.json();
-        // Si no necesita setup o hay éxito pero dice falso, ir a login
+        // Si no necesita setup o hay exito pero dice falso, ir a login
         if (!data.needsSetup) {
           router.replace('/login');
         }
       } catch (error) {
         console.error("Error verificando setup:", error);
-        // Error de conexión o servidor: mejor ir a login que arriesgar el superadmin
+        // Error de conexion o servidor: mejor ir a login que arriesgar el superadmin
         router.replace('/login');
       } finally {
         setVerifying(false);
@@ -57,8 +57,8 @@ export default function SetupPage() {
     if (formData.password !== formData.confirmPassword) {
       toast({
         variant: "destructive",
-        title: "Error de validación",
-        description: "Las contraseñas no coinciden.",
+        title: "Error de validacion",
+        description: "Las contrasenas no coinciden.",
       });
       return;
     }
@@ -79,10 +79,10 @@ export default function SetupPage() {
 
       const data = await res.json();
 
-      if (!res.ok) throw new Error(data.error || "Error en la configuración");
+      if (!res.ok) throw new Error(data.error || "Error en la configuracion");
 
       toast({
-        title: "¡Configuración Exitosa!",
+        title: "¡Configuracion Exitosa!",
         description: "Superadministrador creado. Redirigiendo al login...",
       });
 
@@ -103,7 +103,7 @@ export default function SetupPage() {
 
   if (verifying) {
     return (
-      <div className="flex h-screen w-full items-center justify-center bg-gray-50 dark:bg-[#09090b]">
+      <div className="flex min-h-screen w-full items-center justify-center bg-[#09090b]">
         <Spinner color="success" size="lg" label="Inicializando sistema..." />
       </div>
     );
@@ -124,7 +124,7 @@ export default function SetupPage() {
             <ShieldCheck className="h-8 w-8" />
           </div>
           <h1 className="text-3xl font-medium tracking-tighter text-zinc-900 dark:text-zinc-50 uppercase text-center">
-            Configuración Inicial
+            Configuracion Inicial
           </h1>
           <p className="text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 tracking-[0.2em] mt-3">
             Crear cuenta de Superadministrador
@@ -135,7 +135,7 @@ export default function SetupPage() {
           <CardBody className="space-y-6 py-8">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label="Identificación (DNI)"
+                label="Identificacion (DNI)"
                 placeholder="Ej. 12345678"
                 labelPlacement="outside"
                 isRequired
@@ -151,7 +151,7 @@ export default function SetupPage() {
               />
               <Input
                 label="Nombre Completo"
-                placeholder="Ej. Juan Pérez"
+                placeholder="Ej. Juan Perez"
                 labelPlacement="outside"
                 isRequired
                 value={formData.name}
@@ -167,7 +167,7 @@ export default function SetupPage() {
             </div>
 
             <Input
-              label="Correo Electrónico"
+              label="Correo Electronico"
               placeholder="superadmin@empresa.com"
               type="email"
               labelPlacement="outside"
@@ -185,7 +185,7 @@ export default function SetupPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Input
-                label="Contraseña"
+                label="Contrasena"
                 type="password"
                 labelPlacement="outside"
                 isRequired
@@ -200,7 +200,7 @@ export default function SetupPage() {
                 }}
               />
               <Input
-                label="Confirmar Contraseña"
+                label="Confirmar Contrasena"
                 type="password"
                 labelPlacement="outside"
                 isRequired
@@ -218,7 +218,7 @@ export default function SetupPage() {
 
             <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/5 border border-amber-100 dark:border-amber-500/10">
               <p className="text-[9px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider leading-relaxed">
-                IMPORTANTE: Esta cuenta tendrá acceso total al sistema. La contraseña debe tener al menos 6 caracteres. Asegúrate de usar un correo real para la recuperación.
+                IMPORTANTE: Esta cuenta tendra acceso total al sistema. La contrasena debe tener al menos 6 caracteres. Asegurate de usar un correo real para la recuperacion.
               </p>
             </div>
           </CardBody>
@@ -232,7 +232,7 @@ export default function SetupPage() {
               isLoading={loading}
               className="w-full h-14 text-sm font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all uppercase"
             >
-              Finalizar Configuración e Instalar
+              Finalizar Configuracion e Instalar
             </Button>
           </CardFooter>
         </form>
@@ -244,5 +244,6 @@ export default function SetupPage() {
     </div>
   );
 }
+
 
 

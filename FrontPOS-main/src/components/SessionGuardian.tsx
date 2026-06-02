@@ -12,14 +12,14 @@ export default function SessionGuardian() {
     const [isOnline, setIsOnline] = useState(true);
     const [lastActivity, setLastActivity] = useState(Date.now());
 
-    // 1. SINCRONIZACIÓN DE LOGOUT (Multi-pestaña)
+    // 1. SINCRONIZACION DE LOGOUT (Multi-pestana)
     useEffect(() => {
         const handleStorageChange = (e: StorageEvent) => {
-            // Si detectamos que el token fue removido o cambió en otra pestaña
+            // Si detectamos que el token fue removido o cambio en otra pestana
             if (e.key === 'org-pos-token' && !e.newValue) {
                 toast({
-                    title: "SESIÓN FINALIZADA",
-                    description: "Se ha cerrado la sesión en otra ventana.",
+                    title: "SESION FINALIZADA",
+                    description: "Se ha cerrado la sesion en otra ventana.",
                     variant: "destructive"
                 });
                 router.push('/login');
@@ -30,7 +30,7 @@ export default function SessionGuardian() {
         return () => window.removeEventListener('storage', handleStorageChange);
     }, [router]);
 
-    // 2. DETECCIÓN DE ESTADO DE RED PROACTIVO
+    // 2. DETECCION DE ESTADO DE RED PROACTIVO
     useEffect(() => {
         const updateOnlineStatus = () => {
             const online = navigator.onLine;
@@ -38,13 +38,13 @@ export default function SessionGuardian() {
             if (!online) {
                 toast({
                     title: "MODO OFFLINE ACTIVADO",
-                    description: "Se ha perdido la conexión. Las ventas se guardarán localmente.",
+                    description: "Se ha perdido la conexion. Las ventas se guardaran localmente.",
                     variant: "destructive"
                 });
             } else {
                 toast({
-                    title: "CONEXIÓN RESTAURADA",
-                    description: "El sistema vuelve a estar en línea.",
+                    title: "CONEXION RESTAURADA",
+                    description: "El sistema vuelve a estar en linea.",
                     variant: "default"
                 });
             }
@@ -74,8 +74,8 @@ export default function SessionGuardian() {
                 Cookies.remove('org-pos-token');
                 Cookies.remove('org-pos-user');
                 toast({
-                    title: "SESIÓN EXPIRADA",
-                    description: "Se ha cerrado la sesión por inactividad (1 hora).",
+                    title: "SESION EXPIRADA",
+                    description: "Se ha cerrado la sesion por inactividad (1 hora).",
                     variant: "destructive"
                 });
                 router.push('/login?reason=timeout');
@@ -95,6 +95,6 @@ export default function SessionGuardian() {
     }, []);
 
     // Este componente no renderiza nada visible por defecto, 
-    // pero podemos retornar un pequeño indicador si lo deseamos.
+    // pero podemos retornar un pequeno indicador si lo deseamos.
     return null;
 }

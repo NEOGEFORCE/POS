@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
@@ -12,7 +12,7 @@ import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 
-// Dinámicos para optimización de carga
+// Dinamicos para optimizacion de carga
 const SupplierStats = dynamic(() => import('./components/SupplierStats'), { ssr: false });
 const SupplierTable = dynamic(() => import('./components/SupplierTable'), { ssr: false });
 const SupplierFormModal = dynamic(() => import('./components/SupplierFormModal'), { ssr: false });
@@ -41,7 +41,7 @@ const SupplierHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
           <Truck size={20} />
         </div>
         <div className="flex flex-col">
-          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">DIRECTORIO <span className="text-zinc-900 dark:text-zinc-100">LOGÍSTICO</span></h1>
+          <h1 className="text-[13px] font-medium uppercase tracking-tighter leading-none tracking-tight">DIRECTORIO <span className="text-zinc-900 dark:text-zinc-100">LOGISTICO</span></h1>
           <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Abastecimiento Maestro V4.0</p>
         </div>
       </div>
@@ -86,7 +86,7 @@ export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [filter, setFilter] = useState('');
 
-  // Paginación
+  // Paginacion
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
 
@@ -163,8 +163,8 @@ export default function SuppliersPage() {
       broadcastRevalidate('SUPPLIER_UPDATE');
       toast({
         variant: "success",
-        title: "ÉXITO",
-        description: "VÍNCULO CREADO CORRECTAMENTE",
+        title: "EXITO",
+        description: "VINCULO CREADO CORRECTAMENTE",
       });
       setAddDialogOpen(false);
       setNewSupplier({ name: '', phone: '', address: '' } as any);
@@ -187,7 +187,7 @@ export default function SuppliersPage() {
       await loadSuppliers();
       broadcastRevalidate('SUPPLIER_UPDATE');
       toast({
-        title: "ÉXITO",
+        title: "EXITO",
         description: "REGISTRO ACTUALIZADO",
         className: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white border-none"
       });
@@ -205,7 +205,7 @@ export default function SuppliersPage() {
         method: 'DELETE',
         fallbackError: 'FALLO AL ELIMINAR PROVEEDOR'
       }, token!);
-      toast({ variant: 'success', title: 'ÉXITO', description: 'VÍNCULO ELIMINADO' });
+      toast({ variant: 'success', title: 'EXITO', description: 'VINCULO ELIMINADO' });
       setDeleteDialogOpen(false);
       setDeletingId(null);
       loadSuppliers();
@@ -215,13 +215,13 @@ export default function SuppliersPage() {
     }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950 flex-col gap-4">
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b] flex-col gap-4">
     <Spinner color="success" size="lg" />
-    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Logística...</p>
+    <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Logistica...</p>
   </div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -236,7 +236,7 @@ export default function SuppliersPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col min-w-0">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
         <SupplierTable
           suppliers={paginatedSuppliers}
           currentPage={currentPage}
@@ -261,7 +261,7 @@ export default function SuppliersPage() {
               toast({
                 variant: "success",
                 title: "PROVEEDOR DETECTADO",
-                description: "CARGANDO FICHA LOGÍSTICA EXISTENTE..."
+                description: "CARGANDO FICHA LOGISTICA EXISTENTE..."
               });
               setAddDialogOpen(false);
               setEditingSupplier(existing);
@@ -283,3 +283,7 @@ export default function SuppliersPage() {
     </div>
   );
 }
+
+
+
+

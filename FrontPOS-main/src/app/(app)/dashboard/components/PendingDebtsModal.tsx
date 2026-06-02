@@ -80,7 +80,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                   <h2 className="text-xl font-medium uppercase tracking-tight tracking-tight leading-tight">
                     CENTRO DE <span className="text-amber-500">PAGOS</span>
                   </h2>
-                  <p className="text-[10px] font-medium text-gray-400 uppercase tracking-[0.2em]">Liquidación de Deudas Activas</p>
+                  <p className="text-[10px] font-medium text-gray-400 uppercase tracking-[0.2em]">Liquidacion de Deudas Activas</p>
                 </div>
               </div>
             </ModalHeader>
@@ -90,7 +90,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                   <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 mb-4 border-2 border-dashed border-emerald-500/30">
                     <Activity size={32} />
                   </div>
-                  <h3 className="text-sm font-medium uppercase tracking-widest text-zinc-900 dark:text-zinc-50">Todo al día</h3>
+                  <h3 className="text-sm font-medium uppercase tracking-widest text-zinc-900 dark:text-zinc-50">Todo al dia</h3>
                   <p className="text-[10px] font-bold uppercase tracking-tight text-gray-500 mt-1">No hay deudas pendientes registradas.</p>
                 </div>
               ) : (
@@ -154,7 +154,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                                       </div>
                                     )}
                                   </div>
-                                  <p className="text-[9px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest text-center mb-4">¿Con qué canal deseas saldar esta deuda?</p>
+                                  <p className="text-[9px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest text-center mb-4">¿Con que canal deseas saldar esta deuda?</p>
                                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                                     {[
                                       { id: 'EFECTIVO', label: 'Caja', icon: <Banknote size={16} />, color: 'emerald' },

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { useMemo, useState, useEffect, useCallback } from 'react';
 import { 
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -23,9 +23,9 @@ interface AuditTableProps {
 const COLUMNS = [
     { name: "MARCA TEMPORAL", uid: "timestamp", align: "start" },
     { name: "RESPONSABLE", uid: "employee", align: "start" },
-    { name: "ACCIÓN / MÓDULO", uid: "action", align: "start" },
+    { name: "ACCION / MODULO", uid: "action", align: "start" },
     { name: "RELATO DE EVENTO", uid: "details", align: "start" },
-    { name: "INSPECCIÓN", uid: "inspect", align: "center" },
+    { name: "INSPECCION", uid: "inspect", align: "center" },
 ];
 
 const getActionColor = (action: string, isCritical?: boolean) => {
@@ -43,7 +43,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
   const {isOpen, onOpen, onOpenChange} = useDisclosure();
   const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
   
-  // PAGINACIÓN
+  // PAGINACION
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(25);
   const [isMobile, setIsMobile] = useState(false);
@@ -150,7 +150,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
             );
         case "inspect":
             return (
-                <Tooltip content="Ver Inspección Técnica">
+                <Tooltip content="Ver Inspeccion Tecnica">
                     <Button 
                         isIconOnly 
                         size="sm" 
@@ -168,7 +168,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
   }, []);
 
   const renderChangesTable = (changesStr?: string) => {
-    if (!changesStr) return <p className="text-tiny text-default-400 tracking-tight">No hay detalles técnicos de cambios disponibles.</p>;
+    if (!changesStr) return <p className="text-tiny text-default-400 tracking-tight">No hay detalles tecnicos de cambios disponibles.</p>;
     try {
       const changes = JSON.parse(changesStr);
       const before = changes.before || {};
@@ -205,12 +205,12 @@ export default function AuditTable({ logs }: AuditTableProps) {
         </div>
       );
     } catch {
-      return <pre className="text-[10px] p-2 bg-[#18181b] text-zinc-300 rounded overflow-x-auto">{changesStr}</pre>;
+      return <pre className="text-[10px] p-2 bg-[#18181b] text-zinc-300 rounded overflow-auto overscroll-contain">{changesStr}</pre>;
     }
   };
 
   return (
-    <div className="flex flex-col gap-4 flex-1 min-h-0">
+    <div className="flex-1 min-h-0 h-full w-full flex flex-col gap-4">
       {/* FILTROS AVANZADOS */}
       <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center card-base border-none p-4 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] gap-4 shrink-0 transition-colors">
         <div className="flex flex-col gap-3 w-full lg:w-auto">
@@ -230,7 +230,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
             <Tab key="critical" title={
               <div className="flex items-center gap-2">
                 <ShieldAlert size={14} className="text-rose-500" />
-                <span>ALERTAS CRÍTICAS</span>
+                <span>ALERTAS CRITICAS</span>
               </div>
             } />
             <Tab key="SALES" title="VENTAS" />
@@ -243,7 +243,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
           <Input
             isClearable
             className="w-full lg:w-80"
-            placeholder="Buscar por DNI, nombre, acción..."
+            placeholder="Buscar por DNI, nombre, accion..."
             startContent={<Search size={18} className="text-gray-400" />}
             value={filter}
             onValueChange={(val) => { setFilter(val); setPage(1); }}
@@ -261,14 +261,14 @@ export default function AuditTable({ logs }: AuditTableProps) {
       </div>
 
       {/* CONTENEDOR DE TABLA / CARDS */}
-      <div className="flex-1 min-h-0 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors relative">
+      <div className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors relative">
         {!isMobile ? (
-            <div className="flex-1 overflow-auto overscroll-contain custom-scrollbar min-h-0 w-full">
+            <div className="overflow-auto overscroll-contain custom-scrollbar w-full flex-1 min-h-0 h-full">
                 <Table
                     isCompact
                     removeWrapper
                     isHeaderSticky
-                    aria-label="Registro Maestro de Auditoría"
+                    aria-label="Registro Maestro de Auditoria"
                     classNames={{
                         base: "min-w-[900px]",
                         th: "bg-gray-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
@@ -287,8 +287,8 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         items={items}
                         emptyContent={
                             <EmptyState 
-                                title="Sin registros de auditoría"
-                                description="No se han encontrado eventos bajo los criterios actuales. Intenta ajustar los filtros de búsqueda."
+                                title="Sin registros de auditoria"
+                                description="No se han encontrado eventos bajo los criterios actuales. Intenta ajustar los filtros de busqueda."
                                 icon={<History size={48} className="text-gray-300" />}
                             />
                         }
@@ -302,7 +302,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                 </Table>
             </div>
         ) : (
-            <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-[#18181b]">
+            <div className="overflow-y-auto scroll-smooth custom-scrollbar p-3 flex flex-col gap-3 bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
                 {items.length > 0 ? (
                     items.map((log) => (
                         <div key={log.id} className={`relative p-4 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] card-base border-none flex flex-col gap-3 transition-all ${log.is_critical ? 'border-rose-500/40 bg-rose-500/5 shadow-rose-500/5' : 'hover:border-emerald-500/30'}`}>
@@ -327,7 +327,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                                 {log.human_readable || log.details}
                             </p>
                             <Button size="sm" variant="flat" className="w-full mt-1 bg-white/5 text-emerald-600 font-medium text-[9px] uppercase tracking-tight h-8" onPress={() => handleInspect(log)}>
-                                Ver Detalles Técnicos <Eye size={12} className="ml-1" />
+                                Ver Detalles Tecnicos <Eye size={12} className="ml-1" />
                             </Button>
                         </div>
                     ))
@@ -337,7 +337,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
             </div>
         )}
 
-        {/* PAGINACIÓN ESTILO PREMIUM */}
+        {/* PAGINACION ESTILO PREMIUM */}
         {filteredLogs.length > rowsPerPage && (
             <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
                 <div className="flex items-center gap-2 font-medium">
@@ -386,7 +386,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
         )}
       </div>
 
-      {/* MODAL DE INSPECCIÓN PROFUNDA */}
+      {/* MODAL DE INSPECCION PROFUNDA */}
       <Modal 
         isOpen={isOpen} 
         onOpenChange={onOpenChange}
@@ -409,7 +409,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         {selectedLog?.is_critical ? <ShieldAlert size={24} /> : <History size={24} />}
                     </div>
                     <div className="flex flex-col">
-                        <h3 className="text-sm font-medium uppercase tracking-tighter tracking-tight">Inspección Forense de Evento</h3>
+                        <h3 className="text-sm font-medium uppercase tracking-tighter tracking-tight">Inspeccion Forense de Evento</h3>
                         <p className="text-[10px] font-bold text-default-400 uppercase tracking-widest">ID Registro: #{selectedLog?.id}</p>
                     </div>
                 </div>
@@ -419,7 +419,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                     <div className="bg-default-50 dark:bg-[#18181b]/50 p-3 rounded-2xl border border-default-100 dark:border-white/5">
                         <div className="flex items-center gap-2 mb-2 text-default-400">
                             <Globe size={14} />
-                            <span className="text-[9px] font-medium uppercase tracking-widest">Origen de Conexión</span>
+                            <span className="text-[9px] font-medium uppercase tracking-widest">Origen de Conexion</span>
                         </div>
                         <p className="text-xs font-mono font-medium text-default-700 dark:text-zinc-300">{selectedLog?.ip_address}</p>
                     </div>
@@ -442,7 +442,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                 </div>
 
                 <div className="flex flex-col gap-2 p-4 bg-default-50 dark:bg-[#18181b]/50 rounded-2xl border border-default-100 dark:border-white/5">
-                    <span className="text-[9px] font-medium text-default-400 uppercase tracking-widest">Relato Técnico</span>
+                    <span className="text-[9px] font-medium text-default-400 uppercase tracking-widest">Relato Tecnico</span>
                     <p className="text-xs font-medium text-default-600 dark:text-zinc-400 tracking-tight">
                         &quot;{selectedLog?.human_readable || selectedLog?.details}&quot;
                     </p>
@@ -470,3 +470,6 @@ export default function AuditTable({ logs }: AuditTableProps) {
     </div>
   );
 }
+
+
+

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Button, Input, Spinner, Autocomplete, AutocompleteItem } from "@heroui/react";
@@ -15,7 +15,7 @@ import Cookies from 'js-cookie';
 import { apiFetch, ApiError } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
 
-// COMPONENTES DINÁMICOS PREMIUM
+// COMPONENTES DINAMICOS PREMIUM
 const ProductStats = nextDynamic(() => import('./components/ProductStats'), { ssr: false });
 const ProductTable = nextDynamic(() => import('./components/ProductTable'), { ssr: false });
 const ProductFormModal = nextDynamic(() => import('./components/ProductFormModal'), { ssr: false });
@@ -64,7 +64,7 @@ export default function ProductsPage() {
 
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
 
-    // Resetear página al cambiar proveedor
+    // Resetear pagina al cambiar proveedor
     useEffect(() => {
         setCurrentPage(1);
     }, [selectedSupplierId]);
@@ -95,7 +95,7 @@ export default function ProductsPage() {
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
     const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
 
-    // --- ESTADO CONFIRMACIÓN PERSONALIZADA ---
+    // --- ESTADO CONFIRMACION PERSONALIZADA ---
     const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
     const [bulkProductToOpen, setBulkProductToOpen] = useState<Product | null>(null);
 
@@ -112,7 +112,7 @@ export default function ProductsPage() {
         }
     }, []);
 
-    // SINCRONIZACIÓN ZERO-F5
+    // SINCRONIZACION ZERO-F5
     useEffect(() => {
         let timeout: NodeJS.Timeout;
         const cleanup = setupSyncListener((event) => {
@@ -179,7 +179,7 @@ export default function ProductsPage() {
             await apiFetch('/products/create-products', {
                 method: 'POST', body: JSON.stringify(data), fallbackError: 'FALLO AL CREAR PRODUCTO'
             }, token!);
-            toast({ variant: 'success', title: 'ÉXITO', description: 'REFERENCIA SINCRONIZADA.' });
+            toast({ variant: 'success', title: 'EXITO', description: 'REFERENCIA SINCRONIZADA.' });
             setAddDialogOpen(false);
             localStorage.removeItem('product-form-draft');
             setNewProduct({ barcode: '', productName: '', quantity: '' as any, isWeighted: false, purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20, minStock: '' as any, packMultiplier: '' as any });
@@ -188,14 +188,14 @@ export default function ProductsPage() {
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             if (err instanceof ApiError && err.status === 409) {
-                toast({ variant: 'destructive', title: 'PRODUCTO DUPLICADO', description: 'El código ya pertenece a un producto activo.' });
+                toast({ variant: 'destructive', title: 'PRODUCTO DUPLICADO', description: 'El codigo ya pertenece a un producto activo.' });
                 return;
             }
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
                 setApiFieldErrors(err.data.error.fields);
-                toast({ variant: 'destructive', title: 'ERROR DE VALIDACIÓN', description: 'Revisa los campos marcados en rojo' });
+                toast({ variant: 'destructive', title: 'ERROR DE VALIDACION', description: 'Revisa los campos marcados en rojo' });
             } else {
-                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO EN OPERACIÓN' });
+                toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO EN OPERACION' });
             }
         }
     };
@@ -211,7 +211,7 @@ export default function ProductsPage() {
             await apiFetch(`/products/update-products/${urlBarcode}`, {
                 method: 'PUT', body: JSON.stringify(payload), fallbackError: 'FALLO AL ACTUALIZAR'
             }, token!);
-            toast({ variant: 'success', title: 'ÉXITO', description: 'REGISTRO ACTUALIZADO' });
+            toast({ variant: 'success', title: 'EXITO', description: 'REGISTRO ACTUALIZADO' });
             setEditDialogOpen(false);
             mutateProducts();
             mutateAllProducts();
@@ -219,7 +219,7 @@ export default function ProductsPage() {
         } catch (err: any) {
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
                 setApiFieldErrors(err.data.error.fields);
-                toast({ variant: 'destructive', title: 'ERROR DE VALIDACIÓN', description: 'Revisa los campos marcados en rojo' });
+                toast({ variant: 'destructive', title: 'ERROR DE VALIDACION', description: 'Revisa los campos marcados en rojo' });
             } else {
                 toast({ variant: 'destructive', title: 'ERROR', description: err.message });
             }
@@ -233,7 +233,7 @@ export default function ProductsPage() {
             await apiFetch(`/products/delete-products/${deletingBarcode}`, {
                 method: 'DELETE', fallbackError: 'FALLO AL ELIMINAR'
             }, token!);
-            toast({ variant: 'success', title: 'ÉXITO', description: 'PRODUCTO ELIMINADO' });
+            toast({ variant: 'success', title: 'EXITO', description: 'PRODUCTO ELIMINADO' });
             setDeleteDialogOpen(false);
             mutateProducts();
             mutateAllProducts();
@@ -291,14 +291,14 @@ export default function ProductsPage() {
             const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL || '/api')}/products/export-csv`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
-            if (!response.ok) throw new Error("Falló la exportación");
+            if (!response.ok) throw new Error("Fallo la exportacion");
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
             a.download = `catalogo_${new Date().toISOString().split('T')[0]}.csv`;
             a.click();
-            toast({ variant: 'success', title: 'ÉXITO', description: 'CATÁLOGO DESCARGADO.' });
+            toast({ variant: 'success', title: 'EXITO', description: 'CATALOGO DESCARGADO.' });
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
         }
@@ -320,20 +320,20 @@ export default function ProductsPage() {
             });
 
             const result = await response.json();
-            if (!response.ok) throw new Error(result.error?.message || "Fallo en importación");
+            if (!response.ok) throw new Error(result.error?.message || "Fallo en importacion");
 
             toast({ 
                 variant: 'success', 
-                title: 'IMPORTACIÓN COMPLETADA', 
-                description: `Se procesaron ${result.total} productos. Éxitos: ${result.success}.` 
+                title: 'IMPORTACION COMPLETADA', 
+                description: `Se procesaron ${result.total} productos. EXITOs: ${result.success}.` 
             });
 
             if (result.errors && result.errors.length > 0) {
-                console.error("Errores de importación:", result.errors);
+                console.error("Errores de importacion:", result.errors);
                 toast({
                     variant: 'destructive',
                     title: 'ADVERTENCIA',
-                    description: `Hubo ${result.errors.length} errores. Revisa la consola para más detalles.`
+                    description: `Hubo ${result.errors.length} errores. Revisa la consola para mas detalles.`
                 });
             }
 
@@ -379,7 +379,7 @@ export default function ProductsPage() {
     }, [addDialogOpen, editDialogOpen, scanMode]);
 
     return (
-        <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 overflow-hidden relative">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 relative">
             <div className="shrink-0 px-4 pt-1 pb-1 flex flex-col gap-1.5 bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/5">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -388,10 +388,10 @@ export default function ProductsPage() {
                         </div>
                         <div className="flex flex-col">
                             <h1 className="text-[14px] font-medium tracking-tighter uppercase tracking-tight leading-none">
-                                Catálogo <span className="text-zinc-900 dark:text-zinc-100">Maestro</span>
+                                Catalogo <span className="text-zinc-900 dark:text-zinc-100">Maestro</span>
                             </h1>
                             <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight mt-1 flex items-center gap-1.5">
-                                <ShieldCheck size={12} className="text-zinc-900 dark:text-zinc-100" /> Auditoría de Patrimonio V4.5
+                                <ShieldCheck size={12} className="text-zinc-900 dark:text-zinc-100" /> Auditoria de Patrimonio V4.5
                             </p>
                         </div>
                     </div>
@@ -429,7 +429,7 @@ export default function ProductsPage() {
                 <div className="flex flex-col md:flex-row items-center gap-1.5">
                     <div className="relative flex-1 w-full group/search">
                         <Input
-                            placeholder="ESCANEE O BUSQUE POR REFERENCIA O CATEGORÍA..."
+                            placeholder="ESCANEE O BUSQUE POR REFERENCIA O CATEGORIA..."
                             value={searchTerm}
                             onValueChange={setSearchTerm}
                             startContent={<Search size={16} className="text-zinc-900 dark:text-zinc-100 ml-2" />}
@@ -484,19 +484,19 @@ export default function ProductsPage() {
                         className={`h-11 w-full md:w-auto px-6 rounded-2xl font-medium text-[10px] uppercase tracking-widest tracking-tight border transition-all ${stats.criticalStock > 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-gray-50 dark:bg-[#18181b] text-gray-400 border-gray-200'}`}
                     >
                         <AlertTriangle size={16} className="mr-2" />
-                        {stats.criticalStock > 0 ? `${stats.criticalStock} crítico${stats.criticalStock > 1 ? 's' : ''}` : 'Sin alertas'}
+                        {stats.criticalStock > 0 ? `${stats.criticalStock} critico${stats.criticalStock > 1 ? 's' : ''}` : 'Sin alertas'}
                     </Button>
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-hidden px-2 py-1 bg-gray-100 dark:bg-[#09090b] flex flex-col relative">
+            <div className="px-2 py-1 bg-gray-100 dark:bg-[#09090b] flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar relative">
                 {productsLoading && !productsData && (
                     <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center card-base border-none dark:bg-black/90 gap-4">
                         <Spinner color="success" size="lg" />
-                        <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest animate-pulse tracking-tight">Sincronizando Catálogo...</p>
+                        <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest animate-pulse tracking-tight">Sincronizando Catalogo...</p>
                     </div>
                 )}
-                <div className="flex-1 min-h-0 flex flex-col gap-2">
+                <div className="flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar gap-2">
                     <ProductStats {...stats} />
                     <ProductTable
                         products={products}
@@ -546,11 +546,16 @@ export default function ProductsPage() {
                 isOpen={isBulkConfirmOpen}
                 onOpenChange={setIsBulkConfirmOpen}
                 title="Confirmar Apertura de Paca"
-                description={`¿ESTÁS SEGURO DE DESTAPAR 1 UNIDAD DE "${bulkProductToOpen?.productName}" PARA VENTA LIBRE?`}
+                description={`Â¿ESTAS SEGURO DE DESTAPAR 1 UNIDAD DE "${bulkProductToOpen?.productName}" PARA VENTA LIBRE?`}
                 onConfirm={confirmOpenBulk}
                 type="warning"
-                confirmText="SÍ, DESTAPAR"
+                confirmText="SI, DESTAPAR"
             />
         </div>
     );
 }
+
+
+
+
+

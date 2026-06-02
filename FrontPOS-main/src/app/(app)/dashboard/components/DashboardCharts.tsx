@@ -79,50 +79,16 @@ export default function DashboardCharts({
 
     return (
         <div className="grid gap-6 grid-cols-1 lg:grid-cols-7 shrink-0">
-            {/* --- Tendencia Ventas 7 Días --- */}
-            <Card className="col-span-1 lg:col-span-4 card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors" radius="lg">
-                <CardHeader className="px-6 pt-6 pb-2">
-                    <div className="flex items-center gap-3">
-                        <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 p-2.5 rounded-2xl text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 border border-emerald-200 dark:border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><BarChart3 size={18} /></div>
-                        <div>
-                            <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Tendencia de Ventas</h2>
-                            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Últimos 7 días</p>
-                        </div>
-                    </div>
-                </CardHeader>
-                <CardBody className="px-4 pb-4 pt-0 overflow-hidden">
-                    <div className="h-[260px] w-full mt-4">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={dailyChartData} margin={{ left: -20, right: 10, top: 10 }}>
-                                <defs>
-                                    <linearGradient id="fillVentas" x1="0" y1="0" x2="0" y2="1">
-                                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                                    </linearGradient>
-                                </defs>
-                                <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="currentColor" className="text-gray-200 dark:text-white/5" />
-                                <XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#71717a' }} dy={10} />
-                                <YAxis tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} axisLine={false} tickLine={false} tick={{ fontSize: 10, fontWeight: 700, fill: '#71717a' }} dx={-10} />
-                                <Tooltip
-                                    contentStyle={{ background: 'rgba(0,0,0,0.85)', border: 'none', borderRadius: '12px', padding: '10px 14px', fontSize: 12 }}
-                                    labelStyle={{ color: '#a1a1aa', fontWeight: 700, textTransform: 'uppercase', fontSize: 10 }}
-                                    formatter={(value: number) => [`$${formatCurrency(value)}`, 'Ventas']}
-                                />
-                                <Area type="monotone" dataKey="ventas" stroke="#10b981" strokeWidth={3} fill="url(#fillVentas)" dot={{ fill: '#10b981', r: 4, strokeWidth: 2, stroke: '#fff' }} activeDot={{ r: 6, stroke: '#10b981', strokeWidth: 2 }} />
-                            </AreaChart>
-                        </ResponsiveContainer>
-                    </div>
-                </CardBody>
-            </Card>
 
-            {/* --- Donut Métodos de Pago + Progress Rings --- */}
+
+            {/* --- Donut Metodos de Pago + Progress Rings --- */}
             <Card className="col-span-1 lg:col-span-3 card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors" radius="lg">
                 <CardHeader className="px-6 pt-6 pb-2">
                     <div className="flex items-center gap-3">
                         <div className="bg-violet-100 dark:bg-violet-500/10 p-2.5 rounded-2xl text-violet-600 dark:text-violet-500 border border-violet-200 dark:border-violet-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><DollarSign size={18} /></div>
                         <div>
-                            <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Métodos de Pago</h2>
-                            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Distribución del mes</p>
+                            <h2 className="text-base font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight">Metodos de Pago</h2>
+                            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Distribucion del mes</p>
                         </div>
                     </div>
                 </CardHeader>

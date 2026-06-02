@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -17,7 +17,7 @@ export default function Home() {
             return await response.json();
           }
         } catch (error) {
-          console.log(`Intento ${i + 1} de ${retries} falló. Reintentando en ${delay}ms...`);
+          console.log(`Intento ${i + 1} de ${retries} fallo. Reintentando en ${delay}ms...`);
           if (i < retries - 1) await new Promise(resolve => setTimeout(resolve, delay));
         }
       }
@@ -55,7 +55,7 @@ export default function Home() {
   }, [router]);
 
   return (
-    <div className="flex h-screen w-full flex-col items-center justify-center bg-gray-50 dark:bg-[#09090b] transition-colors duration-500 overflow-hidden select-none">
+    <div className="flex min-h-screen w-full flex-col items-center justify-center bg-[#09090b] select-none">
 
       <div className="flex flex-col items-center gap-10 animate-in fade-in zoom-in duration-700">
 

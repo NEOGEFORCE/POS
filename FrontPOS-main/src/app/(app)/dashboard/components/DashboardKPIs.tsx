@@ -11,6 +11,9 @@ import React from 'react';
 import AuditModal from "./AuditModal";
 import Cookies from 'js-cookie';
 import { useToast } from "@/hooks/use-toast";
+import { motion } from "framer-motion";
+import { Stagger, StaggerItem, useReducedMotionSafe } from "@/components/ui/motion";
+import { RollingDigits } from "@/components/charts/RollingDigits";
 
 
 
@@ -18,8 +21,8 @@ const formatCurrencyWithColor = (value: number, label?: string) => {
     const formatted = formatCurrency(value);
     const isNegative = value < 0;
     
-    // Nueva lógica: si el valor es negativo en balance, es un FALTANTE/EGRESO (rojo o neutro)
-    // Pero aquí solo formateamos.
+    // Nueva logica: si el valor es negativo en balance, es un FALTANTE/EGRESO (rojo o neutro)
+    // Pero aqui solo formateamos.
     if (isNegative) {
         return (
             <span className="text-rose-500 font-bold">
@@ -42,11 +45,24 @@ function KpiCard({
     topAction?: React.ReactNode;
 }) {
     const isAudit = variant === "audit";
+    const reduced = useReducedMotionSafe();
+
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        const target = e.currentTarget;
+        const rect = target.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 100;
+        const y = ((e.clientY - rect.top) / rect.height) * 100;
+        target.style.setProperty('--spotlight-x', `${x}%`);
+        target.style.setProperty('--spotlight-y', `${y}%`);
+    };
 
     return (
-        <div 
+        <motion.div
             onClick={onClick}
-            className={`relative group flex-1 ${isAudit ? 'card-featured' : 'card-base'} overflow-hidden transition-all duration-150 hover:scale-[1.01] ${onClick ? 'cursor-pointer active:scale-[0.98]' : ''} ${isAudit ? 'md:col-span-2' : ''}`}
+            onMouseMove={handleMouseMove}
+            whileHover={reduced ? undefined : { y: -2 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 25 }}
+            className={`relative group flex-1 ${isAudit ? 'card-featured' : 'card-base'} card-spotlight overflow-hidden transition-all duration-150 hover:scale-[1.01] ${onClick ? 'cursor-pointer active:scale-[0.98]' : ''} ${isAudit ? 'md:col-span-2' : ''}`}
         >
 
 
@@ -70,7 +86,17 @@ function KpiCard({
                             
                             <div className={`flex items-center gap-3 ${isAudit ? 'w-full justify-between' : ''}`}>
                                 <span className={`font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono'] truncate pr-1 ${isAudit ? 'text-4xl sm:text-5xl lg:text-6xl text-zinc-900 dark:text-zinc-100' : 'text-3xl'}`}>
-                                    {isCurrency && typeof value === 'number' ? formatCurrencyWithColor(Math.round(value)) : value}
+                                    {isCurrency && typeof value === 'number' && !isAudit ? (
+                                        Math.round(value) < 0 ? (
+                                            <span className="text-rose-500 font-bold">
+                                                -$<RollingDigits value={Math.abs(Math.round(value))} format={(n) => formatCurrency(n)} duration={1.6} />
+                                            </span>
+                                        ) : (
+                                            <span className="text-zinc-900 dark:text-zinc-100 font-bold">
+                                                $<RollingDigits value={Math.round(value)} format={(n) => formatCurrency(n)} duration={1.6} />
+                                            </span>
+                                        )
+                                    ) : isCurrency && typeof value === 'number' ? formatCurrencyWithColor(Math.round(value)) : value}
                                 </span>
                                 {!isAudit && badge && <div>{badge}</div>}
                             </div>
@@ -97,7 +123,7 @@ function KpiCard({
                     </div>
                 )}
             </div>
-        </div>
+        </motion.div>
     );
 }
 
@@ -130,14 +156,14 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
             });
 
             if (response.ok) {
-                toast({ variant: 'success', title: 'ÉXITO', description: 'UTILIDAD REINICIADA CORRECTAMENTE.' });
+                toast({ variant: 'success', title: 'EXITO', description: 'UTILIDAD REINICIADA CORRECTAMENTE.' });
                 setTimeout(() => window.location.reload(), 1000);
             } else {
                 const err = await response.json();
                 toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL REINICIAR UTILIDAD' });
             }
         } catch (error) {
-            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'NO HAY COMUNICACIÓN CON EL SERVIDOR.' });
+            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'NO HAY COMUNICACION CON EL SERVIDOR.' });
         } finally {
             setIsResetting(false);
             setIsResetProfitModalOpen(false);
@@ -156,14 +182,14 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
             });
 
             if (response.ok) {
-                toast({ variant: 'success', title: 'ÉXITO', description: 'SALDO ESPERADO REINICIADO.' });
+                toast({ variant: 'success', title: 'EXITO', description: 'SALDO ESPERADO REINICIADO.' });
                 setTimeout(() => window.location.reload(), 1000);
             } else {
                 const err = await response.json();
                 toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL REINICIAR SALDO' });
             }
         } catch (error) {
-            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'SIN CONEXIÓN AL SERVIDOR.' });
+            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'SIN CONEXION AL SERVIDOR.' });
         } finally {
             setIsResettingExpected(false);
             setIsResetExpectedModalOpen(false);
@@ -182,22 +208,27 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
             });
 
             if (response.ok) {
-                toast({ variant: 'success', title: 'ÉXITO', description: 'FONDO DE CAJA AJUSTADO.' });
+                toast({ variant: 'success', title: 'EXITO', description: 'FONDO DE CAJA AJUSTADO.' });
                 setTimeout(() => window.location.reload(), 1000);
             } else {
                 const err = await response.json();
                 toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'FALLO AL AJUSTAR FONDO' });
             }
         } catch (error) {
-            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'FALLO EN LA COMUNICACIÓN.' });
+            toast({ variant: 'destructive', title: 'ERROR DE RED', description: 'FALLO EN LA COMUNICACION.' });
         }
     };
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full">
+        <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+            className="grid grid-cols-1 md:grid-cols-4 gap-4 w-full"
+        >
             {/* FILA 1 */}
             <KpiCard
-                label="Ventas del Último Cierre"
+                label="Ventas del Ultimo Cierre"
                 value={data.shiftSalesAmount || 0}
                 sub={
                     <div className="flex flex-col gap-1 mt-1">
@@ -236,51 +267,24 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 value={0}
                 sub={
                                 <div className="flex flex-col gap-0 w-full">
-                                    {/* CABECERA DINÁMICA DE 2 COLUMNAS */}
-                                    <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent grid grid-cols-2 gap-8 items-start">
-                                        <div className="flex flex-col items-start border-r border-zinc-200 dark:border-white/5 pr-4">
-                                            <span className="font-medium uppercase tracking-widest leading-none mb-3 tracking-tight text-[11px] text-zinc-500">
-                                                EFECTIVO REAL EN MANO (ACUMULADO)
+                                    <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent flex flex-col items-start">
+                                        <span className="font-medium uppercase tracking-widest leading-none mb-3 tracking-tight text-[11px] text-zinc-500">
+                                            EFECTIVO REAL EN MANO (ACUMULADO)
+                                        </span>
+                                        <div className="flex items-center gap-3">
+                                            <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
+                                                {formatCurrencyWithColor(Math.round(data.reportedBalance || 0))}
                                             </span>
-                                            <div className="flex items-center gap-3">
-                                                <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
-                                                    {formatCurrencyWithColor(Math.round(data.globalHistoricalReal || 0))}
-                                                </span>
-                                            </div>
-
-
-                                            <span className="text-[9px] text-zinc-600 font-bold tracking-tight mt-3 uppercase tracking-tight">Suma de cierres - Egresos de Fondo</span>
-                                        </div>
-
-                                        <div className="flex flex-col items-end pl-4">
-                                            <div className="flex items-center gap-2 mb-3">
-                                                <button 
-                                                    onClick={(e) => { e.stopPropagation(); setIsResetExpectedModalOpen(true); }}
-                                                    className="p-1 hover:bg-zinc-100 dark:bg-zinc-800 rounded-2xl text-zinc-600 hover:text-rose-500 transition-all active:scale-90"
-                                                    title="Reiniciar Saldo Esperado"
-                                                >
-                                                    <RotateCcw size={10} />
-                                                </button>
-                                                <span className="font-medium uppercase tracking-widest leading-none tracking-tight text-[11px] text-zinc-500 text-right">
-                                                    SALDO ESPERADO TOTAL (SISTEMA)
-                                                </span>
-                                            </div>
-                                            <div className="flex items-center gap-3 justify-end">
-                                                <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
-                                                    {formatCurrencyWithColor(Math.round(data.globalHistoricalExpected || 0))}
-                                                </span>
-                                            </div>
-                                            <span className="text-[9px] text-zinc-600 font-bold tracking-tight mt-2 uppercase tracking-tight text-right">Cálculo teórico histórico total</span>
                                         </div>
                                     </div>
 
-                                    {/* SECCIÓN INFERIOR DE DETALLES DEL TURNO */}
-                                    <div className="px-6 py-6 border-t border-zinc-200 dark:border-white/5 bg-[#18181b]/20">
+                                    <div className="px-6 py-6 border-t border-zinc-200 dark:border-white/5 bg-[#18181b]">
                                         <div className="flex flex-col">
-                                            <span className="text-[8px] text-zinc-500 font-bold uppercase tracking-widest mb-1">Diferencia Global</span>
-                                            <span className={`text-sm font-medium tracking-tight ${(data.globalDifference >= 0) ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>
-                                                ${formatCurrency(Math.abs(Math.round(data.globalDifference || 0)))} 
-                                                {(data.globalDifference >= 0) ? ' (SOBRANTE)' : ' (FALTANTE)'}
+                                            <span className="text-[12px] text-zinc-100 font-bold uppercase tracking-widest mb-1">
+                                                TOTAL GENERAL GUARDADO (CAJA + DIGITAL)
+                                            </span>
+                                            <span className="text-xl text-zinc-100 font-bold tracking-tight">
+                                                ${formatCurrency(Math.round(data.totalLiquidity || 0))}
                                             </span>
                                         </div>
                                     </div>
@@ -312,7 +316,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                         >
                                             <PlusCircle size={10} /> Ajustar Fondo
                                         </button>
-                                        <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest">Protocolo de Auditoría Maestro</span>
+                                        <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest">Protocolo de Auditoria Maestro</span>
                                     </div>
                                 </>
                             }
@@ -336,13 +340,13 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Reiniciar <span className="text-amber-500">Saldo Sistema</span></h3>
-                                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Teórico</p>
+                                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Teorico</p>
                                                 </div>
                                             </div>
                                         </ModalHeader>
                                         <ModalBody className="p-8 pt-2">
                                             <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 tracking-tight leading-relaxed">
-                                                ¿Estás seguro de que deseas reiniciar el saldo esperado del sistema? Esto ignorará todos los registros teóricos previos y comenzará a calcular la diferencia desde cero basándose en las nuevas operaciones.
+                                                ¿Estas seguro de que deseas reiniciar el saldo esperado del sistema? Esto ignorara todos los registros teoricos previos y comenzara a calcular la diferencia desde cero basandose en las nuevas operaciones.
                                                 <br /><br />
                                                 <span className="text-amber-600 dark:text-amber-500 font-medium uppercase text-[10px] tracking-widest">âš ï¸ Ideal para cuando terminas el montaje inicial de productos.</span>
                                             </p>
@@ -412,9 +416,9 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                             </ModalHeader>
                             <ModalBody className="p-8 pt-2">
                                 <p className="text-sm font-medium text-gray-600 dark:text-zinc-400 tracking-tight leading-relaxed">
-                                    ¿Estás seguro de que deseas reiniciar el conteo de utilidad? Esta acción establecerá la fecha actual como el nuevo punto de inicio para el cálculo de ganancias, ignorando datos previos.
+                                    ¿Estas seguro de que deseas reiniciar el conteo de utilidad? Esta accion establecera la fecha actual como el nuevo punto de inicio para el calculo de ganancias, ignorando datos previos.
                                     <br /><br />
-                                    <span className="text-rose-500 font-medium uppercase text-[10px] tracking-widest">âš ï¸ Esta acción no se puede deshacer.</span>
+                                    <span className="text-rose-500 font-medium uppercase text-[10px] tracking-widest">âš ï¸ Esta accion no se puede deshacer.</span>
                                 </p>
                             </ModalBody>
                             <ModalFooter className="p-6 bg-gray-50/50 dark:bg-white/[0.02] border-t border-gray-100 dark:border-white/5">
@@ -435,7 +439,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
 
             {/* FILA 2 */}
             <KpiCard
-                label="Egresos del Último Cierre"
+                label="Egresos del Ultimo Cierre"
                 value={typeof data.todayExpenses === 'object' ? (data.todayExpenses?.amount || 0) : (data.todayExpenses || 0)}
                 sub={`${typeof data.todayExpenses === 'object' ? (data.todayExpenses?.count || 0) : 0} salidas pagadas`}
                 icon={DollarSign}
@@ -485,7 +489,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
             />
 
 
-        </div>
+        </motion.div>
     );
 }
 

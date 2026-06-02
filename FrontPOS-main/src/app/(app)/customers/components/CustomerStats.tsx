@@ -3,6 +3,7 @@
 import React, { memo } from 'react';
 import { Users, Wallet, AlertCircle } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
+import { MoneyDigits, NumberDigits } from "@/components/ui/motion";
 
 const dummyData = [
     { pv: 2400 },
@@ -22,9 +23,9 @@ interface StatsProps {
 
 const CustomerStats = memo(({ totalDebt, totalClients, withDebt }: StatsProps) => {
     const stats = [
-        { label: "CARTERA TOTAL", val: `$${totalDebt.toLocaleString()}`, color: "rose", icon: Wallet, sub: "SALDO PENDIENTE" },
-        { label: "BASE DE DATOS", val: totalClients, color: "emerald", icon: Users, sub: "CLIENTES ACTIVOS" },
-        { label: "EN MORA", val: withDebt, color: "amber", icon: AlertCircle, sub: "CUENTAS ABIERTAS" }
+        { label: "CARTERA TOTAL", val: totalDebt, isCurrency: true, color: "rose", icon: Wallet, sub: "SALDO PENDIENTE" },
+        { label: "BASE DE DATOS", val: totalClients, isCurrency: false, color: "emerald", icon: Users, sub: "CLIENTES ACTIVOS" },
+        { label: "EN MORA", val: withDebt, isCurrency: false, color: "amber", icon: AlertCircle, sub: "CUENTAS ABIERTAS" }
     ];
 
     return (
@@ -52,7 +53,11 @@ const CustomerStats = memo(({ totalDebt, totalClients, withDebt }: StatsProps) =
                           <span className={`text-2xl font-medium tabular-nums tracking-tighter tracking-tight ${
                               k.color === 'rose' ? 'text-rose-500' : k.color === 'emerald' ? 'text-zinc-900 dark:text-zinc-100' : 'text-amber-500'
                           }`}>
-                              {k.val}
+                              {k.isCurrency ? (
+                                <MoneyDigits value={k.val} />
+                              ) : (
+                                <NumberDigits value={k.val} />
+                              )}
                           </span>
                           <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase opacity-0 group-hover:opacity-100 transition-opacity tracking-widest">{k.sub}</span>
                         </div>

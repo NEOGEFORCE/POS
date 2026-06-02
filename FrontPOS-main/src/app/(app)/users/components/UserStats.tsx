@@ -84,7 +84,7 @@ const AnalyticalUserCard = ({
 );
 
 const UserStats = memo(({ total, admins, employees }: StatsProps) => {
-    // Datos simulados para tendencias (ya que la API no los provee aún)
+    // Datos simulados para tendencias (ya que la API no los provee aun)
     const trends = useMemo(() => [
         { val: 2 }, { val: 4 }, { val: 3 }, { val: 7 }, { val: 5 }, { val: 9 }, { val: 12 }
     ], []);

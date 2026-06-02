@@ -1,12 +1,12 @@
 /**
- * Utilidad centralizada de validación de formularios POS.
- * Principio Fail-Fast: rechazar datos inválidos en el borde (frontend)
+ * Utilidad centralizada de validacion de formularios POS.
+ * Principio Fail-Fast: rechazar datos invalidos en el borde (frontend)
  * antes de que lleguen al backend.
  * 
  * Reglas:
- *  - CERO valores negativos en campos numéricos (stock, precio, margen, monto, crédito)
- *  - Campos obligatorios no vacíos
- *  - Longitud mínima donde aplique
+ *  - CERO valores negativos en campos numericos (stock, precio, margen, monto, credito)
+ *  - Campos obligatorios no vacios
+ *  - Longitud minima donde aplique
  */
 
 import { isProductWeighted } from './utils';
@@ -25,7 +25,7 @@ export interface ValidationResult {
 
 function nonNegative(value: number | string | undefined | null, fieldName: string): FieldError | null {
   const num = Number(value);
-  if (isNaN(num)) return { field: fieldName, message: `${fieldName}: VALOR NO NUMÉRICO` };
+  if (isNaN(num)) return { field: fieldName, message: `${fieldName}: VALOR NO NUMERICO` };
   if (num < 0) return { field: fieldName, message: `${fieldName}: NO SE PERMITEN VALORES NEGATIVOS (${num})` };
   return null;
 }
@@ -36,13 +36,13 @@ function required(value: string | undefined | null, fieldName: string): FieldErr
 }
 
 function minLength(value: string | undefined | null, min: number, fieldName: string): FieldError | null {
-  if (!value || value.trim().length < min) return { field: fieldName, message: `${fieldName}: MÍNIMO ${min} CARACTERES` };
+  if (!value || value.trim().length < min) return { field: fieldName, message: `${fieldName}: MINIMO ${min} CARACTERES` };
   return null;
 }
 
 function positiveNumber(value: number | string | undefined | null, fieldName: string): FieldError | null {
   const num = Number(value);
-  if (isNaN(num)) return { field: fieldName, message: `${fieldName}: VALOR NO NUMÉRICO` };
+  if (isNaN(num)) return { field: fieldName, message: `${fieldName}: VALOR NO NUMERICO` };
   if (num <= 0) return { field: fieldName, message: `${fieldName}: DEBE SER MAYOR A 0` };
   return null;
 }
@@ -51,7 +51,7 @@ function collect(...checks: (FieldError | null)[]): FieldError[] {
   return checks.filter((e): e is FieldError => e !== null);
 }
 
-// ─── Validadores por Módulo ──────────────────────────────────────
+// ─── Validadores por Modulo ──────────────────────────────────────
 
 export function validateProduct(data: {
   barcode?: string;
@@ -68,15 +68,15 @@ export function validateProduct(data: {
   categoryId?: number | string;
 }): ValidationResult {
   const errors = collect(
-    required(data.barcode, 'CÓDIGO'),
-    minLength(data.barcode, 2, 'CÓDIGO'),
+    required(data.barcode, 'CODIGO'),
+    minLength(data.barcode, 2, 'CODIGO'),
     required(data.productName, 'NOMBRE'),
     minLength(data.productName, 2, 'NOMBRE'),
     nonNegative(data.purchasePrice, 'COSTO'),
     nonNegative(data.salePrice, 'PVP'),
     nonNegative(data.marginPercentage, 'MARGEN'),
     ...(isProductWeighted(data) ? [] : [nonNegative(data.quantity, 'STOCK')]),
-    nonNegative(data.minStock, 'STOCK MÍNIMO'),
+    nonNegative(data.minStock, 'STOCK MINIMO'),
     ...(data.isPack ? [
       required(data.baseProductBarcode, 'PRODUCTO BASE (PACK)'),
       positiveNumber(data.packMultiplier, 'FACTOR PACK'),
@@ -91,11 +91,11 @@ export function validateCustomer(data: {
   creditLimit?: number | string;
 }): ValidationResult {
   const errors = collect(
-    required(data.dni, 'IDENTIFICACIÓN'),
-    minLength(data.dni, 5, 'IDENTIFICACIÓN'),
-    required(data.name, 'RAZÓN SOCIAL'),
-    minLength(data.name, 2, 'RAZÓN SOCIAL'),
-    nonNegative(data.creditLimit, 'CUPO DE CRÉDITO'),
+    required(data.dni, 'IDENTIFICACION'),
+    minLength(data.dni, 5, 'IDENTIFICACION'),
+    required(data.name, 'RAZON SOCIAL'),
+    minLength(data.name, 2, 'RAZON SOCIAL'),
+    nonNegative(data.creditLimit, 'CUPO DE CREDITO'),
   );
   return { isValid: errors.length === 0, errors };
 }
@@ -108,9 +108,9 @@ export function validateExpense(data: {
   lenderName?: string;
 }): ValidationResult {
   const errors = collect(
-    required(data.category, 'CATEGORÍA'),
-    required(data.description, 'DESCRIPCIÓN'),
-    minLength(data.description, 3, 'DESCRIPCIÓN'),
+    required(data.category, 'CATEGORIA'),
+    required(data.description, 'DESCRIPCION'),
+    minLength(data.description, 3, 'DESCRIPCION'),
     nonNegative(data.amount, 'MONTO'),
     ...(Number(data.amount) <= 0 ? [{ field: 'MONTO', message: 'MONTO: DEBE SER MAYOR A $0' }] : []),
     ...(data.paymentSource === 'PRESTADO' && !data.lenderName?.trim()
@@ -125,8 +125,8 @@ export function validateSupplier(data: {
   phone?: string;
 }): ValidationResult {
   const errors = collect(
-    required(data.name, 'EMPRESA / RAZÓN SOCIAL'),
-    minLength(data.name, 2, 'EMPRESA / RAZÓN SOCIAL'),
+    required(data.name, 'EMPRESA / RAZON SOCIAL'),
+    minLength(data.name, 2, 'EMPRESA / RAZON SOCIAL'),
   );
   return { isValid: errors.length === 0, errors };
 }
@@ -135,8 +135,8 @@ export function validateCategory(data: {
   name?: string;
 }): ValidationResult {
   const errors = collect(
-    required(data.name, 'NOMBRE DE CATEGORÍA'),
-    minLength(data.name, 2, 'NOMBRE DE CATEGORÍA'),
+    required(data.name, 'NOMBRE DE CATEGORIA'),
+    minLength(data.name, 2, 'NOMBRE DE CATEGORIA'),
   );
   return { isValid: errors.length === 0, errors };
 }
@@ -166,11 +166,11 @@ export function validateUser(data: {
 }
 
 export function validateManualWeight(value: string | number | undefined): ValidationResult {
-  // Soporte para comas decimales (Latinoamérica)
+  // Soporte para comas decimales (Latinoamerica)
   const normalizedValue = typeof value === 'string' ? value.replace(',', '.') : value;
   const num = Number(normalizedValue);
   const errors = collect(
-    ...(isNaN(num) ? [{ field: 'PESO', message: 'PESO: VALOR NO NUMÉRICO' }] : []),
+    ...(isNaN(num) ? [{ field: 'PESO', message: 'PESO: VALOR NO NUMERICO' }] : []),
     ...(num <= 0 ? [{ field: 'PESO', message: 'PESO: DEBE SER MAYOR A 0 KG' }] : []),
   );
   return { isValid: errors.length === 0, errors };

@@ -108,7 +108,7 @@ export default function LabelsPage() {
                     </div>
                     <div className="flex flex-col">
                         <h1 className="text-sm font-medium uppercase tracking-tighter leading-none tracking-tight">ETIQUETAS</h1>
-                        <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest mt-0.5 opacity-80 tracking-tight">IMPRESIÓN CENTRAL</p>
+                        <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest mt-0.5 opacity-80 tracking-tight">IMPRESION CENTRAL</p>
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -145,13 +145,13 @@ export default function LabelsPage() {
                     <div className="mt-auto p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border border-emerald-500/10 hidden lg:block">
                         <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-[0.2em] mb-1 tracking-tight">Tip Pro</p>
                         <p className="text-[11px] text-gray-500 dark:text-zinc-400 leading-relaxed tracking-tight">
-                            Agrega productos rápidamente y ajusta las cantidades antes de imprimir. El diseño está optimizado para ahorro de tinta.
+                            Agrega productos rapidamente y ajusta las cantidades antes de imprimir. El diseno esta optimizado para ahorro de tinta.
                         </p>
                     </div>
                 </div>
 
-                {/* DERECHA: Cola de Impresión (65%) */}
-                <div className="lg:col-span-8 flex flex-col gap-1 overflow-hidden h-[calc(100vh-140px)]">
+                {/* DERECHA: Cola de Impresion (65%) */}
+                <div className="lg:col-span-8 flex flex-col gap-1 overflow-hidden flex-1 w-full relative">
                     <LabelQueue
                         printQueue={printQueue}
                         onAddAll={addAllToQueue}

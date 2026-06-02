@@ -16,21 +16,21 @@ export function NetworkMonitor() {
 
     const handleOffline = () => {
       setIsOffline(true);
-      console.log('[NetworkMonitor] ðŸ”´ Conexión perdida. Activando Modo Supervivencia.');
+      console.log('[NetworkMonitor] ðŸ”´ Conexion perdida. Activando Modo Supervivencia.');
       toast({
         variant: "destructive",
         title: "MODO SUPERVIVENCIA",
-        description: "Sin conexión. Las ventas se guardarán en la bóveda local.",
+        description: "Sin conexion. Las ventas se guardaran en la boveda local.",
       });
     };
 
     const handleOnline = async () => {
       setIsOffline(false);
-      console.log('[NetworkMonitor] ðŸŸ¢ Conexión recuperada. Iniciando volcado de bóveda...');
+      console.log('[NetworkMonitor] ðŸŸ¢ Conexion recuperada. Iniciando volcado de boveda...');
       toast({
         variant: "success",
-        title: "SISTEMA EN LÍNEA",
-        description: "Conexión restaurada. Sincronizando bóveda...",
+        title: "SISTEMA EN LINEA",
+        description: "Conexion restaurada. Sincronizando boveda...",
       });
       await syncOfflineVault();
     };
@@ -38,7 +38,7 @@ export function NetworkMonitor() {
     window.addEventListener('offline', handleOffline);
     window.addEventListener('online', handleOnline);
 
-    // Si al cargar la página estamos online, revisamos si quedó algo pendiente de una sesión anterior
+    // Si al cargar la pagina estamos online, revisamos si quedo algo pendiente de una sesion anterior
     if (navigator.onLine) {
       syncOfflineVault();
     }
@@ -62,7 +62,7 @@ export function NetworkMonitor() {
         return;
       }
 
-      console.log(`[NetworkMonitor] ðŸ“¦ Procesando ${queue.length} transacciones en bóveda.`);
+      console.log(`[NetworkMonitor] ðŸ“¦ Procesando ${queue.length} transacciones en boveda.`);
 
       let successCount = 0;
       const token = Cookies.get('org-pos-token');
@@ -85,7 +85,7 @@ export function NetworkMonitor() {
           }
         } catch (err) {
           console.error('[NetworkMonitor] Error de red al sincronizar:', err);
-          // Si falla por red, abortamos el volcado, lo intentaremos en la próxima conexión
+          // Si falla por red, abortamos el volcado, lo intentaremos en la proxima conexion
           break;
         }
       }
@@ -93,17 +93,17 @@ export function NetworkMonitor() {
       if (successCount > 0) {
         toast({
           variant: "success",
-          title: "BÓVEDA VACIADA",
+          title: "BOVEDA VACIADA",
           description: `${successCount} transacciones sincronizadas con el servidor.`,
         });
         
-        // Forzar actualización global
+        // Forzar actualizacion global
         broadcastRevalidate('SALE_MADE');
         broadcastRevalidate('DASHBOARD_UPDATE');
       }
 
     } catch (error) {
-      console.error('[NetworkMonitor] Error crítico en volcado de bóveda:', error);
+      console.error('[NetworkMonitor] Error critico en volcado de boveda:', error);
     } finally {
       setIsSyncing(false);
     }

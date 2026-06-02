@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import { motion } from "framer-motion"
 
 import {
   Sidebar,
@@ -46,12 +47,12 @@ const menuItems = [
   { href: "/inventory", label: "Inventario", icon: Warehouse },
   { href: "/products", label: "Productos", icon: Barcode },
   { href: "/suppliers", label: "Proveedores", icon: Truck },
-  { href: "/categories", label: "Categorías", icon: Blocks },
+  { href: "/categories", label: "Categorias", icon: Blocks },
   { href: "/customers", label: "Clientes", icon: HeartHandshake },
   { href: "/expenses", label: "Gastos", icon: Receipt },
   { href: "/labels", label: "Etiquetas", icon: Printer },
   { href: "/users", label: "Personal", icon: IdCard, adminOnly: true },
-  { href: "/audit", label: "Auditoría", icon: Fingerprint, adminOnly: true },
+  { href: "/audit", label: "Auditoria", icon: Fingerprint, adminOnly: true },
 ]
 
 export function AppSidebar() {
@@ -79,7 +80,7 @@ export function AppSidebar() {
 
       <SidebarContent className="px-3 py-4 flex-1 overflow-y-auto custom-scrollbar overflow-x-hidden">
         <div className="px-1">
-          <p className={`text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.3em] mb-3 px-2 transition-all ${collapsed ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>Menú Principal</p>
+          <p className={`text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.3em] mb-3 px-2 transition-all ${collapsed ? 'opacity-0 h-0 overflow-hidden' : 'opacity-100'}`}>Menu Principal</p>
           <SidebarMenu className="space-y-0.5">
             {menuItems.map(
               (item) => {
@@ -97,10 +98,18 @@ export function AppSidebar() {
                         setOpenMobile(false);
                         setOpen(false);
                       }}
-                      className={`flex items-center py-2.5 cursor-pointer transition-all duration-150 relative group/btn h-10 w-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] ${isActive ? 'bg-[var(--accent-soft)] text-[var(--accent)] border-l-2' : 'border-transparent rounded-xl'} ${collapsed ? 'justify-center px-0 mx-0' : 'gap-3 px-3 mx-0 sm:mx-1'}`}
-                      style={isActive ? { borderLeftColor: 'var(--accent)', borderRadius: '0 12px 12px 0' } : {}}
+                      className={`flex items-center py-2.5 cursor-pointer transition-all duration-150 relative group/btn h-10 w-full text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-elevated)] ${isActive ? 'bg-[var(--accent-soft)] text-[var(--accent)] rounded-xl' : 'border-transparent rounded-xl'} ${collapsed ? 'justify-center px-0 mx-0' : 'gap-3 px-3 mx-0 sm:mx-1'}`}
                     >
                       <Link href={item.href} className={`flex items-center w-full ${collapsed ? 'justify-center' : 'gap-3'}`} title={collapsed ? item.label : undefined}>
+                        {/* Magic indicator: layoutId compartido entre todos los items.
+                            Cuando cambia la ruta activa, el indicador se desliza con spring. */}
+                        {isActive && (
+                          <motion.span
+                            layoutId="sidebar-active-indicator"
+                            transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                            className="absolute left-0 top-1/2 h-6 w-[3px] -translate-y-1/2 rounded-r-full bg-[var(--accent)] shadow-[0_0_10px_var(--accent)]"
+                          />
+                        )}
                         <item.icon className={`h-[18px] w-[18px] flex-shrink-0 transition-transform duration-300 group-hover/btn:scale-110 ${isActive ? 'text-[var(--accent)]' : 'text-[var(--text-secondary)] group-hover/btn:text-[var(--text-primary)]'}`} />
                         <span className={`text-sm font-medium whitespace-nowrap transition-all duration-150 ${collapsed ? 'opacity-0 w-0 overflow-hidden' : 'opacity-100'}`}>
                           {item.label}

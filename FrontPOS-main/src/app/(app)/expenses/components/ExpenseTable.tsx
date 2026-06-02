@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -38,9 +38,9 @@ const ExpenseTable = memo(({
   const sortedExpenses = [...expenses].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
   return (
-    <div className="flex-1 min-h-0 bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/5 transition-all">
-      {/* ÁREA DE CONTENIDO PRINCIPAL */}
-      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div className="flex-1 min-h-0 h-full bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/5 transition-all">
+      {/* AREA DE CONTENIDO PRINCIPAL */}
+      <div className="flex flex-col">
         {/* VISTA DESKTOP: TABLA */}
         <div className="hidden md:flex flex-1 flex-col overflow-hidden">
           <Table
@@ -50,16 +50,16 @@ const ExpenseTable = memo(({
             className="flex-1"
             classNames={{
               base: "flex-1 overflow-hidden",
-              wrapper: "flex-1 overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none",
+              wrapper: "overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none flex-1 min-h-0 h-full",
               th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-rose-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
               td: "py-3 font-medium border-b border-gray-100 dark:border-white/5 px-6",
               tr: "hover:bg-rose-500/5 dark:hover:bg-rose-500/5 transition-colors border-l-4 border-transparent hover:border-rose-500 active:bg-rose-500/10 group cursor-pointer"
             }}
           >
             <TableHeader>
-              <TableColumn>CONCEPTO / DESCRIPCIÓN</TableColumn>
-              <TableColumn align="center" className="hidden lg:table-cell">AUDITORÍA CCTV (HORA)</TableColumn>
-              <TableColumn align="center" className="hidden xl:table-cell">AUDITORÍA</TableColumn>
+              <TableColumn>CONCEPTO / DESCRIPCION</TableColumn>
+              <TableColumn align="center" className="hidden lg:table-cell">AUDITORIA CCTV (HORA)</TableColumn>
+              <TableColumn align="center" className="hidden xl:table-cell">AUDITORIA</TableColumn>
               <TableColumn align="center">CANAL ORIGEN</TableColumn>
               <TableColumn align="end">VALOR TOTAL</TableColumn>
             </TableHeader>
@@ -77,7 +77,7 @@ const ExpenseTable = memo(({
                       <div className="h-10 w-10 rounded-2xl bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-white/5 flex items-center justify-center text-rose-500 shrink-0 shadow-inner group-hover:scale-110 transition-transform">
                         <FileText size={18} />
                       </div>
-                      <div className="flex flex-col min-w-0">
+                      <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
                         <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase leading-tight tracking-tight truncate group-hover:text-rose-500 transition-colors">
                           {expense.description}
                         </span>
@@ -172,8 +172,8 @@ const ExpenseTable = memo(({
           </Table>
         </div>
 
-        {/* VISTA MÓVIL: CARDS CON SCROLL INTERNO */}
-        <div className="md:hidden flex-1 p-2 flex flex-col gap-2 overflow-auto custom-scrollbar bg-gray-50/50 dark:bg-[#18181b]">
+        {/* VISTA MOVIL: CARDS CON SCROLL INTERNO */}
+        <div className="md:hidden p-2 flex flex-col gap-2 overflow-auto custom-scrollbar bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
           {sortedExpenses.map((expense) => (
             <div key={expense.id} className="card-base border-none p-4 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-3 shrink-0 transition-transform active:scale-[0.98]">
               <div className="flex items-center justify-between">
@@ -226,7 +226,7 @@ const ExpenseTable = memo(({
       </div>
 
 
-      {/* PAGINACIÓN FIJA (ESTILO USUARIOS) */}
+      {/* PAGINACION FIJA (ESTILO USUARIOS) */}
       {totalRecords > 0 && (
         <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
           <div className="flex items-center gap-2 font-medium">
@@ -284,3 +284,6 @@ const ExpenseTable = memo(({
 
 ExpenseTable.displayName = 'ExpenseTable';
 export default ExpenseTable;
+
+
+

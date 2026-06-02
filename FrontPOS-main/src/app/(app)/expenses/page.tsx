@@ -1,20 +1,20 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
-import { Button, Input, Spinner } from "@heroui/react";
+import { Button, Input, Spinner, Autocomplete, AutocompleteItem } from "@heroui/react";
 import {
-  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles
+  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles, Truck
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
-import { Expense } from '@/lib/definitions';
+import { Expense, Supplier } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 
-// Dinámicos para optimización de carga y HMR
+// Dinamicos para optimizacion de carga y HMR
 const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: false });
 const ExpenseTable = dynamic(() => import('./components/ExpenseTable'), { ssr: false });
 const ExpenseFormModal = dynamic(() => import('./components/ExpenseFormModal'), { ssr: false });
@@ -22,11 +22,12 @@ const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal
 const PendingDebtsModal = dynamic(() => import('./components/PendingDebtsModal'), { ssr: false });
 
 // COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (ESTILO USUARIOS)
-const ExpenseHeader = memo(({ filter, supplierFilter, onSearch, onSearchSupplier, onAdd, onReload, isLoading, onApplyFilters }: {
+const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSelectSupplier, onAdd, onReload, isLoading, onApplyFilters }: {
   filter: string,
   supplierFilter: string,
+  suppliers: Supplier[],
   onSearch: (v: string) => void,
-  onSearchSupplier: (v: string) => void,
+  onSelectSupplier: (name: string) => void,
   onAdd: () => void,
   onReload: () => void,
   isLoading: boolean,
@@ -68,7 +69,7 @@ const ExpenseHeader = memo(({ filter, supplierFilter, onSearch, onSearchSupplier
     <div className="flex flex-col sm:flex-row gap-2">
       <Input
         size="sm"
-        placeholder="FILTRAR POR CONCEPTO..."
+        placeholder="FILTRAR POR CONCEPTO (ej. ALMUERZO, TRANSPORTE)..."
         value={filter}
         onValueChange={onSearch}
         classNames={{
@@ -77,17 +78,31 @@ const ExpenseHeader = memo(({ filter, supplierFilter, onSearch, onSearchSupplier
         }}
         startContent={<Search size={14} className="text-rose-500 mr-1" />}
       />
-      <Input
+      <Autocomplete
         size="sm"
-        placeholder="FILTRAR POR PROVEEDOR..."
-        value={supplierFilter}
-        onValueChange={onSearchSupplier}
+        placeholder="SELECCIONAR PROVEEDOR..."
+        defaultItems={suppliers}
+        selectedKey={supplierFilter || null}
+        onSelectionChange={(key) => onSelectSupplier(key ? String(key) : '')}
+        allowsCustomValue
+        onInputChange={(v) => onSelectSupplier(v.toUpperCase())}
         classNames={{
-          inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
-          input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+          base: "w-full",
         }}
-        startContent={<Search size={14} className="text-rose-500 mr-1" />}
-      />
+        inputProps={{
+          classNames: {
+            inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+            input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
+          }
+        }}
+        startContent={<Truck size={14} className="text-rose-500 mr-1 shrink-0" />}
+      >
+        {(s) => (
+          <AutocompleteItem key={s.name} textValue={s.name} className="text-[11px] font-medium uppercase">
+            {s.name}
+          </AutocompleteItem>
+        )}
+      </Autocomplete>
       <Button
         onPress={onApplyFilters}
         className="h-11 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium uppercase text-[10px] rounded-2xl px-6"
@@ -123,6 +138,7 @@ export default function ExpensesPage() {
 
   const [loading, setLoading] = useState(true);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [filter, setFilter] = useState('');
   const [supplierFilter, setSupplierFilter] = useState('');
 
@@ -147,7 +163,7 @@ export default function ExpensesPage() {
       const data = await fetchExpenses(token, filter, supplierFilter);
       setExpenses(data);
     } catch {
-      toast({ variant: "destructive", title: "Error Auditoría", description: "No se pudo sincronizar el historial de egresos." });
+      toast({ variant: "destructive", title: "Error Auditoria", description: "No se pudo sincronizar el historial de egresos." });
     } finally {
       setLoading(false);
     }
@@ -156,13 +172,33 @@ export default function ExpensesPage() {
   useEffect(() => { 
     loadExpenses(); 
     
-    // Escuchar actualizaciones de egresos (Incluso si ocurren en otra pestaña o proceso)
+    // Escuchar actualizaciones de egresos (Incluso si ocurren en otra pestana o proceso)
     const cleanup = setupSyncListener((event) => {
       if (event === 'EXPENSE_UPDATE' || event === 'DASHBOARD_UPDATE') {
         loadExpenses();
       }
     });
     return cleanup;
+  }, []);
+
+  // Cargar lista de proveedores para alimentar el dropdown del filtro
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      const token = Cookies.get('org-pos-token');
+      if (!token) return;
+      try {
+        const data = await apiFetch('/suppliers/all-suppliers', {
+          method: 'GET',
+          fallbackError: 'No se pudo cargar la lista de proveedores',
+        }, token);
+        if (Array.isArray(data)) {
+          setSuppliers(data);
+        }
+      } catch {
+        // No bloqueante: el filtro permite valor libre con allowsCustomValue
+      }
+    };
+    loadSuppliers();
   }, []);
 
   const stats = useMemo(() => {
@@ -195,7 +231,7 @@ export default function ExpensesPage() {
       const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       
       // Ya filtramos por DB con filter/supplierFilter.
-      // Así que aquí solo aplicamos la regla de "si no hay filtro, mostrar solo el mes actual"
+      // Asi que aqui solo aplicamos la regla de "si no hay filtro, mostrar solo el mes actual"
       if (filter.trim() !== '' || supplierFilter.trim() !== '') {
         return true;
       }
@@ -222,7 +258,7 @@ export default function ExpensesPage() {
   const handleSaveExpense = async (data: any) => {
     const token = Cookies.get('org-pos-token');
     if (!token || !data?.description || !data?.amount || !data?.category) {
-      toast({ variant: "destructive", title: "CAMPOS INCOMPLETOS", description: "La categoría, concepto y monto son obligatorios." });
+      toast({ variant: "destructive", title: "CAMPOS INCOMPLETOS", description: "La categoria, concepto y monto son obligatorios." });
       return;
     }
 
@@ -248,7 +284,7 @@ export default function ExpensesPage() {
     try {
       const currentDate = new Date().toISOString();
 
-      // Si hay linkedOrderId y es creación, usar endpoint especial vinculado
+      // Si hay linkedOrderId y es creacion, usar endpoint especial vinculado
       const isLinkedOrder = addDialogOpen && data.linkedOrderId;
 
       const path = addDialogOpen
@@ -281,24 +317,24 @@ export default function ExpensesPage() {
         fallbackError: 'FALLO AL REGISTRAR MOVIMIENTO'
       }, token!);
 
-      // Mensaje de éxito específico para orden vinculada
+      // Mensaje de exito especifico para orden vinculada
       if (isLinkedOrder && result?.message) {
         toast({
           variant: "success",
-          title: "ÉXITO",
-          description: `${result.message}. Stock actualizado automáticamente.`,
+          title: "EXITO",
+          description: `${result.message}. Stock actualizado automaticamente.`,
         });
       } else {
         toast({
           variant: "success",
-          title: "ÉXITO",
+          title: "EXITO",
           description: "MOVIMIENTO REGISTRADO CORRECTAMENTE",
         });
       }
 
       setAddDialogOpen(false);
       setEditDialogOpen(false);
-      localStorage.removeItem('expense-form-draft'); // Limpieza estricta tras éxito
+      localStorage.removeItem('expense-form-draft'); // Limpieza estricta tras exito
       setEditingExpense(null);
       loadExpenses();
       broadcastRevalidate('EXPENSE_UPDATE');
@@ -321,7 +357,7 @@ export default function ExpensesPage() {
       }, token!);
       toast({
         variant: "success",
-        title: "ÉXITO",
+        title: "EXITO",
         description: "REGISTRO ELIMINADO",
       });
       setDeleteDialogOpen(false);
@@ -364,18 +400,19 @@ export default function ExpensesPage() {
     }
   };
 
-  if (loading) return <div className="h-screen w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="danger" size="lg" /></div>;
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b]"><Spinner color="danger" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col w-full max-w-[1600px] mx-auto h-full min-h-0 bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 overflow-hidden relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
         <ExpenseHeader
           filter={filter}
           supplierFilter={supplierFilter}
+          suppliers={suppliers}
           onSearch={(v) => setFilter(v.toUpperCase())}
-          onSearchSupplier={(v) => setSupplierFilter(v.toUpperCase())}
+          onSelectSupplier={(v) => setSupplierFilter(v.toUpperCase())}
           onAdd={() => setAddDialogOpen(true)}
           onReload={() => { setFilter(''); setSupplierFilter(''); loadExpenses(); }}
           onApplyFilters={loadExpenses}
@@ -391,7 +428,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* CONTENT SECTION (INTERNAL SCROLLABLE) */}
-      <div className="flex-1 min-h-0 overflow-hidden px-1 md:px-2 py-1 flex flex-col">
+      <div className="px-1 md:px-2 py-1 flex flex-col">
         <ExpenseTable
           expenses={paginatedExpenses}
           isAdmin={isAdmin}
@@ -418,15 +455,15 @@ export default function ExpensesPage() {
             setEditingExpense(null);
           }
         }}
-        initialData={editingExpense || undefined}
+        initialExpense={editingExpense || undefined}
         onSave={handleSaveExpense}
       />
 
       <ConfirmDialog
         isOpen={duplicateAlertOpen}
         onOpenChange={setDuplicateAlertOpen}
-        title="⚠️ ALERTA: POSIBLE PAGO DUPLICADO"
-        description="Ya se realizó un pago a este proveedor el día de hoy. ¿Está seguro de que desea registrar otro pago?"
+        title="Ã¢Å¡Â Ã¯Â¸Â ALERTA: POSIBLE PAGO DUPLICADO"
+        description="Ya se realizo un pago a este proveedor el dia de hoy. Ã‚Â¿Esta seguro de que desea registrar otro pago?"
         onConfirm={() => {
           setDuplicateAlertOpen(false);
           const token = Cookies.get('org-pos-token');
@@ -454,3 +491,7 @@ export default function ExpensesPage() {
     </div>
   );
 }
+
+
+
+

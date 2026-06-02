@@ -2,6 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============================================================
+   NUCLEAR RESET: Sobreescritura global de fondo y estructura.
+   ============================================================ */
+@layer base {
+  :root, html, body {
+    background-color: #09090b !important;
+    color: #f4f4f5 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow-x: hidden !important;
+  }
+  @media (min-width: 768px) {
+    :root, html, body {
+      height: 100vh !important;
+      overflow: hidden !important;
+    }
+  }
+  @media (max-width: 767px) {
+    :root, html, body {
+      height: 100% !important;
+      min-height: 100vh !important;
+      overflow-y: auto !important;
+    }
+  }
+  #__next {
+    min-height: 100vh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+  }
+  main {
+    flex: 1 !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    width: 100% !important;
+  }
+}
+
 @layer base {
   /* ── MODO OSCURO (default) ── */
   :root {
@@ -189,6 +228,9 @@
     min-height: 100vh;
     width: 100%;
     margin: 0;
+    /* Previene el fondo negro expuesto en overscroll */
+    overscroll-behavior: none;
+    background-color: #09090b;
   }
 
   @media screen and (max-width: 768px) {
@@ -361,3 +403,38 @@
   border: none !important;
   box-shadow: none !important;
 }
+
+/* ============================================================
+   PURGA DE OVERFLOW Y ESPACIOS FANTASMAS
+   Anula reglas ocultas de HeroUI / Tailwind / SO overscroll.
+   ============================================================ */
+:root, html, body {
+  background-color: #09090b !important;
+  color: #f4f4f5 !important;
+  min-height: 100vh !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  overscroll-behavior-y: none !important;
+}
+
+/* Forzar el wrapper de Next y HeroUI a respetar el tamaño */
+#__next, [data-overlay-container="true"] {
+  min-height: 100vh !important;
+  display: flex !important;
+  flex-direction: column !important;
+  width: 100% !important;
+  background-color: transparent !important;
+}
+
+
+
+html, body, #__next, [data-overlay-container="true"], main {
+  height: 100% !important;
+  min-height: 100vh !important;
+  background-color: #09090b !important;
+  display: flex !important;
+  flex-direction: column !important;
+  flex: 1 1 0% !important;
+}
+

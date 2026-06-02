@@ -30,7 +30,7 @@ let revalidateTimer: ReturnType<typeof setTimeout> | null = null;
 const pendingEvents = new Set<SyncEvent>();
 
 export function broadcastRevalidate(event: SyncEvent) {
-  // 1. Notificar a otras pestañas INMEDIATAMENTE
+  // 1. Notificar a otras pestanas INMEDIATAMENTE
   if (channel) {
     channel.postMessage(event);
   }
@@ -54,7 +54,7 @@ export function setupSyncListener(onEvent: (event: SyncEvent) => void) {
   if (!channel) return () => {};
 
   const handler = (e: MessageEvent) => {
-    // Solo procesar si el tab está visible o es una prioridad alta
+    // Solo procesar si el tab esta visible o es una prioridad alta
     if (document.visibilityState === 'hidden' && !['SALE_MADE', 'STOCK_UPDATE', 'INVENTORY_UPDATE'].includes(e.data)) {
         return;
     }
@@ -162,7 +162,7 @@ export function revalidateKeysForEvent(event: SyncEvent) {
     mutate(key);
   });
 
-  // Revalidación por patrón para rutas con parámetros variables (como productos paginados)
+  // Revalidacion por patron para rutas con parametros variables (como productos paginados)
   if (event === 'PRODUCT_UPDATE' || event === 'SALE_MADE' || event === 'CATEGORY_UPDATE' || event === 'SUPPLIER_UPDATE' || event === 'INVENTORY_UPDATE') {
     mutate((key: any) => {
       if (typeof key !== 'string') return false;

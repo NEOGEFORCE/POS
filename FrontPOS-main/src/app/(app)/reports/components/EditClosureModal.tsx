@@ -61,7 +61,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
         body: JSON.stringify({
           physical_cash: formData.physicalCash,
           expected_cash: formData.expectedCash,
-          totalExpenses: formData.totalExpenses,
+          total_expenses: formData.totalExpenses,
           total_nequi_real: formData.totalNequiReal,
           total_daviplata_real: formData.totalDaviplataReal,
           difference: newDifference
@@ -73,7 +73,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
         throw new Error(errData.userMessage || 'Error al actualizar el cierre');
       }
       
-      toast({ title: "CIERRE ACTUALIZADO", description: `El cierre #${closure.id} se actualizó correctamente.` });
+      toast({ title: "CIERRE ACTUALIZADO", description: `El cierre #${closure.id} se actualizo correctamente.` });
       onSuccess();
       onOpenChange(false);
     } catch (error: any) {
@@ -117,7 +117,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
             <ModalBody>
               <div className="space-y-4">
                 <Input
-                  label="Efectivo Físico (Arqueo)"
+                  label="Efectivo Fisico (Arqueo)"
                   type="number"
                   variant="bordered"
                   value={formData.physicalCash.toString()}

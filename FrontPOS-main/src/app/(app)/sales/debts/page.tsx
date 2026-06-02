@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -47,7 +47,7 @@ export default function DebtsControlPage() {
 
   const handlePayment = async () => {
     if (!paymentAmount || parseFloat(paymentAmount) <= 0) {
-      toast({ title: "Error", description: "Ingresa un monto válido", variant: "destructive" });
+      toast({ title: "Error", description: "Ingresa un monto valido", variant: "destructive" });
       return;
     }
 
@@ -62,14 +62,14 @@ export default function DebtsControlPage() {
       });
 
       if (res.ok) {
-        toast({ title: "Éxito", description: "¡Abono registrado con éxito!" });
+        toast({ title: "EXITO", description: "Â¡Abono registrado con exito!" });
         onOpenChange();
         fetchDebts();
       } else {
         toast({ title: "Error", description: "Error al registrar el pago", variant: "destructive" });
       }
     } catch (error) {
-      toast({ title: "Error", description: "Error de conexión", variant: "destructive" });
+      toast({ title: "Error", description: "Error de conexion", variant: "destructive" });
     }
   };
 
@@ -95,9 +95,9 @@ export default function DebtsControlPage() {
   };
 
   return (
-    <div className="flex flex-col gap-8 p-8 max-w-[1600px] mx-auto animate-in fade-in slide-in-from-bottom-4 duration-700">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative p-4 md:p-8 gap-4 md:gap-8 animate-in fade-in slide-in-from-bottom-4">
       {/* HEADER SECTION */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white/50 dark:bg-[#18181b]/50 p-8 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+      <div className="shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white/50 dark:bg-[#18181b]/50 p-8 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
         <div className="flex items-center gap-6">
           <div className="h-20 w-20 bg-amber-500/10 text-amber-500 flex items-center justify-center rounded-[1.75rem] shadow-inner -rotate-3 border border-amber-500/20">
             <Landmark size={40} />
@@ -109,7 +109,7 @@ export default function DebtsControlPage() {
                 Control de <span className="text-amber-500 text-5xl">Cartera</span>
               </h1>
             </div>
-            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] mt-3 tracking-tight opacity-70">Auditoría de Fiados y Cuentas por Cobrar</p>
+            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] mt-3 tracking-tight opacity-70">Auditoria de Fiados y Cuentas por Cobrar</p>
           </div>
         </div>
 
@@ -137,8 +137,8 @@ export default function DebtsControlPage() {
       </div>
 
       {/* TABLE SECTION */}
-      <Card className="card-base border-none dark:bg-zinc-950/60 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden min-h-[600px]">
-        <CardBody className="p-0">
+      <Card className="flex flex-col flex-1 min-h-0 card-base border-none dark:bg-zinc-950/60 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden">
+        <CardBody className="p-0 overflow-y-auto custom-scrollbar flex-1 min-h-0">
           <Table
             aria-label="Debts table"
             className="p-8"
@@ -151,7 +151,7 @@ export default function DebtsControlPage() {
           >
             <TableHeader>
               <TableColumn width={400}>CLIENTE / TITULAR</TableColumn>
-              <TableColumn>EXPEDICIÓN</TableColumn>
+              <TableColumn>EXPEDICION</TableColumn>
               <TableColumn>VALOR FACTURA</TableColumn>
               <TableColumn>SALDO PENDIENTE</TableColumn>
               <TableColumn>ESTADO</TableColumn>
@@ -252,7 +252,7 @@ export default function DebtsControlPage() {
                     <CreditCard size={24} />
                   </div>
                   <div>
-                    <h3 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">Liquidación <span className="text-amber-500">Cartera</span></h3>
+                    <h3 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">Liquidacion <span className="text-amber-500">Cartera</span></h3>
                     <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Registrar Ingreso de Dinero</p>
                   </div>
                 </div>
@@ -283,7 +283,7 @@ export default function DebtsControlPage() {
                   </div>
 
                   <div className="space-y-3">
-                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1 tracking-tight">MÉTODO DE PAGO</label>
+                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1 tracking-tight">METODO DE PAGO</label>
                     <div className="grid grid-cols-2 gap-3">
                       {["EFECTIVO", "NEQUI", "DAVIPLATA", "OTRO"].map(m => (
                         <Button
@@ -369,20 +369,20 @@ export default function DebtsControlPage() {
 
                     <Divider className="opacity-50" />
 
-                    {/* LÍNEA DE TIEMPO DEL CICLO */}
+                    {/* LINEA DE TIEMPO DEL CICLO */}
                     <div className="p-8 space-y-8">
                       <h4 className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-[0.3em] flex items-center gap-2">
                          <TrendingDown size={14} className="text-blue-500" /> Movimientos del Ciclo
                       </h4>
                       
                       <div className="relative space-y-6 before:absolute before:left-[19px] before:top-2 before:bottom-2 before:w-[2px] before:bg-gray-100 dark:before:bg-[#18181b]">
-                        {/* UNIFICAR VENTAS Y PAGOS CRONOLÓGICAMENTE */}
+                        {/* UNIFICAR VENTAS Y PAGOS CRONOLOGICAMENTE */}
                         {[
                           ...(statementData.pending?.map((s: any) => ({ ...s, type: 'SALE' })) || []),
                           ...(statementData.payments?.map((p: any) => ({ ...p, type: 'PAYMENT', date: p.paymentDate })) || [])
                         ].sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime()).map((item: any, idx: number) => (
                           <div key={idx} className="relative pl-12 group">
-                            {/* PUNTO DE LA LÍNEA */}
+                            {/* PUNTO DE LA LINEA */}
                             <div className={`absolute left-0 top-1.5 h-10 w-10 rounded-2xl flex items-center justify-center border-2 transition-all ${
                               item.type === 'SALE' 
                                 ? 'card-base border-none border-blue-500/20 text-blue-500 group-hover:scale-110 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-blue-500/10' 
@@ -396,7 +396,7 @@ export default function DebtsControlPage() {
                                 <div className="flex flex-col">
                                   <span className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">{new Date(item.date).toLocaleString()}</span>
                                   <span className={`text-sm font-medium uppercase tracking-tight tracking-tight ${item.type === 'SALE' ? 'text-zinc-900 dark:text-zinc-50' : 'text-zinc-900 dark:text-zinc-100'}`}>
-                                    {item.type === 'SALE' ? `Compra a Crédito #${item.id}` : `Abono a Cartera - ${item.transferSource || 'EFECTIVO'}`}
+                                    {item.type === 'SALE' ? `Compra a Credito #${item.id}` : `Abono a Cartera - ${item.transferSource || 'EFECTIVO'}`}
                                   </span>
                                 </div>
                                 <span className={`text-lg font-medium tracking-tight tracking-tighter ${item.type === 'SALE' ? 'text-zinc-900 dark:text-zinc-50' : 'text-zinc-900 dark:text-zinc-100'}`}>
@@ -444,3 +444,6 @@ export default function DebtsControlPage() {
     </div>
   );
 }
+
+
+

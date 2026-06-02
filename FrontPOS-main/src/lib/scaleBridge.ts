@@ -1,5 +1,5 @@
 const WS_URL = process.env.NEXT_PUBLIC_SCALE_WS_URL || 'ws://localhost:9876';
-const RECONNECT_DELAY = 1000; // 1 segundo para reconexión ultra-rápida
+const RECONNECT_DELAY = 1000; // 1 segundo para reconexion ultra-rapida
 
 interface ScaleState {
     weight: number;
@@ -133,7 +133,7 @@ class ScaleBridge {
                             this.updateState({ rawData: msg.data ?? '' });
                             break;
                         case 'pong':
-                            // El pong mantiene viva la conexión y actualiza lastMessageTime
+                            // El pong mantiene viva la conexion y actualiza lastMessageTime
                             break;
                     }
                 } catch {
@@ -143,7 +143,7 @@ class ScaleBridge {
 
             ws.onerror = () => {
                 if (this.ws !== ws) return;
-                this.updateState({ isConnected: false, error: 'Error de conexión con el bridge de balanza' });
+                this.updateState({ isConnected: false, error: 'Error de conexion con el bridge de balanza' });
             };
 
             ws.onclose = () => {
@@ -159,7 +159,7 @@ class ScaleBridge {
                 }
             };
         } catch (e) {
-            console.error("ScaleBridge: Fallo crítico al conectar", e);
+            console.error("ScaleBridge: Fallo critico al conectar", e);
             this.updateState({ isConnected: false, error: 'No se pudo conectar al bridge' });
             if (!this.reconnectTimer) {
                 this.reconnectTimer = setTimeout(() => {
@@ -233,7 +233,7 @@ class ScaleBridge {
             this.connect();
         }
 
-        // Quitar estado de recarga después de medio segundo
+        // Quitar estado de recarga despues de medio segundo
         setTimeout(() => {
             if (this.state.isReloading) {
                 this.updateState({ isReloading: false });

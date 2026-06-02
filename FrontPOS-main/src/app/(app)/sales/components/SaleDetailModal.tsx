@@ -47,7 +47,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                             </div>
                             <div className="flex flex-col min-w-0">
                                 <span className="text-xl font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter leading-none">Venta Maestro #{sale.id}</span>
-                                <span className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.3em] mt-2 not-tracking-tight">Comprobante de Transacción Oficial</span>
+                                <span className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.3em] mt-2 not-tracking-tight">Comprobante de Transaccion Oficial</span>
                             </div>
                             <div className="ml-auto">
                                 <Chip variant="dot" color="success" size="sm" className="font-bold border-zinc-200 dark:border-white/10 uppercase tracking-widest text-[8px]">Sincronizado</Chip>
@@ -56,7 +56,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                         <ModalBody className="p-8 gap-8">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                                 <div className="space-y-4">
-                                    <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Información del Cliente</h4>
+                                    <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Informacion del Cliente</h4>
                                     <div className="p-6 bg-gray-50 dark:bg-[#18181b] rounded-[2rem] border border-gray-100 dark:border-white/5 space-y-4">
                                         <div className="flex justify-between items-center">
                                             <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Nombre</span>
@@ -72,7 +72,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                                     <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Resumen de Pago</h4>
                                     <div className="p-6 bg-gray-50 dark:bg-[#18181b] rounded-[2rem] border border-gray-100 dark:border-white/5 space-y-4">
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Método</span>
+                                            <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Metodo</span>
                                             <Chip size="sm" color={getPaymentColor(sale.paymentMethod)} variant="flat" className="font-medium uppercase text-[8px] tracking-[0.2em]">{getPaymentDescription(sale)}</Chip>
                                         </div>
                                         <div className="flex justify-between items-center">
@@ -84,7 +84,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                             </div>
 
                             <div className="space-y-4">
-                                <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Artículos Vendidos</h4>
+                                <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Articulos Vendidos</h4>
                                 <div className="rounded-[2rem] border border-gray-100 dark:border-white/5 overflow-hidden">
                                     <Table isCompact removeWrapper aria-label="Detalle de productos" classNames={{ th: "bg-gray-50 dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400 h-10 px-6", td: "py-5 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-zinc-950 px-6 group-hover:bg-gray-50/50 dark:group-hover:bg-[#18181b] transition-colors" }}>
                                         <TableHeader>

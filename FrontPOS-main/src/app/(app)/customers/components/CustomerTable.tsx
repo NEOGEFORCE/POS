@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -37,10 +37,10 @@ interface TableProps {
 }
 
 const COLUMNS = [
-    { name: "IDENTIFICACIÓN / CLIENTE", uid: "identity", align: "start" },
-    { name: "LÍNEA DIRECTA", uid: "contact", align: "center", hideOnMobile: true },
+    { name: "IDENTIFICACION / CLIENTE", uid: "identity", align: "start" },
+    { name: "LINEA DIRECTA", uid: "contact", align: "center", hideOnMobile: true },
     { name: "BALANCE CARTERA", uid: "balance", align: "center" },
-    { name: "GESTIÓN", uid: "actions", align: "end" },
+    { name: "GESTION", uid: "actions", align: "end" },
 ];
 
 const CustomerTable = memo(({
@@ -62,7 +62,7 @@ const CustomerTable = memo(({
         switch (columnKey) {
             case "identity":
                 return (
-                    <div className="flex items-center gap-4 py-0.5 group/id">
+                    <div className="flex-1 min-h-0 h-full flex items-center gap-4 py-0.5 group/id">
                         <div className="relative shrink-0">
                             <Avatar
                                 size="sm"
@@ -73,7 +73,7 @@ const CustomerTable = memo(({
                                 <div className="absolute -top-1 -right-1 h-3 w-3 bg-rose-500 border-2 border-white dark:border-zinc-900 rounded-2xl animate-pulse shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-10" />
                             )}
                         </div>
-                        <div className="flex flex-col min-w-0">
+                        <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate max-w-[150px] md:max-w-none group-hover/id:text-zinc-900 dark:text-zinc-100 transition-colors">
                                 {c.name}
                             </span>
@@ -166,11 +166,11 @@ const CustomerTable = memo(({
     }, [onPay, onEdit, onDelete, onViewStatement]);
 
     return (
-        <div className="flex-1 min-h-0 bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
+        <div className="flex-1 min-h-0 h-full w-full bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
 
-            <div className="flex-1 min-h-0 flex flex-col overflow-hidden relative">
+            <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full relative">
                 {!isMobile ? (
-                    <div className="flex-1 overflow-auto overscroll-contain custom-scrollbar min-h-0 w-full">
+                    <div className="overflow-auto overscroll-contain custom-scrollbar w-full flex-1 min-h-0 h-full">
                         <Table
                             isCompact
                             removeWrapper
@@ -222,7 +222,7 @@ const CustomerTable = memo(({
                         </Table>
                     </div>
                 ) : (
-                    <div className="flex-1 min-h-0 overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b]">
+                    <div className="overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
                         {customers.length === 0 ? (
                             <div className="py-24 flex flex-col items-center justify-center text-gray-400 dark:text-zinc-700">
                                 <SearchX size={32} strokeWidth={1} className="mb-4 opacity-20" />
@@ -250,7 +250,7 @@ const CustomerTable = memo(({
                                                 <div className="absolute -top-1 -right-1 h-3 w-3 bg-rose-500 border-2 border-white dark:border-zinc-900 rounded-2xl animate-pulse shadow-rose-500/50" />
                                             )}
                                         </div>
-                                        <div className="flex flex-col min-w-0">
+                                        <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
                                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-none truncate max-w-[140px] mb-1">
                                                 {c.name}
                                             </span>
@@ -294,7 +294,7 @@ const CustomerTable = memo(({
                 )}
             </div>
 
-            {/* PAGINACIÓN FIJA - SINCRONIZADA CON USERS */}
+            {/* PAGINACION FIJA - SINCRONIZADA CON USERS */}
             {totalRecords > 0 && (
                 <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2 border-t border-gray-200 dark:border-white/10 bg-gray-50/95 dark:bg-zinc-950 z-40 shadow-[0_-4px_15px_rgba(0,0,0,0.1)]">
                     <div className="flex items-center gap-2 font-medium">
@@ -352,3 +352,6 @@ const CustomerTable = memo(({
 
 CustomerTable.displayName = 'CustomerTable';
 export default CustomerTable;
+
+
+

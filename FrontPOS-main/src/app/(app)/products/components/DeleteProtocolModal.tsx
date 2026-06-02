@@ -54,7 +54,7 @@ export default function DeleteProtocolModal({ isOpen, onOpenChange, deletingBarc
                                     onClose();
                                 }}
                             >
-                                SÍ, PURGAR
+                                SI, PURGAR
                             </Button>
                         </ModalFooter>
                     </>

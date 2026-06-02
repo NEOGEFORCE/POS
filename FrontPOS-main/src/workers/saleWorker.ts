@@ -1,4 +1,4 @@
-// Motor de Cálculo y Búsqueda Ultra-Instinto (Web Worker)
+// Motor de Calculo y Busqueda Ultra-Instinto (Web Worker)
 import { Product } from '../lib/definitions';
 
 interface WorkerState {
@@ -13,7 +13,7 @@ let state: WorkerState = {
     selectedCategory: 'all'
 };
 
-// Función de filtrado optimizada (Búsqueda HFT)
+// Funcion de filtrado optimizada (Busqueda HFT)
 function filterProducts() {
     const query = state.searchQuery.toLowerCase().trim();
     const categoryFilter = state.selectedCategory;
@@ -51,7 +51,7 @@ self.onmessage = (e: MessageEvent) => {
             const items = payload;
             const total = items.reduce((sum: number, item: any) => {
                 const price = Number(item.salePrice) || 0;
-                // Simulación de redondeo (applyRounding local)
+                // Simulacion de redondeo (applyRounding local)
                 const val = price * item.cartQuantity;
                 return sum + (Math.round(val / 50) * 50); // Rounding a 50 como en applyRounding
             }, 0);

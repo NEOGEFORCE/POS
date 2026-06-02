@@ -1,8 +1,9 @@
 "use client";
 
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Input } from "@heroui/react";
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from "@heroui/react";
 import { Calendar, Download } from "lucide-react";
 import React from 'react';
+import { PremiumDateInput } from "@/components/ui/premium-date-input";
 
 interface DateRangeModalProps {
     isOpen: boolean;
@@ -46,40 +47,30 @@ export default function DateRangeModal({
                                 </div>
                                 <div className="flex flex-col">
                                     <h3 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">Selector <span className="text-zinc-900 dark:text-zinc-100">Maestro</span></h3>
-                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Rango de Auditoría Temporal</p>
+                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Rango de Auditoria Temporal</p>
                                 </div>
                             </div>
                         </ModalHeader>
                         <ModalBody className="p-8 py-10">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                <div className="space-y-2 text-left">
-                                    <label className="text-[10px] font-medium uppercase tracking-widest text-zinc-900 dark:text-zinc-100/60 dark:text-zinc-100/50 ml-1 tracking-tight">Desde (Apertura)</label>
-                                    <Input
-                                        type="datetime-local"
-                                        aria-label="Fecha Inicial"
-                                        value={startDate}
-                                        onChange={(e) => onSetStartDate(e.target.value)}
-                                        variant="flat"
-                                        classNames={{
-                                            input: "text-xs font-medium uppercase tracking-tight",
-                                            inputWrapper: "h-14 bg-gray-50 dark:bg-[#18181b] border-2 border-transparent focus-within:border-emerald-500/50 transition-all rounded-2xl shadow-inner"
-                                        }}
-                                    />
-                                </div>
-                                <div className="space-y-2 text-left">
-                                    <label className="text-[10px] font-medium uppercase tracking-widest text-zinc-900 dark:text-zinc-100/60 dark:text-zinc-100/50 ml-1 tracking-tight">Hasta (Cierre)</label>
-                                    <Input
-                                        type="datetime-local"
-                                        aria-label="Fecha Final"
-                                        value={endDate}
-                                        onChange={(e) => onSetEndDate(e.target.value)}
-                                        variant="flat"
-                                        classNames={{
-                                            input: "text-xs font-medium uppercase tracking-tight",
-                                            inputWrapper: "h-14 bg-gray-50 dark:bg-[#18181b] border-2 border-transparent focus-within:border-emerald-500/50 transition-all rounded-2xl shadow-inner"
-                                        }}
-                                    />
-                                </div>
+                                <PremiumDateInput
+                                    type="datetime-local"
+                                    label="Desde (Apertura)"
+                                    value={startDate}
+                                    onChange={onSetStartDate}
+                                    accent="emerald"
+                                    size="lg"
+                                    showFormatted
+                                />
+                                <PremiumDateInput
+                                    type="datetime-local"
+                                    label="Hasta (Cierre)"
+                                    value={endDate}
+                                    onChange={onSetEndDate}
+                                    accent="emerald"
+                                    size="lg"
+                                    showFormatted
+                                />
                             </div>
                         </ModalBody>
                         <ModalFooter className="flex gap-3">

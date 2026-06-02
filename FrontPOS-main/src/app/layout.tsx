@@ -36,7 +36,7 @@ export const metadata: Metadata = {
   },
 };
 
-// MEJORA UX: Desactivamos el auto-zoom en móviles al hacer focus en inputs
+// MEJORA UX: Desactivamos el auto-zoom en moviles al hacer focus en inputs
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -55,7 +55,7 @@ export default function RootLayout({
       <head>
         <meta charSet="utf-8" />
       </head>
-      <body suppressHydrationWarning className="font-body antialiased min-h-screen transition-colors duration-300 bg-[#f0f5f3] dark:bg-[#09090b]">
+      <body suppressHydrationWarning className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col antialiased overflow-x-hidden">
 
         {/* Envolvemos toda la app en nuestro Provider de Cliente */}
         <Providers>

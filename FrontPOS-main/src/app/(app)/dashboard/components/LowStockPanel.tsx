@@ -22,15 +22,15 @@ interface LowStockPanelProps {
 export default function LowStockPanel({ items }: LowStockPanelProps) {
     const safeItems = (Array.isArray(items) ? items : []).map(item => ({
         ...item,
-        // Forzamos el estado real basado en nuestra nueva lógica frontend
+        // Forzamos el estado real basado en nuestra nueva logica frontend
         currentStatus: getStockStatus(item.stock, item.minStock)
     }));
 
-    // Contadores reales para el título
+    // Contadores reales para el titulo
     const criticalCount = safeItems.filter(i => i.currentStatus === 'CRITICAL').length;
     const warningCount = safeItems.filter(i => i.currentStatus === 'REORDER').length;
 
-    // FILTRO DE RENDIMIENTO (TOP 18): Ordena poniendo los críticos arriba
+    // FILTRO DE RENDIMIENTO (TOP 18): Ordena poniendo los criticos arriba
     const priorityItems = safeItems
         .filter(item => item.currentStatus === 'CRITICAL' || item.currentStatus === 'REORDER')
         .sort((a, b) => (a.currentStatus === 'CRITICAL' ? -1 : 1))
@@ -54,7 +54,7 @@ export default function LowStockPanel({ items }: LowStockPanelProps) {
                             warningCount > 0 ? 'text-amber-500 dark:text-amber-400' :
                                 'text-zinc-900 dark:text-zinc-100 dark:text-zinc-300'
                             }`}>
-                            {criticalCount > 0 ? `${criticalCount} crítico${criticalCount > 1 ? 's' : ''}` :
+                            {criticalCount > 0 ? `${criticalCount} critico${criticalCount > 1 ? 's' : ''}` :
                                 warningCount > 0 ? `${warningCount} reorden${warningCount > 1 ? 'es' : ''}` :
                                     `0 alertas prioritarias`}
                         </p>
@@ -104,7 +104,7 @@ export default function LowStockPanel({ items }: LowStockPanelProps) {
                                                         : 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400'}
                                                     classNames={{ content: "text-[9px] font-medium uppercase tracking-widest px-1" }}
                                                 >
-                                                    {isCritical ? 'CRÍTICO' : 'REORDEN'}
+                                                    {isCritical ? 'CRITICO' : 'REORDEN'}
                                                 </Chip>
                                             </td>
                                         </tr>

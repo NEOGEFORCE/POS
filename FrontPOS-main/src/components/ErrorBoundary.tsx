@@ -37,7 +37,7 @@ export class ErrorBoundary extends Component<Props, State> {
           <Info size={24} />
           <div className="flex flex-col">
             <h2 className="font-medium text-sm uppercase">Error en el Formulario</h2>
-            <p className="text-xs tracking-tight opacity-80">Por favor, cierra esta ventana e intenta de nuevo. Revisa que los números digitados sean válidos.</p>
+            <p className="text-xs tracking-tight opacity-80">Por favor, cierra esta ventana e intenta de nuevo. Revisa que los numeros digitados sean validos.</p>
           </div>
         </div>
       );
