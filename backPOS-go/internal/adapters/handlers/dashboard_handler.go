@@ -107,7 +107,7 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	isCritical := false
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
-		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
+		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 	
 	realBalance := closure.PhysicalCash + closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer - closure.TotalExpenses
@@ -197,7 +197,6 @@ func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
 }
 
 func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierClosure, isPartial bool) string {
-
 	title := "🧾 *REPORTE DE CIERRE PROFESIONAL*"
 	if isPartial {
 		title = "⏳ *REPORTE DE AVANCE (PARCIAL)*"
@@ -205,128 +204,158 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
-		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
+		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 
-	digitalIncome := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
-	realBalance := closure.PhysicalCash + digitalIncome - closure.TotalExpenses
+	// 1. LÓGICA MATEMÁTICA DEL REPORTE
+	efectivoContado := closure.PhysicalCash
+	ingresosDigitales := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
 
-	statusIcon := "✅"
-	// statusText := "BALANCE FÍSICO APROBADO"
+	egresosEfectivoTurno := 0.0
+	for _, e := range closure.Expenses {
+		src := strings.ToUpper(e.PaymentSource)
+		if src == "" || src == "EFECTIVO" || src == "CAJA" {
+			egresosEfectivoTurno += e.Amount
+		}
+	}
 
-	// 1. INFO GENERAL
+	ventaReal := efectivoContado + ingresosDigitales + egresosEfectivoTurno
+	diferenciaFisica := efectivoContado - expectedCash
+
+	// Variables auxiliares para la vista
+	diferenciaFisicaAbs := diferenciaFisica
+	if diferenciaFisicaAbs < 0 {
+		diferenciaFisicaAbs = -diferenciaFisicaAbs
+	}
+	diferenciaIcon := "🟢 SOBRANTE"
+	if diferenciaFisica < 0 {
+		diferenciaIcon = "🔴 FALTANTE"
+	}
+
 	loc := time.FixedZone("America/Bogota", -5*60*60)
-	header := fmt.Sprintf("%s\n━━━━━━━━━━━━━━━━━━━━\n"+
-		"👤 *CAJERO:* %s\n"+
-		"📅 *INICIO:* `%s`\n"+
-		"🏁 *FIN:*    `%s`\n"+
-		"━━━━━━━━━━━━━━━━━━━━\n\n",
-		title,
-		closure.ClosedByName,
-		closure.StartDate.In(loc).Format("02/01 15:04"),
-		closure.EndDate.In(loc).Format("02/01 15:04"))
+	
+	// 2. CONSTRUCCIÓN DE PLANTILLA
+	var msg strings.Builder
 
-	// 2. RESUMEN FINANCIERO (Real-First)
-	core := fmt.Sprintf("💰 *RESUMEN DE CAJA (REAL)*\n"+
-		"💵 Efectivo Físico:  `$%s`\n"+
-		"📱 Ingresos Digital: `+$%s`\n"+
-		"💸 Egresos/Retiros:  `-$%s`\n"+
-		"────────────────────\n"+
-		"%s *BALANCE REAL:* `$%s`\n\n"+
-		"📥 _Esperado Sist.:_  `$%s`\n\n",
-		formatCOP(closure.PhysicalCash),
-		formatCOP(digitalIncome),
-		formatCOP(closure.TotalExpenses),
-		statusIcon, formatCOP(realBalance),
-		formatCOP(expectedCash))
+	msg.WriteString(fmt.Sprintf("%s\n", title))
+	msg.WriteString("━━━━━━━━━━━━━━━━━━━━\n")
+	msg.WriteString(fmt.Sprintf("👤 *CAJERO:* %s\n", closure.ClosedByName))
+	msg.WriteString(fmt.Sprintf("📅 *INICIO:* `%s`\n", closure.StartDate.In(loc).Format("02/01/2006 15:04")))
+	msg.WriteString(fmt.Sprintf("🏁 *FIN:*    `%s`\n", closure.EndDate.In(loc).Format("02/01/2006 15:04")))
+	msg.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
 
-	// 3. DESGLOSE FÍSICO
-	physical := fmt.Sprintf("🪙 *DESGLOSE DE EFECTIVO*\n"+
-		"▫️ Billetes:        `$%s`\n"+
-		"▫️ Mon. 500/1000:   `$%s`\n"+
-		"▫️ Mon. 200:        `$%s`\n"+
-		"▫️ Mon. 100:        `$%s`\n\n",
-		formatCOP(closure.CashBills),
-		formatCOP(closure.Coins1000+closure.Coins500),
-		formatCOP(closure.Coins200),
-		formatCOP(closure.Coins100))
+	msg.WriteString("🧮 *VENTA REAL DEL DÍA (RECONSTRUIDO)*\n")
+	msg.WriteString(fmt.Sprintf("💰 *TOTAL VENTAS:* `$%s`\n", formatCOP(ventaReal)))
+	msg.WriteString("📋 _(Efectivo Contado + Digital + Egresos Caja)_\n\n")
 
-	// 4. EGRESOS
-	expensesText := "💸 *EGRESOS DETALLADOS*\n"
-	methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
-	hasExpenses := false
-	for _, m := range methods {
-		methodTotal := 0.0
-		methodText := ""
-		for _, e := range closure.Expenses {
-			eMethod := e.PaymentSource
-			if eMethod == "" { eMethod = "EFECTIVO" }
-			if eMethod == m {
-				methodText += fmt.Sprintf("   • %s: `$%s`\n", e.Description, formatCOP(e.Amount))
-				methodTotal += e.Amount
+	msg.WriteString("💵 *1. RESUMEN DE CAJA (ARQUEO FÍSICO)*\n")
+	msg.WriteString(fmt.Sprintf("▫️ Efectivo Esperado:  `$%s`\n", formatCOP(expectedCash)))
+	msg.WriteString(fmt.Sprintf("▫️ Efectivo Contado:   `$%s`\n", formatCOP(efectivoContado)))
+	msg.WriteString("────────────────────\n")
+	msg.WriteString(fmt.Sprintf("🚨 *DIFERENCIA FÍSICA:* %s `$%s`\n\n", diferenciaIcon, formatCOP(diferenciaFisicaAbs)))
+
+	msg.WriteString("📱 *2. MEDIOS DIGITALES Y OTROS*\n")
+	msg.WriteString(fmt.Sprintf("▫️ Nequi:      `$%s`\n", formatCOP(closure.TotalNequi)))
+	msg.WriteString(fmt.Sprintf("▫️ Daviplata:  `$%s`\n", formatCOP(closure.TotalDaviplata)))
+	msg.WriteString(fmt.Sprintf("▫️ Tarjeta:    `$%s`\n", formatCOP(closure.TotalCard)))
+	if closure.TotalBancolombia+closure.TotalOtherTransfer > 0 {
+		msg.WriteString(fmt.Sprintf("▫️ Otros:      `$%s`\n", formatCOP(closure.TotalBancolombia+closure.TotalOtherTransfer)))
+	}
+	msg.WriteString("────────────────────\n")
+	msg.WriteString(fmt.Sprintf("📲 *TOTAL DIGITAL:*  `$%s`\n\n", formatCOP(ingresosDigitales)))
+
+	msg.WriteString("💸 *3. EGRESOS DETALLADOS POR CANAL*\n")
+	
+	// 3. CONTROL DE EGRESOS POR CANAL
+	egresosAgrupados := make(map[string][]models.Expense)
+	for _, e := range closure.Expenses {
+		src := strings.ToUpper(e.PaymentSource)
+		if src == "" {
+			src = "EFECTIVO"
+		}
+		egresosAgrupados[src] = append(egresosAgrupados[src], e)
+	}
+
+	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
+	for k := range egresosAgrupados {
+		found := false
+		for _, c := range canalesOrder {
+			if c == k {
+				found = true
+				break
 			}
 		}
-		if methodTotal > 0 {
-			hasExpenses = true
-			expensesText += fmt.Sprintf("📍 *%s:* `$%s`\n%s", m, formatCOP(methodTotal), methodText)
+		if !found {
+			canalesOrder = append(canalesOrder, k)
 		}
 	}
-	if !hasExpenses {
-		expensesText += "_Sin egresos registrados._\n"
-	}
-	expensesText += "\n"
 
-	creditsText := "🤝 *CRÉDITOS (FIADOS)*\n"
+	hayEgresos := false
+	for _, canal := range canalesOrder {
+		egresosCanal := egresosAgrupados[canal]
+		if len(egresosCanal) > 0 {
+			hayEgresos = true
+			totalCanal := 0.0
+			for _, e := range egresosCanal {
+				totalCanal += e.Amount
+			}
+			msg.WriteString(fmt.Sprintf("📍 *%s:* `$%s`\n", canal, formatCOP(totalCanal)))
+			for _, e := range egresosCanal {
+				msg.WriteString(fmt.Sprintf("   • %s: `$%s`\n", e.Description, formatCOP(e.Amount)))
+			}
+		}
+	}
+	if !hayEgresos {
+		msg.WriteString("_Sin egresos registrados._\n")
+	}
+	msg.WriteString("\n")
+
+	msg.WriteString("🤝 *4. CRÉDITOS Y ABONOS*\n")
+	totalFiados := 0.0
+	for _, s := range closure.CreditsIssued {
+		totalFiados += s.CreditAmount
+	}
+	totalAbonos := 0.0
+	for _, p := range closure.CreditPayments {
+		totalAbonos += p.TotalPaid
+	}
+
+	msg.WriteString(fmt.Sprintf("📍 *FIADOS ENTREGADOS:* `$%s`\n", formatCOP(totalFiados)))
 	if len(closure.CreditsIssued) > 0 {
 		for _, s := range closure.CreditsIssued {
-			clientName := s.ClientDNI
-			if clientName == "" { clientName = "Consumidor Final" }
-			// Defensa contra punteros nulos en asociaciones no cargadas
-			if s.Client.Name != "" { 
-				clientName = s.Client.Name 
+			name := s.Client.Name
+			if name == "" {
+				name = s.ClientDNI
 			}
-			creditsText += fmt.Sprintf("▫️ %s: `$%s` (Debe: `$%s`)\n", clientName, formatCOP(s.CreditAmount), formatCOP(s.Client.CurrentCredit))
+			msg.WriteString(fmt.Sprintf("   • %s: `$%s` (Saldo actual: `$%s`)\n", name, formatCOP(s.CreditAmount), formatCOP(s.Client.CurrentCredit)))
 		}
 	} else {
-		creditsText += "_Sin fiados hoy._\n"
+		msg.WriteString("   _Sin fiados emitidos._\n")
 	}
-	creditsText += "\n"
 
-	paymentsText := "💰 *ABONOS (RECAUDO)*\n"
+	msg.WriteString(fmt.Sprintf("📍 *ABONOS RECIBIDOS:* `$%s`\n", formatCOP(totalAbonos)))
 	if len(closure.CreditPayments) > 0 {
 		for _, p := range closure.CreditPayments {
-			clientName := p.ClientDNI
-			if clientName == "" { clientName = "Cliente Desconocido" }
-			if p.Client.Name != "" { 
-				clientName = p.Client.Name 
+			name := p.Client.Name
+			if name == "" {
+				name = p.ClientDNI
 			}
-			paymentsText += fmt.Sprintf("▫️ %s: `$%s` (Saldo: `$%s`)\n", clientName, formatCOP(p.TotalPaid), formatCOP(p.Client.CurrentCredit))
+			msg.WriteString(fmt.Sprintf("   • %s: `$%s` (Saldo actual: `$%s`)\n", name, formatCOP(p.TotalPaid), formatCOP(p.Client.CurrentCredit)))
 		}
 	} else {
-		paymentsText += "_Sin abonos hoy._\n"
+		msg.WriteString("   _Sin abonos recibidos._\n")
 	}
-	paymentsText += "\n"
+	msg.WriteString("\n")
 
-	// 6. CANALES DIGITALES Y OTROS
-	digital := fmt.Sprintf("📱 *MEDIOS DIGITALES Y OTROS*\n"+
-		"▫️ Nequi:      `$%s`\n"+
-		"▫️ Daviplata:   `$%s`\n"+
-		"▫️ Tarjeta:     `$%s`\n"+
-		"▫️ Otros:       `$%s`\n\n",
-		formatCOP(closure.TotalNequi),
-		formatCOP(closure.TotalDaviplata),
-		formatCOP(closure.TotalCard),
-		formatCOP(closure.TotalBancolombia+closure.TotalOtherTransfer))
-
-	msg := header + core + physical + expensesText + creditsText + paymentsText + digital
-
-	if !isPartial && closure.AuthorizedBy != "" {
-		msg += fmt.Sprintf("🚨 *VERIFICADO POR: %s* 🚨\n\n", closure.AuthorizedBy)
+	authName := closure.AuthorizedBy
+	if authName == "" {
+		authName = closure.ClosedByName
 	}
+	msg.WriteString(fmt.Sprintf("🚨 *VERIFICADO POR:* %s 🚨\n", authName))
+	msg.WriteString("━━━━━━━━━━━━━━━━━━━━\n")
+	msg.WriteString("_Generado por POS Pro_")
 
-	msg += "━━━━━━━━━━━━━━━━━━━━\n"
-	msg += "_Generado por POS Pro_"
-	return msg
+	return msg.String()
 }
 
 
@@ -496,7 +525,7 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 	// --- BLOQUES DE RESUMEN (AUDIT BOXES) ---
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
-		expectedCash = closure.OpeningCash + closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
+		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
 
 	digitalIncome := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
