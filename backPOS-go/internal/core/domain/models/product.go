@@ -1,6 +1,7 @@
 package models
 
 import (
+	"time"
 	"gorm.io/gorm"
 )
 
@@ -42,6 +43,7 @@ type Product struct {
 	BaseProduct        *Product `gorm:"foreignKey:BaseProductBarcode;references:Barcode;constraint:OnUpdate:CASCADE,OnDelete:SET NULL;" json:"baseProduct,omitempty"`
 
 	NetProfit float64        `gorm:"-" json:"netProfit"`
+	UpdatedAt time.Time      `json:"updatedAt"`
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 

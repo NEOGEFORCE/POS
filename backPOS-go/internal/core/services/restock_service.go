@@ -1,16 +1,18 @@
 package services
 
 import (
+	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 )
 
 type RestockService struct {
-	repo ports.RestockRepository
+	repo         ports.RestockRepository
+	supplierRepo *repositories.PostgresSupplierRepository
 }
 
-func NewRestockService(repo ports.RestockRepository) *RestockService {
-	return &RestockService{repo: repo}
+func NewRestockService(repo ports.RestockRepository, supplierRepo *repositories.PostgresSupplierRepository) *RestockService {
+	return &RestockService{repo: repo, supplierRepo: supplierRepo}
 }
 
 func (s *RestockService) GetActivePurchaseList() ([]models.ActivePurchaseList, error) {
@@ -27,10 +29,6 @@ func (s *RestockService) RemovePurchaseListItem(id string) error {
 }
 
 func (s *RestockService) ConfirmOrder(supplierID uint, expectedDate, invoiceRef string, items []models.ConfirmedOrderItem, estimatedTotal, realInvoiceTotal float64, confirmedBy string, editOrderID string) error {
-	if len(items) == 0 {
-		return nil // Nothing to confirm
-	}
-
 	if editOrderID != "" {
 		if err := s.repo.DeleteOrderAndItems(editOrderID); err != nil {
 			return err
@@ -51,6 +49,14 @@ func (s *RestockService) ConfirmOrder(supplierID uint, expectedDate, invoiceRef 
 	if err != nil {
 		return err
 	}
+
+	// Auto-aprendizaje de ruta: el día en que se confirma un pedido es el día
+	// de preventa/visita del proveedor. Se registra en visit_days (JSONB
+	// anti-duplicados). No-fatal: si falla no rompe la creación del pedido.
+	if s.supplierRepo != nil && supplierID != 0 {
+		_ = s.supplierRepo.LearnDay(supplierID, "visit_days")
+	}
+
 	return s.repo.ClearPurchaseList(supplierID)
 }
 

@@ -142,7 +142,7 @@ func (h *ReturnHandler) ProcessReturn(c *gin.Context) {
 		nameStr = name.(string)
 	}
 
-	err := h.service.ProcessAdvancedReturn(req, dniStr, nameStr)
+	ret, err := h.service.ProcessAdvancedReturn(req, dniStr, nameStr)
 	if err != nil {
 		if strings.Contains(err.Error(), "solo se permite reembolso en efectivo") {
 			SendError(c, http.StatusBadRequest, ErrBadRequest, err.Error(), nil)
@@ -152,7 +152,13 @@ func (h *ReturnHandler) ProcessReturn(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Devolución procesada correctamente"})
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Devolución procesada correctamente",
+		"id": ret.ID,
+		"type": ret.ReturnType,
+		"totalReturned": ret.TotalReturned,
+		"totalReplacement": req.ChargeAmount,
+	})
 
 	h.auditService.Log(dniStr, nameStr, "ADVANCED_RETURN", "SALES", 
 		fmt.Sprintf("Devolución Tipo: %s. Reembolso: %.2f. Cobro: %.2f", req.Type, req.RefundAmount, req.ChargeAmount),

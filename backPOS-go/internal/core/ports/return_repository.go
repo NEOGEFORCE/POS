@@ -12,7 +12,7 @@ type ReturnRepository interface {
 	GetAll() ([]models.Return, error)
 	GetByDateRange(from, to time.Time) ([]models.Return, error)
 	GetTotalReturnedByRange(from, to time.Time) (float64, error)
-	ProcessAdvancedReturnTransaction(req ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) error
+	ProcessAdvancedReturnTransaction(req ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) (*models.Return, error)
 }
 
 type ProcessReturnReq struct {

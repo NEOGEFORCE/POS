@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"log"
 	"time"
 
 	"backPOS-go/internal/adapters/repositories"
@@ -17,15 +18,17 @@ type ExpenseService struct {
 	orderRepo    *repositories.PostgresPurchaseOrderRepository
 	productRepo  ports.ProductRepository
 	expected     *ExpectedOrderService
+	restockRepo  ports.RestockRepository
 }
 
-func NewExpenseService(repo ports.ExpenseRepository, supplierRepo *repositories.PostgresSupplierRepository, orderRepo *repositories.PostgresPurchaseOrderRepository, productRepo ports.ProductRepository, expected *ExpectedOrderService) *ExpenseService {
+func NewExpenseService(repo ports.ExpenseRepository, supplierRepo *repositories.PostgresSupplierRepository, orderRepo *repositories.PostgresPurchaseOrderRepository, productRepo ports.ProductRepository, expected *ExpectedOrderService, restockRepo ports.RestockRepository) *ExpenseService {
 	return &ExpenseService{
 		repo:         repo,
 		supplierRepo: supplierRepo,
 		orderRepo:    orderRepo,
 		productRepo:  productRepo,
 		expected:     expected,
+		restockRepo:  restockRepo,
 	}
 }
 
@@ -67,6 +70,16 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 		// Automatización: Si es un pago a proveedor, marcar pedido esperado como recibido
 		if expense.SupplierID != nil {
 			_ = s.expected.MarkAsReceivedBySupplier(*expense.SupplierID)
+
+			// Auto-aprendizaje de ruta: el día actual queda registrado como día
+			// de entrega del proveedor (delivery_days, JSONB anti-duplicados).
+			_ = s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days")
+
+			// Auto-completar PurchaseOrders pendientes: si el operador registra
+			// un egreso al proveedor, asumimos que la mercancía pendiente llegó.
+			// Solo cerramos pedidos cuya deliveryDate sea hoy o anterior — los
+			// programados para días futuros se respetan.
+			s.autoCompletePendingPurchaseOrders(*expense.SupplierID)
 		}
 
 		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
@@ -80,6 +93,10 @@ func (s *ExpenseService) GetAllExpenses(supplier, concept string) ([]models.Expe
 		return s.repo.GetAll()
 	}
 	return s.repo.GetAllFiltered(supplier, concept)
+}
+
+func (s *ExpenseService) GetExpensesPaginated(filter ports.ExpenseFilter) ([]models.Expense, int64, error) {
+	return s.repo.GetExpensesPaginated(filter)
 }
 
 func (s *ExpenseService) GetPendingRestockExpensesBySupplier(supplierID uint) ([]models.Expense, error) {
@@ -128,6 +145,21 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		amountToPay = expense.RemainingAmount
 	}
 
+	// 1. Crear un nuevo egreso para registrar el Abono exacto con el método de pago exacto y fecha de hoy
+	abonoExpense := &models.Expense{
+		Description:     "ABONO A DEUDA: " + expense.Description,
+		Amount:          amountToPay,
+		PaidAmount:      amountToPay,
+		RemainingAmount: 0,
+		Status:          "PAID",
+		Category:        expense.Category,
+		PaymentSource:   newPaymentSource,
+		Date:            time.Now(),
+		CreatedByDNI:    updaterDNI,
+		SupplierID:      expense.SupplierID,
+	}
+
+	// 2. Descontar la deuda original sin cambiar su PaymentSource ni fecha inicial
 	expense.PaidAmount += amountToPay
 	expense.RemainingAmount -= amountToPay
 
@@ -135,11 +167,12 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		expense.Status = "PAID"
 	}
 
-	expense.PaymentSource = newPaymentSource
-	expense.Date = time.Now()
-	expense.CreatedByDNI = updaterDNI
-
 	if err := s.repo.Update(id, expense); err != nil {
+		return nil, err
+	}
+
+	// 3. Guardar el abono como un egreso nuevo para que cuadre en la caja de hoy
+	if err := s.repo.Save(abonoExpense); err != nil {
 		return nil, err
 	}
 
@@ -186,6 +219,9 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 	// Automatización: Marcar pedido esperado como recibido
 	if expense.SupplierID != nil {
 		_ = s.expected.MarkAsReceivedBySupplier(*expense.SupplierID)
+
+		// Auto-aprendizaje de ruta: día actual = día de entrega (delivery_days).
+		_ = s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days")
 	}
 
 	// Preparar entradas de recepción basadas en los items de la orden
@@ -214,4 +250,74 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 	sse.GetSSEService().BroadcastDashboardUpdate()
 
 	return expense, nil
+}
+
+
+// autoCompletePendingPurchaseOrders cierra automáticamente las órdenes de
+// compra (PurchaseOrder) en estado PENDING del proveedor cuya deliveryDate
+// sea hoy o anterior, marcándolas como RECEIVED. Disparado tras registrar
+// un egreso al proveedor — la hipótesis es que si el operador pagó, la
+// mercancía ya llegó.
+//
+// Las órdenes con deliveryDate en el FUTURO se respetan: si el operador
+// pagó por adelantado un pedido programado para mañana, no queremos
+// cerrarlo prematuramente — la entrega aún no ocurrió.
+//
+// No-fatal: cualquier error queda en log; el flujo principal no se
+// interrumpe.
+func (s *ExpenseService) autoCompletePendingPurchaseOrders(supplierID uint) {
+	if supplierID == 0 {
+		return
+	}
+
+	bogotaLoc, _ := time.LoadLocation("America/Bogota")
+	if bogotaLoc == nil {
+		bogotaLoc = time.FixedZone("COT", -5*3600)
+	}
+	// Fin del día de HOY en Bogotá: cualquier deliveryDate < esto es candidata.
+	todayEnd := time.Now().In(bogotaLoc).Truncate(24 * time.Hour).Add(24 * time.Hour)
+	todayStr := time.Now().In(bogotaLoc).Format("2006-01-02")
+
+	closed := 0
+
+	// 1. Cerrar PurchaseOrders (Legado)
+	if s.orderRepo != nil {
+		if pendingOrders, err := s.orderRepo.GetBySupplierAndStatus(supplierID, models.PurchaseOrderPending); err == nil && len(pendingOrders) > 0 {
+			for _, ord := range pendingOrders {
+				if ord.DeliveryDate.IsZero() || ord.DeliveryDate.Before(todayEnd) {
+					if err := s.orderRepo.UpdateStatus(ord.ID, models.PurchaseOrderReceived); err == nil {
+						closed++
+						log.Printf(
+							"[ExpenseService] Auto-completado PurchaseOrder #%d (supplier %d, deliveryDate %s) por egreso",
+							ord.ID, supplierID, ord.DeliveryDate.Format("2006-01-02"),
+						)
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Cerrar ConfirmedOrders (Actuales)
+	if s.restockRepo != nil {
+		if pendingConfirmed, err := s.restockRepo.GetPendingOrdersBySupplier(supplierID); err == nil && len(pendingConfirmed) > 0 {
+			for _, ord := range pendingConfirmed {
+				// expected_date es YYYY-MM-DD
+				if ord.ExpectedDate == "" || ord.ExpectedDate <= todayStr {
+					if err := s.restockRepo.UpdateOrderStatus(ord.ID, "received", "SISTEMA (Auto-pago)"); err == nil {
+						closed++
+						log.Printf(
+							"[ExpenseService] Auto-completado ConfirmedOrder %s (supplier %d, expectedDate %s) por egreso",
+							ord.ID, supplierID, ord.ExpectedDate,
+						)
+					}
+				}
+			}
+		}
+	}
+
+	if closed > 0 {
+		// Notificar al frontend para que la vista de "Entregas programadas hoy"
+		// refresque y oculte los pedidos recién cerrados.
+		sse.GetSSEService().Broadcast("INVENTORY_UPDATE", nil)
+	}
 }

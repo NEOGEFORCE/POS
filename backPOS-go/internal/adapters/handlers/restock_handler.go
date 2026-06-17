@@ -25,7 +25,8 @@ func NewRestockHandler(rs *services.RestockService, is *services.InventoryServic
 }
 
 func (h *RestockHandler) GetSuggestions(c *gin.Context) {
-	suggestions, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped()
+	ignoreStock := c.Query("all") == "true"
+	suggestions, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped(ignoreStock)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -34,7 +35,7 @@ func (h *RestockHandler) GetSuggestions(c *gin.Context) {
 }
 
 func (h *RestockHandler) GetCritical(c *gin.Context) {
-	suggestions, err := h.inventoryService.GetGlobalRestockSuggestions()
+	suggestions, err := h.inventoryService.GetGlobalRestockSuggestions(false)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

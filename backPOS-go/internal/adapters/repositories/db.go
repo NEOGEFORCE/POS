@@ -206,6 +206,20 @@ func ConnectDB() {
 				ALTER TABLE products ADD COLUMN discount DECIMAL(10,2) DEFAULT 0;
 			END IF;
 
+			-- 9.2 MIGRACIÓN EGRESOS MIXTOS
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='cash_amount') THEN
+				ALTER TABLE expenses ADD COLUMN cash_amount DECIMAL(10,2) DEFAULT 0;
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='nequi_amount') THEN
+				ALTER TABLE expenses ADD COLUMN nequi_amount DECIMAL(10,2) DEFAULT 0;
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='daviplata_amount') THEN
+				ALTER TABLE expenses ADD COLUMN daviplata_amount DECIMAL(10,2) DEFAULT 0;
+			END IF;
+			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='fondo_amount') THEN
+				ALTER TABLE expenses ADD COLUMN fondo_amount DECIMAL(10,2) DEFAULT 0;
+			END IF;
+
 			-- 10. REFORZAR ON UPDATE CASCADE PARA BARCODES (V9.0)
 			-- Esto es CRÍTICO para permitir editar códigos de producto sin romper la base de datos
 			
@@ -308,6 +322,8 @@ func ConnectDB() {
 		&models.ActivePurchaseList{},
 		&models.ConfirmedOrder{},
 		&models.ConfirmedOrderItem{},
+		&models.SupplierProductAlias{},
+		&models.SupplierInvoiceParams{},
 	}
 
 	// Sesión especial para migraciones: sin transacciones y en modo SILENCIOSO para evitar ruido en el terminal
@@ -611,10 +627,16 @@ func createGlobalIndexes(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_sales_client ON sales("clientDni")`,
 		`CREATE INDEX IF NOT EXISTS idx_sales_employee ON sales("employeeDni")`,
 		`CREATE INDEX IF NOT EXISTS idx_sales_payment_method ON sales("paymentMethod")`,
+		`CREATE INDEX IF NOT EXISTS idx_sales_dashboard ON sales("saleDate" DESC, status, deleted_at)`,
 
 		// DETALLES DE VENTA: Join con ventas y productos
 		`CREATE INDEX IF NOT EXISTS idx_sale_details_id ON sale_details("saleId")`,
 		`CREATE INDEX IF NOT EXISTS idx_sale_details_barcode ON sale_details("barcode")`,
+		`CREATE INDEX IF NOT EXISTS idx_sale_details_sale_deleted ON sale_details("saleId", deleted_at)`,
+
+		// EGRESOS: Dashboard y reportes
+		`CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_expenses_dashboard ON expenses(date DESC, status, deleted_at)`,
 
 		// AUDITORÍA: Búsqueda forense rápida por fecha y criticidad
 		`CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs("created_at" DESC)`,
@@ -627,6 +649,8 @@ func createGlobalIndexes(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements("date" DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_products_category ON products("categoryId")`,
 		`CREATE INDEX IF NOT EXISTS idx_products_supplier ON products("supplierId")`,
+		`CREATE INDEX IF NOT EXISTS idx_products_active_deleted ON products("isActive", deleted_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_product_suppliers_supplier_id ON product_suppliers(supplier_id)`,
 
 		// CIERRES DE CAJA
 		`CREATE INDEX IF NOT EXISTS idx_cashier_closures_date ON cashier_closures("date" DESC)`,
@@ -646,42 +670,45 @@ func createGlobalIndexes(db *gorm.DB) error {
 func createMaterializedViews(db *gorm.DB) error {
 	log.Printf("🚀 Creating High-Performance Materialized Views...")
 
+	// FORZAR RECREACIÓN: DROP primero para asegurar que la definición siempre esté actualizada
+	db.Exec(`DROP MATERIALIZED VIEW IF EXISTS mv_dashboard_stats_monthly CASCADE;`)
+
 	sql := `
-	CREATE MATERIALIZED VIEW IF NOT EXISTS mv_dashboard_stats_monthly AS
-	WITH sale_detail_stats AS (
+	CREATE MATERIALIZED VIEW mv_dashboard_stats_monthly AS
+	WITH sale_totals AS (
 		SELECT 
-			TO_CHAR(s."saleDate", 'YYYY-MM') as month_year,
-			SUM(sd.subtotal) as total_sales,
+			TO_CHAR(s."saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
+			SUM(s."totalAmount") as total_sales,
+			COUNT(*) as transaction_count,
+			SUM(GREATEST(0, s."cashAmount" - s."change")) as sales_cash,
+			SUM(s."transferAmount") as sales_transfer,
+			SUM(s."creditAmount") as sales_credit
+		FROM sales s
+		WHERE s."deleted_at" IS NULL AND (s.status IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
+		GROUP BY 1
+	),
+	sale_cogs AS (
+		SELECT 
+			TO_CHAR(s."saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
 			SUM(sd.quantity * COALESCE(NULLIF(sd."costPrice", 0), p."purchasePrice", 0)) as total_cogs,
 			COALESCE(SUM(sd.quantity), 0) as products_sold
 		FROM sales s
-		LEFT JOIN sale_details sd ON s."saleId" = sd."saleId"
+		JOIN sale_details sd ON s."saleId" = sd."saleId"
 		LEFT JOIN products p ON sd.barcode = p.barcode
 		WHERE s."deleted_at" IS NULL AND (s.status IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
 		GROUP BY 1
 	),
-	sale_payment_stats AS (
-		SELECT 
-			TO_CHAR("saleDate", 'YYYY-MM') as month_year,
-			COUNT(*) as transaction_count,
-			SUM(GREATEST(0, "cashAmount" - "change")) as sales_cash,
-			SUM("transferAmount") as sales_transfer,
-			SUM("creditAmount") as sales_credit
-		FROM sales
-		WHERE "deleted_at" IS NULL AND (status IN ('PAID', 'CREDIT', 'FIADO') OR status IS NULL OR status = '')
-		GROUP BY 1
-	),
 	expense_stats AS (
 		SELECT 
-			TO_CHAR(date, 'YYYY-MM') as month_year,
+			TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
 			SUM(amount + tax_amount) as total_expenses
 		FROM expenses
-		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID'
+		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID' AND UPPER(category) NOT IN ('PROVEEDORES', 'INVENTARIO')
 		GROUP BY 1
 	),
 	return_stats AS (
 		SELECT 
-			TO_CHAR(date, 'YYYY-MM') as month_year,
+			TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
 			SUM("totalReturned") as total_returned,
 			SUM((SELECT SUM(quantity) FROM return_details rd WHERE rd."returnId" = r.id AND rd."isExchange" = false)) as products_returned
 		FROM "returns" r
@@ -690,14 +717,14 @@ func createMaterializedViews(db *gorm.DB) error {
 	),
 	payment_stats AS (
 		SELECT 
-			TO_CHAR("paymentDate", 'YYYY-MM') as month_year,
+			TO_CHAR("paymentDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
 			SUM("totalPaid") as total_abonos
 		FROM credit_payments
 		WHERE "deleted_at" IS NULL
 		GROUP BY 1
 	),
 	all_months AS (
-		SELECT month_year FROM sale_detail_stats
+		SELECT month_year FROM sale_totals
 		UNION
 		SELECT month_year FROM expense_stats
 		UNION
@@ -707,18 +734,18 @@ func createMaterializedViews(db *gorm.DB) error {
 	)
 	SELECT 
 		am.month_year,
-		COALESCE(sds.total_sales, 0) - COALESCE(ret.total_returned, 0) as total_sales,
-		COALESCE(sps.transaction_count, 0) as transaction_count,
-		COALESCE(sps.sales_cash, 0) - COALESCE(ret.total_returned, 0) as sales_cash,
-		COALESCE(sps.sales_transfer, 0) as sales_transfer,
-		COALESCE(sps.sales_credit, 0) as sales_credit,
-		COALESCE(sds.products_sold, 0) - COALESCE(ret.products_returned, 0) as products_sold,
-		COALESCE(sds.total_cogs, 0) as total_cogs,
+		COALESCE(st.total_sales, 0) - COALESCE(ret.total_returned, 0) as total_sales,
+		COALESCE(st.transaction_count, 0) as transaction_count,
+		COALESCE(st.sales_cash, 0) - COALESCE(ret.total_returned, 0) as sales_cash,
+		COALESCE(st.sales_transfer, 0) as sales_transfer,
+		COALESCE(st.sales_credit, 0) as sales_credit,
+		COALESCE(sc.products_sold, 0) - COALESCE(ret.products_returned, 0) as products_sold,
+		COALESCE(sc.total_cogs, 0) as total_cogs,
 		COALESCE(e.total_expenses, 0) as total_expenses,
 		COALESCE(p.total_abonos, 0) as total_abonos
 	FROM all_months am
-	LEFT JOIN sale_detail_stats sds ON am.month_year = sds.month_year
-	LEFT JOIN sale_payment_stats sps ON am.month_year = sps.month_year
+	LEFT JOIN sale_totals st ON am.month_year = st.month_year
+	LEFT JOIN sale_cogs sc ON am.month_year = sc.month_year
 	LEFT JOIN expense_stats e ON am.month_year = e.month_year
 	LEFT JOIN payment_stats p ON am.month_year = p.month_year
 	LEFT JOIN return_stats ret ON am.month_year = ret.month_year;
@@ -732,6 +759,7 @@ func createMaterializedViews(db *gorm.DB) error {
 
 	log.Printf("✅ Materialized Views initialized")
 	return nil
+
 }
 
 func SeedClient(db *gorm.DB, adminDNI string) {

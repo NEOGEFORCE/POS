@@ -6,9 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
@@ -24,6 +27,7 @@ type CronManager struct {
 	supplier  *services.SupplierService
 	orders    *services.PurchaseOrderService
 	expected  *services.ExpectedOrderService
+	restock   *services.RestockService
 }
 
 func NewCronManager(
@@ -33,6 +37,7 @@ func NewCronManager(
 	sup *services.SupplierService,
 	ord *services.PurchaseOrderService,
 	exp *services.ExpectedOrderService,
+	res *services.RestockService,
 ) *CronManager {
 	// LOCALIZACIÓN FIJA: Colombia (UTC-5) - Independiente de la configuración del servidor
 	loc := time.FixedZone("America/Bogota", -5*60*60)
@@ -46,6 +51,7 @@ func NewCronManager(
 		supplier:  sup,
 		orders:    ord,
 		expected:  exp,
+		restock:   res,
 	}
 }
 
@@ -97,8 +103,9 @@ func (m *CronManager) Start() {
 }
 
 func (m *CronManager) handleSuggestedOrdersAlert() {
-	log.Println("🤖 Running Daily Suggested Orders Job (07:05 AM)...")
+	log.Println("🔄 Running Daily Suggested Orders Job (07:05 AM)...")
 	
+	loc, _ := time.LoadLocation("America/Bogota")
 	// Determinar día actual
 	days := map[time.Weekday]string{
 		time.Monday:    "Lunes",
@@ -110,7 +117,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 		time.Sunday:    "Domingo",
 	}
 	
-	today := days[time.Now().Weekday()]
+	today := days[time.Now().In(loc).Weekday()]
 	suppliers, err := m.supplier.GetSuppliersByVisitDay(today)
 	if err != nil {
 		log.Printf("❌ Job 1 Error: %v", err)
@@ -121,35 +128,47 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 		return
 	}
 
-	message := "🛒 *Sugerencias de Pedido para Hoy (" + today + ")*:\n\n"
-	foundAny := false
-	var urgentAlerts []string
-
 	for _, s := range suppliers {
-		suggested, _ := m.inventory.GetSuggestedOrders(s.ID)
-		if len(suggested) > 0 {
-			message += fmt.Sprintf("• *%s*: %d items a reponer\n", s.Name, len(suggested))
-			foundAny = true
-
-			// TAREA 2: Escanear y destacar Alertas de Aumento de Stock Base
-			for _, item := range suggested {
-				if item.AlertType == "INCREASE_MIN_STOCK" || item.AlertType == "HIGH_MOVER" {
-					urgentAlerts = append(urgentAlerts, fmt.Sprintf("   ⚠️ *%s*: %s", item.ProductName, item.Alert))
-				}
-			}
-		}
-	}
-
-	if foundAny {
-		if len(urgentAlerts) > 0 {
-			message += "\n🔥 *¡ATENCIÓN A ESTOS PRODUCTOS!*\n_Se están vendiendo muy rápido. ¡Pide más y sube tu Stock Base!_\n"
-			for _, alert := range urgentAlerts {
-				message += alert + "\n"
-			}
-		}
+		suggested, _ := m.inventory.GetSuggestedOrders(s.ID, false)
 		
-		message += "\n👉 Revisa el panel de Pedidos Inteligentes para confirmar."
-		m.telegram.SendAlert(message)
+		var criticalItems []string
+		var urgentAlerts []string
+
+		for _, item := range suggested {
+			// TAREA 2: Escanear y destacar Alertas de Aumento de Stock Base
+			if item.AlertType == "INCREASE_MIN_STOCK" || item.AlertType == "HIGH_MOVER" {
+				urgentAlerts = append(urgentAlerts, fmt.Sprintf("   🚨 *%s*: %s", item.ProductName, item.Alert))
+			}
+			
+			// Solo items en estado realmente crǟtico (Stock <= 0)
+			if item.Stock <= 0 {
+				criticalItems = append(criticalItems, fmt.Sprintf("• %s: stock %.2f | min: %.2f", item.ProductName, item.Stock, item.MinStock))
+			}
+		}
+
+		if len(criticalItems) > 0 || len(urgentAlerts) > 0 {
+			var message strings.Builder
+			message.WriteString(fmt.Sprintf("🛎️ *VISITAS HOY: %s*\n\n", s.Name))
+			
+			if len(criticalItems) > 0 {
+				message.WriteString("🚨 *ESTADO CRÍTICO (AGOTADOS)*:\n")
+				for _, ci := range criticalItems {
+					message.WriteString(ci + "\n")
+				}
+				message.WriteString("\n")
+			}
+			
+			if len(urgentAlerts) > 0 {
+				message.WriteString("⚠️ *¡ATENCIÓN A ESTOS PRODUCTOS!*\n_Se están vendiendo muy rápido. ¡Pide más y sube tu Stock Base!_\n")
+				for _, alert := range urgentAlerts {
+					message.WriteString(alert + "\n")
+				}
+				message.WriteString("\n")
+			}
+			
+			message.WriteString("📱 Revisa el panel de Pedidos Inteligentes para confirmar.")
+			m.telegram.SendAlert(message.String())
+		}
 	}
 }
 
@@ -179,18 +198,56 @@ func (m *CronManager) handlePendingDeliveriesAlert() {
 }
 
 func (m *CronManager) handleLogisticReportJob() {
-	log.Println("🤖 Running Daily Logistic Report Job (07:00 AM)...")
+	log.Println("✅ Running Daily Logistic Report Job (07:00 AM)...")
 
 	loc, _ := time.LoadLocation("America/Bogota")
 	todayStr := time.Now().In(loc).Format("2006-01-02")
-	expectedOrders, err := m.expected.GetExpectedOrdersByDate(todayStr)
-	if err != nil {
-		log.Printf("❌ Logistic Job Error: %v", err)
-		return
+	
+	type UnifiedOrder struct {
+		SupplierName string
+		Total        float64
+		ItemCount    int
+	}
+	var allOrders []UnifiedOrder
+
+	// Helper func to extract value from invoiceRef
+	getVal := func(est float64, totalEst float64, invoiceRef string) float64 {
+		val := est
+		if val == 0 {
+			val = totalEst
+		}
+		if invoiceRef != "" {
+			cleanInv := regexp.MustCompile(`[^0-9.]`).ReplaceAllString(invoiceRef, "")
+			if parsedInv, err := strconv.ParseFloat(cleanInv, 64); err == nil && parsedInv > 0 {
+				val = parsedInv
+			}
+		}
+		return val
 	}
 
-	if len(expectedOrders) == 0 {
-		log.Println("ℹ️ No hay entregas programadas para hoy.")
+	// 1. Expected Orders
+	var expected []models.ExpectedOrder
+	m.db.Where("DATE(expected_date) <= ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&expected)
+	for _, o := range expected {
+		allOrders = append(allOrders, UnifiedOrder{o.SupplierName, getVal(0, o.TotalEstimated, ""), o.ItemCount})
+	}
+
+	// 2. Purchase Orders
+	var purchase []models.PurchaseOrder
+	m.db.Preload("Supplier").Preload("OrderItems").Where("DATE(\"orderDate\") <= ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&purchase)
+	for _, o := range purchase {
+		allOrders = append(allOrders, UnifiedOrder{o.Supplier.Name, getVal(o.EstimatedCost, 0, ""), len(o.OrderItems)})
+	}
+
+	// 3. Confirmed Orders
+	var confirmed []models.ConfirmedOrder
+	m.db.Preload("Supplier").Preload("Items").Where("DATE(expected_date) <= ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&confirmed)
+	for _, o := range confirmed {
+		allOrders = append(allOrders, UnifiedOrder{o.Supplier.Name, getVal(0, o.EstimatedTotal, o.InvoiceRef), len(o.Items)})
+	}
+
+	if len(allOrders) == 0 {
+		log.Println("💤 No hay entregas programadas para hoy.")
 		m.telegram.SendAlert("📅 *REPORTE LOGÍSTICO*\n\n✅ No hay entregas programadas para el día de hoy. ¡Que tengas un excelente turno!")
 		return
 	}
@@ -198,29 +255,29 @@ func (m *CronManager) handleLogisticReportJob() {
 	var totalAmount float64
 	var list strings.Builder
 
-	for _, o := range expectedOrders {
-		list.WriteString(fmt.Sprintf("▫️ *%s*\n   💰 Valor: `$%s` | 📦 Ítems: `%d`\n\n", 
-			o.SupplierName, formatMoney(o.TotalEstimated), o.ItemCount))
-		totalAmount += o.TotalEstimated
+	for _, o := range allOrders {
+		list.WriteString(fmt.Sprintf("🚛 *%s*\n   💰 Valor: `$%s` | 📦 Ítems: `%d`\n\n", 
+			o.SupplierName, formatMoney(o.Total), o.ItemCount))
+		totalAmount += o.Total
 	}
 
 	message := fmt.Sprintf(
-		"📊 *PLAN DE ENTREGAS - HOY*\n"+
-			"📅 *Fecha:* `%s` 🕒 *07:00 AM*\n"+
-			"━━━━━━━━━━━━━━━━━━━━\n\n"+
+		"📦 *PLAN DE ENTREGAS - HOY*\n"+
+			"📅 *Fecha:* `%s` ⏰ *07:00 AM*\n"+
+			"➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n"+
 			"💰 *INVERSIÓN TOTAL:* `$%s COP`\n"+
-			"🚚 *PEDIDOS EN CAMINO:* `%d`\n\n"+
+			"📋 *PEDIDOS EN CAMINO:* `%d`\n\n"+
 			"%s"+
-			"━━━━━━━━━━━━━━━━━━━━\n"+
-			"🚀 _Sistema POS Pro Sincronizado_",
-		time.Now().Format("02/01/2006"),
+			"➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n"+
+			"🤖 _Sistema POS Pro Sincronizado_",
+		time.Now().In(loc).Format("02/01/2006"),
 		formatMoney(totalAmount),
-		len(expectedOrders),
+		len(allOrders),
 		list.String(),
 	)
 
 	m.telegram.SendAlert(message)
-	log.Printf("✅ Logistic report sent to Telegram: %d orders", len(expectedOrders))
+	log.Printf("📩 Logistic report sent to Telegram: %d orders", len(allOrders))
 }
 
 func formatMoney(amount float64) string {
@@ -313,7 +370,7 @@ func (m *CronManager) handleShelfStockCriticalAlert() {
 		expectedSuppliers[o.SupplierName] = true
 	}
 
-	criticals, err := m.inventory.GetGlobalRestockSuggestions()
+	criticals, err := m.inventory.GetGlobalRestockSuggestions(false)
 	if err != nil {
 		log.Printf("❌ Shelf Stock Job Error: %v", err)
 		return

@@ -26,6 +26,24 @@ func (r *PostgresStockMovementRepository) SaveWithTx(tx interface{}, movement *m
 	return gormDB.Create(movement).Error
 }
 
+// BatchSaveWithTx inserta N movimientos en una sola operación batch (CreateInBatches
+// con tamaño 100). Reduce drásticamente el round-trip a Postgres en ventas con
+// muchos items: en lugar de N INSERTs secuenciales (cada uno con su latencia
+// de red/disco), realiza ⌈N/100⌉ sentencias multi-fila.
+//
+// Pasa transparentemente cualquier transacción activa; si tx no es *gorm.DB
+// cae al db base del repo. Retorna nil si la lista viene vacía.
+func (r *PostgresStockMovementRepository) BatchSaveWithTx(tx interface{}, movements []models.StockMovement) error {
+	if len(movements) == 0 {
+		return nil
+	}
+	gormDB, ok := tx.(*gorm.DB)
+	if !ok {
+		gormDB = r.db
+	}
+	return gormDB.CreateInBatches(movements, 100).Error
+}
+
 func (r *PostgresStockMovementRepository) GetByProduct(barcode string, from, to time.Time) ([]models.StockMovement, error) {
 	var movements []models.StockMovement
 	query := r.db.Preload("Product").Where("barcode = ?", barcode)

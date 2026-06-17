@@ -12,6 +12,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/dbbackup"
 	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 )
@@ -376,19 +377,19 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
 	
-	pgDumpRaw := strings.TrimSpace(strings.Trim(os.Getenv("PG_DUMP_PATH"), "\""))
-	pgDumpPath := filepath.Clean(pgDumpRaw)
+	pgDumpPath, attempted, err := dbbackup.ResolvePgDumpPath()
 
 	if host == "" { host = "localhost" }
 	if port == "" { port = "5432" }
 	if user == "" { user = "postgres" }
 	if dbname == "" { dbname = "sistemapos" }
-	if pgDumpPath == "" || pgDumpPath == "." { pgDumpPath = "pg_dump" }
 
-	// Validar que el binario exista antes de invocarlo
-	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
-		log.Printf("Error: Binario pg_dump no encontrado en la ruta: %s", pgDumpPath)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, fmt.Sprintf("Error: El ejecutable pg_dump no se encontró en la ruta especificada (%s). Verifique su archivo .env.", pgDumpPath), err)
+	if err != nil {
+		pathsList := dbbackup.FormatAttemptedPaths(attempted)
+		log.Printf("Error: pg_dump no encontrado. Rutas probadas:\n%s", pathsList)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer,
+			fmt.Sprintf("No se encontró el ejecutable pg_dump. Rutas probadas:\n%s\nConfigura PG_DUMP_PATH en el .env o instala PostgreSQL.", pathsList),
+			err)
 		return
 	}
 
@@ -456,47 +457,44 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	fileName := fmt.Sprintf("pos_manual_telegram_%s.sql", time.Now().Format("20060102_150405"))
 	filePath := "./" + fileName
 
-	// 2. Ejecutar pg_dump
-	args := []string{"-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath}
-	cmd := exec.Command(pgDumpPath, args...)
-	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
-
-	log.Printf("🛠️ Manual Telegram Backup: %s %v", pgDumpPath, args)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		log.Printf("Error ejecutando pg_dump para Telegram: %v. Salida: %s", err, string(output))
-		msg := "No se pudo generar el respaldo para Telegram. Verifique la instalación de PostgreSQL Client Tools."
-		if strings.Contains(err.Error(), "executable file not found") {
-			msg = fmt.Sprintf("Error: No se encontró '%s'. Instale las herramientas de PostgreSQL o ajuste el .env.", pgDumpPath)
-		}
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, msg, err)
-		return
-	}
-
-	// 3. Abrir archivo y enviar a Telegram
-	file, err := os.Open(filePath)
-	if err != nil {
-		log.Printf("Error abriendo backup manual: %v", err)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo abrir el archivo de respaldo.", err)
-		return
-	}
-	defer file.Close()
-	defer os.Remove(filePath)
-
 	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
-	caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Sincronizado_", 
-		requesterName, requesterDNI, time.Now().Format("02/01/2006 15:04"))
 
-	if err := h.telegram.SendDocument(file, fileName, caption); err != nil {
-		log.Printf("Error enviando backup a Telegram: %v", err)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al enviar el respaldo a Telegram.", err)
-		return
-	}
+	// 2. Ejecutar pg_dump y subir en segundo plano
+	go func() {
+		defer func() { recover() }()
+		args := []string{"-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath}
+		cmd := exec.Command(pgDumpPath, args...)
+		cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
 
-	// 4. Registrar auditoría
-	h.auditService.Log(requesterDNI, requesterName, "DB_BACKUP_TELEGRAM", "ADMIN", "Envío de Respaldo a Telegram", "El administrador solicitó enviar un respaldo manual a Telegram.", "{}", ip, device, true)
+		log.Printf("🛠️ Manual Telegram Backup: %s %v", pgDumpPath, args)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			log.Printf("Error ejecutando pg_dump para Telegram: %v. Salida: %s", err, string(output))
+			return
+		}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Respaldo enviado exitosamente a Telegram"})
+		// 3. Abrir archivo y enviar a Telegram
+		file, err := os.Open(filePath)
+		if err != nil {
+			log.Printf("Error abriendo backup manual: %v", err)
+			return
+		}
+		defer file.Close()
+		defer os.Remove(filePath)
+
+		caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Sincronizado_", 
+			requesterName, requesterDNI, time.Now().Format("02/01/2006 15:04"))
+
+		if err := h.telegram.SendDocument(file, fileName, caption); err != nil {
+			log.Printf("Error enviando backup a Telegram: %v", err)
+			return
+		}
+
+		// 4. Registrar auditoría
+		h.auditService.Log(requesterDNI, requesterName, "DB_BACKUP_TELEGRAM", "ADMIN", "Envío de Respaldo a Telegram", "El administrador solicitó enviar un respaldo manual a Telegram.", "{}", ip, device, true)
+	}()
+
+	c.JSON(http.StatusAccepted, gin.H{"message": "Generando y enviando respaldo en segundo plano. Te llegará por Telegram en unos momentos."})
 }
 
 func (h *AdminHandler) PurgeOldData(c *gin.Context) {
@@ -509,26 +507,26 @@ func (h *AdminHandler) PurgeOldData(c *gin.Context) {
 		return
 	}
 
-	// Ejecutar purga en el servicio
-	rowsAffected, err := h.service.PurgeDataBefore(req.Date)
-	if err != nil {
-		log.Printf("Error purgando base de datos: %v", err)
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo realizar la purga.", err)
-		return
-	}
-
-	// Auditoría
 	requesterDNI, requesterName, ip, device := h.getAuditInfo(c)
-	h.auditService.Log(requesterDNI, requesterName, "DB_PURGE", "ADMIN", fmt.Sprintf("Purga de historial anterior a %s", req.Date), fmt.Sprintf("Se eliminaron %d registros transaccionales obsoletos.", rowsAffected), "{}", ip, device, true)
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Purga completada exitosamente",
-		"records_deleted": rowsAffected,
-	})
-
-	// AVISO GLOBAL: Purga masiva realizada. Forzar recarga de dashboard y ventas.
 	go func() {
+		defer func() { recover() }()
+		// Ejecutar purga en el servicio
+		rowsAffected, err := h.service.PurgeDataBefore(req.Date)
+		if err != nil {
+			log.Printf("Error purgando base de datos: %v", err)
+			return
+		}
+
+		// Auditoría
+		h.auditService.Log(requesterDNI, requesterName, "DB_PURGE", "ADMIN", fmt.Sprintf("Purga de historial anterior a %s", req.Date), fmt.Sprintf("Se eliminaron %d registros transaccionales obsoletos.", rowsAffected), "{}", ip, device, true)
+
+		// AVISO GLOBAL: Purga masiva realizada. Forzar recarga de dashboard y ventas.
 		sse.GetSSEService().BroadcastDashboardUpdate()
 		sse.GetSSEService().BroadcastNewSale(models.Sale{}) // Trigger de historial
 	}()
+
+	c.JSON(http.StatusAccepted, gin.H{
+		"message": "La purga de datos ha comenzado en segundo plano. Esto puede tardar unos minutos.",
+	})
 }

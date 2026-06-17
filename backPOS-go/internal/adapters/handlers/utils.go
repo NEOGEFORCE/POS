@@ -10,7 +10,7 @@ import (
 func GetContextUser(c *gin.Context) (dni string, name string) {
 	dniVal, exists := c.Get("dni")
 	if !exists || dniVal == nil {
-		dni = "SISTEMA"
+		dni = "admin" // Fallback to a real user in the DB just in case
 	} else {
 		dni = fmt.Sprintf("%v", dniVal)
 	}

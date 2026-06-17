@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 	"backPOS-go/internal/infrastructure/cache"
 	"backPOS-go/internal/infrastructure/sse"
@@ -23,10 +24,115 @@ func NewReturnService(rr ports.ReturnRepository, pr ports.ProductRepository, sr 
 	return &ReturnService{returnRepo: rr, productRepo: pr, saleRepo: sr, movementRepo: mr}
 }
 
+// ============================================================
+// Helpers compartidos: política de devoluciones
+// ============================================================
+//
+// REGLA DE NEGOCIO (ratificada en el sprint 2026-05-30):
+//   - Solo se permite REFUND (devolución de dinero) si la venta original
+//     fue pagada en EFECTIVO. Cualquier otro método (transferencia, fiado,
+//     tarjeta, mixto, etc.) obliga a EXCHANGE: el cliente debe llevarse
+//     producto por valor equivalente o mayor.
+//   - El stock SIEMPRE se ajusta: items devueltos suman al inventario
+//     (regresan a la góndola) e items de reemplazo restan (salen al cliente).
+//   - El dinero solo se mueve si hay diferencia: en REFUND se crea un
+//     Expense category=Devoluciones (egreso real de caja); en EXCHANGE con
+//     chargeAmount > 0 se crea una mini-Sale (ingreso real de caja).
+
+// isCashOnlyMethod verifica si el método de pago es estrictamente efectivo
+// (única vía para permitir REFUND). Aplica normalización case-insensitive
+// y trimspace para tolerar variantes del frontend.
+func isCashOnlyMethod(method string) bool {
+	m := strings.ToUpper(strings.TrimSpace(method))
+	return m == "EFECTIVO" || m == "CASH"
+}
+
+// validateRefundAllowed retorna error si la venta original no permite REFUND.
+// Centraliza la decisión para que tanto CreateReturn como ProcessAdvancedReturn
+// apliquen la misma regla y el mensaje de error sea consistente.
+func validateRefundAllowed(sale *models.Sale) error {
+	if sale == nil {
+		return errors.New("solo se permite reembolso con factura asociada (modo ciego no aplica)")
+	}
+	if !isCashOnlyMethod(sale.PaymentMethod) {
+		return fmt.Errorf(
+			"solo se permite reembolso en efectivo (esta venta fue pagada con %s) — usa EXCHANGE para que el cliente se lleve otro producto",
+			sale.PaymentMethod,
+		)
+	}
+	return nil
+}
+
+// validateItemsAgainstSale verifica que cada item solicitado para devolver
+// (1) está en la venta original y (2) no excede la cantidad disponible
+// (vendida menos la ya devuelta previamente). Esto previene:
+//   - Devolver productos que NO fueron vendidos en esa factura.
+//   - Devolver más de lo realmente comprado.
+//   - Doble devolución del mismo item.
+//
+// La tolerancia de 0.001 evita falsos positivos por floats en productos
+// pesables (kg, lb).
+func validateItemsAgainstSale(sale *models.Sale, items []ports.ReturnItemReq) error {
+	if sale == nil {
+		return errors.New("no se puede validar items: venta original no encontrada")
+	}
+	available := make(map[string]float64)
+	for _, det := range sale.SaleDetails {
+		available[det.Barcode] += det.Quantity - det.ReturnedQty
+	}
+	for _, it := range items {
+		if it.Qty <= 0 {
+			continue
+		}
+		avail, ok := available[it.Barcode]
+		if !ok {
+			return fmt.Errorf("el producto %s no fue vendido en la factura #%d", it.Barcode, sale.SaleID)
+		}
+		if it.Qty > avail+0.001 {
+			return fmt.Errorf(
+				"cantidad %.2f de %s excede lo disponible para devolución (vendido pendiente: %.2f)",
+				it.Qty, it.Barcode, avail,
+			)
+		}
+	}
+	return nil
+}
+
+// returnDetailsToItemReqs adapta los []ReturnDetail del flujo legacy
+// CreateReturn al []ReturnItemReq usado por validateItemsAgainstSale.
+// Solo considera items NO-IsExchange (los que el cliente está devolviendo);
+// los IsExchange son productos de salida (reemplazos) y no aplican.
+func returnDetailsToItemReqs(details []models.ReturnDetail) []ports.ReturnItemReq {
+	out := make([]ports.ReturnItemReq, 0, len(details))
+	for _, d := range details {
+		if d.IsExchange {
+			continue
+		}
+		out = append(out, ports.ReturnItemReq{Barcode: d.Barcode, Qty: d.Quantity})
+	}
+	return out
+}
+
 func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, employeeName string) error {
-	// 1. Validar que la venta existe
-	if _, err := s.saleRepo.GetByID(ret.SaleID); err != nil {
+	// 1. Validar que la venta existe y aplicar política de devoluciones
+	originalSale, err := s.saleRepo.GetByID(ret.SaleID)
+	if err != nil {
 		return errors.New("venta no encontrada")
+	}
+
+	// 1a. Si es REFUND, la venta debe haber sido pagada en EFECTIVO.
+	// Para TRANSFERENCIA/CRÉDITO/MIXTO/etc. solo se permite EXCHANGE.
+	if strings.ToUpper(ret.ReturnType) == "REFUND" {
+		if err := validateRefundAllowed(originalSale); err != nil {
+			return err
+		}
+	}
+
+	// 1b. Validar que cada item devuelto esté efectivamente en la venta
+	// original y que la cantidad no exceda lo disponible (vendido menos
+	// previamente devuelto).
+	if err := validateItemsAgainstSale(originalSale, returnDetailsToItemReqs(ret.Details)); err != nil {
+		return err
 	}
 
 	// 2. Procesar detalles y calcular ajustes de stock
@@ -180,22 +286,38 @@ func (s *ReturnService) GetBlindReturnData(barcode string) (map[string]interface
 }
 
 
-func (s *ReturnService) ProcessAdvancedReturn(req ports.ProcessReturnReq, employeeDNI string, employeeName string) error {
+func (s *ReturnService) ProcessAdvancedReturn(req ports.ProcessReturnReq, employeeDNI string, employeeName string) (*models.Return, error) {
 	var originalSale *models.Sale
 	var err error
 
 	if req.InvoiceRef > 0 {
 		originalSale, err = s.saleRepo.GetByID(req.InvoiceRef)
 		if err != nil {
-			return errors.New("venta original no encontrada")
+			return nil, errors.New("venta original no encontrada")
 		}
 
-		if req.Type == "REFUND" && originalSale.PaymentMethod != "EFECTIVO" && originalSale.PaymentMethod != "CASH" {
-			return errors.New("solo se permite reembolso en efectivo para ventas pagadas en efectivo")
+		// Solo REFUND en efectivo. Cualquier otro método (TRANSFER/CREDIT/MIXTO/...)
+		// obliga a EXCHANGE: el cliente debe llevarse otro producto.
+		if strings.ToUpper(req.Type) == "REFUND" {
+			if err := validateRefundAllowed(originalSale); err != nil {
+				return nil, err
+			}
 		}
-	} else if req.Type == "REFUND" {
-		// En modo ciego sin factura, el GetBlindReturnData ya aseguró si había efectivo disponible
-		// Pero para ser robustos, asumimos que el controlador validó la disponibilidad de efectivo.
+
+		// Validar que los items devueltos pertenecen a la venta original
+		// y que las cantidades no exceden lo disponible. Bloquea:
+		//   - barcode que no fue vendido en esta factura
+		//   - cantidad mayor a lo vendido (descontando devoluciones previas)
+		if err := validateItemsAgainstSale(originalSale, req.ReturnedItems); err != nil {
+			return nil, err
+		}
+	} else {
+		// Modo ciego (sin factura): NO se permite REFUND porque no podemos
+		// auditar el método de pago original con seguridad. El usuario debe
+		// usar el flujo con factura para reembolsar dinero.
+		if strings.ToUpper(req.Type) == "REFUND" {
+			return nil, errors.New("modo ciego sin factura: solo se permite cambio por otro producto (EXCHANGE), no reembolso en efectivo")
+		}
 	}
 
 	// Calculate stock adjustments and Kárdex movements
@@ -231,14 +353,14 @@ func (s *ReturnService) ProcessAdvancedReturn(req ports.ProcessReturnReq, employ
 	}
 
 	// 3. Guardar devolución con transacción ACID síncrona
-	err = s.returnRepo.ProcessAdvancedReturnTransaction(req, originalSale, employeeDNI, employeeName, stockAdjustments, movements)
+	ret, err := s.returnRepo.ProcessAdvancedReturnTransaction(req, originalSale, employeeDNI, employeeName, stockAdjustments, movements)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Invalida cache de dashboard e inicia broadcast asíncrono
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 	sse.GetSSEService().BroadcastDashboardUpdate()
 
-	return nil
+	return ret, nil
 }

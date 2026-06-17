@@ -102,6 +102,14 @@ func (h *ProductHandler) Create(c *gin.Context) {
 	product.Barcode = strings.ToUpper(strings.TrimSpace(product.Barcode))
 	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
 
+	if product.SupplierID != nil && *product.SupplierID == 0 {
+		product.SupplierID = nil
+	}
+
+	if product.BaseProductBarcode != nil && strings.TrimSpace(*product.BaseProductBarcode) == "" {
+		product.BaseProductBarcode = nil
+	}
+
 	// 1. Verificar Duplicados (Barcode)
 	if existing, err := h.service.GetProduct(product.Barcode); err == nil && existing != nil {
 		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El cÃ³digo de barras ya existe en el sistema", gin.H{
@@ -148,9 +156,27 @@ func (h *ProductHandler) Create(c *gin.Context) {
 }
 
 func (h *ProductHandler) GetAll(c *gin.Context) {
-	products, err := h.service.GetAllProducts()
+	supplierIDStr := c.Query("supplier")
+	var products []models.Product
+	var err error
+
+	if supplierIDStr != "" && supplierIDStr != "global" && supplierIDStr != "null" {
+		if supplierIDStr == "none" {
+			products, err = h.service.GetOrphanedProducts()
+		} else {
+			supplierID, _ := strconv.Atoi(supplierIDStr)
+			if supplierID > 0 {
+				products, err = h.service.GetProductsBySupplier(uint(supplierID))
+			} else {
+				products, err = h.service.GetAllProducts()
+			}
+		}
+	} else {
+		products, err = h.service.GetAllProducts()
+	}
+
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catÃ¡logo de productos", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener catálogo de productos", err)
 		return
 	}
 	c.JSON(http.StatusOK, products)
@@ -234,8 +260,26 @@ func (h *ProductHandler) Update(c *gin.Context) {
 
 	// SanitizaciÃ³n
 	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
-	// Capturar estado anterior para auditorÃ­a forense
+	
+	if product.SupplierID != nil && *product.SupplierID == 0 {
+		product.SupplierID = nil
+	}
+
+	if product.BaseProductBarcode != nil && strings.TrimSpace(*product.BaseProductBarcode) == "" {
+		product.BaseProductBarcode = nil
+	}
+	
+	// Capturar estado anterior para auditoría forense
 	existing, _ := h.service.GetProduct(barcode)
+
+	dniStr, nameStr := GetContextUser(c)
+	if dniStr != "" {
+		product.UpdatedByDNI = dniStr
+		product.UpdatedByName = nameStr
+	} else {
+		product.UpdatedByDNI = "admin"
+		product.UpdatedByName = "admin"
+	}
 
 	if err := h.service.UpdateProduct(barcode, &product); err != nil {
 		fmt.Printf("[ERROR] UpdateProduct failed for barcode %s: %v\n", barcode, err)
@@ -253,7 +297,12 @@ func (h *ProductHandler) Update(c *gin.Context) {
 		return
 	}
 
-	// AuditorÃ­a de Cambio de Precio (CRÃTICO)
+	// Sincronizar proveedores si vienen en el payload (permite unlink)
+	if product.Suppliers != nil {
+		_ = h.service.UpdateProductSuppliers(barcode, product.Suppliers)
+	}
+
+	// AuditorÃ­a de Cambio de Precio (CRÃ TICO)
 	if existing != nil && existing.SalePrice != product.SalePrice {
 		dniStr, nameStr := GetContextUser(c)
 
@@ -381,19 +430,29 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 		TotalWeight     float64              `json:"totalWeight"`
 		IsEgreso        *bool                `json:"isEgreso"`
 		EditReceptionID string               `json:"editReceptionId"`
+		AdminPin        string               `json:"adminPin"`
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos invÃ¡lido", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
-	// Doble ValidaciÃ³n de Seguridad: Solo ADMIN/SUPERADMIN pueden omitir egresos
+	// Doble Validación de Seguridad: Solo ADMIN/SUPERADMIN pueden omitir egresos, validado por PIN
 	if body.BypassExpense {
-		roleStr := GetContextRole(c)
-		if roleStr != "ADMIN" && roleStr != "SUPERADMIN" {
-			SendError(c, http.StatusForbidden, ErrForbidden, "No tienes permisos para omitir el registro de egresos", nil)
-			return
+		userRole, _ := c.Get("role")
+		roleStr := strings.ToLower(fmt.Sprintf("%v", userRole))
+		isAlreadyAdmin := roleStr == "admin" || roleStr == "administrador" || roleStr == "superadmin"
+
+		if !isAlreadyAdmin {
+			if body.AdminPin == "" {
+				SendError(c, http.StatusForbidden, ErrForbidden, "Se requiere PIN de administrador para omitir el egreso", nil)
+				return
+			}
+			if err := h.authService.VerifyAdminPIN(body.AdminPin); err != nil {
+				SendError(c, http.StatusUnauthorized, ErrUnauthorized, "PIN de Administrador incorrecto", err)
+				return
+			}
 		}
 	}
 
@@ -758,17 +817,18 @@ func (h *ProductHandler) GetReception(c *gin.Context) {
 
 func (h *ProductHandler) ScanInvoice(c *gin.Context) {
 	var req struct {
-		ImageBase64  string `json:"imageBase64"`
-		MimeType     string `json:"mimeType"`
-		SupplierName string `json:"supplierName"`
-		SupplierID   uint   `json:"supplierId"`
+		ImageBase64   string                `json:"imageBase64"`
+		MimeType      string                `json:"mimeType"`
+		SupplierName  string                `json:"supplierName"`
+		SupplierID    uint                  `json:"supplierId"`
+		ExpectedTaxes *models.ExpectedTaxes `json:"expectedTaxes,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
-	result, err := h.service.ScanInvoice(req.ImageBase64, req.MimeType, req.SupplierName, req.SupplierID)
+	result, err := h.service.ScanInvoice(req.ImageBase64, req.MimeType, req.SupplierName, req.SupplierID, req.ExpectedTaxes)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al escanear factura", err)
 		return
@@ -788,9 +848,38 @@ func (h *ProductHandler) SaveAlias(c *gin.Context) {
 		return
 	}
 
-	// Assuming a service method for this exists, if not we'll just mock it or add it later.
-	// We'll return 200 OK for now to satisfy the compiler.
+	alias := &models.SupplierProductAlias{
+		SupplierID:     req.SupplierID,
+		InvoiceName:    req.InvoiceName,
+		ProductBarcode: req.ProductBarcode,
+	}
+
+	err := h.service.SaveSupplierAlias(alias)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error al guardar el alias", err)
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "Alias guardado con éxito"})
+}
+
+func (h *ProductHandler) LinkSupplier(c *gin.Context) {
+	barcode := c.Param("barcode")
+	var req struct {
+		SupplierID uint `json:"supplierId" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Falta supplierId", err)
+		return
+	}
+
+	err := h.service.LinkSupplier(barcode, req.SupplierID)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al vincular proveedor", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Proveedor vinculado con éxito"})
 }
 
 func (h *ProductHandler) UnlinkSupplier(c *gin.Context) {

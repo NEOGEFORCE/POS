@@ -3,6 +3,7 @@ package repositories
 import (
 	"backPOS-go/internal/core/domain/models"
 	"gorm.io/gorm"
+	"time"
 )
 
 type closureRepository struct {
@@ -15,6 +16,12 @@ func NewClosureRepository(db *gorm.DB) *closureRepository {
 
 func (r *closureRepository) Save(closure *models.CashierClosure) error {
 	return r.db.Save(closure).Error
+}
+
+func (r *closureRepository) GetByDateRange(from, to time.Time) ([]models.CashierClosure, error) {
+	var closures []models.CashierClosure
+	err := r.db.Where("start_date >= ? AND start_date <= ?", from, to).Order("start_date ASC").Find(&closures).Error
+	return closures, err
 }
 
 func (r *closureRepository) GetAll() ([]models.CashierClosure, error) {
@@ -103,6 +110,55 @@ func (r *closureRepository) GetGlobalHistoricalSum() (expected float64, real flo
 		Scan(&result).Error
 	
 	return result.Expected, result.Real, err
+}
+
+func (r *closureRepository) GetDailyReconstructedSales(from time.Time, to time.Time) (map[string]float64, error) {
+	dailySales := make(map[string]float64)
+
+	var results []struct {
+		Day   string
+		Total float64
+	}
+
+	err := r.db.Table("cashier_closures").
+		Select("TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses) as total").
+		Where("end_date >= ? AND end_date <= ?", from, to).
+		Group("day").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, res := range results {
+		dailySales[res.Day] = res.Total
+	}
+
+	return dailySales, nil
+}
+
+func (r *closureRepository) GetMonthlyReconstructedSales() (map[string]float64, error) {
+	monthlySales := make(map[string]float64)
+
+	var results []struct {
+		Month string
+		Total float64
+	}
+
+	err := r.db.Table("cashier_closures").
+		Select("TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month, SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses) as total").
+		Group("month").
+		Scan(&results).Error
+
+	if err != nil {
+		return nil, err
+	}
+
+	for _, res := range results {
+		monthlySales[res.Month] = res.Total
+	}
+
+	return monthlySales, nil
 }
 
 func (r *closureRepository) Delete(id uint) error {

@@ -110,3 +110,26 @@ func (h *NotificationHandler) HealthCheck(c *gin.Context) {
 		"timestamp":     fmt.Sprintf("%d", os.Getpid()),
 	})
 }
+
+// SendTelegramMessage envía un mensaje de texto simple vía Telegram Bot
+func (h *NotificationHandler) SendTelegramMessage(c *gin.Context) {
+	var req struct {
+		Message string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Cuerpo de mensaje inválido", err)
+		return
+	}
+
+	if req.Message == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "El mensaje no puede estar vacío", nil)
+		return
+	}
+
+	h.telegramService.SendMarkdownAlert(req.Message)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Mensaje enviado exitosamente vía Telegram",
+	})
+}

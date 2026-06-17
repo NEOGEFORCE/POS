@@ -1,6 +1,7 @@
 package repositories
 
 import (
+	"fmt"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
@@ -22,12 +23,18 @@ func (r *PostgresClientRepository) Save(client *models.Client) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(cache.CacheKeyClientCount)
+		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", client.DNI))
 		sse.GetSSEService().Broadcast("CUSTOMER_UPDATE", nil)
 	}
 	return err
 }
 
 func (r *PostgresClientRepository) GetByDNI(dni string) (*models.Client, error) {
+	cacheKey := fmt.Sprintf("client_dni_%s", dni)
+	if cached, found := cache.CacheManager.Get(cacheKey); found {
+		return cached.(*models.Client), nil
+	}
+
 	var client models.Client
 	
 	query := `
@@ -53,6 +60,8 @@ func (r *PostgresClientRepository) GetByDNI(dni string) (*models.Client, error) 
 	if client.DNI == "" {
 		return nil, gorm.ErrRecordNotFound
 	}
+
+	cache.CacheManager.Set(cacheKey, &client, 24*time.Hour)
 	return &client, nil
 }
 
@@ -82,6 +91,7 @@ func (r *PostgresClientRepository) Update(dni string, client *models.Client) err
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(cache.CacheKeyClientCount)
+		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", dni))
 		sse.GetSSEService().Broadcast("CUSTOMER_UPDATE", nil)
 	}
 	return err
@@ -92,6 +102,7 @@ func (r *PostgresClientRepository) Delete(dni string) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(cache.CacheKeyClientCount)
+		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", dni))
 		sse.GetSSEService().Broadcast("CUSTOMER_UPDATE", nil)
 	}
 	return err

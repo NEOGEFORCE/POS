@@ -43,6 +43,7 @@ type SaleRepository interface {
 	GetDB() interface{}
 	GetAll() ([]models.Sale, error)
 	GetByDateRange(from, to time.Time) ([]models.Sale, error)
+	GetByDateRangeWithoutDetails(from, to time.Time) ([]models.Sale, error)
 	GetDeletedByDateRange(from, to time.Time) ([]models.Sale, error)
 	GetByID(id uint) (*models.Sale, error)
 	Delete(id uint, reason string, employeeDNI string) error

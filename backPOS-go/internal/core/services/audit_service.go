@@ -29,10 +29,13 @@ func (s *AuditService) Log(dni, name, action, module, details, human, changes, i
 		Device:        device,
 		CreatedAt:     time.Now(),
 	}
-	_ = s.repo.Create(log)
-	
-	// AVISO GLOBAL: Nueva acción registrada en auditoría
-	go sse.GetSSEService().BroadcastAuditUpdate()
+	go func() {
+		defer func() { recover() }()
+		_ = s.repo.Create(log)
+		
+		// AVISO GLOBAL: Nueva acción registrada en auditoría
+		sse.GetSSEService().BroadcastAuditUpdate()
+	}()
 }
 
 func (s *AuditService) GetLogs() ([]models.AuditLog, error) {

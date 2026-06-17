@@ -5,10 +5,18 @@ import (
 	"time"
 )
 
+type ExpenseFilter struct {
+	Page     int    `json:"page"`
+	PageSize int    `json:"pageSize"`
+	Supplier string `json:"supplier"`
+	Concept  string `json:"concept"`
+}
+
 type ExpenseRepository interface {
 	Save(expense *models.Expense) error
 	GetAll() ([]models.Expense, error)
 	GetAllFiltered(supplier, concept string) ([]models.Expense, error)
+	GetExpensesPaginated(filter ExpenseFilter) ([]models.Expense, int64, error)
 	GetByID(id uint) (*models.Expense, error)
 	GetByDateRange(from, to time.Time) ([]models.Expense, error)
 	GetPendingRestockExpensesBySupplier(supplierID uint) ([]models.Expense, error)

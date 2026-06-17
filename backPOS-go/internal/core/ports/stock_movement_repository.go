@@ -8,6 +8,7 @@ import (
 type StockMovementRepository interface {
 	Save(movement *models.StockMovement) error
 	SaveWithTx(tx interface{}, movement *models.StockMovement) error
+	BatchSaveWithTx(tx interface{}, movements []models.StockMovement) error
 	GetByProduct(barcode string, from, to time.Time) ([]models.StockMovement, error)
 	GetByDateRange(from, to time.Time) ([]models.StockMovement, error)
 	GetLastMovementByBarcodeAndReason(barcode string, reason string) (*models.StockMovement, error)

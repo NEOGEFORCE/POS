@@ -124,14 +124,19 @@ func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
 		return nil
 	}
 	
-	today := time.Now().Format("2006-01-02")
-	orders, err := s.repo.GetByDate(today)
+	bogotaLoc, _ := time.LoadLocation("America/Bogota")
+	if bogotaLoc == nil {
+		bogotaLoc = time.FixedZone("COT", -5*3600)
+	}
+	today := time.Now().In(bogotaLoc).Format("2006-01-02")
+	
+	orders, err := s.repo.GetBySupplier(supplierID)
 	if err != nil {
 		return err
 	}
 	
 	for _, o := range orders {
-		if o.SupplierID == supplierID && o.Status == "PENDING" {
+		if o.Status == "PENDING" && o.ExpectedDate.Format("2006-01-02") <= today {
 			log.Printf("[ExpectedOrderService] Marcando pedido #%d como recibido para proveedor %d", o.ID, supplierID)
 			_ = s.repo.UpdateStatus(o.ID, "RECEIVED")
 		}

@@ -63,6 +63,26 @@ func (s *ProductService) GetPaginatedProducts(page, pageSize int, search string)
 	return s.repo.GetPaginated(page, pageSize, search, 0)
 }
 
+func (s *ProductService) GetProductsBySupplier(supplierID uint) ([]models.Product, error) {
+	return s.repo.GetBySupplier(supplierID)
+}
+
+func (s *ProductService) SaveSupplierAlias(alias *models.SupplierProductAlias) error {
+	return s.repo.SaveSupplierAlias(alias)
+}
+
+func (s *ProductService) LinkSupplier(barcode string, supplierID uint) error {
+	return s.repo.LinkSupplier(barcode, supplierID)
+}
+
+func (s *ProductService) UnlinkSupplier(barcode string, supplierID uint) error {
+	return s.repo.UnlinkSupplier(barcode, supplierID)
+}
+
+func (s *ProductService) GetOrphanedProducts() ([]models.Product, error) {
+	return s.repo.GetOrphanedProducts()
+}
+
 func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Product) error {
 	existing, err := s.repo.GetByBarcode(barcode)
 	if err != nil {
@@ -542,7 +562,7 @@ func (s *ProductService) EditReception(ref string, dniStr string, reason string,
 
 // --- AI Invoice Reader Logic ---
 
-func (s *ProductService) ScanInvoice(imageBase64, mimeType, supplierName string, supplierID uint) (*models.ScanInvoiceResult, error) {
+func (s *ProductService) ScanInvoice(imageBase64, mimeType, supplierName string, supplierID uint, expectedTaxes *models.ExpectedTaxes) (*models.ScanInvoiceResult, error) {
 	aliases, err := s.repo.GetSupplierAliases(supplierID)
 	if err != nil {
 		aliases = make(map[string]models.SupplierProductAlias)
@@ -766,8 +786,4 @@ func (s *ProductService) callClaudeVision(imageBase64, mimeType, supplierName st
 	}
 
 	return items, nil
-}
-
-func (s *ProductService) UnlinkSupplier(barcode string, supplierID uint) error {
-	return s.repo.UnlinkSupplier(barcode, supplierID)
 }

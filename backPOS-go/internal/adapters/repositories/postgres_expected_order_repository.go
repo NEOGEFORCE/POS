@@ -30,7 +30,7 @@ func (r *PostgresExpectedOrderRepository) GetByID(id uint) (*models.ExpectedOrde
 // GetAll obtiene todos los pedidos esperados
 func (r *PostgresExpectedOrderRepository) GetAll() ([]models.ExpectedOrder, error) {
 	var orders []models.ExpectedOrder
-	err := r.db.Preload("Supplier").Preload("Items").Order("expectedDate ASC").Find(&orders).Error
+	err := r.db.Preload("Supplier").Preload("Items").Order(`"expectedDate" ASC`).Find(&orders).Error
 	return orders, err
 }
 
@@ -76,7 +76,7 @@ func (r *PostgresExpectedOrderRepository) GetBySupplier(supplierID uint) ([]mode
 	var orders []models.ExpectedOrder
 	err := r.db.Preload("Supplier").Preload("Items").
 		Where("supplierId = ? AND status = ?", supplierID, "PENDING").
-		Order("expectedDate ASC").
+		Order(`"expectedDate" ASC`).
 		Find(&orders).Error
 	return orders, err
 }

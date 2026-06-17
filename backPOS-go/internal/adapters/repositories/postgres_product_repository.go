@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
@@ -44,6 +45,7 @@ func (r *PostgresProductRepository) Save(product *models.Product) error {
 	// INVALIDACIÓN L1: El catálogo maestro ha cambiado
 	cache.InvalidateCache(cache.CacheKeyProducts)
 	cache.InvalidateCache(cache.CacheKeyProductCount)
+	cache.InvalidateCache(fmt.Sprintf("product_barcode_%s", product.Barcode))
 	r.invalidateDashboardCache()
 
 	if len(suppliers) > 0 {
@@ -57,11 +59,20 @@ func (r *PostgresProductRepository) Save(product *models.Product) error {
 }
 
 func (r *PostgresProductRepository) GetByBarcode(barcode string) (*models.Product, error) {
+	cacheKey := fmt.Sprintf("product_barcode_%s", barcode)
+	if cached, found := cache.CacheManager.Get(cacheKey); found {
+		return cached.(*models.Product), nil
+	}
+
 	var product models.Product
 	// Búsqueda en código principal o en el array de códigos alternos
 	err := r.db.Preload("Category").Preload("Suppliers").
 		Where("barcode = ? OR ? = ANY(string_to_array(\"alternate_codes\", ','))", barcode, barcode).
 		First(&product).Error
+		
+	if err == nil {
+		cache.CacheManager.Set(cacheKey, &product, 24*time.Hour)
+	}
 	return &product, err
 }
 
@@ -149,13 +160,19 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 func (r *PostgresProductRepository) Update(barcode string, product *models.Product) error {
 	// === PREPARACIÓN DE VALORES SEGUROS ===
 
-	catID := int64(product.CategoryID)
-	if catID == 0 {
+	var catID interface{}
+	catIDInt := int64(product.CategoryID)
+	if catIDInt == 0 {
 		var currentCatID int64
 		r.db.Raw(`SELECT "categoryId" FROM products WHERE barcode = ?`, barcode).Scan(&currentCatID)
 		if currentCatID > 0 {
-			catID = currentCatID
+			catIDInt = currentCatID
 		}
+	}
+	if catIDInt > 0 {
+		catID = catIDInt
+	} else {
+		catID = nil
 	}
 
 	var suppID interface{}
@@ -256,6 +273,7 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 	// INVALIDACIÓN L1
 	cache.InvalidateCache(cache.CacheKeyProducts)
 	cache.InvalidateCache(cache.CacheKeyProductCount)
+	cache.InvalidateCache(fmt.Sprintf("product_barcode_%s", barcode))
 	r.invalidateDashboardCache()
 
 	return nil
@@ -266,6 +284,7 @@ func (r *PostgresProductRepository) Delete(barcode string) error {
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		cache.InvalidateCache(cache.CacheKeyProductCount)
+		cache.InvalidateCache(fmt.Sprintf("product_barcode_%s", barcode))
 		r.invalidateDashboardCache()
 	}
 	return err
@@ -327,6 +346,14 @@ func (r *PostgresProductRepository) GetBySupplier(supplierID uint) ([]models.Pro
 	return products, err
 }
 
+func (r *PostgresProductRepository) GetOrphanedProducts() ([]models.Product, error) {
+	var products []models.Product
+	err := r.db.Where(
+		`"supplierId" IS NULL AND barcode NOT IN (SELECT product_barcode FROM product_suppliers)`,
+	).Where("\"isActive\" = ?", true).Find(&products).Error
+	return products, err
+}
+
 func (r *PostgresProductRepository) UnlinkSupplier(barcode string, supplierID uint) error {
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		// 1. Set products.supplierId to NULL if it matches this supplier
@@ -340,6 +367,21 @@ func (r *PostgresProductRepository) UnlinkSupplier(barcode string, supplierID ui
 		return nil
 	})
 }
+
+func (r *PostgresProductRepository) LinkSupplier(barcode string, supplierID uint) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// 1. Set products.supplierId
+		if err := tx.Exec(`UPDATE products SET "supplierId" = ? WHERE barcode = ?`, supplierID, barcode).Error; err != nil {
+			return err
+		}
+		// 2. Insert into product_suppliers
+		if err := tx.Exec(`INSERT INTO product_suppliers (product_barcode, supplier_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, barcode, supplierID).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
 func (r *PostgresProductRepository) UpdateSupplierFrequency(supplierID uint, days int) error {
 	return r.db.Model(&models.Supplier{}).Where("id = ?", supplierID).Update("visit_frequency_days", days).Error
 }
@@ -409,13 +451,27 @@ func (r *PostgresProductRepository) GetPendingTransitQuantities() (map[string]fl
 
 	var rows []TransitRow
 
-	err := r.db.Table("expected_order_items i").
-		Select("i.barcode, SUM(i.expected_quantity) as total_qty, MAX(s.name) as supplier_name").
-		Joins("JOIN expected_orders o ON o.id = i.expected_order_id").
-		Joins("LEFT JOIN suppliers s ON s.id = o.supplier_id").
-		Where("o.status = ?", "PENDING").
-		Group("i.barcode").
-		Scan(&rows).Error
+	query := `
+		SELECT barcode, SUM(qty) as total_qty, MAX(supplier_name) as supplier_name
+		FROM (
+			SELECT i.barcode as barcode, i.expected_quantity as qty, s.name as supplier_name
+			FROM expected_order_items i
+			JOIN expected_orders o ON o.id = i.expected_order_id
+			LEFT JOIN suppliers s ON s.id = o."supplierId"
+			WHERE UPPER(o.status) = 'PENDING'
+			
+			UNION ALL
+			
+			SELECT i.product_id as barcode, i.quantity as qty, s.name as supplier_name
+			FROM confirmed_order_items i
+			JOIN confirmed_orders o ON o.id = i.confirmed_order_id
+			LEFT JOIN suppliers s ON s.id = o.supplier_id
+			WHERE UPPER(o.status) = 'PENDING'
+		) t
+		GROUP BY barcode
+	`
+
+	err := r.db.Raw(query).Scan(&rows).Error
 
 	if err != nil {
 		return nil, nil, err
@@ -527,7 +583,7 @@ func (r *PostgresProductRepository) GetSupplierAliases(supplierID uint) (map[str
 	}
 	result := make(map[string]models.SupplierProductAlias)
 	for _, a := range aliases {
-		result[a.InvoiceName] = a
+		result[strings.ToUpper(a.InvoiceName)] = a
 	}
 	return result, nil
 }

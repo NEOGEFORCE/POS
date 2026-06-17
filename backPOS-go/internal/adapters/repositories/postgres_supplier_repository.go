@@ -4,6 +4,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"fmt"
 	"log"
+	"time"
 
 	"backPOS-go/internal/infrastructure/cache"
 	"backPOS-go/internal/infrastructure/sse"
@@ -88,6 +89,35 @@ func (r *PostgresSupplierRepository) Delete(id uint) error {
 
 func (r *PostgresSupplierRepository) GetByVisitDay(day string) ([]models.Supplier, error) {
 	var suppliers []models.Supplier
-	err := r.db.Where("\"visitDay\" = ? AND \"is_active\" = ?", day, true).Order("name ASC").Limit(100).Find(&suppliers).Error
+	err := r.db.Where("(\"visitDay\" = ? OR visit_days @> ?::jsonb) AND \"is_active\" = ?", day, "\""+day+"\"", true).Order("name ASC").Limit(100).Find(&suppliers).Error
 	return suppliers, err
+}
+
+// ============================================================
+// Auto-Aprendizaje de Rutas de Proveedores
+// ============================================================
+func (r *PostgresSupplierRepository) LearnDay(supplierID uint, targetColumn string) error {
+	loc, _ := time.LoadLocation("America/Bogota")
+	days := map[time.Weekday]string{
+		time.Monday:    "Lunes",
+		time.Tuesday:   "Martes",
+		time.Wednesday: "Miércoles",
+		time.Thursday:  "Jueves",
+		time.Friday:    "Viernes",
+		time.Saturday:  "Sábado",
+		time.Sunday:    "Domingo",
+	}
+	today := days[time.Now().In(loc).Weekday()]
+
+	if targetColumn != "visit_days" && targetColumn != "delivery_days" {
+		return fmt.Errorf("columna no permitida para auto-aprendizaje: %s", targetColumn)
+	}
+
+	query := fmt.Sprintf(`
+		UPDATE suppliers
+		SET %s = COALESCE(%s, '[]'::jsonb) || '"%s"'::jsonb
+		WHERE id = ? AND NOT (COALESCE(%s, '[]'::jsonb) @> '"%s"'::jsonb)
+	`, targetColumn, targetColumn, today, targetColumn, today)
+
+	return r.db.Exec(query, supplierID).Error
 }

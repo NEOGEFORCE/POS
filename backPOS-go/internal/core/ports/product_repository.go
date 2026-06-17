@@ -80,8 +80,11 @@ type ProductRepository interface {
 	UpdateSupplierPrice(productBarcode string, supplierID uint, price float64) error
 	GetSupplierPrices(productBarcode string) ([]models.ProductSupplier, error)
 	GetBySupplier(supplierID uint) ([]models.Product, error)
+	GetOrphanedProducts() ([]models.Product, error)
+
 	SyncSuppliers(productBarcode string, supplierIDs []uint) error
 	UnlinkSupplier(productBarcode string, supplierID uint) error
+	LinkSupplier(barcode string, supplierID uint) error
 	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error)
 	GetSavingsOpportunities() ([]SavingsOpportunity, error)
 	GetAllWithLowStock() ([]models.Product, error)

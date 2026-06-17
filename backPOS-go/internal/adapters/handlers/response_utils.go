@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"log"
 	"github.com/gin-gonic/gin"
 	"time"
 )
@@ -32,6 +33,19 @@ func SendError(c *gin.Context, status int, code, message string, errOrMeta any) 
 			metadata = errOrMeta
 		}
 	}
+	
+	// Traducir error a lenguaje amigable si existe un detalle tecnico
+	if details != "" {
+		friendlyTitle, friendlyDetails := TranslateDBError(details)
+		if friendlyTitle != "" {
+			// Sobrescribimos el mensaje generico con el titulo amigable del error tecnico
+			message = friendlyTitle
+			// Sobrescribimos los detalles con la explicacion amigable
+			details = friendlyDetails
+		}
+	}
+
+	log.Printf("❌ [API_ERROR] %d | Code: %s | Message: %s | Details: %s", status, code, message, details)
 
 	c.JSON(status, ErrorResponse{
 		Success: false,

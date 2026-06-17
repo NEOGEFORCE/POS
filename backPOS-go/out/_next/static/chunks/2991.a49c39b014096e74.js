@@ -1,1 +1,0 @@
-"use strict";(self.webpackChunk_N_E=self.webpackChunk_N_E||[]).push([[2991],{62991:(e,s,t)=>{t.d(s,{db:()=>c});var a=t(10005);class r extends a.Ay{constructor(){super("PosDatabase"),this.version(1).stores({productos:"barcode, productName",ventas_pendientes:"++id, timestamp"})}}let c=new r}}]);

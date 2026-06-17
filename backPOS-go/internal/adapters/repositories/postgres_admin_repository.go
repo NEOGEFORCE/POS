@@ -1,7 +1,11 @@
 package repositories
 
 import (
+	"fmt"
+	"time"
+
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/infrastructure/cache"
 	"gorm.io/gorm"
 )
 
@@ -26,9 +30,18 @@ func (r *PostgresAdminRepository) FindByEmail(email string) (*models.Employee, e
 }
 
 func (r *PostgresAdminRepository) FindByDNI(dni string) (*models.Employee, error) {
+	cacheKey := fmt.Sprintf("employee_dni_%s", dni)
+	if cached, found := cache.CacheManager.Get(cacheKey); found {
+		return cached.(*models.Employee), nil
+	}
+
 	var employee models.Employee
 	// Usamos Unscoped para poder encontrar usuarios incluso si fueron borrados lógicamente
 	err := r.db.Unscoped().Where("dni = ?", dni).First(&employee).Error
+	
+	if err == nil {
+		cache.CacheManager.Set(cacheKey, &employee, 24*time.Hour)
+	}
 	return &employee, err
 }
 
@@ -39,7 +52,11 @@ func (r *PostgresAdminRepository) GetAll() ([]models.Employee, error) {
 }
 
 func (r *PostgresAdminRepository) Save(employee *models.Employee) error {
-	return r.db.Create(employee).Error
+	err := r.db.Create(employee).Error
+	if err == nil {
+		cache.InvalidateCache(fmt.Sprintf("employee_dni_%s", employee.DNI))
+	}
+	return err
 }
 
 func (r *PostgresAdminRepository) Update(dni string, employee *models.Employee) error {
@@ -56,11 +73,19 @@ func (r *PostgresAdminRepository) Update(dni string, employee *models.Employee) 
 	if employee.Password != "" {
 		updates["password"] = employee.Password
 	}
-	return r.db.Unscoped().Model(&models.Employee{}).Where("dni = ?", dni).Updates(updates).Error
+	err := r.db.Unscoped().Model(&models.Employee{}).Where("dni = ?", dni).Updates(updates).Error
+	if err == nil {
+		cache.InvalidateCache(fmt.Sprintf("employee_dni_%s", dni))
+	}
+	return err
 }
 
 func (r *PostgresAdminRepository) Delete(dni string) error {
-	return r.db.Model(&models.Employee{}).Where("dni = ?", dni).Update("is_active", false).Error
+	err := r.db.Model(&models.Employee{}).Where("dni = ?", dni).Update("is_active", false).Error
+	if err == nil {
+		cache.InvalidateCache(fmt.Sprintf("employee_dni_%s", dni))
+	}
+	return err
 }
 
 func (r *PostgresAdminRepository) CountAll() (int64, error) {

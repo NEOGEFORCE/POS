@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/cache"
 	"log"
 	"strings"
@@ -40,7 +41,7 @@ func (r *PostgresExpenseRepository) Save(expense *models.Expense) error {
 
 func (r *PostgresExpenseRepository) GetAll() ([]models.Expense, error) {
 	expenses := []models.Expense{}
-	err := r.db.Preload("Creator").Order("date DESC").Find(&expenses).Error
+	err := r.db.Preload("Creator").Order("date DESC").Limit(1000).Find(&expenses).Error
 	return expenses, err
 }
 
@@ -59,8 +60,34 @@ func (r *PostgresExpenseRepository) GetAllFiltered(supplier, concept string) ([]
 		query = query.Where("description ILIKE ?", "%"+concept+"%")
 	}
 
-	err := query.Order("date DESC").Find(&expenses).Error
+	err := query.Order("date DESC").Limit(1000).Find(&expenses).Error
 	return expenses, err
+}
+
+func (r *PostgresExpenseRepository) GetExpensesPaginated(filter ports.ExpenseFilter) ([]models.Expense, int64, error) {
+	var expenses []models.Expense
+	var total int64
+
+	query := r.db.Model(&models.Expense{})
+
+	if filter.Supplier != "" {
+		query = query.Joins("LEFT JOIN suppliers ON suppliers.id = expenses.supplier_id").
+			Where("suppliers.name ILIKE ?", "%"+filter.Supplier+"%")
+	}
+
+	if filter.Concept != "" {
+		query = query.Where("description ILIKE ?", "%"+filter.Concept+"%")
+	}
+
+	err := query.Count(&total).Error
+	if err != nil {
+		return nil, 0, err
+	}
+
+	offset := (filter.Page - 1) * filter.PageSize
+	err = query.Preload("Creator").Order("date DESC").Offset(offset).Limit(filter.PageSize).Find(&expenses).Error
+
+	return expenses, total, err
 }
 
 func (r *PostgresExpenseRepository) GetByID(id uint) (*models.Expense, error) {
@@ -146,7 +173,7 @@ func (r *PostgresExpenseRepository) GetPendingDebtsSummary() (float64, int64, er
 		Count  int64
 	}
 	err := r.db.Model(&models.Expense{}).
-		Where("UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')", "PENDING").
+		Where("(UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) != 'PAID'", "PENDING").
 		Select("COALESCE(SUM(CASE WHEN remaining_amount > 0 THEN remaining_amount ELSE amount END + tax_amount), 0) as amount, COUNT(*) as count").
 		Scan(&result).Error
 	return result.Amount, result.Count, err
@@ -154,9 +181,9 @@ func (r *PostgresExpenseRepository) GetPendingDebtsSummary() (float64, int64, er
 
 func (r *PostgresExpenseRepository) GetExpensesByStatus(status string) ([]models.Expense, error) {
 	expenses := []models.Expense{}
-	// If searching for PENDING, also include PRESTAMO/PREST. sources
+	// If searching for PENDING, also include PRESTAMO/PREST. sources but EXCLUDE already PAID ones
 	if strings.ToUpper(status) == "PENDING" {
-		err := r.db.Where("UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')", "PENDING").
+		err := r.db.Where("(UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) != 'PAID'", "PENDING").
 			Order("date DESC").Find(&expenses).Error
 		return expenses, err
 	}
@@ -180,6 +207,7 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 	results := make(map[string]float64)
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
+		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
 		Group("\"paymentSource\"").
@@ -205,8 +233,10 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to time.Time) (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Expense{}).
+		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
+		Where("UPPER(category) NOT IN ('PROVEEDORES', 'INVENTARIO')").
 		Where("date >= ? AND date <= ?", from, to).
 		Select("COALESCE(SUM(amount + tax_amount), 0)").Scan(&total).Error
 	if err != nil {
@@ -219,6 +249,7 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, t
 	results := make(map[string]float64)
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
+		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("date >= ? AND date <= ?", from, to).
 		Group("\"paymentSource\"").

@@ -43,7 +43,8 @@ func (h *OrderHandler) GetSuggestedOrders(c *gin.Context) {
 
 	// Si es "global", retornar todos los productos en riesgo (Radar Global) agrupados por proveedor
 	if supplierIDStr == "global" {
-		suggested, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped()
+		ignoreStock := c.Query("all") == "true"
+		suggested, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped(ignoreStock)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -63,7 +64,8 @@ func (h *OrderHandler) GetSuggestedOrders(c *gin.Context) {
 		return
 	}
 
-	suggested, err := h.inventoryService.GetSuggestedOrders(uint(supplierID))
+	ignoreStock := c.Query("all") == "true"
+	suggested, err := h.inventoryService.GetSuggestedOrders(uint(supplierID), ignoreStock)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -76,7 +78,8 @@ func (h *OrderHandler) GetSuggestedOrders(c *gin.Context) {
 func (h *OrderHandler) GetGlobalRestockSuggestions(c *gin.Context) {
 	log.Printf("[Radar Global] Iniciando solicitud de restock global...")
 
-	suggested, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped()
+	ignoreStock := c.Query("all") == "true"
+	suggested, err := h.inventoryService.GetGlobalRestockSuggestionsGrouped(ignoreStock)
 	if err != nil {
 		log.Printf("[Radar Global] ERROR en servicio: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -158,6 +161,7 @@ func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 				"estimatedCost": o.EstimatedCost,
 				"createdAt":     o.OrderDate,
 				"expectedDate":  o.OrderDate, // Fallback
+				"status":        string(o.Status),
 				"itemCount":     len(o.OrderItems),
 				"orderItems":    o.OrderItems,
 			})
@@ -182,6 +186,7 @@ func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 				"estimatedCost": eo.TotalEstimated,
 				"createdAt":     eo.CreatedAt,
 				"expectedDate":  eo.ExpectedDate,
+				"status":        eo.Status,
 				"itemCount":     eo.ItemCount,
 				"orderItems":    eo.Items,
 			})
@@ -205,6 +210,7 @@ func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 				"estimatedCost": co.EstimatedTotal,
 				"createdAt":     co.ConfirmedAt,
 				"expectedDate":  co.ExpectedDate,
+				"status":        co.Status,
 				"invoiceRef":    co.InvoiceRef,
 				"itemCount":     len(co.Items),
 				"orderItems":    co.Items,
@@ -245,7 +251,7 @@ func (h *OrderHandler) GetOrderItems(c *gin.Context) {
 		orders, err := h.restockService.GetPendingOrders()
 		if err == nil {
 			for _, co := range orders {
-				if fmt.Sprintf("%d", co.ID) == idStr {
+				if fmt.Sprintf("%v", co.ID) == idStr {
 					type ItemDetail struct {
 						ProductName string  `json:"productName"`
 						Barcode     string  `json:"barcode"`
@@ -277,7 +283,7 @@ func (h *OrderHandler) GetOrderItems(c *gin.Context) {
 		allOrders, err := h.orderService.GetAllOrders()
 		if err == nil {
 			for _, po := range allOrders {
-				if fmt.Sprintf("%d", po.ID) == idStr {
+				if fmt.Sprintf("%v", po.ID) == idStr {
 					type ItemDetail struct {
 						ProductName string  `json:"productName"`
 						Barcode     string  `json:"barcode"`
@@ -309,7 +315,7 @@ func (h *OrderHandler) GetOrderItems(c *gin.Context) {
 		expectedOrders, err := h.expectedOrderService.GetAllExpectedOrders()
 		if err == nil {
 			for _, eo := range expectedOrders {
-				if fmt.Sprintf("%d", eo.ID) == idStr {
+				if fmt.Sprintf("%v", eo.ID) == idStr {
 					type ItemDetail struct {
 						ProductName string  `json:"productName"`
 						Barcode     string  `json:"barcode"`
@@ -554,6 +560,10 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 			}
 		}
 	}
+
+	// Forzar la fecha a mediodía en la zona horaria de Colombia para evitar el desfase UTC
+	loc, _ := time.LoadLocation("America/Bogota")
+	expectedDate = time.Date(expectedDate.Year(), expectedDate.Month(), expectedDate.Day(), 12, 0, 0, 0, loc)
 
 	// Obtener datos del creador del contexto (si está disponible)
 	createdByDNI, _ := c.Get("userDni")

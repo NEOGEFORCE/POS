@@ -121,8 +121,13 @@ func (s *AuthService) ForgotPassword(email string) error {
 	// El frontend manejará esta ruta
 	resetLink := fmt.Sprintf("%s/reset-password?token=%s", os.Getenv("FRONTEND_URL"), tokenString)
 
-	// 3. Enviar correo real
-	return s.emailService.SendResetPasswordEmail(user.Email, user.Name, resetLink)
+	// 3. Enviar correo real en segundo plano
+	go func() {
+		defer func() { recover() }()
+		_ = s.emailService.SendResetPasswordEmail(user.Email, user.Name, resetLink)
+	}()
+	
+	return nil
 }
 
 func (s *AuthService) ResetPassword(tokenString, newPassword string) error {
@@ -203,5 +208,18 @@ func (s *AuthService) CheckSetup() (bool, error) {
 	// Solo necesita setup si confirmamos exitosamente que el conteo es 0
 	return count == 0, nil
 }
-
-
+func (s *AuthService) VerifyAdminPIN(pin string) error {
+	allUsers, err := s.repo.GetAll()
+	if err != nil {
+		return err
+	}
+	for _, user := range allUsers {
+		role := strings.ToUpper(user.Role)
+		if role == "ADMIN" || role == "SUPERADMIN" || role == "ADMINISTRADOR" {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pin)); err == nil {
+				return nil
+			}
+		}
+	}
+	return errors.New("PIN de administrador incorrecto")
+}

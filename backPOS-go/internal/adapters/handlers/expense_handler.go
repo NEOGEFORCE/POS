@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
 	"backPOS-go/internal/infrastructure/sse"
 
@@ -63,6 +64,32 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
+func normalizeExpensesForFrontend(expenses []models.Expense) {
+	for i := range expenses {
+		e := &expenses[i]
+		if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 {
+			var parts []string
+			if e.CashAmount > 0 { parts = append(parts, "EFECTIVO") }
+			if e.NequiAmount > 0 { parts = append(parts, "NEQUI") }
+			if e.DaviplataAmount > 0 { parts = append(parts, "DAVIPLATA") }
+			if e.FondoAmount > 0 { parts = append(parts, "FONDO") }
+			if len(parts) > 1 {
+				e.PaymentSource = "MIXTO"
+			} else if len(parts) == 1 {
+				e.PaymentSource = parts[0]
+			}
+		} else {
+			src := strings.ToUpper(e.PaymentSource)
+			if strings.Contains(src, "/") && strings.Contains(src, "$") {
+				e.PaymentSource = "MIXTO"
+			} else {
+				if src == "CAJA" || src == "" { e.PaymentSource = "EFECTIVO" }
+				if src == "PREST." || src == "DEUDA" { e.PaymentSource = "PRESTAMO" }
+			}
+		}
+	}
+}
+
 func (h *ExpenseHandler) GetAll(c *gin.Context) {
 	supplier := c.Query("supplier")
 	concept := c.Query("concept")
@@ -72,7 +99,35 @@ func (h *ExpenseHandler) GetAll(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener gastos", err)
 		return
 	}
+	normalizeExpensesForFrontend(expenses)
 	c.JSON(http.StatusOK, expenses)
+}
+
+func (h *ExpenseHandler) GetPaginated(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "50"))
+	supplier := c.Query("supplier")
+	concept := c.Query("concept")
+
+	filter := ports.ExpenseFilter{
+		Page:     page,
+		PageSize: pageSize,
+		Supplier: supplier,
+		Concept:  concept,
+	}
+
+	expenses, total, err := h.service.GetExpensesPaginated(filter)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error fetching paginated expenses", err)
+		return
+	}
+
+	normalizeExpensesForFrontend(expenses)
+
+	c.JSON(http.StatusOK, gin.H{
+		"items": expenses,
+		"total": total,
+	})
 }
 
 func (h *ExpenseHandler) Delete(c *gin.Context) {

@@ -27,7 +27,7 @@ func (r *PostgresPurchaseOrderRepository) GetByID(id uint) (*models.PurchaseOrde
 
 func (r *PostgresPurchaseOrderRepository) GetAll() ([]models.PurchaseOrder, error) {
 	var orders []models.PurchaseOrder
-	err := r.db.Preload("Supplier").Find(&orders).Error
+	err := r.db.Preload("Supplier").Order("created_at DESC").Limit(1000).Find(&orders).Error
 	return orders, err
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -196,6 +197,53 @@ func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Reporte parcial enviado a Telegram"})
 }
 
+func normalizeExpensesForReport(expenses []models.Expense) {
+	for i := range expenses {
+		e := &expenses[i]
+		if e.CashAmount == 0 && e.NequiAmount == 0 && e.DaviplataAmount == 0 && e.FondoAmount == 0 && e.Status != "PENDING" {
+			src := strings.ToUpper(e.PaymentSource)
+			if strings.Contains(src, "/") && strings.Contains(src, "$") {
+				parts := strings.Split(src, "/")
+				for _, p := range parts {
+					p = strings.TrimSpace(p)
+					if strings.Contains(p, ": $") {
+						kv := strings.Split(p, ": $")
+						if len(kv) == 2 {
+							method := strings.TrimSpace(kv[0])
+							valStr := strings.ReplaceAll(kv[1], ".", "")
+							val, _ := strconv.ParseFloat(valStr, 64)
+							switch method {
+							case "CAJA", "EFECTIVO":
+								e.CashAmount += val
+							case "NEQUI":
+								e.NequiAmount += val
+							case "DAVIPLATA":
+								e.DaviplataAmount += val
+							case "FONDO":
+								e.FondoAmount += val
+							}
+						}
+					}
+				}
+			} else {
+				if src == "" || src == "CAJA" || src == "EFECTIVO" {
+					e.CashAmount = e.Amount
+				} else if src == "NEQUI" {
+					e.NequiAmount = e.Amount
+				} else if src == "DAVIPLATA" {
+					e.DaviplataAmount = e.Amount
+				} else if src == "FONDO" {
+					e.FondoAmount = e.Amount
+				} else if src == "PREST." || src == "DEUDA" || src == "PRESTAMO" {
+					e.Status = "PENDING"
+				} else {
+					e.CashAmount = e.Amount
+				}
+			}
+		}
+	}
+}
+
 func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierClosure, isPartial bool) string {
 	title := "🧾 *REPORTE DE CIERRE PROFESIONAL*"
 	if isPartial {
@@ -211,12 +259,11 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	efectivoContado := closure.PhysicalCash
 	ingresosDigitales := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
 
+	normalizeExpensesForReport(closure.Expenses)
+
 	egresosEfectivoTurno := 0.0
 	for _, e := range closure.Expenses {
-		src := strings.ToUpper(e.PaymentSource)
-		if src == "" || src == "EFECTIVO" || src == "CAJA" {
-			egresosEfectivoTurno += e.Amount
-		}
+		egresosEfectivoTurno += e.CashAmount
 	}
 
 	ventaReal := efectivoContado + ingresosDigitales + egresosEfectivoTurno
@@ -267,16 +314,41 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	msg.WriteString("💸 *3. EGRESOS DETALLADOS POR CANAL*\n")
 	
 	// 3. CONTROL DE EGRESOS POR CANAL
-	egresosAgrupados := make(map[string][]models.Expense)
+	type splitExpense struct {
+		Desc   string
+		Amount float64
+	}
+	egresosAgrupados := make(map[string][]splitExpense)
+	
+	totalEfectivo := 0.0
+	totalFondo := 0.0
+	totalPrestamos := 0.0
+	
 	for _, e := range closure.Expenses {
-		src := strings.ToUpper(e.PaymentSource)
-		if src == "" {
-			src = "EFECTIVO"
+		if e.CashAmount > 0 {
+			egresosAgrupados["EFECTIVO"] = append(egresosAgrupados["EFECTIVO"], splitExpense{Desc: e.Description, Amount: e.CashAmount})
+			totalEfectivo += e.CashAmount
 		}
-		egresosAgrupados[src] = append(egresosAgrupados[src], e)
+		if e.NequiAmount > 0 {
+			egresosAgrupados["NEQUI"] = append(egresosAgrupados["NEQUI"], splitExpense{Desc: e.Description, Amount: e.NequiAmount})
+		}
+		if e.DaviplataAmount > 0 {
+			egresosAgrupados["DAVIPLATA"] = append(egresosAgrupados["DAVIPLATA"], splitExpense{Desc: e.Description, Amount: e.DaviplataAmount})
+		}
+		if e.FondoAmount > 0 {
+			egresosAgrupados["FONDO"] = append(egresosAgrupados["FONDO"], splitExpense{Desc: e.Description, Amount: e.FondoAmount})
+			totalFondo += e.FondoAmount
+		}
+		
+		sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+		if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
+			diff := e.Amount - sumPaid
+			egresosAgrupados["PRESTAMO"] = append(egresosAgrupados["PRESTAMO"], splitExpense{Desc: e.Description, Amount: diff})
+			totalPrestamos += diff
+		}
 	}
 
-	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
+	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "PRESTAMO"}
 	for k := range egresosAgrupados {
 		found := false
 		for _, c := range canalesOrder {
@@ -301,13 +373,18 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 			}
 			msg.WriteString(fmt.Sprintf("📍 *%s:* `$%s`\n", canal, formatCOP(totalCanal)))
 			for _, e := range egresosCanal {
-				msg.WriteString(fmt.Sprintf("   • %s: `$%s`\n", e.Description, formatCOP(e.Amount)))
+				msg.WriteString(fmt.Sprintf("   • %s: `$%s`\n", e.Desc, formatCOP(e.Amount)))
 			}
 		}
 	}
 	if !hayEgresos {
 		msg.WriteString("_Sin egresos registrados._\n")
 	}
+
+	msg.WriteString("────────────────────\n")
+	msg.WriteString(fmt.Sprintf("▫️ Total gastado de la Venta del día (Efectivo): `$%s`\n", formatCOP(totalEfectivo)))
+	msg.WriteString(fmt.Sprintf("▫️ Total gastado del Fondo (Plata de adentro): `$%s`\n", formatCOP(totalFondo)))
+	msg.WriteString(fmt.Sprintf("▫️ Total gastado de Préstamos (Plata de afuera): `$%s`\n", formatCOP(totalPrestamos)))
 	msg.WriteString("\n")
 
 	msg.WriteString("🤝 *4. CRÉDITOS Y ABONOS*\n")
@@ -425,6 +502,15 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		return
 	}
 
+	// Re-enviar a Telegram tras editar el cierre
+	if updatedClosure, err := h.service.GetClosureByID(uint(id)); err == nil && updatedClosure != nil {
+		tgMsg := h.formatTelegramClosureMessage(*updatedClosure, false)
+		tgMsg = "⚠️ *REPORTE EDITADO MANUALMENTE* ⚠️\n" + tgMsg
+		h.telegramService.SendMarkdownAlert(tgMsg)
+	} else {
+		log.Printf("⚠️ No se pudo obtener el cierre %d para reenviar reporte de Telegram: %v", id, err)
+	}
+
 	// Auditoría Forense: Edición de cierre
 	dniStr, nameStr := GetContextUser(c)
 	details := fmt.Sprintf("Cierre de caja ID #%d EDITADO por %s", id, nameStr)
@@ -471,6 +557,7 @@ func (h *DashboardHandler) GetGlobalDebt(c *gin.Context) {
 
 
 func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isPartial bool) *bytes.Buffer {
+	normalizeExpensesForReport(closure.Expenses)
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	tr := pdf.UnicodeTranslatorFromDescriptor("")
 
@@ -618,16 +705,48 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 		})
 
 	// 3. Egresos por Canal
-	methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
+	methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "PRESTAMO"}
 	for _, m := range methods {
 		var rows [][]string
 		total := 0.0
+		
 		for _, e := range closure.Expenses {
-			eMethod := e.PaymentSource
-			if eMethod == "" { eMethod = "EFECTIVO" }
-			if eMethod == m {
-				rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.Amount))})
-				total += e.Amount
+			isMixedOrNewSchema := e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0
+			
+			if isMixedOrNewSchema {
+				if m == "EFECTIVO" && e.CashAmount > 0 {
+					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.CashAmount))})
+					total += e.CashAmount
+				}
+				if m == "NEQUI" && e.NequiAmount > 0 {
+					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.NequiAmount))})
+					total += e.NequiAmount
+				}
+				if m == "DAVIPLATA" && e.DaviplataAmount > 0 {
+					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.DaviplataAmount))})
+					total += e.DaviplataAmount
+				}
+				if m == "FONDO" && e.FondoAmount > 0 {
+					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.FondoAmount))})
+					total += e.FondoAmount
+				}
+				if m == "PRESTAMO" {
+					sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+					if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
+						diff := e.Amount - sumPaid
+						rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(diff))})
+						total += diff
+					}
+				}
+			} else {
+				eMethod := strings.ToUpper(e.PaymentSource)
+				if eMethod == "" || eMethod == "CAJA" { eMethod = "EFECTIVO" }
+				if eMethod == "PREST." || eMethod == "DEUDA" { eMethod = "PRESTAMO" }
+				
+				if eMethod == m {
+					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.Amount))})
+					total += e.Amount
+				}
 			}
 		}
 		if len(rows) > 0 {

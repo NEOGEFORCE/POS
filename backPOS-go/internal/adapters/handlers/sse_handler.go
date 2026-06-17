@@ -41,7 +41,7 @@ func (h *SSEHandler) Stream(c *gin.Context) {
 			if err != nil {
 				return true
 			}
-			fmt.Fprintf(w, formatted)
+			fmt.Fprint(w, formatted)
 			return true
 		}
 	})

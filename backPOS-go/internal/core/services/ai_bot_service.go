@@ -138,7 +138,7 @@ Cuando el usuario mande una foto:
 - Si un producto de la factura no está en el sistema, avisa cuáles no encontraste y continúa con los que sí
 - Los productos que no se encuentran por barcode los buscas por similitud de nombre`
 
-const systemPrompt = `Eres el asistente personal de Sebastian, dueño de Surtifamiliar, un supermercado de barrio en Colombia.
+const systemPromptBase = `Eres el asistente personal de Sebastian, dueño de Surtifamiliar, un supermercado de barrio en Colombia.
 Tienes acceso completo a la base de datos del POS mediante la tool query_database.
 
 IMPORTANTE: Si el usuario te pregunta algo sobre el negocio que las tools específicas no cubren,
@@ -155,6 +155,51 @@ Reglas:
 - Nunca inventes datos — si la query no devuelve resultados, dilo claramente
 - El negocio está en Colombia, usa horario de Bogotá (UTC-5)
 - Cuando uses query_database, construye queries eficientes con filtros de fecha apropiados`
+
+// Mantener const systemPrompt para compatibilidad con código existente que lo
+// referencia. La inyección dinámica se hace vía buildSystemPrompt() abajo.
+const systemPrompt = systemPromptBase
+
+// Días de la semana en español (Date.Weekday() retorna 0=Sunday)
+var spanishWeekdays = [7]string{
+	"Domingo", "Lunes", "Martes", "Miércoles",
+	"Jueves", "Viernes", "Sábado",
+}
+
+var spanishMonths = [12]string{
+	"enero", "febrero", "marzo", "abril", "mayo", "junio",
+	"julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+}
+
+// buildSystemPrompt genera el system prompt con contexto temporal actual
+// (Bogotá, UTC-5). Se llama en cada request a Claude para que el modelo
+// SIEMPRE sepa qué día es hoy y no le pregunte al usuario.
+func buildSystemPrompt(includeImageRules bool) string {
+	loc, _ := time.LoadLocation("America/Bogota")
+	if loc == nil {
+		loc = time.FixedZone("COT", -5*3600)
+	}
+	now := time.Now().In(loc)
+	dayName := spanishWeekdays[now.Weekday()]
+	monthName := spanishMonths[now.Month()-1]
+	formattedDate := fmt.Sprintf("%s, %d de %s de %d", dayName, now.Day(), monthName, now.Year())
+	formattedTime := now.Format("15:04")
+
+	temporalContext := fmt.Sprintf(`
+CONTEXTO TEMPORAL — IMPORTANTE:
+- Hoy es %s (%s).
+- Hora actual en Bogotá: %s.
+- Día de la semana actual (para filtros de proveedores): %s.
+- NUNCA le preguntes al usuario qué día es. NUNCA asumas otra fecha.
+- Cuando el usuario diga "hoy", "ayer", "esta semana", "este mes", calcula a partir de %s.
+- Cuando consultes proveedores que vienen "hoy", filtra por día de visita = %s.
+`, formattedDate, now.Format("2006-01-02"), formattedTime, dayName, now.Format("2006-01-02"), dayName)
+
+	if includeImageRules {
+		return systemPromptWithImageCapabilities + "\n" + temporalContext
+	}
+	return systemPromptBase + "\n" + temporalContext
+}
 
 // ============================================================
 // ProcessMessage — Entry Point from Telegram
@@ -228,10 +273,26 @@ func (s *AIBotService) HandleCallbackQuery(chatID int64, data string) {
 
 // ============================================================
 // callClaude — Main AI Loop with Tool Use
+//
+// Iteración: Claude puede pedir múltiples tools en cadena.
+// Mientras stop_reason == "tool_use" seguimos ejecutando localmente y
+// devolviendo tool_result a la API, hasta que el modelo dé una respuesta
+// natural ("end_turn"). Solo entonces se envía el texto al usuario, evitando
+// que IDs internos como `toolu_...` se filtren a Telegram.
 // ============================================================
+
+const maxToolIterations = 6
 
 func (s *AIBotService) callClaude(chatID int64, userMessage string) (string, error) {
 	state := s.getOrCreateState(chatID)
+
+	// Snapshot del historial ANTES de añadir nada. Sirve para rollback
+	// limpio si: (a) se detecta acción peligrosa que requiere confirmación,
+	// (b) la API responde con error de red, (c) se excede maxToolIterations.
+	// Sin esto, una iteración intermedia (iter > 0) que detecta acción
+	// peligrosa dejaría tool_use sin su tool_result siguiente y la próxima
+	// request fallaría con "tool_use ids found without tool_result blocks".
+	historyCheckpoint := len(state.ConversationHistory)
 
 	// Agregar mensaje del usuario al historial
 	state.ConversationHistory = append(state.ConversationHistory, ClaudeMessage{
@@ -244,75 +305,124 @@ func (s *AIBotService) callClaude(chatID int64, userMessage string) (string, err
 	// Primera llamada
 	resp, err := s.doClaudeRequest(req)
 	if err != nil {
+		state.ConversationHistory = state.ConversationHistory[:historyCheckpoint]
 		return "", err
 	}
 
-	// Si Claude quiere usar una tool
-	if resp.StopReason == "tool_use" {
-		// Encontrar el bloque de tool use
-		var toolBlock ClaudeBlock
+	// Loop multi-step: maneja N iteraciones de tool_use hasta respuesta natural
+	for iter := 0; iter < maxToolIterations && resp.StopReason == "tool_use"; iter++ {
+		// Encontrar TODOS los bloques de tool use
+		var toolBlocks []ClaudeBlock
 		for _, block := range resp.Content {
 			if block.Type == "tool_use" {
-				toolBlock = block
+				toolBlocks = append(toolBlocks, block)
+			}
+		}
+		if len(toolBlocks) == 0 {
+			break
+		}
+
+		// Revisar si ALGUNA es peligrosa ANTES de ejecutar nada
+		var dangerousBlock *ClaudeBlock
+		var dangerousArgs map[string]interface{}
+		for i, block := range toolBlocks {
+			args, _ := block.Input.(map[string]interface{})
+			if block.Name == "update_product_price" || block.Name == "register_expense" {
+				dangerousBlock = &toolBlocks[i]
+				dangerousArgs = args
+				break
 			}
 		}
 
-		// Parsear args
-		args, _ := toolBlock.Input.(map[string]interface{})
-
-		// Acciones peligrosas requieren confirmación
-		if toolBlock.Name == "update_product_price" || toolBlock.Name == "register_expense" {
-			state.PendingAction = toolBlock.Name
-			state.PendingPayload = args
+		// Acciones peligrosas requieren confirmación — interrumpir el loop
+		// y devolver pregunta al usuario sin ejecutar nada.
+		if dangerousBlock != nil {
+			state.PendingAction = dangerousBlock.Name
+			state.PendingPayload = dangerousArgs
 
 			respText := "¿Confirmas que deseas ejecutar esta acción de modificación?"
-			if toolBlock.Name == "update_product_price" {
-				respText = fmt.Sprintf("¿Confirmas que quieres cambiar el precio de %v a $%v?", args["product_name"], args["new_price"])
-			} else if toolBlock.Name == "register_expense" {
-				respText = fmt.Sprintf("¿Confirmas que quieres registrar un egreso de $%v por concepto de '%v'?", args["amount"], args["concept"])
+			if dangerousBlock.Name == "update_product_price" {
+				respText = fmt.Sprintf("¿Confirmas que quieres cambiar el precio de %v a $%v?", dangerousArgs["product_name"], dangerousArgs["new_price"])
+			} else if dangerousBlock.Name == "register_expense" {
+				respText = fmt.Sprintf("¿Confirmas que quieres registrar un egreso de $%v por concepto de '%v'?", dangerousArgs["amount"], dangerousArgs["concept"])
 			}
+
+			// IMPORTANTE: rollback completo al checkpoint para evitar dejar
+			// tool_use huérfanos en el historial. Si esta iteración es > 0,
+			// ya hay pares assistant(tool_use) + user(tool_result) acumulados;
+			// borrar solo el último mensaje deja un tool_use sin tool_result
+			// siguiente y la próxima request fallaría con error 400 de la API
+			// ("tool_use ids were found without tool_result blocks").
+			// Volvemos al estado previo a esta llamada a callClaude; el flujo
+			// posterior (executeDangerousAction tras "sí" del usuario) ejecuta
+			// la acción sin contaminar el historial conversacional.
+			state.ConversationHistory = state.ConversationHistory[:historyCheckpoint]
 			return respText, nil
 		}
 
-		// Agregar respuesta de Claude al historial (con los bloques originales)
+		// Agregar respuesta de Claude al historial (con TODOS los bloques originales)
 		state.ConversationHistory = append(state.ConversationHistory, ClaudeMessage{
 			Role:    "assistant",
 			Content: resp.Content,
 		})
 
-		// Ejecutar la función
-		result, err := s.executeFunction(chatID, toolBlock.Name, args)
-		resultJSON, _ := json.Marshal(result)
-		if err != nil {
-			resultJSON = []byte(`{"error":"` + err.Error() + `"}`)
+		// Ejecutar todas las tools en orden y construir los resultados
+		var toolResults []map[string]interface{}
+		for _, block := range toolBlocks {
+			args, _ := block.Input.(map[string]interface{})
+			result, execErr := s.executeFunction(chatID, block.Name, args)
+			
+			var resultJSON []byte
+			if execErr != nil {
+				resultJSON = []byte(`{"error":"` + execErr.Error() + `"}`)
+			} else {
+				resultJSON, _ = json.Marshal(result)
+			}
+
+			toolResults = append(toolResults, map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": block.ID,
+				"content":     string(resultJSON),
+			})
 		}
 
-		// Agregar resultado de la tool al historial
+		// Agregar TODOS los resultados de la tool al historial en un único mensaje
 		state.ConversationHistory = append(state.ConversationHistory, ClaudeMessage{
-			Role: "user",
-			Content: []map[string]interface{}{
-				{
-					"type":        "tool_result",
-					"tool_use_id": toolBlock.ID,
-					"content":     string(resultJSON),
-				},
-			},
+			Role:    "user",
+			Content: toolResults,
 		})
 
-		// Segunda llamada — Claude redacta respuesta final
+		// Próxima llamada — Claude redacta respuesta final O pide otra tool
 		req.Messages = state.ConversationHistory
 		resp, err = s.doClaudeRequest(req)
 		if err != nil {
+			state.ConversationHistory = state.ConversationHistory[:historyCheckpoint]
 			return "", err
 		}
 	}
 
-	// Extraer texto de la respuesta final
+	// Si después de N iteraciones todavía pide tool_use, abortamos
+	// limpiamente para no entrar en bucle infinito ni filtrar IDs.
+	// Rollback al checkpoint para descartar la cadena fallida — mejor que
+	// el usuario reformule sobre un historial limpio que sobre uno medio
+	// completado que confunda al modelo en futuras interacciones.
+	if resp.StopReason == "tool_use" {
+		state.ConversationHistory = state.ConversationHistory[:historyCheckpoint]
+		return "Disculpa, no pude completar tu solicitud (demasiadas tools encadenadas). Reformula la pregunta.", nil
+	}
+
+	// Extraer SOLO los bloques de texto de la respuesta final.
+	// Cualquier bloque de otro tipo (tool_use, etc.) se ignora explícitamente
+	// para evitar que IDs internos se filtren al chat.
 	var finalText string
 	for _, block := range resp.Content {
 		if block.Type == "text" {
 			finalText += block.Text
 		}
+	}
+
+	if strings.TrimSpace(finalText) == "" {
+		finalText = "(respuesta vacía del modelo)"
 	}
 
 	// Guardar respuesta en historial
@@ -671,6 +781,23 @@ NOTA: Los nombres de columnas en camelCase van entre comillas dobles en PostgreS
 					},
 				},
 				"required": []string{"items"},
+			},
+		},
+		{
+			Name: "get_today_suppliers",
+			Description: "Devuelve los proveedores que vienen HOY (según día de la semana actual de Bogotá) " +
+				"junto con sus productos en stock crítico (cantidad <= minStock). " +
+				"Úsala cuando el usuario pregunte 'qué proveedores vienen hoy', 'qué tengo que pedir hoy', " +
+				"'qué se acabó de los proveedores de hoy'. Filtra automáticamente por el día actual; no requiere argumentos.",
+			InputSchema: map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"day_of_week": map[string]interface{}{
+						"type":        "string",
+						"description": "Opcional. Día específico en español (Lunes, Martes, ..., Domingo). Si se omite, usa el día actual de Bogotá.",
+						"enum":        []string{"Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"},
+					},
+				},
 			},
 		},
 	}
@@ -1268,6 +1395,111 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		}, nil
 	}
 
+	if name == "get_today_suppliers" {
+		// Resolver el día objetivo: argumento explícito o el actual de Bogotá
+		targetDay := ""
+		if d, ok := args["day_of_week"].(string); ok && d != "" {
+			targetDay = d
+		} else {
+			targetDay = spanishWeekdays[now.Weekday()]
+		}
+
+		// Normalizar para comparación case-insensitive
+		targetDayLower := strings.ToLower(targetDay)
+
+		// Listar proveedores cuyo visit_day o visit_days incluye el día objetivo.
+		// Soporta tanto el campo legacy `visitDay` (string) como el nuevo
+		// `visit_days` (jsonb array). En PostgreSQL `?` es operador JSONB
+		// "contiene clave"; lo evitamos usando texto y LIKE para compatibilidad.
+		type supRow struct {
+			ID         uint
+			Name       string
+			Phone      string
+			VendorName string
+			VisitDay   string
+			VisitDays  string // jsonb serializado como texto
+		}
+		var sups []supRow
+		err := s.db.Raw(`
+			SELECT id, name, COALESCE(phone, '') AS phone,
+			       COALESCE("vendorName", '') AS vendor_name,
+			       COALESCE("visitDay", '') AS visit_day,
+			       COALESCE(visit_days::text, '[]') AS visit_days
+			FROM suppliers
+			WHERE deleted_at IS NULL
+			  AND COALESCE(is_active, true) = true
+			  AND (
+			        LOWER(COALESCE("visitDay", '')) LIKE ?
+			     OR LOWER(COALESCE(visit_days::text, '')) LIKE ?
+			      )
+			ORDER BY name ASC
+		`, "%"+targetDayLower+"%", "%"+targetDayLower+"%").Scan(&sups).Error
+		if err != nil {
+			return nil, fmt.Errorf("query suppliers: %w", err)
+		}
+
+		// Para cada proveedor, traer productos críticos (cantidad <= minStock).
+		type critProduct struct {
+			Barcode     string  `json:"barcode"`
+			ProductName string  `json:"productName"`
+			Quantity    float64 `json:"quantity"`
+			MinStock    float64 `json:"minStock"`
+			SalePrice   float64 `json:"salePrice"`
+		}
+		type supplierResult struct {
+			ID            uint          `json:"id"`
+			Name          string        `json:"name"`
+			Phone         string        `json:"phone"`
+			VendorName    string        `json:"vendorName,omitempty"`
+			VisitDay      string        `json:"visitDay,omitempty"`
+			Critical      []critProduct `json:"critical"`
+			CriticalCount int           `json:"criticalCount"`
+		}
+
+		results := make([]supplierResult, 0, len(sups))
+		for _, sp := range sups {
+			var crit []critProduct
+			_ = s.db.Raw(`
+				SELECT barcode,
+				       "productName" AS product_name,
+				       COALESCE(quantity, 0) AS quantity,
+				       COALESCE("minStock", 0) AS min_stock,
+				       COALESCE("salePrice", 0) AS sale_price
+				FROM products
+				WHERE deleted_at IS NULL
+				  AND COALESCE("isActive", true) = true
+				  AND "supplierId" = ?
+				  AND COALESCE(quantity, 0) <= COALESCE("minStock", 0)
+				ORDER BY (COALESCE("minStock", 0) - COALESCE(quantity, 0)) DESC
+				LIMIT 50
+			`, sp.ID).Scan(&crit).Error
+
+			results = append(results, supplierResult{
+				ID:            sp.ID,
+				Name:          sp.Name,
+				Phone:         sp.Phone,
+				VendorName:    sp.VendorName,
+				VisitDay:      sp.VisitDay,
+				Critical:      crit,
+				CriticalCount: len(crit),
+			})
+		}
+
+		return map[string]interface{}{
+			"day":             targetDay,
+			"date":            now.Format("2006-01-02"),
+			"supplierCount":   len(results),
+			"suppliers":       results,
+			"totalCriticalItems": func() int {
+				total := 0
+				for _, r := range results {
+					total += r.CriticalCount
+				}
+				return total
+			}(),
+		}, nil
+	}
+
 	return nil, fmt.Errorf("función desconocida: %s", name)
 }
 
@@ -1532,10 +1764,10 @@ func (s *AIBotService) ProcessImageMessage(chatID int64, imgBase64, mimeType, ca
 	}
 
 	if resp.StopReason == "tool_use" {
-		var toolBlock ClaudeBlock
+		var toolBlocks []ClaudeBlock
 		for _, block := range resp.Content {
 			if block.Type == "tool_use" {
-				toolBlock = block
+				toolBlocks = append(toolBlocks, block)
 			}
 		}
 
@@ -1544,22 +1776,28 @@ func (s *AIBotService) ProcessImageMessage(chatID int64, imgBase64, mimeType, ca
 			Content: resp.Content,
 		})
 
-		args, _ := toolBlock.Input.(map[string]interface{})
-		result, err := s.executeFunction(chatID, toolBlock.Name, args)
-		resultJSON, _ := json.Marshal(result)
-		if err != nil {
-			resultJSON = []byte(`{"error":"` + err.Error() + `"}`)
+		var toolResults []map[string]interface{}
+		for _, block := range toolBlocks {
+			args, _ := block.Input.(map[string]interface{})
+			result, err := s.executeFunction(chatID, block.Name, args)
+			
+			var resultJSON []byte
+			if err != nil {
+				resultJSON = []byte(`{"error":"` + err.Error() + `"}`)
+			} else {
+				resultJSON, _ = json.Marshal(result)
+			}
+
+			toolResults = append(toolResults, map[string]interface{}{
+				"type":        "tool_result",
+				"tool_use_id": block.ID,
+				"content":     string(resultJSON),
+			})
 		}
 
 		state.ConversationHistory = append(state.ConversationHistory, ClaudeMessage{
-			Role: "user",
-			Content: []map[string]interface{}{
-				{
-					"type":        "tool_result",
-					"tool_use_id": toolBlock.ID,
-					"content":     string(resultJSON),
-				},
-			},
+			Role:    "user",
+			Content: toolResults,
 		})
 
 		req.Messages = state.ConversationHistory
@@ -1613,13 +1851,14 @@ Si es otro tipo de imagen:
 
 func (s *AIBotService) buildRequest(state *ConversationState, isImage bool) ClaudeRequest {
 	maxTokens := 1024
-	sysPrompt := systemPrompt
-	model := "claude-3-5-haiku-20241022"
+	// Inyección dinámica de fecha/hora actual de Bogotá en cada request
+	sysPrompt := buildSystemPrompt(false)
+	model := "claude-haiku-4-5"
 
 	if isImage {
-		maxTokens = 2048 // Las facturas pueden tener muchos productos
-		sysPrompt = systemPromptWithImageCapabilities
-		model = "claude-3-5-sonnet-20240620"
+		maxTokens = 4096 // Las facturas pueden tener muchos productos
+		sysPrompt = buildSystemPrompt(true)
+		model = "claude-sonnet-4-5"
 	}
 	// Si el último mensaje menciona reporte, detalle o desglose
 	lastMsg := ""

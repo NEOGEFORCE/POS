@@ -235,7 +235,7 @@ func (s *TelegramService) StartListener(invService *InventoryService, saleRepo p
 }
 
 func (s *TelegramService) handleInventario(invService *InventoryService) string {
-	suggestions, err := invService.GetGlobalRestockSuggestions()
+	suggestions, err := invService.GetGlobalRestockSuggestions(false)
 	if err != nil {
 		return "❌ Error al obtener inventario: " + err.Error()
 	}

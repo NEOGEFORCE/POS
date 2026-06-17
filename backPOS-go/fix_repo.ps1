@@ -1,0 +1,1 @@
+(Get-Content "C:\Users\jaide\OneDrive\Desktop\POS\backPOS-go\internal\adapters\repositories\closure_repository.go") -replace "r\.db\.Preload\(`"Expenses`"\)", "r.db" | Set-Content "C:\Users\jaide\OneDrive\Desktop\POS\backPOS-go\internal\adapters\repositories\closure_repository.go"

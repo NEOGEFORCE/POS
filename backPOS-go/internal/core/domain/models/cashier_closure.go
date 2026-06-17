@@ -28,6 +28,7 @@ type CashierClosure struct {
 	TotalOtherTransfer float64     `json:"totalOtherTransfer"`
 	NetBalance      float64        `json:"netBalance"`
 	ExpectedCash    float64        `json:"expectedCash"`
+	CashBreakdown   string         `gorm:"type:text" json:"cashBreakdown"`
 	ActiveShiftName string         `gorm:"-" json:"activeShiftName"`
 	ActiveShiftDNI  string         `gorm:"-" json:"activeShiftDni"`
 	CashBills       float64        `json:"cashBills"`
@@ -48,9 +49,26 @@ type CashierClosure struct {
 	Expenses        []Expense      `gorm:"-" json:"expenses"`
 	CreditsIssued   []Sale         `gorm:"-" json:"creditsIssued"`   // Listado de fiados realizados
 	CreditPayments  []CreditPayment `gorm:"-" json:"creditPayments"` // Listado de abonos recibidos
+
+	// Desglose dinámico por método de pago — se calcula en runtime desde
+	// las ventas y abonos del rango del cierre (no se persiste en BD).
+	// Cada item lleva el nombre EXACTO del método tal como se registró
+	// en las ventas (TransferSource): EFECTIVO, NEQUI, DAVIPLATA, BANCOLOMBIA,
+	// MASTERCARD, etc. — sin agruparse en un genérico "OTROS".
+	PaymentMethodsBreakdown []PaymentMethodTotal `gorm:"-" json:"paymentMethodsBreakdown,omitempty"`
+
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (CashierClosure) TableName() string {
 	return "cashier_closures"
+}
+
+// PaymentMethodTotal representa el total acumulado de un método de pago
+// específico durante un cierre de caja. Se usa para alimentar la sección
+// "Distribución por Medios de Pago" del modal de auditoría sin necesidad
+// de agruparse en un campo genérico "TARJETA/OTROS".
+type PaymentMethodTotal struct {
+	Method string  `json:"method"` // Nombre exacto: NEQUI, DAVIPLATA, BANCOLOMBIA, MASTERCARD, etc.
+	Total  float64 `json:"total"`
 }

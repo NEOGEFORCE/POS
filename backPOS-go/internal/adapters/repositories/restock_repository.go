@@ -90,11 +90,13 @@ func (r *PostgresRestockRepository) CreateConfirmedOrder(order *models.Confirmed
 		if err := tx.Create(order).Error; err != nil {
 			return err
 		}
-		for i := range items {
-			items[i].ConfirmedOrderID = order.ID
-		}
-		if err := tx.Create(&items).Error; err != nil {
-			return err
+		if len(items) > 0 {
+			for i := range items {
+				items[i].ConfirmedOrderID = order.ID
+			}
+			if err := tx.Create(&items).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})

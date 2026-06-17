@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"gorm.io/gorm"
+	"backPOS-go/internal/infrastructure/cache"
 )
 
 type SaleService struct {
@@ -152,42 +153,52 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 	if sale.Change < 0 { sale.Change = 0 }
 
 	// === INICIO DE TRANSACCIÓN ATÓMICA ULTRA-RÁPIDA ===
-	rawDB := s.saleRepo.GetDB()
-	// Importante: No podemos importar gorm aquí sin romper la abstracción, 
-	// pero sabemos que el repo devuelve un *gorm.DB.
-	// Usaremos una aserción de tipo si es posible o simplemente confiaremos en el repo.
-	// En Go, no podemos hacer cast a un tipo de otro paquete sin importarlo.
-	
-	// Refactor: Usar el patrón de transacción del repo si es posible, 
-	// o simplemente realizar las llamadas WithTx.
-	
-	tx := rawDB // Esto es un interface{}, pero el repo lo casteará internamente.
+	rawInterface := s.saleRepo.GetDB()
+	rawDB, ok := rawInterface.(*gorm.DB)
+	if !ok {
+		return fmt.Errorf("error de sistema: base de datos inválida")
+	}
+
+	tx := rawDB.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("error iniciando transacción: %w", tx.Error)
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			tx.Rollback()
+		}
+	}()
 
 	if err := s.saleRepo.CreateWithTx(tx, sale); err != nil {
+		tx.Rollback()
 		return fmt.Errorf("error guardando venta: %w", err)
 	}
 
 	if len(deductions) > 0 {
-		// Ajuste de stock masivo en la misma transacción
+		// Ajuste de stock masivo en la misma transacción (1 QUERY)
 		if err := s.productRepo.BatchAdjustQuantitiesWithTx(tx, deductions); err != nil {
+			tx.Rollback()
 			return fmt.Errorf("error ajustando inventario: %w", err)
 		}
 
-		// Registro de movimientos de stock
+		movements := make([]models.StockMovement, 0, len(sale.SaleDetails))
 		for i := range sale.SaleDetails {
 			detail := sale.SaleDetails[i]
-			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" { continue }
+			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
+				continue
+			}
 
 			targetBarcode := detail.Barcode
 			effectiveQty := detail.Quantity
-			
+
 			product := productCache[detail.Barcode]
 			if product.IsPack && product.BaseProductBarcode != nil {
 				targetBarcode = *product.BaseProductBarcode
 				effectiveQty = detail.Quantity * float64(product.PackMultiplier)
 			}
 
-			m := &models.StockMovement{
+			movements = append(movements, models.StockMovement{
 				Date:         sale.SaleDate,
 				Barcode:      targetBarcode,
 				Quantity:     effectiveQty,
@@ -196,11 +207,24 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 				ReferenceID:  fmt.Sprintf("SALE-%d", sale.SaleID),
 				EmployeeDNI:  sale.EmployeeDNI,
 				EmployeeName: sale.Employee.Name,
+			})
+		}
+
+		if len(movements) > 0 {
+			if err := s.movementRepo.BatchSaveWithTx(tx, movements); err != nil {
+				tx.Rollback()
+				return fmt.Errorf("error guardando movimientos: %w", err)
 			}
-			_ = s.movementRepo.SaveWithTx(tx, m)
 		}
 	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("error aplicando transacción de venta: %w", err)
+	}
 	// === FIN DE TRANSACCIÓN ATÓMICA ===
+
+	cache.InvalidateCache(cache.CacheKeyProducts)
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 
 	// 5. Tareas secundarias en Goroutine (Background)
 	go func() {
@@ -216,72 +240,72 @@ func (s *SaleService) CreateSale(sale *models.Sale) error {
 				continue
 			}
 
-			// Calcular promedio diario (últimos 14 días)
-			avgDaily, err := s.productRepo.GetDailySalesAverage(detail.Barcode, 14)
-			if err != nil || avgDaily <= 0 {
-				continue
-			}
-
-			// Obtener producto actualizado
-			product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "Supplier")
-			if err != nil || product == nil {
+			// Usar el caché de memoria (evita consultar base de datos por producto)
+			cachedProduct, exists := productCache[detail.Barcode]
+			if !exists || cachedProduct == nil {
 				continue
 			}
 
 			// TAREA 1.5: Alerta de Venta en Negativo
-			if product.Quantity < 0 {
-				msgNeg := fmt.Sprintf("🚨 *¡VENTA SIN STOCK DETECTADA!*\n\n"+
-					"Se ha vendido el producto *%s* pero el inventario ha quedado en negativo.\n\n"+
-					"📦 *Stock Actual:* %.2f\n"+
-					"👤 *Cajero:* %s\n"+
-					"📝 *Factura:* #%d\n\n"+
-					"💡 _Regístrelo pronto para cuadrar el inventario._",
-					product.ProductName, product.Quantity, sale.Employee.Name, sale.SaleID)
+			// En productCache tenemos el stock ANTES de esta venta.
+			newStock := cachedProduct.Quantity - detail.Quantity
+			if newStock < 0 && cachedProduct.Quantity >= 0 {
+				msgNeg := fmt.Sprintf("🚨 *ALERTA DE INVENTARIO (POS)*\n"+
+					"El producto *%s* acaba de ser vendido, pero su stock en sistema quedó negativo (%.2f).\n"+
+					"Acción: Verificar auditoría o registrar la factura de entrada faltante.",
+					cachedProduct.ProductName, newStock)
 				
 				s.telegramService.SendMarkdownAlert(msgNeg)
 			}
 
-			// Solo alertar si tiene proveedor y frecuencia definida
-			if product.SupplierID != nil && product.Supplier.VisitFrequencyDays > 0 {
+			// TAREA 1: Solo alertar si el producto tiene un proveedor asignado
+			if cachedProduct.SupplierID != nil {
+				// Cargar la relación del proveedor para ver su VisitFrequencyDays
+				productWithSupplier, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "Supplier")
+				if err != nil || productWithSupplier == nil || productWithSupplier.Supplier.VisitFrequencyDays <= 0 {
+					continue
+				}
+
+				// Solo si tiene frecuencia de visita calculamos las métricas pesadas
+				avgDaily, err := s.productRepo.GetDailySalesAverage(detail.Barcode, 14)
+				if err != nil || avgDaily <= 0 {
+					continue
+				}
+
 				// Estimar días hasta la próxima visita
 				lastMove, err := s.movementRepo.GetLastMovementByBarcodeAndReason(detail.Barcode, "RECEPTION")
 				
-				daysUntilVisit := float64(product.Supplier.VisitFrequencyDays)
+				daysUntilVisit := float64(productWithSupplier.Supplier.VisitFrequencyDays)
 				if err == nil && lastMove != nil {
 					elapsed := time.Since(lastMove.Date).Hours() / 24
-					daysUntilVisit = float64(product.Supplier.VisitFrequencyDays) - elapsed
+					daysUntilVisit = float64(productWithSupplier.Supplier.VisitFrequencyDays) - elapsed
 				}
 
 				// Si los días hasta la visita son mayores que los días que aguanta el stock -> ALERTA
-				stockSurvivalDays := product.Quantity / avgDaily
+				stockSurvivalDays := newStock / avgDaily
 				if daysUntilVisit > 0 && stockSurvivalDays < daysUntilVisit {
-					msg := fmt.Sprintf("⚠️ *¡ALERTA DE AGOTAMIENTO!*\n\n"+
+					msg := fmt.Sprintf("🚨 *¡ALERTA DE AGOTAMIENTO!*\n\n"+
 						"El producto *%s* se está vendiendo rápido.\n\n"+
 						"📦 *Stock Actual:* %.2f\n"+
 						"📈 *Venta Diaria:* %.2f\n"+
-						"🚚 *Próximo pedido en:* %.1f días\n\n"+
+						"⏳ *Próximo pedido en:* %.1f días\n\n"+
 						"💡 _Sugerencia: Surtir externamente para no perder ventas._",
-						product.ProductName, product.Quantity, avgDaily, daysUntilVisit)
+						cachedProduct.ProductName, newStock, avgDaily, daysUntilVisit)
 					
 					s.telegramService.SendMarkdownAlert(msg)
 				}
 			}
 
 			// TAREA 1.6: Alerta de Min Estante
-			if product.MinShelfStock > 0 && product.Quantity <= product.MinShelfStock && product.Quantity >= 0 {
-				var supplierText string
-				if product.SupplierID != nil && product.Supplier.Name != "" {
-					supplierText = fmt.Sprintf("🚚 *El preventista de %s viene hoy/pronto.*\n💡 _Pide más cantidad para no quedarte sin stock._", product.Supplier.Name)
-				} else {
-					supplierText = "💡 _Pide más cantidad pronto._"
-				}
+			if cachedProduct.MinShelfStock > 0 && newStock <= cachedProduct.MinShelfStock && newStock >= 0 {
+				supplierText := "💡 _Pide más cantidad pronto._"
 
-				msgMin := fmt.Sprintf("⚠️ *¡ALERTA DE STOCK BAJO (MIN. ESTANTE)!*\n\n"+
+				msgMin := fmt.Sprintf("🚨 *¡ALERTA DE STOCK BAJO (MIN. ESTANTE)!*\n\n"+
 					"El producto *%s* ha caído a su nivel de alerta en estante.\n\n"+
 					"📦 *Stock Actual:* %.2f\n"+
 					"📉 *Mínimo Permitido:* %.2f\n\n"+
 					"%s",
-					product.ProductName, product.Quantity, product.MinShelfStock, supplierText)
+					cachedProduct.ProductName, newStock, cachedProduct.MinShelfStock, supplierText)
 				
 				s.telegramService.SendMarkdownAlert(msgMin)
 			}
@@ -445,6 +469,9 @@ func (s *SaleService) AddItemsToSale(saleID uint, newDetails []models.SaleDetail
 			_ = s.movementRepo.SaveWithTx(rawDB, m)
 		}
 	}
+
+	cache.InvalidateCache(cache.CacheKeyProducts)
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 
 	go func() {
 		defer func() { recover() }()

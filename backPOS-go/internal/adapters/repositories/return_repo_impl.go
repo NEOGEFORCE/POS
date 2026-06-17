@@ -55,7 +55,7 @@ func (r *GormReturnRepository) CreateWithTransaction(
 
 		// 2. Ajustar cantidades de stock de productos
 		for barcode, delta := range adjustments {
-			if err := tx.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).
+			if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).
 				Update("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", delta)).Error; err != nil {
 				return fmt.Errorf("error actualizando stock de producto %s: %w", barcode, err)
 			}
@@ -114,7 +114,8 @@ func (r *GormReturnRepository) GetTotalReturnedByRange(from, to time.Time) (floa
 	return total, err
 }
 
-func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) error {
+func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) (*models.Return, error) {
+	var createdReturn *models.Return
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// 1. Kárdex Movements
 		for _, mv := range movements {
@@ -125,7 +126,7 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 
 		// 2. Adjust Stock
 		for barcode, delta := range stockAdjustments {
-			if err := tx.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).
+			if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).
 				Update("quantity", gorm.Expr("ROUND((quantity + ?)::numeric, 3)", delta)).Error; err != nil {
 				return fmt.Errorf("error actualizando stock de producto %s: %w", barcode, err)
 			}
@@ -133,12 +134,28 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 
 		// 3. Mark original sale as hasReturn
 		if originalSale != nil && originalSale.SaleID > 0 {
-			if err := tx.Model(&models.Sale{}).Where("saleId = ?", originalSale.SaleID).Update("hasReturn", true).Error; err != nil {
+			if err := tx.Model(&models.Sale{}).Where("\"saleId\" = ?", originalSale.SaleID).Update("hasReturn", true).Error; err != nil {
 				return fmt.Errorf("error actualizando estado de venta original: %w", err)
 			}
 		}
 
 		// 4. Create the Return record
+		var details []models.ReturnDetail
+		for _, item := range req.ReturnedItems {
+			details = append(details, models.ReturnDetail{
+				Barcode:    item.Barcode,
+				Quantity:   item.Qty,
+				IsExchange: false,
+			})
+		}
+		for _, item := range req.ReplacementItems {
+			details = append(details, models.ReturnDetail{
+				Barcode:    item.Barcode,
+				Quantity:   item.Qty,
+				IsExchange: true,
+			})
+		}
+
 		ret := &models.Return{
 			SaleID:        req.InvoiceRef,
 			Date:          time.Now(),
@@ -146,14 +163,16 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 			Reason:        "DEVOLUCION_AVANZADA",
 			ReturnType:    req.Type,
 			EmployeeDNI:   employeeDNI,
+			Details:       details,
 		}
 		if err := tx.Create(ret).Error; err != nil {
 			return fmt.Errorf("error guardando registro de devolución: %w", err)
 		}
+		createdReturn = ret
 
 		// Update returnRef on originalSale
 		if originalSale != nil && originalSale.SaleID > 0 {
-			if err := tx.Model(&models.Sale{}).Where("saleId = ?", originalSale.SaleID).Update("returnRef", ret.ID).Error; err != nil {
+			if err := tx.Model(&models.Sale{}).Where("\"saleId\" = ?", originalSale.SaleID).Update("returnRef", ret.ID).Error; err != nil {
 				return fmt.Errorf("error vinculando devolucion a factura: %w", err)
 			}
 		}
@@ -204,5 +223,5 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		r.invalidateDashboardCache()
 	}
-	return err
+	return createdReturn, err
 }

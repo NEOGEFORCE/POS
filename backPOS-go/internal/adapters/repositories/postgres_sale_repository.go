@@ -30,12 +30,22 @@ func (r *PostgresSaleRepository) GetDB() interface{} {
 }
 
 func (r *PostgresSaleRepository) invalidateDashboardCache() {
+	// Borrado de cache local es trivial (in-memory map), lo dejamos síncrono.
 	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
-	// Solicitar refresco asíncrono y debounced al servicio centralizado
-	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
 
-	// Notificar sincronización global
-	sse.GetSSEService().BroadcastNewSale(nil)
+	// MV refresh y SSE broadcast se mueven a goroutine de fondo: no son
+	// requeridos para responder al cliente HTTP. El broadcast SSE sobre
+	// muchas conexiones puede ser pesado, y el RequestRefresh dispara
+	// REFRESH MATERIALIZED VIEW en Postgres (segundos en datasets grandes).
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("⚠️ [invalidateDashboardCache] recovered: %v", rec)
+			}
+		}()
+		refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
+		sse.GetSSEService().BroadcastNewSale(nil)
+	}()
 }
 
 func (r *PostgresSaleRepository) Create(sale *models.Sale) error {
@@ -67,6 +77,19 @@ func (r *PostgresSaleRepository) GetAll() ([]models.Sale, error) {
 func (r *PostgresSaleRepository) GetByDateRange(from, to time.Time) ([]models.Sale, error) {
 	var sales []models.Sale
 	query := r.db.Preload("Client").Preload("SaleDetails.Product.Category")
+	if !from.IsZero() {
+		query = query.Where("\"saleDate\" >= ?", from)
+	}
+	if !to.IsZero() {
+		query = query.Where("\"saleDate\" <= ?", to)
+	}
+	err := query.Order("\"saleDate\" DESC").Find(&sales).Error
+	return sales, err
+}
+
+func (r *PostgresSaleRepository) GetByDateRangeWithoutDetails(from, to time.Time) ([]models.Sale, error) {
+	var sales []models.Sale
+	query := r.db.Preload("Client")
 	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
@@ -280,7 +303,7 @@ func (r *PostgresSaleRepository) UpdateDebt(id uint, newDebt float64) error {
 func (r *PostgresSaleRepository) GetMonthlyTotals() (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("sales").
-		Select("TO_CHAR(\"saleDate\", 'YYYY-MM') as month, COALESCE(SUM(\"totalAmount\"), 0) as total").
+		Select("TO_CHAR(\"saleDate\" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month, COALESCE(SUM(\"totalAmount\"), 0) as total").
 		Where("status = ?", "PAID").
 		Group("month").
 		Rows()
@@ -385,7 +408,7 @@ func (r *PostgresSaleRepository) GetTopSellingProducts(from, to time.Time, limit
 func (r *PostgresSaleRepository) GetDailySalesByRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("sales").
-		Select("TO_CHAR(\"saleDate\", 'YYYY-MM-DD') as day, COALESCE(SUM(\"totalAmount\"), 0) as total").
+		Select("TO_CHAR(\"saleDate\" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, COALESCE(SUM(\"cashAmount\" + \"transferAmount\"), 0) as total").
 		Where("\"saleDate\" >= ? AND \"saleDate\" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL", from, to).
 		Group("day").
 		Rows()

@@ -20,7 +20,7 @@ import (
 func (r *PostgresProductRepository) UpdateQuantity(barcode string, newQuantity float64) error {
 	// MASTER SPRINT: Enforce 3 decimal precision
 	roundedQty := math.Round(newQuantity*1000) / 1000
-	err := r.db.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).Update("quantity", roundedQty).Error
+	err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", roundedQty).Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeyProducts)
 		r.invalidateDashboardCache()
@@ -42,7 +42,7 @@ func (r *PostgresProductRepository) BatchUpdateQuantities(updates map[string]flo
 	for barcode, newQty := range updates {
 		// MASTER SPRINT: Enforce 3 decimal precision
 		roundedQty := math.Round(newQty*1000) / 1000
-		if err := tx.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).Update("quantity", roundedQty).Error; err != nil {
+		if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", roundedQty).Error; err != nil {
 			tx.Rollback()
 			return err
 		}
@@ -79,15 +79,25 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 		}()
 	}
 
+	// Construir query masiva con CASE
+	query := "UPDATE products SET quantity = ROUND((quantity - CASE barcode "
+	var args []interface{}
+	var barcodes []string
+
 	for barcode, delta := range adjustments {
-		// MASTER SPRINT: Enforce 3 decimal precision in atomic adjustment
-		if err := gormDB.Model(&models.Product{}).Where("barcode = ? AND quantity != -1", barcode).
-			Update("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", delta)).Error; err != nil {
-			if !ok {
-				gormDB.Rollback()
-			}
-			return err
+		query += "WHEN ? THEN ?::numeric "
+		args = append(args, barcode, delta)
+		barcodes = append(barcodes, barcode)
+	}
+
+	query += "ELSE 0 END)::numeric, 3) WHERE barcode IN ?"
+	args = append(args, barcodes)
+
+	if err := gormDB.Exec(query, args...).Error; err != nil {
+		if !ok {
+			gormDB.Rollback()
 		}
+		return err
 	}
 
 	if !ok {
@@ -151,6 +161,15 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				employeeName = emp.Name
 			}
 		}
+
+		// Lookup del nombre del proveedor global para el historial
+		supplierName := ""
+		if supplierID != nil {
+			var sup models.Supplier
+			if err := tx.First(&sup, *supplierID).Error; err == nil {
+				supplierName = sup.Name
+			}
+		}
 		
 		receptionID := fmt.Sprintf("RECP-%d", time.Now().Unix())
 		for _, entry := range entries {
@@ -162,7 +181,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			oldSalePrice := product.SalePrice
 
 			// === TAREA 2 & 3: AJUSTE FÍSICO EN CALIENTE ===
-			if entry.ActualPhysicalStock != nil && product.Quantity != -1 {
+			if entry.ActualPhysicalStock != nil {
 				theoreticalStock := product.Quantity
 				physicalStock := *entry.ActualPhysicalStock
 				diff := physicalStock - theoreticalStock
@@ -227,7 +246,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 && diff != 0 {
 					var baseProduct models.Product
 					if err := tx.Where("barcode = ?", *product.BaseProductBarcode).First(&baseProduct).Error; err == nil {
-						if baseProduct.Quantity != -1 && isEgreso {
+						if isEgreso {
 							baseProduct.Quantity += diff * float64(product.PackMultiplier)
 							if err := tx.Save(&baseProduct).Error; err != nil {
 								return fmt.Errorf("error actualizando stock del producto base en ajuste: %w", err)
@@ -267,14 +286,14 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 
 				expandedQuantity := entry.AddedQuantity * float64(product.PackMultiplier)
 				
-				if baseProduct.Quantity != -1 && isEgreso {
+				if isEgreso {
 					baseProduct.Quantity += expandedQuantity
 					if err := tx.Save(&baseProduct).Error; err != nil {
 						return fmt.Errorf("error actualizando stock del producto base: %w", err)
 					}
 				}
 
-				if product.Quantity != -1 && isEgreso {
+				if isEgreso {
 					product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
 				}
 
@@ -296,7 +315,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					return err
 				}
 			} else {
-				if product.Quantity != -1 && isEgreso {
+				if isEgreso {
 					product.Quantity += entry.AddedQuantity
 				}
 			}
@@ -380,7 +399,18 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 
 			// Guardar snapshot de los valores (IVA, DTO, Precios) para reconstrucción/edición futura
-			metaBytes, _ := json.Marshal(entry)
+			// Añadimos supplierName y employeeName para el historial de recepciones
+			type receptionMetadata struct {
+				Entry         interface{} `json:"entry"`
+				SupplierName  string      `json:"supplierName"`
+				EmployeeName  string      `json:"employeeName"`
+			}
+			meta := receptionMetadata{
+				Entry:        entry,
+				SupplierName: supplierName,
+				EmployeeName: employeeName,
+			}
+			metaBytes, _ := json.Marshal(meta)
 
 			// 4. Registro de Movimiento en Kárdex
 			movementQty := entry.AddedQuantity
@@ -405,12 +435,14 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				return err
 			}
 
-			// Acumular total para el egreso (solo compras, no regalos ni devoluciones)
-			// Nota: devoluciones restan, pero aquí asumimos flujo de entrada positiva
+			// Acumular total para el egreso. La separación 3 zonas garantiza:
+			//   - REGULAR: AddedQuantity > 0 y NewPurchasePrice > 0  → lineTotal > 0 (suma)
+			//   - BONUS:   AddedQuantity > 0 pero NewPurchasePrice 0 → lineTotal = 0 (no afecta)
+			//   - RETURN:  AddedQuantity < 0 con precio > 0          → lineTotal < 0 (resta)
+			// Sin el filtro `> 0` anterior, las devoluciones reducen el monto
+			// real a pagar al proveedor al cerrar el egreso de recepción.
 			lineTotal := (entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount) * entry.AddedQuantity
-			if lineTotal > 0 {
-				totalAmount += lineTotal
-			}
+			totalAmount += lineTotal
 			if mainSupplierID == nil && entry.SupplierID != nil {
 				mainSupplierID = entry.SupplierID
 			}
@@ -428,6 +460,36 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			if err := json.Unmarshal([]byte(paymentSource), &mixed); err == nil && len(mixed) > 0 {
 				isMixed = true
 			}
+		} else if strings.HasPrefix(paymentSource, "{") {
+			var objMap map[string]float64
+			if err := json.Unmarshal([]byte(paymentSource), &objMap); err == nil {
+				for k, v := range objMap {
+					if v > 0 {
+						mixed = append(mixed, mixedPayment{Method: k, Amount: v})
+					}
+				}
+				if len(mixed) > 0 {
+					isMixed = true
+				}
+			}
+		}
+
+		// VALIDACIÓN ESTRICTA DE PAGOS MIXTOS: si el operador dividió el pago
+		// en varios canales, la suma debe cuadrar con el total del egreso
+		// (mercancía + flete). Tolerancia ±5 pesos por redondeos del frontend.
+		// Si no cuadra abortamos antes de tocar la BD; el operador corrige.
+		if isMixed && !bypassExpense {
+			var sumMixed float64
+			for _, mp := range mixed {
+				sumMixed += mp.Amount
+			}
+			expectedSum := totalAmount + freightCost
+			if math.Abs(sumMixed-expectedSum) > 5.0 {
+				return fmt.Errorf(
+					"pagos mixtos no cuadran: suma de canales $%.2f vs total esperado $%.2f (mercancía $%.2f + flete $%.2f)",
+					sumMixed, expectedSum, totalAmount, freightCost,
+				)
+			}
 		}
 
 		// 4.5. Creación de Egreso Automático (si no hay bypass)
@@ -439,37 +501,68 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					description = fmt.Sprintf("RECEPCIÓN DE MERCANCÍA - %s", supplier.Name)
 				}
 			}
-			
+
 			if isMixed {
-				// Crear un egreso por cada método de pago
+				// Pagos mixtos: una sola fila contable con desglose en las nuevas columnas
+				// y el campo paymentSource concatenado
+				freightLabel := ""
+				if freightCost > 0 {
+					freightLabel = " (incluye flete)"
+				}
+
+				var parts []string
+				var actualSum float64
+				for _, mp := range mixed {
+					if mp.Amount > 0 {
+						actualSum += mp.Amount
+					}
+				}
+
+				expense := models.Expense{
+					Description:   fmt.Sprintf("%s%s", description, freightLabel),
+					Amount:        actualSum,
+					Date:          time.Now(),
+					Status:        "PAID",
+					Category:      "Proveedores",
+					SupplierID:    mainSupplierID,
+					CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
+					ReferenceID:   receptionID,
+				}
+
 				for _, mp := range mixed {
 					if mp.Amount <= 0 {
 						continue
 					}
-					status := "PAID"
-					if mp.Method == "PRESTAMO" || mp.Method == "PREST." {
-						status = "PENDING"
-					}
+					methodUpper := strings.ToUpper(mp.Method)
+					parts = append(parts, fmt.Sprintf("%s: $%s", methodUpper, formatMoney(mp.Amount)))
 
-					expense := models.Expense{
-						Description:   fmt.Sprintf("%s (%s)", description, mp.Method),
-						Amount:        mp.Amount,
-						Date:          time.Now(),
-						PaymentSource: mp.Method,
-						Status:        status,
-						Category:      "Proveedores",
-						SupplierID:    mainSupplierID,
-						CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
-						ReferenceID:   receptionID,
+					switch methodUpper {
+  					case "EFECTIVO", "CAJA", "CASH":
+  						expense.CashAmount += mp.Amount
+  					case "NEQUI":
+  						expense.NequiAmount += mp.Amount
+  						expense.TaxAmount += math.Ceil(mp.Amount * 0.004)
+  					case "DAVIPLATA":
+  						expense.DaviplataAmount += mp.Amount
+					case "FONDO":
+						expense.FondoAmount += mp.Amount
+					case "PRESTAMO", "PREST.":
+						expense.Status = "PENDING"
 					}
-					if err := tx.Create(&expense).Error; err != nil {
-						return fmt.Errorf("error creando egreso mixto: %w", err)
-					}
+				}
+
+				expense.PaymentSource = strings.Join(parts, " / ")
+				if expense.PaymentSource == "" {
+					expense.PaymentSource = "MIXTO"
+				}
+
+				if err := tx.Create(&expense).Error; err != nil {
+					return fmt.Errorf("error creando egreso mixto consolidado: %w", err)
 				}
 			} else {
 				// Flujo normal (un solo método de pago)
 				status := "PAID"
-				if paymentSource == "PRESTAMO" || paymentSource == "PREST." {
+				if paymentSource == "PRESTAMO" || paymentSource == "PREST." || paymentSource == "DEUDA" {
 					status = "PENDING"
 				}
 				
@@ -484,14 +577,28 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
 					ReferenceID:   receptionID,
 				}
+
+				if paymentSource == "NEQUI" {
+					expense.NequiAmount = totalAmount
+					expense.TaxAmount = math.Ceil(totalAmount * 0.004)
+				} else if paymentSource == "DAVIPLATA" {
+					expense.DaviplataAmount = totalAmount
+				} else if paymentSource == "EFECTIVO" || paymentSource == "CAJA" {
+					expense.CashAmount = totalAmount
+				} else if paymentSource == "FONDO" {
+					expense.FondoAmount = totalAmount
+				}
+
 				if err := tx.Create(&expense).Error; err != nil {
 					return fmt.Errorf("error creando egreso: %w", err)
 				}
 			}
 		}
 
-		// 4.6. Creación de Egreso por Flete (si aplica y no hay bypass)
-		if !bypassExpense && freightCost > 0 {
+		// 4.6. Creación de Egreso por Flete — SOLO si NO hay pagos mixtos.
+		// En modo mixed, el flete ya está distribuido entre los canales que
+		// el operador eligió (validación de suma garantiza que cubre todo).
+		if !bypassExpense && freightCost > 0 && !isMixed {
 			description := "FLETE / TRANSPORTE - MERCANCÍA"
 			if mainSupplierID != nil {
 				var supplier models.Supplier
@@ -501,9 +608,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 
 			freightPaymentSource := paymentSource
-			if isMixed && len(mixed) > 0 {
-				freightPaymentSource = mixed[0].Method
-			} else if paymentSource == "" {
+			if paymentSource == "" {
 				freightPaymentSource = "EFECTIVO"
 			}
 
@@ -517,6 +622,18 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				SupplierID:    mainSupplierID,
 				CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
 			}
+
+			if freightPaymentSource == "NEQUI" {
+				expenseFreight.NequiAmount = freightCost
+				expenseFreight.TaxAmount = math.Ceil(freightCost * 0.004)
+			} else if freightPaymentSource == "DAVIPLATA" {
+				expenseFreight.DaviplataAmount = freightCost
+			} else if freightPaymentSource == "EFECTIVO" || freightPaymentSource == "CAJA" {
+				expenseFreight.CashAmount = freightCost
+			} else if freightPaymentSource == "FONDO" {
+				expenseFreight.FondoAmount = freightCost
+			}
+
 			if err := tx.Create(&expenseFreight).Error; err != nil {
 				return fmt.Errorf("error creando egreso de flete: %w", err)
 			}

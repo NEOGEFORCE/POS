@@ -23,6 +23,11 @@ type Expense struct {
 	PaidAmount      float64        `gorm:"type:decimal(10,2);default:0;column:paid_amount" json:"paidAmount"`
 	RemainingAmount float64        `gorm:"type:decimal(10,2);default:0;column:remaining_amount" json:"remainingAmount"`
 
+	CashAmount      float64        `gorm:"type:decimal(10,2);default:0;column:cash_amount" json:"cashAmount"`
+	NequiAmount     float64        `gorm:"type:decimal(10,2);default:0;column:nequi_amount" json:"nequiAmount"`
+	DaviplataAmount float64        `gorm:"type:decimal(10,2);default:0;column:daviplata_amount" json:"daviplataAmount"`
+	FondoAmount     float64        `gorm:"type:decimal(10,2);default:0;column:fondo_amount" json:"fondoAmount"`
+
 	IsRestocked     bool           `gorm:"default:false;column:is_restocked" json:"isRestocked"`
 
 	CreatedByDNI  string         `gorm:"not null;index;column:createdByDni" json:"createdByDni"`

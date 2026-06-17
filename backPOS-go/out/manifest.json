@@ -4,14 +4,21 @@
   "description": "Sistema de Punto de Venta de Alta Densidad",
   "start_url": "/",
   "display": "standalone",
+  "display_override": ["standalone", "fullscreen", "minimal-ui"],
   "background_color": "#09090b",
-  "theme_color": "#10b981",
+  "theme_color": "#09090b",
   "icons": [
+    {
+      "src": "/logos/2.000.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
     {
       "src": "/logos/2.000.png",
       "sizes": "512x512",
       "type": "image/png",
-      "purpose": "maskable"
+      "purpose": "any maskable"
     }
   ]
 }

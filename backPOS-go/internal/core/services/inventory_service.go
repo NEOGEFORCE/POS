@@ -1,6 +1,7 @@
 package services
 
 import (
+	"fmt"
 	"log"
 	"math"
 	"sort"
@@ -78,8 +79,8 @@ func (s *InventoryService) CalculateSalesVelocity(barcode string, days int) (flo
 	return math.Round(avgDaily*100) / 100, nil
 }
 
-// GetGlobalRestockSuggestions devuelve todos los productos con bajo stock, incluyendo los sin proveedor asignado
-func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, error) {
+// GetGlobalRestockSuggestions retorna todas las sugerencias de restock (Smart Sourcing)
+func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]SuggestedOrder, error) {
 	log.Printf("[InventoryService] Iniciando GetGlobalRestockSuggestions (Smart Sourcing)...")
 
 	// Obtener todos los productos con info de mejor proveedor
@@ -88,6 +89,8 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 		log.Printf("[InventoryService] Error en GetProductsWithBestSupplier: %v", err)
 		return nil, err
 	}
+
+
 
 	if len(products) == 0 {
 		return []SuggestedOrder{}, nil
@@ -154,13 +157,14 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 		stockRequeridoPorVentas := avgDaily * diasCobertura
 		sugeridoPorVentas := stockRequeridoPorVentas - effectiveStock
 
-		// La Regla de Decisión: si stock actual + tránsito >= min, NO sugerir.
 		var deficit float64
-		if effectiveStock >= p.MinStock {
-			deficit = 0
-		} else {
-			deficit = math.Max(sugeridoBase, sugeridoPorVentas)
+		// Regla Estricta: PROHIBIDO sugerir si Stock >= Stock Mínimo y no ignoramos el stock
+		// EXCEPCION: Si hay algo en transito, lo mostramos para que el Frontend ponga la etiqueta "EN CAMINO"
+		if !ignoreStock && (p.Quantity >= p.MinStock) && pendingQty <= 0 {
+			continue
 		}
+
+		deficit = math.Max(sugeridoBase, sugeridoPorVentas)
 		
 		alert := ""
 		alertType := ""
@@ -174,24 +178,34 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 		// Slow/High-Mover and Min Stock checks
 		suggestedMinStock := p.MinStock
 		if avgDaily * 14 > p.MinStock + 2 {
-			alert = "Aumentar Stock Mínimo: Ventas altas"
-			alertType = "INCREASE_MIN_STOCK"
 			suggestedMinStock = math.Ceil(avgDaily * 14)
+			alert = fmt.Sprintf("Aumentar min. a %.0f: Ventas altas", suggestedMinStock)
+			alertType = "INCREASE_MIN_STOCK"
 		} else if p.MinStock >= 10 && sold30d <= 1 {
-			alert = "Reducir Stock Mínimo: Producto estancado"
-			alertType = "SLOW_MOVER"
-			deficit = 0
 			if sold30d == 0 {
 				suggestedMinStock = 2.0
 			} else {
 				suggestedMinStock = 3.0
 			}
+			alert = fmt.Sprintf("Reducir min. a %.0f: Estancado", suggestedMinStock)
+			alertType = "SLOW_MOVER"
+			deficit = 0
 		}
 
 		totalIdeal := 0.0
 		if deficit > 0 {
 			pacas := math.Ceil(deficit / multiplo)
 			totalIdeal = pacas * multiplo
+		}
+
+		// IA Ciega: Si no hay deficit y no hay alerta, ignoramos la sugerencia
+		// EXCEPCION: Si hay algo en transito, lo mostramos para que el Frontend ponga la etiqueta "EN CAMINO"
+		if totalIdeal <= 0 && alertType == "" && pendingQty <= 0 {
+			continue
+		}
+		
+		if alertType == "HIGH_MOVER" && totalIdeal > 0 {
+			alert = fmt.Sprintf("Aumentado a %.0f: Alta rotación", totalIdeal)
 		}
 		
 		isHighRotation := (sugeridoPorVentas > sugeridoBase && totalIdeal > 0) || alertType == "HIGH_MOVER"
@@ -214,12 +228,11 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 				status = StockOptimal
 			}
 		} else {
-			criticalThreshold := float64(GetCriticalThreshold(int(p.MinStock)))
-			warningThreshold := math.Ceil(p.MinStock * 0.50)
+			ratio := float64(p.Quantity) / p.MinStock
 			
-			if p.Quantity <= criticalThreshold {
+			if p.Quantity <= 0 || ratio <= 0.25 {
 				status = StockCritical
-			} else if p.Quantity <= warningThreshold {
+			} else if ratio <= 0.50 {
 				status = StockWarning
 			} else {
 				status = StockOptimal
@@ -276,8 +289,8 @@ func (s *InventoryService) GetGlobalRestockSuggestions() ([]SuggestedOrder, erro
 }
 
 // GetGlobalRestockSuggestionsGrouped retorna las sugerencias agrupadas por proveedor
-func (s *InventoryService) GetGlobalRestockSuggestionsGrouped() ([]SupplierGroup, error) {
-	suggestions, err := s.GetGlobalRestockSuggestions()
+func (s *InventoryService) GetGlobalRestockSuggestionsGrouped(ignoreStock bool) ([]SupplierGroup, error) {
+	suggestions, err := s.GetGlobalRestockSuggestions(ignoreStock)
 	if err != nil {
 		return nil, err
 	}
@@ -299,7 +312,7 @@ func (s *InventoryService) GetGlobalRestockSuggestionsGrouped() ([]SupplierGroup
 		}
 	}
 
-	var groups []SupplierGroup
+	groups := make([]SupplierGroup, 0)
 	for id, items := range groupsMap {
 		name := supplierNames[id]
 		if id == 0 {
@@ -325,7 +338,8 @@ func (s *InventoryService) GetGlobalRestockSuggestionsGrouped() ([]SupplierGroup
 	return groups, nil
 }
 
-func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder, error) {
+// GetSuggestedOrders retorna las sugerencias para un proveedor especifico
+func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool) ([]SuggestedOrder, error) {
 	products, err := s.repo.GetProductsWithBestSupplier(&supplierID)
 	if err != nil {
 		return nil, err
@@ -394,7 +408,12 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 		stockRequeridoPorVentas := avgDaily * diasCobertura
 		sugeridoPorVentas := stockRequeridoPorVentas - effectiveStock
 
-		deficit := math.Max(sugeridoBase, sugeridoPorVentas)
+		var deficit float64
+		if effectiveStock >= p.MinStock && pendingQty <= 0 {
+			continue
+		} else {
+			deficit = math.Max(sugeridoBase, sugeridoPorVentas)
+		}
 		
 		alert := ""
 		alertType := ""
@@ -406,24 +425,34 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 
 		suggestedMinStock := p.MinStock
 		if avgDaily * 14 > p.MinStock + 2 {
-			alert = "Aumentar Stock Mínimo: Ventas altas"
-			alertType = "INCREASE_MIN_STOCK"
 			suggestedMinStock = math.Ceil(avgDaily * 14)
+			alert = fmt.Sprintf("Aumentar min. a %.0f: Ventas altas", suggestedMinStock)
+			alertType = "INCREASE_MIN_STOCK"
 		} else if p.MinStock >= 10 && sold30d <= 1 {
-			alert = "Reducir Stock Mínimo: Producto estancado"
-			alertType = "SLOW_MOVER"
-			deficit = 0
 			if sold30d == 0 {
 				suggestedMinStock = 2.0
 			} else {
 				suggestedMinStock = 3.0
 			}
+			alert = fmt.Sprintf("Reducir min. a %.0f: Estancado", suggestedMinStock)
+			alertType = "SLOW_MOVER"
+			deficit = 0
 		}
 
 		totalIdeal := 0.0
 		if deficit > 0 {
 			pacas := math.Ceil(deficit / multiplo)
 			totalIdeal = pacas * multiplo
+		}
+
+		// IA Ciega: Si no hay deficit y no hay alerta, ignoramos la sugerencia
+		// EXCEPCION: Si hay algo en transito, lo mostramos para que el Frontend ponga la etiqueta "EN CAMINO"
+		if totalIdeal <= 0 && alertType == "" && pendingQty <= 0 {
+			continue
+		}
+		
+		if alertType == "HIGH_MOVER" && totalIdeal > 0 {
+			alert = fmt.Sprintf("Aumentado a %.0f: Alta rotación", totalIdeal)
 		}
 		
 		isHighRotation := (sugeridoPorVentas > sugeridoBase && totalIdeal > 0) || alertType == "HIGH_MOVER"
@@ -441,12 +470,11 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint) ([]SuggestedOrder
 				status = StockOptimal
 			}
 		} else {
-			criticalThreshold := float64(GetCriticalThreshold(int(p.MinStock)))
-			warningThreshold := math.Ceil(p.MinStock * 0.50)
+			ratio := float64(p.Quantity) / p.MinStock
 			
-			if p.Quantity <= criticalThreshold {
+			if p.Quantity <= 0 || ratio <= 0.25 {
 				status = StockCritical
-			} else if p.Quantity <= warningThreshold {
+			} else if ratio <= 0.50 {
 				status = StockWarning
 			} else {
 				status = StockOptimal

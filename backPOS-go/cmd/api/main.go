@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"runtime/debug"
 
 	"backPOS-go/internal/adapters/handlers"
 	"backPOS-go/internal/adapters/jobs"
@@ -20,6 +21,11 @@ import (
 )
 
 func main() {
+	// OPTIMIZACIÓN TIER 1: GARBAGE COLLECTOR
+	// Cambiamos la frecuencia de limpieza del 100% (default) al 200%.
+	// Esto sacrifica un poco más de RAM a cambio de ganar extrema fluidez de CPU (menos micro-cortes).
+	debug.SetGCPercent(200)
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("No .env file found, relying on environment variables")
@@ -57,7 +63,7 @@ func main() {
 	expectedOrderService := services.NewExpectedOrderService(expectedOrderRepo)
 	telegramService := services.NewTelegramService()
 	productService := services.NewProductService(productRepo, movementRepo, expectedOrderService, telegramService)
-	restockService := services.NewRestockService(restockRepo)
+	restockService := services.NewRestockService(restockRepo, supplierRepo)
 
 	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo, telegramService)
 	authService := services.NewAuthService(adminRepo, emailService, auditService)
@@ -66,11 +72,14 @@ func main() {
 	dashboardService := services.NewDashboardService(saleRepo, productRepo, clientRepo, expenseRepo, returnRepo, closureRepo, shiftRepo, creditRepo, categoryRepo, movementRepo, adminRepo, reportRepo)
 	inventoryService := services.NewInventoryService(productRepo, saleRepo)
 	clientService := services.NewClientService(clientRepo, creditRepo)
-	expenseService := services.NewExpenseService(expenseRepo, supplierRepo, orderRepo, productRepo, expectedOrderService)
+	expenseService := services.NewExpenseService(expenseRepo, supplierRepo, orderRepo, productRepo, expectedOrderService, restockRepo)
 	adminService := services.NewAdminService(adminRepo)
 	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo, movementRepo)
-	orderService := services.NewPurchaseOrderService(orderRepo)
+	orderService := services.NewPurchaseOrderService(orderRepo, supplierRepo)
 	reportService := services.NewReportService(reportRepo)
+
+	// ExportService: PDF/Excel/CSV + nuevos reportes (rentabilidad, mermas, rotaci\u00f3n, cuadre real)
+	exportService := services.NewExportService(repositories.DB, dashboardService)
 
 	// Initialize Handlers
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService, authService)
@@ -81,6 +90,7 @@ func main() {
 	supplierHandler := handlers.NewSupplierHandler(supplierService, auditService)
 	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService)
 	dashboardReportHandler := handlers.NewDashboardReportHandler(dashboardService, auditService)
+	dashboardExportHandler := handlers.NewDashboardExportHandler(repositories.DB, exportService, dashboardService, telegramService, auditService)
 	clientHandler := handlers.NewClientHandler(clientService, saleRepo, auditService)
 	expenseHandler := handlers.NewExpenseHandler(expenseService, auditService)
 	adminHandler := handlers.NewAdminHandler(adminService, auditService, telegramService)
@@ -92,7 +102,7 @@ func main() {
 	sseHandler := handlers.NewSSEHandler()
 
 	// Initialize and Start Cron Jobs
-	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService)
+	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService)
 	cronManager.Start()
 
 	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
@@ -116,7 +126,7 @@ func main() {
 	log.Printf("🚀 POS PRO - SERVER STARTUP")
 	log.Printf("-----------------------------------------")
 	log.Printf("📡 RED: IP ESTATICA REQUERIDA (Resiliencia POS)")
-	log.Printf("🔗 ACCESO: http://%s:8080 (O su IP Local)", os.Getenv("SERVER_IP"))
+	log.Printf("🔗 ACCESO: http://%s:%s (O su IP Local)", os.Getenv("SERVER_IP"), func() string { p := os.Getenv("PORT"); if p == "" { p = "3000" }; return p }())
 	log.Printf("🛠️  MODO: RESILIENCIA OFFLINE ACTIVADA")
 	log.Printf("-----------------------------------------")
 
@@ -183,7 +193,7 @@ func main() {
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
 		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
-		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Writer.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		c.Writer.Header().Set("Access-Control-Max-Age", "86400") // 24 hours cache for preflight
 
 		if c.Request.Method == "OPTIONS" {
@@ -249,6 +259,7 @@ func main() {
 				productManage.POST("/products/create-products", productHandler.Create)
 				productManage.POST("/products/import-csv", productHandler.ImportCSV)
 				productManage.GET("/products/export-csv", productHandler.ExportCSV)
+				productManage.GET("/products/stats", productHandler.GetStats)
 				productManage.PUT("/products/update-products/:barcode", productHandler.Update)
 				productManage.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
 				productManage.POST("/products/open-bulk/:barcode", productHandler.OpenBulk)
@@ -375,6 +386,7 @@ func main() {
 				expenseGroup.POST("/create", expenseHandler.Create)
 				expenseGroup.PATCH("/settle/:id", expenseHandler.Settle)
 				expenseGroup.GET("/list", expenseHandler.GetAll)
+				expenseGroup.GET("/paginated", expenseHandler.GetPaginated)
 
 				// Acciones Administrativas (Restricción TOTAL para empleados)
 				expenseAdminActions := expenseGroup.Group("/")
@@ -408,6 +420,21 @@ func main() {
 				dashboard.GET("/reports/movements", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetInventoryMovements)
 				dashboard.GET("/reports/vault-audit", middlewares.RoleMiddleware("admin"), dashboardHandler.GetVaultAudit)
 				dashboard.GET("/reports/global-debt", middlewares.RoleMiddleware("admin"), dashboardHandler.GetGlobalDebt)
+
+				// EXPORT UNIFICADO: PDF/Excel/CSV + Telegram opcional
+				dashboard.GET("/reports/export", middlewares.RoleMiddleware("admin"), dashboardExportHandler.ExportReport)
+
+				// Cuadre Real (B\u00e1lance F\u00edsico = Efectivo + Transferencias - Egresos)
+				dashboard.GET("/reports/cuadre-real", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetCuadreRealRange)
+				dashboard.GET("/reports/cuadre-real-day", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetCuadreRealDay)
+
+				// Reportes estrat\u00e9gicos nuevos (JSON)
+				dashboard.GET("/reports/profitability", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetProfitability)
+				dashboard.GET("/reports/shrinkage", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetShrinkage)
+				dashboard.GET("/reports/rotation", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetRotation)
+
+				// Detalle ampliado de un cierre (ventas + egresos + c\u00e1lculo cuadre real)
+				dashboard.GET("/cashier-history/:id/full-detail", middlewares.RoleMiddleware("empleado"), dashboardExportHandler.GetClosureFullDetail)
 			}
 
 			// Admin
@@ -442,6 +469,7 @@ func main() {
 			protected.POST("/inventory/orders/dismiss", orderHandler.DismissOrder)
 			protected.POST("/inventory/shrinkage", productHandler.RegisterShrinkage)
 			protected.PATCH("/inventory/products/:barcode/unlink-supplier", productHandler.UnlinkSupplier)
+			protected.PATCH("/inventory/products/:barcode/link-supplier", productHandler.LinkSupplier)
 			protected.POST("/telegram/send-delivery-summary", orderHandler.SendDeliverySummaryToTelegram)
 			protected.GET("/inventory/savings-opportunities", productHandler.GetSavingsOpportunities)
 
@@ -455,6 +483,7 @@ func main() {
 
 			// Notifications (Telegram Integration)
 			protected.POST("/notifications/telegram", notificationHandler.SendTelegramPDF)
+			protected.POST("/notifications/telegram/text", notificationHandler.SendTelegramMessage)
 			protected.GET("/notifications/health", notificationHandler.HealthCheck)
 
 			// REAL-TIME EVENT STREAM (Ultra-Instinto)
@@ -487,6 +516,10 @@ func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 		if filepath.Ext(path) != "" {
 			fullPath := filepath.Join(publicPath, path)
 			if _, err := os.Stat(fullPath); err == nil {
+				// Cacheo a largo plazo para assets estaticos generados por Next.js
+				if filepath.Ext(path) == ".js" || filepath.Ext(path) == ".css" {
+					c.Header("Cache-Control", "public, max-age=31536000, immutable")
+				}
 				c.File(fullPath)
 				c.Abort()
 				return
@@ -494,6 +527,11 @@ func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 			c.AbortWithStatus(404)
 			return
 		}
+
+		// Prevenir el cacheo de los archivos HTML generados estáticamente para evitar "Application error" por chunks obsoletos
+		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+		c.Header("Pragma", "no-cache")
+		c.Header("Expires", "0")
 
 		// 2. Intentar servir el archivo .html (Next.js static export)
 		htmlPath := filepath.Join(publicPath, path+".html")
