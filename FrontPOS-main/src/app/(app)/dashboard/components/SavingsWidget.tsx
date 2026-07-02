@@ -20,7 +20,7 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
     return (
         <Card className="bg-gradient-to-br from-white to-emerald-50/30 dark:from-zinc-900/50 dark:to-emerald-950/20 border border-emerald-200/50 dark:border-emerald-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-full flex flex-col overflow-hidden" radius="lg">
             <CardHeader className="px-6 pt-6 pb-3 flex-shrink-0 relative overflow-hidden">
-                <div className="absolute -right-4 -top-4 w-24 h-24 bg-white/5 rounded-2xl blur-3xl" />
+                <div className="absolute -right-4 -top-4 w-24 h-24 bg-black/5 dark:bg-white/5 rounded-2xl blur-3xl" />
                 <div className="flex items-center justify-between w-full z-10">
                     <div className="flex items-center gap-3">
                         <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 p-2.5 rounded-2xl text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-3">
@@ -58,7 +58,7 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
                             animate={{ opacity: 1, x: 0 }}
                             transition={{ delay: idx * 0.1 }}
                             key={item.barcode} 
-                            className="p-3 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 hover:border-emerald-500/30 transition-all duration-300 group"
+                            className="p-3 rounded-2xl bg-black/5 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 hover:border-emerald-500/30 transition-all duration-300 group"
                         >
                             <div className="flex justify-between items-start mb-2">
                                 <div className="min-w-0">
@@ -66,9 +66,9 @@ export default function SavingsWidget({ items }: SavingsWidgetProps) {
                                         {item.productName}
                                     </p>
                                     <div className="flex items-center gap-2 mt-0.5">
-                                        <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 tracking-widest uppercase">{item.barcode}</span>
+                                        <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 tracking-widest uppercase">{item.barcode}</span>
                                         <span className="h-1 w-1 rounded-2xl bg-gray-300 dark:bg-zinc-700" />
-                                        <span className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">Stock: {item.stock}</span>
+                                        <span className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">Stock: {item.stock}</span>
                                     </div>
                                 </div>
                                 <Chip size="sm" variant="flat"

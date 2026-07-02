@@ -47,7 +47,7 @@ export default function DateRangeModal({
                                 </div>
                                 <div className="flex flex-col">
                                     <h3 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">Selector <span className="text-zinc-900 dark:text-zinc-100">Maestro</span></h3>
-                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Rango de Auditoria Temporal</p>
+                                    <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Rango de Auditoria Temporal</p>
                                 </div>
                             </div>
                         </ModalHeader>
@@ -85,7 +85,7 @@ export default function DateRangeModal({
                                 color="primary"
                                 onPress={onDownloadRange}
                                 startContent={<Download size={18} />}
-                                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[11px] uppercase tracking-[0.2em] h-14 px-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] tracking-tight"
+                                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-white/5 dark:bg-transparent border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[11px] uppercase tracking-[0.2em] h-14 px-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] tracking-tight"
                             >
                                 Generar Reporte
                             </Button>

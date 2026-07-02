@@ -56,7 +56,7 @@ const AnalyticalUserCard = ({
                     <Icon size={16} className="sm:size-4" />
                 </div>
                 <div className="text-right">
-                    <span className="text-[8px] sm:text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none tracking-tight block mb-0.5">
+                    <span className="text-[8px] sm:text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none tracking-tight block mb-0.5">
                         {label}
                     </span>
                     <span className="text-lg sm:text-xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight leading-none tracking-tighter tabular-nums">
@@ -67,7 +67,7 @@ const AnalyticalUserCard = ({
 
             <div className="flex flex-col gap-1 sm:gap-2">
                 <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-medium uppercase tracking-wider">
-                    <span className="text-zinc-500 dark:text-zinc-400 truncate max-w-[60px] sm:max-w-none">{subValue}</span>
+                    <span className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400 truncate max-w-[60px] sm:max-w-none">{subValue}</span>
                     {progress !== undefined && <span style={{ color: color }}>{progress}%</span>}
                 </div>
                 {progress !== undefined && (

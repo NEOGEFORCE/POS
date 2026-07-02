@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
@@ -121,7 +121,7 @@ export default function CategoriesPage() {
             title: 'CATEGORIA DUPLICADA',
             description: isActive
               ? `"${name}" ya existe como una categoria activa.`
-              : `Existe un registro inactivo para "${name}". Ã‚Â¿Deseas reactivarlo?`,
+              : `Existe un registro inactivo para "${name}". Â¿Deseas reactivarlo?`,
             action: !isActive ? (
               <Button
                 size="sm"
@@ -223,7 +223,7 @@ export default function CategoriesPage() {
   </div>;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) - MATCHING SUPPLIERS/USERS 3-PANEL STYLE */}
       <div className="shrink-0 px-4 py-4 flex flex-col gap-3 md:gap-5 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -249,7 +249,7 @@ export default function CategoriesPage() {
               isIconOnly
               size="sm"
               onPress={() => loadCategories()}
-              className="h-8 w-8 card-base border-none text-zinc-500 dark:text-zinc-400 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
+              className="h-8 w-8 card-base border-none text-gray-500 dark:text-zinc-500 dark:text-zinc-400 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-90 transition-all"
             >
               <Clock size={14} />
             </Button>
@@ -271,7 +271,7 @@ export default function CategoriesPage() {
             onValueChange={(v) => { setFilter(v.toUpperCase()); setCurrentPage(1); }}
             startContent={<Search size={14} className="text-zinc-900 dark:text-zinc-100 mr-2" />}
             classNames={{
-              inputWrapper: "h-11 px-4 bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-2xl",
+              inputWrapper: "h-11 px-4 bg-black/5 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner rounded-2xl",
               input: "text-[11px] font-medium tracking-widest uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600"
             }}
           />
@@ -288,7 +288,7 @@ export default function CategoriesPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-hidden">
         <CategoryTable
           categories={paginatedCategories}
           currentPage={currentPage}
@@ -344,6 +344,8 @@ export default function CategoriesPage() {
     </div>
   );
 }
+
+
 
 
 

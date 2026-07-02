@@ -10,11 +10,11 @@ import {
   DropdownItem,
   Avatar
 } from "@heroui/react"
-import { SidebarTrigger } from "@/components/ui/sidebar"
 import { LogOut } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { BackButton } from "@/components/back-button"
 import { NotificationDot } from "@/components/ui/notification-dot"
+import { SidebarTrigger } from "@/components/ui/sidebar"
 
 export function AppHeader() {
   const { user, logout } = useAuth()
@@ -62,14 +62,19 @@ export function AppHeader() {
   return (
     <header className="sticky top-0 z-[100] flex h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-app)] px-4 shadow-sm transition-colors">
       <div className="flex items-center gap-3">
-        <SidebarTrigger className="h-8 w-8 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--accent)] transition-all shrink-0" />
+        <SidebarTrigger className="md:hidden" />
         {pathname !== "/dashboard" && pathname !== "/" && (
           <BackButton size="sm" showText={false} className="h-8 w-8" />
         )}
       </div>
 
-      <div className="flex-1 flex justify-center items-center px-4">
-        {/* Espacio reservado para Busqueda (Search) si se requiere despues */}
+      <div className="flex-1 flex flex-col justify-center items-center px-4 overflow-hidden">
+        <span className="text-[9px] md:text-[10px] font-bold text-[var(--text-muted)] uppercase tracking-widest leading-none text-center truncate w-full">
+          {dateStr}
+        </span>
+        <span className="text-[10px] md:text-xs font-medium text-[var(--text-primary)] uppercase tracking-tight text-center truncate w-full">
+          {timeStr}
+        </span>
       </div>
 
       <div className="flex items-center gap-3">

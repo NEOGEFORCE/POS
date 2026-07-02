@@ -23,6 +23,7 @@ import {
   X,
   Search,
   Camera,
+  ArrowLeft,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 
@@ -294,6 +295,15 @@ export default function UnmatchedItemsReviewer({
     advanceTo(null);
   };
 
+  // Volver al item anterior
+  const handleGoBack = () => {
+    if (currentIdx > 0) {
+      const prevItem = items[currentIdx - 1];
+      setResolvedItems(prev => prev.filter(r => r.invoiceName !== prevItem.invoiceName));
+      setCurrentIdx(idx => idx - 1);
+    }
+  };
+
   // ============================================================
   // Render
   // ============================================================
@@ -362,11 +372,11 @@ export default function UnmatchedItemsReviewer({
                   </p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Cant</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">Cant</p>
                   <p className="text-base font-medium tabular-nums text-zinc-900 dark:text-zinc-100">{current.quantity}</p>
                 </div>
                 <div className="text-right shrink-0">
-                  <p className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Precio</p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">Precio</p>
                   <p className="text-base font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
                     ${Math.round(current.unitPrice).toLocaleString("es-CO")}
                   </p>
@@ -418,7 +428,7 @@ export default function UnmatchedItemsReviewer({
                         <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 uppercase truncate">
                           {sug.productName}
                         </p>
-                        <p className="text-[9px] font-medium text-zinc-500 tabular-nums tracking-wider">
+                        <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 tabular-nums tracking-wider">
                           {sug.barcode}
                         </p>
                       </div>
@@ -430,12 +440,12 @@ export default function UnmatchedItemsReviewer({
                             ? "bg-emerald-500/10 text-emerald-600"
                             : sug.confidence >= 0.4
                               ? "bg-amber-500/10 text-amber-600"
-                              : "bg-zinc-500/10 text-zinc-500"
+                              : "bg-zinc-500/10 text-gray-500 dark:text-zinc-500"
                         }`}
                       >
                         {Math.round(sug.confidence * 100)}%
                       </Chip>
-                      <ArrowRight size={14} className="text-zinc-400 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all" />
+                      <ArrowRight size={14} className="text-gray-500 dark:text-zinc-400 group-hover:text-emerald-500 group-hover:translate-x-1 transition-all" />
                     </button>
                   ))}
                 </div>
@@ -462,7 +472,7 @@ export default function UnmatchedItemsReviewer({
                   classNames={{
                     base: "w-full",
                     listboxWrapper: "max-h-[250px]",
-                    selectorButton: "text-zinc-500",
+                    selectorButton: "text-gray-500 dark:text-zinc-500",
                   }}
                   inputProps={{
                     classNames: {
@@ -480,7 +490,7 @@ export default function UnmatchedItemsReviewer({
                     <AutocompleteItem key={item.barcode} textValue={`${item.productName} - ${item.barcode}`}>
                       <div className="flex flex-col py-1">
                         <span className="text-sm font-medium uppercase text-zinc-900 dark:text-zinc-100">{item.productName}</span>
-                        <span className="text-[10px] font-mono text-zinc-500">#{item.barcode}</span>
+                        <span className="text-[10px] font-mono text-gray-500 dark:text-zinc-500">#{item.barcode}</span>
                       </div>
                     </AutocompleteItem>
                   )}
@@ -488,7 +498,7 @@ export default function UnmatchedItemsReviewer({
                 <Button 
                   isIconOnly 
                   onPress={() => setIsScannerOpen(true)}
-                  className="h-14 w-14 shrink-0 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-2xl text-zinc-500 hover:text-emerald-500 hover:border-emerald-500/50 transition-all shadow-inner"
+                  className="h-14 w-14 shrink-0 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/10 rounded-2xl text-gray-500 dark:text-zinc-500 hover:text-emerald-500 hover:border-emerald-500/50 transition-all shadow-inner"
                 >
                   <Camera size={22} />
                 </Button>
@@ -505,28 +515,39 @@ export default function UnmatchedItemsReviewer({
               >
                 + Abrir Protocolo de Nuevo Producto
               </Button>
-              <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-500 uppercase tracking-widest text-center mt-2">
+              <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-500 uppercase tracking-widest text-center mt-2">
                 Pre-cargado con nombre, costo e impuestos detectados
               </p>
             </div>
           </ModalBody>
 
           <ModalFooter className="flex justify-between items-center gap-2">
-            <Button
-              variant="light"
-              onPress={handleSkip}
-              startContent={<SkipForward size={14} />}
-              className="text-[10px] font-medium uppercase tracking-widest text-zinc-500"
-            >
-              Saltar este item
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="light"
+                onPress={handleGoBack}
+                isDisabled={currentIdx === 0}
+                startContent={<ArrowLeft size={14} />}
+                className="text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500"
+              >
+                Volver
+              </Button>
+              <Button
+                variant="light"
+                onPress={handleSkip}
+                startContent={<SkipForward size={14} />}
+                className="text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500"
+              >
+                Saltar
+              </Button>
+            </div>
             <Button
               variant="light"
               onPress={() => onOpenChange(false)}
               startContent={<X size={14} />}
-              className="text-[10px] font-medium uppercase tracking-widest text-zinc-500"
+              className="text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500"
             >
-              Cancelar revision
+              Cancelar
             </Button>
           </ModalFooter>
         </>

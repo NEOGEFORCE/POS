@@ -44,17 +44,17 @@ const LabelSearch = memo(({ filter, onFilterChange, filteredProducts, onAddToQue
                             <div 
                                 key={p.barcode} 
                                 onClick={() => onAddToQueue(p)}
-                                className="group p-3 rounded-2xl border border-transparent hover:border-emerald-500/30 bg-gray-50/50 dark:bg-[#18181b] hover:bg-white dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 flex justify-between items-center transition-all cursor-pointer"
+                                className="group p-3 rounded-2xl border border-transparent hover:border-emerald-500/30 bg-gray-50/50 dark:bg-[#18181b] hover:bg-white dark:hover:bg-white/5 dark:bg-transparent border border-zinc-200 dark:border-white/5 flex justify-between items-center transition-all cursor-pointer"
                             >
                                 <div className="flex items-center gap-3 min-w-0">
-                                    <div className="h-10 w-10 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 group-hover:scale-110 transition-transform">
+                                    <div className="h-10 w-10 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 group-hover:scale-110 transition-transform">
                                         <ShoppingBag size={18} />
                                     </div>
                                     <div className="flex flex-col min-w-0">
                                         <span className="text-xs font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight truncate tracking-tight">
                                             {p.productName}
                                         </span>
-                                        <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-medium tracking-[0.2em] mt-0.5 uppercase">
+                                        <span className="text-[9px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium tracking-[0.2em] mt-0.5 uppercase">
                                             ${formatCurrency(p.salePrice)} <span className="text-zinc-900 dark:text-zinc-100/50 ml-1">#{p.barcode}</span>
                                         </span>
                                     </div>

@@ -61,8 +61,11 @@ export default function InvoiceReaderModal({
           const errData = JSON.parse(text);
           if (typeof errData?.error === 'string') {
             errMsg = errData.error;
-          } else if (typeof errData?.error?.message === 'string') {
+          } else if (errData?.error && typeof errData.error === 'object' && typeof errData.error.message === 'string') {
             errMsg = errData.error.message;
+            if (typeof errData.error.details === 'string' && errData.error.details.trim() !== '') {
+              errMsg += ` (${errData.error.details})`;
+            }
           } else if (typeof errData?.userMessage === 'string') {
             errMsg = errData.userMessage;
           } else if (typeof errData?.message === 'string') {
@@ -213,13 +216,9 @@ export default function InvoiceReaderModal({
         const ibuaFromOcr = Number(item.ibua_percentage ?? item.IBUA ?? item.ibua ?? 0);
         const icuiFromOcr = Number(item.icui_percentage ?? item.ICUI ?? item.icui ?? 0);
 
-        out.iva_percentage = ivaFromOcr > 0
-          ? ivaFromOcr
-          : (expectIVA ? 19 : 0);
-        out.ibua_percentage = ibuaFromOcr > 0
-          ? ibuaFromOcr
-          : (expectIBUA ? 20 : 0);
-        out.icui_percentage = icuiFromOcr;
+        out.iva_percentage = expectIVA ? (ivaFromOcr > 0 ? ivaFromOcr : 19) : 0;
+        out.ibua_percentage = expectIBUA ? (ibuaFromOcr > 0 ? ibuaFromOcr : 20) : 0;
+        out.icui_percentage = expectIBUA ? icuiFromOcr : 0;
         return out;
       };
 
@@ -281,7 +280,7 @@ export default function InvoiceReaderModal({
                     />
                   </label>
                   
-                  <label className="w-full h-32 border-2 border-dashed border-gray-300 dark:border-zinc-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-zinc-900/50 transition-colors relative overflow-hidden group">
+                  <label className="w-full h-32 border-2 border-dashed border-gray-300 dark:border-zinc-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-50 dark:bg-zinc-900/50 transition-colors relative overflow-hidden group">
                     <Upload size={28} className="text-gray-400 mb-2 group-hover:scale-110 transition-transform" />
                     <p className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-widest text-center">Subir<br/>Archivo</p>
                     <input 
@@ -330,7 +329,7 @@ export default function InvoiceReaderModal({
                       className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
                         expectIVA
                           ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
-                          : 'bg-[#121214] border-white/5 text-zinc-400 hover:border-emerald-500/20'
+                          : 'bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
                       }`}
                     >
                       <CheckCircle2
@@ -346,7 +345,7 @@ export default function InvoiceReaderModal({
                           Buscar IVA
                         </span>
                         <span className={`text-[9px] font-medium uppercase tracking-widest ${
-                          expectIVA ? 'text-emerald-500/70' : 'text-zinc-500'
+                          expectIVA ? 'text-emerald-500/70' : 'text-gray-500 dark:text-zinc-500'
                         }`}>
                           5% / 19% tipicos
                         </span>
@@ -361,7 +360,7 @@ export default function InvoiceReaderModal({
                       className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
                         expectIBUA
                           ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
-                          : 'bg-[#121214] border-white/5 text-zinc-400 hover:border-emerald-500/20'
+                          : 'bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
                       }`}
                     >
                       <CheckCircle2
@@ -377,7 +376,7 @@ export default function InvoiceReaderModal({
                           Buscar IBUA / ICUI
                         </span>
                         <span className={`text-[9px] font-medium uppercase tracking-widest ${
-                          expectIBUA ? 'text-emerald-500/70' : 'text-zinc-500'
+                          expectIBUA ? 'text-emerald-500/70' : 'text-gray-500 dark:text-zinc-500'
                         }`}>
                           Bebidas · 8% / 16% / 18% / 20%
                         </span>

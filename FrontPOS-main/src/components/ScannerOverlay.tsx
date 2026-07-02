@@ -205,16 +205,16 @@ export function ScannerOverlay({
             aria-modal="true"
             aria-labelledby="scanner-title"
         >
-            <div className="relative w-full max-w-lg aspect-[3/4] sm:aspect-square bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+            <div className="relative w-full max-w-lg aspect-[3/4] sm:aspect-square bg-white dark:bg-zinc-950 rounded-[2.5rem] overflow-hidden border border-black/5 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                 
                 {/* AVISO DE CONTEXTO NO SEGURO (HTTP) */}
                 {isInsecure && (
-                    <div className="absolute inset-0 z-[100] bg-zinc-950 flex flex-col items-center justify-center p-8 text-center">
+                    <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950 flex flex-col items-center justify-center p-8 text-center">
                         <div className="h-16 w-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mb-4 border border-amber-500/20">
                             <AlertCircle className="h-8 w-8 text-amber-500" />
                         </div>
                         <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">CAMARA BLOQUEADA POR SEGURIDAD</h3>
-                        <p className="text-[10px] font-bold text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
+                        <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
                             El navegador bloquea la camara en conexiones <span className="text-amber-500 font-medium">HTTP</span>.
                             <br/><br/>
                             Para usar la camara desde esta IP (<span className="text-white underline">{typeof window !== 'undefined' ? window.location.hostname : ''}</span>), necesitas configurar <span className="text-zinc-100 font-medium tracking-tight text-[11px]">HTTPS</span> o acceder via <span className="text-sky-400 font-medium tracking-tight text-[11px]">localhost</span>.
@@ -225,12 +225,12 @@ export function ScannerOverlay({
 
                 {/* ERROR DE INICIALIZACION (Permisos denegados, etc) */}
                 {initError && !isInsecure && (
-                    <div className="absolute inset-0 z-[100] bg-zinc-950 flex flex-col items-center justify-center p-8 text-center">
+                    <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950 flex flex-col items-center justify-center p-8 text-center">
                         <div className="h-16 w-16 rounded-2xl bg-rose-500/10 flex items-center justify-center mb-4 border border-rose-500/20">
                             <AlertCircle className="h-8 w-8 text-rose-500" />
                         </div>
                         <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">ERROR DE CAMARA</h3>
-                        <p className="text-[10px] font-bold text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
+                        <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
                             No se pudo acceder a la camara. Asegurate de haber concedido los permisos necesarios.
                             <br/><br/>
                             <span className="text-rose-500/50 font-mono text-[8px] break-all">{initError}</span>
@@ -243,7 +243,7 @@ export function ScannerOverlay({
 
                 {/* INTERFAZ VISUAL DEL ESCANER (Omnidireccional / Full-Screen) */}
                 <div className="absolute inset-0 pointer-events-none z-10">
-                    <div className={`absolute left-0 right-0 h-0.5 bg-zinc-800 border border-white/5 shadow-[0_0_15px_3px_rgba(16,185,129,0.8)] animate-[scan_2s_ease-in-out_infinite] ${flashActive ? 'hidden' : ''}`}></div>
+                    <div className={`absolute left-0 right-0 h-0.5 bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 shadow-[0_0_15px_3px_rgba(16,185,129,0.8)] animate-[scan_2s_ease-in-out_infinite] ${flashActive ? 'hidden' : ''}`}></div>
                 </div>
 
                 {/* TOP BAR: Titulo + Flash + Cerrar */}
@@ -260,8 +260,8 @@ export function ScannerOverlay({
                                 torchOn 
                                     ? 'bg-amber-500 border-amber-400 text-black shadow-[0_0_20px_rgba(245,158,11,0.6)]' 
                                     : torchSupported
-                                        ? 'bg-black/50 border-white/10 text-white hover:bg-amber-500/20 hover:border-amber-500/50'
-                                        : 'bg-black/30 border-white/5 text-white/30 cursor-not-allowed'
+                                        ? 'bg-black/50 border-black/5 dark:border-white/10 text-white hover:bg-amber-500/20 hover:border-amber-500/50'
+                                        : 'bg-black/30 border-black/5 dark:border-white/5 text-white/30 cursor-not-allowed'
                             }`}
                             disabled={!torchSupported}
                             title={torchSupported ? (torchOn ? "Apagar Flash" : "Encender Flash") : "Flash no disponible"}
@@ -273,7 +273,7 @@ export function ScannerOverlay({
                         </button>
                         <button
                             onClick={onClose}
-                            className="px-4 h-10 bg-black/50 hover:bg-rose-500 text-white rounded-2xl flex items-center gap-2 transition-all border border-white/10 font-medium uppercase text-[10px] tracking-widest"
+                            className="px-4 h-10 bg-black/50 hover:bg-rose-500 text-white rounded-2xl flex items-center gap-2 transition-all border border-black/5 dark:border-white/10 font-medium uppercase text-[10px] tracking-widest"
                         >
                             <X className="h-4 w-4" /> VOLVER
                         </button>
@@ -295,7 +295,7 @@ export function ScannerOverlay({
                     const scannedBarcode = errorMessage ? (errorMessage.match(/\d{8,14}/)?.[0] || '') : '';
                     return (
                         <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-6 animate-in fade-in zoom-in duration-300 pointer-events-auto">
-                            <div className="bg-zinc-950/80 border border-zinc-800/50 p-8 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-900/10 text-center max-w-sm">
+                            <div className="bg-white dark:bg-zinc-950/80 border border-gray-200 dark:border-zinc-800/50 p-8 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-900/10 text-center max-w-sm">
                                 <div className="h-16 w-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4 border border-amber-500/20">
                                     <AlertTriangle className="h-8 w-8 text-amber-500" />
                                 </div>
@@ -303,23 +303,23 @@ export function ScannerOverlay({
                                 
                                 {scannedBarcode && (
                                     <div className="mb-4">
-                                        <span className="bg-zinc-800 text-zinc-300 border border-zinc-700/30 px-3 py-1.5 rounded-2xl font-mono text-xs font-bold tracking-wider">
+                                        <span className="bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 border border-zinc-700/30 px-3 py-1.5 rounded-2xl font-mono text-xs font-bold tracking-wider">
                                             {scannedBarcode}
                                         </span>
                                     </div>
                                 )}
                                 
-                                <p className="text-xs font-bold text-zinc-400 mb-6 tracking-tight leading-relaxed">{errorMessage}</p>
+                                <p className="text-xs font-bold text-gray-500 dark:text-zinc-400 mb-6 tracking-tight leading-relaxed">{errorMessage}</p>
                                 <div className="flex flex-col gap-3">
                                     <button
                                         onClick={onCreateProduct}
-                                        className="w-full h-12 bg-zinc-800 border border-white/5 text-white rounded-2xl font-medium uppercase text-xs shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-2 hover:scale-105 hover:bg-zinc-800 border border-white/5 transition-all"
+                                        className="w-full h-12 bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 text-white rounded-2xl font-medium uppercase text-xs shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-2 hover:scale-105 hover:bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 transition-all"
                                     >
                                         <Plus size={16} /> CREAR PRODUCTO
                                     </button>
                                     <button
                                         onClick={onIgnoreError}
-                                        className="w-full h-12 border border-zinc-800 bg-transparent text-zinc-300 hover:text-white hover:bg-[#18181b] rounded-2xl font-medium uppercase text-[10px] tracking-widest transition-colors"
+                                        className="w-full h-12 border border-gray-200 dark:border-zinc-800 bg-transparent text-gray-600 dark:text-zinc-300 hover:text-white hover:bg-[#18181b] rounded-2xl font-medium uppercase text-[10px] tracking-widest transition-colors"
                                     >
                                         VOLVER / IGNORAR
                                     </button>

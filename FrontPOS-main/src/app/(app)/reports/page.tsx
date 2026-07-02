@@ -21,6 +21,8 @@ import Cookies from 'js-cookie';
 import nextDynamic from "next/dynamic";
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';
 
+import { useApi } from "@/hooks/use-api";
+
 // Componentes dinamicos
 const DateRangeModal = nextDynamic(() => import("../dashboard/components/DateRangeModal"));
 const GenerateReportModal = nextDynamic(() => import("./components/GenerateReportModal"));
@@ -36,10 +38,10 @@ const MetricCard = memo(({ label, value, subValue, trend }: any) => (
       </ResponsiveContainer>
     </div>
     <div className="relative z-10">
-      <span className="text-[11px] font-medium tracking-widest uppercase text-zinc-500 block mb-2">{label}</span>
+      <span className="text-[11px] font-medium tracking-widest uppercase text-gray-500 dark:text-zinc-500 block mb-2">{label}</span>
       <div className="flex items-baseline gap-2">
         <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">{value}</span>
-        <span className="text-xs font-medium text-zinc-500">{trend}</span>
+        <span className="text-xs font-medium text-gray-500 dark:text-zinc-500">{trend}</span>
       </div>
       <p className="text-xs text-zinc-600 mt-1">{subValue}</p>
     </div>
@@ -61,11 +63,13 @@ export default function ReportsPage() {
   const [dateTo, setDateTo] = useState(`${new Date().toISOString().split('T')[0]}T23:59`);
   const [quickCategory, setQuickCategory] = useState("box-closure");
 
+  const { data } = useApi<any>(`/dashboard/overview?startDate=${dateFrom}&endDate=${dateTo}`);
+
   const getHeaders = () => {
     const token = Cookies.get('org-pos-token');
     return { 'Authorization': `Bearer ${token}` };
   };
-  const handleDownload = async (type: string, customOptions?: any) => {
+  const handleDownload = async (type: string, customOptions?: any) => {
     setLoadingReport(type);
     try {
       const baseUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
@@ -74,9 +78,9 @@ export default function ReportsPage() {
       // Incluye todas las nuevas: cuadre-real, profitability, shrinkage, rotation
       const backendCategories = [
         'box-closure', 'cuadre-real', 'cuadre-real-day', 'payments',
-        'inventory', 'pnl', 'cashflow', 'ranking', 'savings',
+        'inventory', 'pnl', 'cashflow', 'cashflow-detailed', 'ranking', 'savings',
         'vault-audit', 'global-credit', 'voids-audit',
-        'profitability', 'shrinkage', 'rotation',
+        'profitability', 'shrinkage', 'rotation', 'expenses'
       ];
 
       // Solo dejamos el fallback frontend si la categoria no es soportada por el backend
@@ -111,8 +115,8 @@ export default function ReportsPage() {
 
       const params = new URLSearchParams({
         type,
-        from: dateFrom,
-        to: dateTo,
+        from: customOptions?.dateFrom || dateFrom,
+        to: customOptions?.dateTo || dateTo,
         format,
         telegram: sendTelegram,
       });
@@ -120,6 +124,11 @@ export default function ReportsPage() {
       // Parametro extra para rentabilidad: target margin (default 0.17)
       if (type === 'profitability') {
         params.set('target', String(customOptions?.target ?? 0.17));
+      }
+      
+      // Parametro extra para egresos: concept
+      if (type === 'expenses' && customOptions?.concept) {
+        params.set('concept', customOptions.concept);
       }
 
       const url = `${baseUrl}/dashboard/reports/export?${params.toString()}`;
@@ -186,7 +195,7 @@ export default function ReportsPage() {
               <h1 className="text-[13px] font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter uppercase tracking-tight leading-none">
                 Central de <span className="text-zinc-900 dark:text-zinc-100">Reportes</span>
               </h1>
-              <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
+              <p className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                 <Target size={10} className="text-zinc-900 dark:text-zinc-100" /> Business Intelligence V4.0
               </p>
             </div>
@@ -196,13 +205,13 @@ export default function ReportsPage() {
             <Button
               variant="flat"
               onPress={() => setDateRangeOpen(true)}
-              className="bg-transparent text-zinc-500 dark:text-zinc-400 text-sm font-medium border border-white/[0.08] rounded-xl px-4 h-10 hover:bg-zinc-100 dark:bg-zinc-800 hover:text-zinc-200 transition-all duration-150"
+              className="bg-transparent text-gray-500 dark:text-zinc-500 dark:text-zinc-400 text-sm font-medium border border-white/[0.08] rounded-xl px-4 h-10 hover:bg-zinc-100 dark:bg-zinc-800 hover:text-zinc-200 transition-all duration-150"
             >
               <Calendar size={14} className="mr-1.5" /> Rango de Fechas
             </Button>
             <Button
               onPress={() => setIsGenerateModalOpen(true)}
-              className="bg-transparent text-zinc-500 dark:text-zinc-400 text-sm font-medium border border-white/[0.08] rounded-xl px-4 h-10 hover:bg-zinc-100 dark:bg-zinc-800 hover:text-zinc-200 transition-all duration-150"
+              className="bg-transparent text-gray-500 dark:text-zinc-500 dark:text-zinc-400 text-sm font-medium border border-white/[0.08] rounded-xl px-4 h-10 hover:bg-zinc-100 dark:bg-zinc-800 hover:text-zinc-200 transition-all duration-150"
             >
               <Zap size={14} className="mr-1.5" /> Generador Maestro
             </Button>
@@ -215,10 +224,30 @@ export default function ReportsPage() {
         <div className="flex flex-col gap-6 max-w-full">
           
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
-            <MetricCard label="Ventas Hoy" value="$1.2M" subValue="120 Transacciones" trend="+12%" />
-            <MetricCard label="Cajas Cerradas" value="08" subValue="Turno Mañana/Tarde" trend="Auditado" />
-            <MetricCard label="Riesgo Cartera" value="$4.5M" subValue="15 Clientes Fiados" trend="Critico" />
-            <MetricCard label="Valor Stock" value="$82M" subValue="1.2k Productos" trend="Actualizado" />
+            <MetricCard 
+              label="Ventas Hoy" 
+              value={data ? formatCurrency(data.todaySalesAmount || 0) : "---"} 
+              subValue={`${data?.todaySalesCount || 0} Transacciones`} 
+              trend="Actualizado" 
+            />
+            <MetricCard 
+              label="Egresos Hoy" 
+              value={data ? formatCurrency(data.todayExpenses?.amount || 0) : "---"} 
+              subValue={`${data?.todayExpenses?.count || 0} Movimientos`} 
+              trend="Auditado" 
+            />
+            <MetricCard 
+              label="Riesgo Cartera" 
+              value={data?.pendingDebts ? formatCurrency(data.pendingDebts.amount || 0) : "---"} 
+              subValue={`${data?.pendingDebts?.count || 0} Fiados Pendientes`} 
+              trend="Critico" 
+            />
+            <MetricCard 
+              label="Productos Totales" 
+              value={data ? (data.totalProducts || 0).toLocaleString() : "---"} 
+              subValue={`${data?.activeProducts || 0} Activos`} 
+              trend="Actualizado" 
+            />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[1fr_384px] gap-8 items-start">

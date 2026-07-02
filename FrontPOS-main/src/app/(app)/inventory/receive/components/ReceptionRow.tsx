@@ -3,7 +3,7 @@
 import React, { memo, useState, useEffect, useMemo } from 'react';
 import { Button, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
 import { 
-    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2 
+    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles 
 } from 'lucide-react';
 import { ReceiveItem } from '../page';
 import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText } from "@/lib/utils";
@@ -47,10 +47,14 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         return calculateGrossCost(basePrice, iva, icui, ibua) * (1 - (Number(discount || 0) / 100));
     };
 
-    // 2. Calculo de PVP Sugerido: Se calcula sobre el Costo Bruto para que el descuento beneficie al supermercado
-    const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number) => {
+    // 2. Calculo de PVP Sugerido: Se calcula sobre el Costo Bruto, y sube el PVP proporcionalmente al descuento para dar beneficio
+    const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number, discount: number = 0) => {
         const grossCost = calculateGrossCost(basePrice, iva, icui, ibua);
-        return applyRounding(grossCost * (1 + (Number(marginPct || 0) / 100)));
+        const discountDec = Number(discount || 0) / 100;
+        // Evitar division por cero si el descuento es 100%
+        const baseForPvp = discountDec >= 1 ? grossCost : (grossCost / (1 - discountDec));
+        // El precio de venta sube respecto al descuento para aumentar el margen de ganancia real
+        return applyRounding(baseForPvp * (1 + (Number(marginPct || 0) / 100)));
     };
 
     const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
@@ -154,7 +158,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         
         const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
         const targetSubtotal = basePrice * effectiveQty;
-        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
+        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage, item.discount);
         
         setLocalCost(formatCOP(Math.round(neto)));
         setLocalSalePrice(formatCOP(newSalePrice));
@@ -177,7 +181,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         
         const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
         const bruto = calculateGrossCost(basePrice, item.iva, item.icui, item.ibua);
-        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
+        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage, item.discount);
         
         setLocalCost(formatCOP(Math.round(neto)));
         setLocalSalePrice(formatCOP(newSalePrice));
@@ -213,7 +217,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         setLocalCost(formatCOP(neto));
         setLocalSubtotal(formatCOP(Math.round(targetSubtotal)));
         
-        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
+        const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage, item.discount);
         setLocalSalePrice(formatCOP(newSalePrice));
 
         onUpdate(item.lineId, {
@@ -254,9 +258,8 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const currentIBUA = type === 'ibua' ? value : item.ibua;
         
         const neto = calculateNetCost(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.discount);
-        const pvp = calculatePVP(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.marginPercentage);
+        const pvp = calculatePVP(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA, item.marginPercentage, item.discount);
         const bruto = calculateGrossCost(item.newPurchasePrice, currentIVA, currentICUI, currentIBUA);
-        
         setLocalCost(formatCOP(Math.round(neto)));
         setLocalSalePrice(formatCOP(pvp));
         setLocalTotal(formatCOP(Math.round(bruto * effectiveQty)));
@@ -271,7 +274,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         setLocalMargin(val);
         const targetMargin = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
         const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.discount);
-        const newSale = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, targetMargin);
+        const newSale = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, targetMargin, item.discount);
         
         setLocalSalePrice(formatCOP(newSale));
         onUpdate(item.lineId, { 
@@ -285,9 +288,11 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         const value = val === "" ? 0 : (parseFloat(val.replace(",", ".")) || 0);
         
         const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, value);
-        const newSalePrice = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.marginPercentage);
+        const newSalePrice = calculatePVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.marginPercentage, value);
         
+        const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
         setLocalCost(formatCOP(Math.round(neto)));
+        setLocalTotal(formatCOP(Math.round(bruto * effectiveQty)));
         setLocalSalePrice(formatCOP(newSalePrice));
         onUpdate(item.lineId, { 
             discount: value,
@@ -316,7 +321,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                 const realProduct = await prodRes.json();
 
                 // Intentar guardar el alias
-                const supplierId = localStorage.getItem('selectedSupplierId') || "0"; 
+                const supplierId = localStorage.getItem('org-pos-reception-supplier') || localStorage.getItem('selectedSupplierId') || "0"; 
                 // We don't have supplierId in ReceptionRow natively unless passed, but we can assume the user can map it later or we just pass it if possible.
                 // Actually the API expects supplierId. We can pull it from the DOM or ignore it if the backend allows 0. 
                 // For now let's just call it.
@@ -384,6 +389,24 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     if (item.matchStatus === 'match') matchClasses = "bg-emerald-50 dark:bg-emerald-900/30 border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.15)]";
     if (item.matchStatus === 'warning') matchClasses = "bg-amber-50 dark:bg-amber-900/30 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.15)]";
     if (item.matchStatus === 'extra') matchClasses = "bg-rose-50 dark:bg-rose-900/30 border-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.15)]";
+
+    const oldStock = item.currentStock || 0;
+    const oldPurchasePrice = item.oldPurchasePrice || 0;
+    const addedQuantity = item.addedQuantity || 0;
+    const newPurchasePrice = item.newPurchasePrice || 0;
+    let projectedWac = newPurchasePrice;
+    if (oldStock > 0 && addedQuantity > 0 && newPurchasePrice > 0) {
+        projectedWac = ((oldStock * oldPurchasePrice) + (addedQuantity * newPurchasePrice)) / (oldStock + addedQuantity);
+    }
+    
+    let targetMargin = item.marginPercentage;
+    let projectedSalePrice = item.newSalePrice;
+    if (projectedWac !== newPurchasePrice && projectedWac > 0 && targetMargin > 0 && addedQuantity > 0) {
+        const suggestedSalePrice = projectedWac * (1 + (targetMargin / 100));
+        const base = Math.floor(suggestedSalePrice / 100) * 100;
+        const remainder = suggestedSalePrice % 100;
+        projectedSalePrice = remainder >= 25 ? base + 100 : base;
+    }
 
     return (
         <div className={`flex flex-col gap-2 p-3 border rounded-2xl transition-all shadow-sm overflow-hidden focus-within:ring-1 focus-within:ring-[var(--accent)] ${matchClasses}`}>
@@ -505,9 +528,10 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                 const finalVal = !allowDecimals ? Math.floor(numVal) : numVal;
                                 
                                 const newEffectiveQty = finalVal * (item.unit === 'LB' ? 0.5 : 1);
+                                const neto = calculateNetCost(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.discount);
                                 const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
-                                setLocalTotal(formatInitial(bruto * newEffectiveQty));
                                 setLocalSubtotal(formatInitial(item.newPurchasePrice * newEffectiveQty));
+                                setLocalTotal(formatInitial(bruto * newEffectiveQty));
                                 
                                 onUpdate(item.lineId, { addedQuantity: finalVal });
                             }}
@@ -679,6 +703,16 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         </span>
                     </div>
                 </div>
+
+                {/* Visualizador de Precio Moderado (Si aplica) */}
+                {(oldStock > 0 && addedQuantity > 0 && newPurchasePrice > 0 && projectedWac !== newPurchasePrice) && (
+                    <div className="flex items-center gap-2 mt-0.5 p-2 bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/20 rounded-xl animate-in fade-in zoom-in-95 duration-300">
+                        <Sparkles size={14} className="text-emerald-500" />
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
+                            Costo Promedio Proyectado: {formatCOP(projectedWac)} <span className="opacity-50 mx-1">➡️</span> PVP Moderado: {formatCOP(projectedSalePrice)}
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     );

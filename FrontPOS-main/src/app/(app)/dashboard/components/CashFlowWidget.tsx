@@ -34,12 +34,12 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
             <CardBody className="p-5">
                 <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-white/8 text-zinc-500 dark:text-zinc-400 shrink-0">
+                        <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-white/8 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 shrink-0">
                             <Wallet size={18} />
                         </div>
                         <div>
                             <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 tracking-tight">Flujo <span className="text-zinc-900 dark:text-zinc-100">Hoy</span></h3>
-                            <p className="text-[11px] font-medium text-zinc-500 uppercase tracking-widest leading-none mt-1">Ventas vs Egresos</p>
+                            <p className="text-[11px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mt-1">Ventas vs Egresos</p>
                         </div>
                     </div>
                     <Chip 
@@ -64,8 +64,8 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                             <div key={method.key} className="p-3 rounded-2xl bg-zinc-100 dark:bg-zinc-800/30 border border-zinc-200 dark:border-white/5">
                                 <div className="flex items-center justify-between mb-2">
                                     <div className="flex items-center gap-2">
-                                        <method.icon size={14} className="text-zinc-500 dark:text-zinc-400" />
-                                        <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">{method.label}</span>
+                                        <method.icon size={14} className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400" />
+                                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">{method.label}</span>
                                     </div>
                                     <span className={`text-[11px] font-medium tracking-tight font-['DM_Mono'] ${mBalance >= 0 ? 'text-zinc-900 dark:text-zinc-100' : 'text-rose-500'}`}>
                                         <MoneyDigits value={mBalance} />
@@ -87,7 +87,7 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
 
                     <div className="pt-4 border-t border-zinc-200 dark:border-white/5">
                         <div className="flex justify-between items-end mb-2">
-                            <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-tight">Gasto vs Ingreso</span>
+                            <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-tight">Gasto vs Ingreso</span>
                             <span className="text-[10px] font-medium text-rose-500 tracking-tight">{progressRatio.toFixed(1)}%</span>
                         </div>
                         <Progress 
@@ -98,7 +98,7 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
                     </div>
 
                     <div className="flex flex-col items-center justify-center p-4 bg-zinc-100 dark:bg-zinc-800/50 border border-zinc-200 dark:border-white/5 rounded-xl">
-                        <span className="text-[11px] font-medium tracking-widest uppercase text-zinc-500 mb-1">Balance Neto del Dia</span>
+                        <span className="text-[11px] font-medium tracking-widest uppercase text-gray-500 dark:text-zinc-500 mb-1">Balance Neto del Dia</span>
                         <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">
                             <MoneyDigits value={balance} duration={1.6} />
                         </span>

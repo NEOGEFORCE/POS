@@ -91,7 +91,7 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
                                     <h3 className="text-lg font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter leading-none">
                                         Reportar <span className="text-rose-500">Faltante</span>
                                     </h3>
-                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
+                                    <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
                                         Notificar al area de compras
                                     </p>
                                 </div>
@@ -107,7 +107,7 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
 
                             <div className="space-y-4">
                                 <div className="space-y-1.5">
-                                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-2">Nombre del Producto</label>
+                                    <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-2">Nombre del Producto</label>
                                     <Input
                                         placeholder="EJ: LECHE ALQUERIA 1L..."
                                         value={productName}
@@ -121,7 +121,7 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
                                 </div>
 
                                 <div className="space-y-1.5">
-                                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-2">Nota Adicional (Opcional)</label>
+                                    <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-2">Nota Adicional (Opcional)</label>
                                     <Textarea
                                         placeholder="EJ: VARIOS CLIENTES HAN PREGUNTADO..."
                                         value={note}

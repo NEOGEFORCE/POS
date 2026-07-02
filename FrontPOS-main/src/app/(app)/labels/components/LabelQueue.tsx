@@ -39,7 +39,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                         <Button 
                             size="sm" 
                             variant="flat"
-                            className="bg-white/5 text-zinc-900 dark:text-zinc-100 text-[9px] font-medium uppercase tracking-widest rounded-2xl h-8 px-4 border border-emerald-500/20 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all tracking-tight" 
+                            className="bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 text-[9px] font-medium uppercase tracking-widest rounded-2xl h-8 px-4 border border-emerald-500/20 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-white transition-all tracking-tight" 
                             onPress={onAddAll}
                         >
                             <Layers size={14} className="mr-2" /> añadir todos
@@ -81,7 +81,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                                             <div className="flex items-center gap-2 mt-0.5">
                                                 <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tighter tracking-tight">${formatCurrency(item.product.salePrice)}</span>
                                                 <span className="h-1 w-1 rounded-2xl bg-gray-300 dark:bg-zinc-700" />
-                                                <span className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">PVP</span>
+                                                <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">PVP</span>
                                             </div>
                                         </div>
                                     </div>
@@ -105,7 +105,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                                                 isIconOnly 
                                                 size="sm" 
                                                 variant="light" 
-                                                className="h-7 w-7 min-w-0 rounded-2xl text-zinc-900 dark:text-zinc-100 hover:bg-white/5" 
+                                                className="h-7 w-7 min-w-0 rounded-2xl text-zinc-900 dark:text-zinc-100 hover:bg-black/5 dark:bg-white/5" 
                                                 onPress={() => onUpdateQuantity(item.product.barcode, 1)}
                                             >
                                                 <Plus size={14} />

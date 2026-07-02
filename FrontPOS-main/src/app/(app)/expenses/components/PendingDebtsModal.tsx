@@ -10,28 +10,34 @@ import {
   CreditCard as CardIcon, ChevronRight, Info, X
 } from 'lucide-react';
 import { Expense } from '@/lib/definitions';
+import { ExpensePaymentModal } from './ExpensePaymentModal';
 
 interface PendingDebtsModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   debts: Expense[];
   onSettle: (id: string, paymentSource: string, amount: number) => Promise<void>;
+  isAdmin?: boolean;
+  onForceClose?: (id: string) => Promise<void>;
 }
 
-const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDebtsModalProps) => {
-  const [settlingId, setSettlingId] = useState<string | null>(null);
+const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle, isAdmin, onForceClose }: PendingDebtsModalProps) => {
+  const [currentDebtId, setCurrentDebtId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState<string>('');
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [currentDebtAmount, setCurrentDebtAmount] = useState(0);
 
-  const handleSettleClick = async (id: string, source: string, maxAmount: number) => {
-    const amountToPay = parseFloat(paymentAmount) || maxAmount;
-    if (amountToPay <= 0) return;
-    
+  const handleSettleClick = async (paymentData: any) => {
+    if (!currentDebtId) return;
     setIsProcessing(true);
+    
+    const totalAmountPaid = paymentData.cash + paymentData.nequi + paymentData.daviplata + paymentData.fondo;
+    
     try {
-      await onSettle(id, source, amountToPay);
-      setSettlingId(null);
-      setPaymentAmount('');
+      await onSettle(currentDebtId, paymentData.paymentSourceString, totalAmountPaid);
+      setIsPaymentModalOpen(false);
+    } catch (e) {
+      console.error(e);
     } finally {
       setIsProcessing(false);
     }
@@ -87,7 +93,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
             <ModalBody>
               {debts.length === 0 ? (
                 <div className="py-20 flex flex-col items-center justify-center text-center opacity-40">
-                  <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 mb-4 border-2 border-dashed border-emerald-500/30">
+                  <div className="h-20 w-20 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 mb-4 border-2 border-dashed border-emerald-500/30">
                     <Activity size={32} />
                   </div>
                   <h3 className="text-sm font-medium uppercase tracking-widest text-zinc-900 dark:text-zinc-50">Todo al dia</h3>
@@ -101,10 +107,8 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                         {creditor}
                       </h3>
                       {creditorDebts.map((debt) => {
-                        const currentDebtAmount = debt.remainingAmount > 0 ? debt.remainingAmount : Number(debt.amount);
-                        const isSettling = settlingId === String(debt.id);
-                        const paymentVal = parseFloat(paymentAmount) || 0;
-                        const remainingAfterPayment = isSettling ? Math.max(0, currentDebtAmount - paymentVal) : currentDebtAmount;
+                        const currentDebtAmountValue = debt.remainingAmount > 0 ? debt.remainingAmount : Number(debt.amount);
+                        const isSettling = currentDebtId === String(debt.id);
 
                         return (
                           <div
@@ -129,70 +133,43 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                               <div className="text-right flex flex-col items-end">
                                 <span className="text-[9px] font-medium text-rose-500 uppercase tracking-tight tracking-widest leading-none mb-1">Pendiente</span>
                                 <span className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 tabular-nums leading-none tracking-tighter tracking-tight">
-                                  ${currentDebtAmount.toLocaleString()}
+                                  ${currentDebtAmountValue.toLocaleString()}
                                 </span>
                               </div>
                             </div>
 
                             {/* AREA DE ACCION / EXPANSION */}
                             <div className="mt-5 border-t border-gray-200/50 dark:border-white/5 pt-4">
-                              {isSettling ? (
-                                <div className="animate-in slide-in-from-bottom-4 fade-in duration-500">
-                                  <div className="flex flex-col gap-3 mb-4">
-                                    <Input
-                                      type="number"
-                                      label="Monto a Abonar"
-                                      placeholder="0.00"
-                                      value={paymentAmount}
-                                      onValueChange={setPaymentAmount}
-                                      startContent={<span className="text-gray-400 text-sm">$</span>}
-                                      classNames={{ inputWrapper: "bg-white dark:bg-zinc-900 border-amber-500/30" }}
-                                    />
-                                    {paymentVal > 0 && paymentVal < currentDebtAmount && (
-                                      <div className="text-right text-[10px] text-amber-600 dark:text-amber-400 uppercase font-medium">
-                                        Saldo Restante Tras Abono: <span className="font-bold">${remainingAfterPayment.toLocaleString()}</span>
-                                      </div>
-                                    )}
-                                  </div>
-                                  <p className="text-[9px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest text-center mb-4">¿Con que canal deseas saldar esta deuda?</p>
-                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                    {[
-                                      { id: 'EFECTIVO', label: 'Caja', icon: <Banknote size={16} />, color: 'emerald' },
-                                      { id: 'NEQUI', label: 'Nequi', icon: <Wallet size={16} />, color: 'pink' },
-                                      { id: 'DAVIPLATA', label: 'Davi', icon: <Building2 size={16} />, color: 'rose' },
-                                      { id: 'FONDO', label: 'Fondo', icon: <Building2 size={16} />, color: 'blue' }
-                                    ].map((source) => (
-                                      <Button
-                                        key={source.id}
-                                        isLoading={isProcessing}
-                                        className={`h-16 rounded-2xl border border-transparent transition-all hover:scale-[1.02] active:scale-95 flex flex-col items-center justify-center gap-1 bg-white dark:bg-zinc-950 shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:border-${source.color}-500 group`}
-                                        onPress={() => handleSettleClick(String(debt.id), source.id, currentDebtAmount)}
-                                      >
-                                        <div className={`text-${source.color}-500 group-hover:scale-110 transition-transform`}>{source.icon}</div>
-                                        <span className="text-[9px] font-medium uppercase tracking-tight tracking-tighter">{source.label}</span>
-                                      </Button>
-                                    ))}
-                                  </div>
+                                <div className="flex gap-2">
                                   <Button
-                                    variant="light"
-                                    size="sm"
-                                    fullWidth
-                                    className="mt-4 text-[9px] font-medium uppercase text-gray-400"
-                                    onPress={() => { setSettlingId(null); setPaymentAmount(''); }}
+                                    className="flex-1 h-12 bg-[#18181b] dark:bg-white text-white dark:text-black rounded-2xl font-medium uppercase tracking-widest tracking-tight text-[11px] shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all hover:scale-[1.01] active:scale-98 flex items-center justify-center gap-2 group"
+                                    onPress={() => { 
+                                      setCurrentDebtId(String(debt.id)); 
+                                      setCurrentDebtAmount(currentDebtAmountValue);
+                                      setIsPaymentModalOpen(true); 
+                                    }}
                                   >
-                                    Cancelar
+                                    <HandCoins size={16} className="group-hover:rotate-12 transition-transform" />
+                                    Abonar
+                                    <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
                                   </Button>
+                                  {isAdmin && onForceClose && (
+                                    <Button
+                                      className="h-12 w-12 min-w-12 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-2xl transition-all shadow-none shrink-0"
+                                      onPress={async () => {
+                                        if (confirm(`¿Estás seguro de forzar el cierre (Condonar) de la deuda #${debt.id} sin generar un comprobante de egreso?`)) {
+                                          setIsProcessing(true);
+                                          await onForceClose(String(debt.id));
+                                          setIsProcessing(false);
+                                        }
+                                      }}
+                                      isLoading={isProcessing && currentDebtId === String(debt.id)}
+                                      title="Condonar / Quitar sin Egreso"
+                                    >
+                                      <X size={18} />
+                                    </Button>
+                                  )}
                                 </div>
-                              ) : (
-                                <Button
-                                  className="w-full h-12 bg-[#18181b] dark:bg-white text-white dark:text-black rounded-2xl font-medium uppercase tracking-widest tracking-tight text-[11px] shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all hover:scale-[1.01] active:scale-98 flex items-center justify-center gap-2 group"
-                                  onPress={() => { setSettlingId(String(debt.id)); setPaymentAmount(currentDebtAmount.toString()); }}
-                                >
-                                  <HandCoins size={16} className="group-hover:rotate-12 transition-transform" />
-                                  Abonar a Deuda
-                                  <ChevronRight size={14} className="group-hover:translate-x-1 transition-transform" />
-                                </Button>
-                              )}
                             </div>
                           </div>
                         );
@@ -220,6 +197,14 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
           </>
         )}
       </ModalContent>
+
+      <ExpensePaymentModal
+        isOpen={isPaymentModalOpen}
+        onOpenChange={setIsPaymentModalOpen}
+        title="Liquidar Deuda"
+        totalToPay={currentDebtAmount}
+        onPay={handleSettleClick}
+      />
     </Modal>
   );
 };

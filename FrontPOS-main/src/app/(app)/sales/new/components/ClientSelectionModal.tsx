@@ -119,7 +119,7 @@ export default function ClientSelectionModal({
                                                     {c.name}
                                                 </span>
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{c.dni}</span>
+                                                    <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">{c.dni}</span>
                                                     {c.currentCredit > 0 && (
                                                         <span className="h-1.5 w-1.5 rounded-2xl bg-rose-500 animate-pulse" />
                                                     )}

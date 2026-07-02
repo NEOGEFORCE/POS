@@ -26,7 +26,7 @@ export const ConfirmDialog = ({
     switch (type) {
       case 'danger': return { border: 'border-rose-500', text: 'text-rose-500', btn: 'bg-rose-500', shadow: 'shadow-rose-500/20', icon: AlertTriangle };
       case 'warning': return { border: 'border-amber-500', text: 'text-amber-500', btn: 'bg-amber-500', shadow: 'shadow-amber-500/20', icon: AlertTriangle };
-      case 'success': return { border: 'border-emerald-500', text: 'text-zinc-100', btn: 'bg-zinc-800 border border-white/5', shadow: '', icon: HelpCircle };
+      case 'success': return { border: 'border-emerald-500', text: 'text-zinc-100', btn: 'bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5', shadow: '', icon: HelpCircle };
       default: return { border: 'border-sky-500', text: 'text-sky-500', btn: 'bg-sky-500', shadow: 'shadow-sky-500/20', icon: Info };
     }
   };
@@ -40,9 +40,9 @@ export const ConfirmDialog = ({
       onOpenChange={onOpenChange}
       backdrop="blur"
       classNames={{
-        base: `bg-zinc-950 border-2 ${colors.border} rounded-[2rem] overflow-hidden`,
-        header: "border-b border-white/5 bg-[#18181b]",
-        footer: "border-t border-white/5 bg-[#18181b]",
+        base: `bg-white dark:bg-zinc-950 border-2 ${colors.border} rounded-[2rem] overflow-hidden`,
+        header: "border-b border-black/5 dark:border-white/5 bg-[#18181b]",
+        footer: "border-t border-black/5 dark:border-white/5 bg-[#18181b]",
         backdrop: "bg-black/60"
       }}
     >
@@ -65,7 +65,7 @@ export const ConfirmDialog = ({
                 {description}
               </p>
               {isDanger && (
-                <p className="text-zinc-500 text-[10px] uppercase font-medium tracking-widest mt-2 tracking-tight">
+                <p className="text-gray-500 dark:text-zinc-500 text-[10px] uppercase font-medium tracking-widest mt-2 tracking-tight">
                   Esta accion es irreversible. Proporcione cautela.
                 </p>
               )}
@@ -74,7 +74,7 @@ export const ConfirmDialog = ({
               <Button 
                 variant="light" 
                 onPress={onClose} 
-                className="font-medium text-zinc-400 hover:text-white transition-colors"
+                className="font-medium text-gray-500 dark:text-zinc-400 hover:text-white transition-colors"
               >
                 {cancelText.toUpperCase()}
               </Button>

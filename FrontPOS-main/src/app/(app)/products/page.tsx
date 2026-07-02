@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Button, Input, Spinner, Autocomplete, AutocompleteItem } from "@heroui/react";
@@ -10,7 +10,7 @@ import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Product, Category } from '@/lib/definitions';
-import { applyRounding, formatCurrency, parseCurrency, sanitizeProductPayload, getStockStatus } from '@/lib/utils';
+import { applyRounding, formatCurrency, parseCurrency, sanitizeProductPayload, getStockStatus, normalizeText } from '@/lib/utils';
 import Cookies from 'js-cookie';
 import { apiFetch, ApiError } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
@@ -74,8 +74,7 @@ export default function ProductsPage() {
     );
     const { data: categoriesData, mutate: mutateCategories } = useApi<Category[]>('/categories/all-categories');
     const { data: suppliersData, mutate: mutateSuppliers } = useApi<any[]>('/suppliers/all-suppliers');
-    const { data: allProductsData, mutate: mutateAllProducts } = useApi<Product[]>('/products/all-products');
-
+    
     // --- ESTADOS ---
     const [addDialogOpen, setAddDialogOpen] = useState(false);
     const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -83,6 +82,12 @@ export default function ProductsPage() {
     const [alertsDialogOpen, setAlertsDialogOpen] = useState(false);
     const [isScannerOpen, setIsScannerOpen] = useState(false);
     const [scanMode, setScanMode] = useState<'main' | 'alternate' | 'search' | 'baseProduct'>('main');
+
+    // Solo descargar los 1275+ productos cuando se abra el modal de edicion/creacion para autocompletado
+    const { data: allProductsData, mutate: mutateAllProducts } = useApi<Product[]>(
+        addDialogOpen || editDialogOpen ? '/products/all-products' : null
+    );
+    const { data: statsData } = useApi<any>('/products/stats');
 
     const [newProduct, setNewProduct] = useState<Omit<Product, 'id'>>({
         barcode: '', productName: '', quantity: '' as any, isWeighted: false,
@@ -141,22 +146,17 @@ export default function ProductsPage() {
     const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
     const stats = useMemo(() => {
-        const source = allProductsData || [];
-        const cost = source.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.purchasePrice)), 0);
-        const retail = source.reduce((acc, p) => acc + (p.isWeighted ? 0 : (p.quantity * p.salePrice)), 0);
-        const totalItems = productsData?.total || source.length;
-
-        const criticalCount = products.filter(p => getStockStatus(p.quantity, p.minStock || 0) === 'CRITICAL').length;
-        const warningCount = products.filter(p => getStockStatus(p.quantity, p.minStock || 0) === 'REORDER').length;
-
+        if (statsData) {
+            return statsData;
+        }
         return {
-            totalCost: cost,
-            totalRetail: retail,
-            criticalStock: criticalCount,
-            warningStock: warningCount,
-            totalItems: totalItems
+            totalCost: 0,
+            totalRetail: 0,
+            criticalStock: 0,
+            warningStock: 0,
+            totalItems: productsData?.total || 0
         };
-    }, [products, allProductsData, productsData]);
+    }, [statsData, productsData]);
     
     useEffect(() => {
         if (addDialogOpen && editingProduct) {
@@ -171,8 +171,8 @@ export default function ProductsPage() {
         try {
             const rawData = {
                 ...newProduct,
-                productName: newProduct.productName.toUpperCase().trim(),
-                barcode: newProduct.barcode.toUpperCase().trim(),
+                productName: normalizeText(newProduct.productName),
+                barcode: normalizeText(newProduct.barcode),
             };
             const data = sanitizeProductPayload(rawData);
 
@@ -205,7 +205,12 @@ export default function ProductsPage() {
         const token = Cookies.get('org-pos-token');
         setApiFieldErrors({});
         try {
-            const payload = sanitizeProductPayload(editingProduct);
+            const payloadToSanitize = {
+                ...editingProduct,
+                productName: normalizeText(editingProduct.productName),
+                barcode: normalizeText(editingProduct.barcode),
+            };
+            const payload = sanitizeProductPayload(payloadToSanitize);
             const urlBarcode = originalBarcode || editingProduct.barcode;
 
             await apiFetch(`/products/update-products/${urlBarcode}`, {
@@ -213,6 +218,7 @@ export default function ProductsPage() {
             }, token!);
             toast({ variant: 'success', title: 'EXITO', description: 'REGISTRO ACTUALIZADO' });
             setEditDialogOpen(false);
+            setEditingProduct(null);
             mutateProducts();
             mutateAllProducts();
             broadcastRevalidate('PRODUCT_UPDATE');
@@ -379,7 +385,7 @@ export default function ProductsPage() {
     }, [addDialogOpen, editDialogOpen, scanMode]);
 
     return (
-        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 relative">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 relative">
             <div className="shrink-0 px-4 pt-1 pb-1 flex flex-col gap-1.5 bg-white dark:bg-zinc-950 border-b border-gray-200 dark:border-white/5">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -390,7 +396,7 @@ export default function ProductsPage() {
                             <h1 className="text-[14px] font-medium tracking-tighter uppercase tracking-tight leading-none">
                                 Catalogo <span className="text-zinc-900 dark:text-zinc-100">Maestro</span>
                             </h1>
-                            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight mt-1 flex items-center gap-1.5">
+                            <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight mt-1 flex items-center gap-1.5">
                                 <ShieldCheck size={12} className="text-zinc-900 dark:text-zinc-100" /> Auditoria de Patrimonio V4.5
                             </p>
                         </div>
@@ -409,7 +415,7 @@ export default function ProductsPage() {
                                     accept=".csv"
                                     onChange={handleImportCSV}
                                 />
-                                <Button variant="flat" onPress={handleExportCSV} className="h-9 px-3 bg-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl border border-emerald-500/20">
+                                <Button variant="flat" onPress={handleExportCSV} className="h-9 px-3 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl border border-emerald-500/20">
                                     <FileDown size={16} />
                                     <span className="hidden sm:inline ml-2">Exportar CSV</span>
                                 </Button>
@@ -431,7 +437,7 @@ export default function ProductsPage() {
                         <Input
                             placeholder="ESCANEE O BUSQUE POR REFERENCIA O CATEGORIA..."
                             value={searchTerm}
-                            onValueChange={setSearchTerm}
+                            onValueChange={(val) => setSearchTerm(normalizeText(val))}
                             startContent={<Search size={16} className="text-zinc-900 dark:text-zinc-100 ml-2" />}
                             endContent={
                                 <div className="flex items-center gap-2 mr-2">
@@ -489,14 +495,14 @@ export default function ProductsPage() {
                 </div>
             </div>
 
-            <div className="px-2 py-1 bg-gray-100 dark:bg-[#09090b] flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar relative">
+            <div className="px-2 py-1 bg-gray-100 dark:bg-[#09090b] flex flex-col flex-1 min-h-0 overflow-hidden relative">
                 {productsLoading && !productsData && (
                     <div className="absolute inset-0 z-[100] flex flex-col items-center justify-center card-base border-none dark:bg-black/90 gap-4">
                         <Spinner color="success" size="lg" />
                         <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest animate-pulse tracking-tight">Sincronizando Catalogo...</p>
                     </div>
                 )}
-                <div className="flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar gap-2">
+                <div className="flex flex-col flex-1 min-h-0 overflow-hidden gap-2">
                     <ProductStats {...stats} />
                     <ProductTable
                         products={products}
@@ -519,7 +525,7 @@ export default function ProductsPage() {
             <ErrorBoundary>
                 <ProductFormModal
                     isOpen={addDialogOpen || editDialogOpen}
-                    onOpenChange={(open) => { if (!open) { setAddDialogOpen(false); setEditDialogOpen(false); setApiFieldErrors({}); } }}
+                    onOpenChange={(open) => { if (!open) { setAddDialogOpen(false); setEditDialogOpen(false); setEditingProduct(null); setApiFieldErrors({}); } }}
                     addDialogOpen={addDialogOpen}
                     newProduct={newProduct}
                     setNewProduct={setNewProduct}

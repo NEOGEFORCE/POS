@@ -79,7 +79,7 @@ const AnalyticalCard = ({
                     <Icon size={16} className="sm:size-4" />
                 </div>
                 <div className="text-right pr-2">
-                    <span className="text-[8px] sm:text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none block mb-1 tracking-tight">
+                    <span className="text-[8px] sm:text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none block mb-1 tracking-tight">
                         {label}
                     </span>
                     <span className="text-lg sm:text-xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight leading-none tracking-tighter tabular-nums block">
@@ -99,7 +99,7 @@ const AnalyticalCard = ({
 
             <div className="flex flex-col gap-1">
                 <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-medium uppercase tracking-wider">
-                    <span className="text-zinc-500 dark:text-zinc-400 truncate">{subValue}</span>
+                    <span className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400 truncate">{subValue}</span>
                     {onClick && (
                         <span className="text-[7px] font-medium text-rose-500 flex items-center gap-0.5 animate-pulse">
                             VER DETALLES <ChevronRight size={8} />

@@ -84,7 +84,7 @@ function ResetPasswordForm() {
     return (
       <Card className="w-full max-w-md border-none rounded-[2.5rem] card-base border-none dark:bg-zinc-950/60 shadow-[0_8px_30px_rgb(0,0,0,0.12)] p-8 text-center">
         <div className="flex justify-center mb-6">
-          <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100">
+          <div className="h-20 w-20 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100">
             <CheckCircle2 size={48} />
           </div>
         </div>
@@ -110,7 +110,7 @@ function ResetPasswordForm() {
         <h1 className="text-3xl font-medium tracking-tighter text-zinc-900 dark:text-zinc-50 uppercase text-center">
           Nueva Contraseña
         </h1>
-        <p className="text-[10px] font-medium uppercase text-zinc-500 dark:text-zinc-400 tracking-[0.3em] mt-3">
+        <p className="text-[10px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400 tracking-[0.3em] mt-3">
           Establece una clave segura
         </p>
       </CardHeader>
@@ -127,7 +127,7 @@ function ResetPasswordForm() {
             onValueChange={setPassword}
             isDisabled={isLoading}
             classNames={{
-              label: "text-[10px] font-medium text-zinc-500 dark:text-zinc-400 mb-2 ml-1",
+              label: "text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 mb-2 ml-1",
               inputWrapper: "h-16 bg-gray-50 dark:bg-[#18181b]/50 border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 transition-all",
               input: "font-medium text-lg tracking-tight text-zinc-900 dark:text-zinc-50"
             }}
@@ -142,7 +142,7 @@ function ResetPasswordForm() {
             onValueChange={setConfirmPassword}
             isDisabled={isLoading}
             classNames={{
-              label: "text-[10px] font-medium text-zinc-500 dark:text-zinc-400 mb-2 ml-1",
+              label: "text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 mb-2 ml-1",
               inputWrapper: "h-16 bg-gray-50 dark:bg-[#18181b]/50 border-gray-200 dark:border-white/10 rounded-2xl focus-within:!border-emerald-500 transition-all",
               input: "font-medium text-lg tracking-tight text-zinc-900 dark:text-zinc-50"
             }}
@@ -178,7 +178,7 @@ export default function ResetPasswordPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-[#09090b] p-4 relative overflow-hidden transition-colors duration-500">
       {/* Background Decor */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-white/5 blur-[120px] rounded-2xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-black/5 dark:bg-white/5 blur-[120px] rounded-2xl pointer-events-none" />
       
       <div className="absolute top-4 right-4 animate-in fade-in slide-in-from-top-4 duration-1000">
         <ThemeToggle />

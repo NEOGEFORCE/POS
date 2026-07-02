@@ -54,7 +54,7 @@ export default function DeleteCustomerModal({
             <ModalFooter className="px-6 md:px-10 py-6 border-t border-gray-100 dark:border-white/5 flex gap-4 rounded-b-[2.5rem] bg-gray-50/50 dark:bg-[#18181b]/50">
               <Button 
                 variant="flat" 
-                className="flex-1 h-12 rounded-2xl font-medium uppercase text-[10px] bg-gray-100 dark:bg-[#18181b] text-zinc-500 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-zinc-100 dark:bg-zinc-800 tracking-tight tracking-widest transition-all" 
+                className="flex-1 h-12 rounded-2xl font-medium uppercase text-[10px] bg-gray-100 dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:bg-gray-200 dark:hover:bg-white/5 dark:bg-transparent tracking-tight tracking-widest transition-all" 
                 onPress={onClose}
               >
                 CERRAR <X size={16} className="ml-2" />

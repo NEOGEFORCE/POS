@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useMemo } from 'react';
 import { 
@@ -48,6 +48,7 @@ export default function ReceptionHistoryPage() {
             id: string;
             date: string;
             employee: string;
+            supplierName: string;
             items: StockMovement[];
             totalQty: number;
         }> = {};
@@ -55,14 +56,33 @@ export default function ReceptionHistoryPage() {
         movements.forEach(m => {
             if (m.reason === 'RECEPTION' && (m.referenceId || m.ref)) {
                 const ref = m.referenceId || m.ref || 'UNKNOWN';
+
+                // Intentar extraer supplierName y employeeName del metadata
+                let metaSupplier = '';
+                let metaEmployee = '';
+                if (m.metadata) {
+                    try {
+                        const parsed = JSON.parse(m.metadata);
+                        metaSupplier = parsed.supplierName || '';
+                        metaEmployee = parsed.employeeName || '';
+                    } catch {}
+                }
+
                 if (!groups[ref]) {
                     groups[ref] = {
                         id: ref,
                         date: m.date,
-                        employee: m.employeeName || 'SISTEMA',
+                        employee: m.employee || metaEmployee || 'SISTEMA',
+                        supplierName: metaSupplier || '',
                         items: [],
                         totalQty: 0
                     };
+                } else {
+                    // Actualizar con info del primer movimiento que la tenga
+                    if (!groups[ref].supplierName && metaSupplier)
+                        groups[ref].supplierName = metaSupplier;
+                    if (groups[ref].employee === 'SISTEMA' && (m.employee || metaEmployee))
+                        groups[ref].employee = m.employee || metaEmployee || 'SISTEMA';
                 }
                 groups[ref].items.push(m);
                 groups[ref].totalQty += m.quantity;
@@ -109,13 +129,13 @@ export default function ReceptionHistoryPage() {
                         <h1 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter">
                             Historial de <span className="text-zinc-900 dark:text-zinc-100">Recepciones</span>
                         </h1>
-                        <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Auditoria de Entradas de Mercancia</p>
+                        <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Auditoria de Entradas de Mercancia</p>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-2">
                     <div className="relative">
-                        <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 dark:text-zinc-400 pointer-events-none" />
+                        <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 pointer-events-none" />
                         <input 
                             type="date" 
                             value={selectedDate}
@@ -131,24 +151,24 @@ export default function ReceptionHistoryPage() {
                 {isLoading ? (
                     <div className="flex flex-col items-center justify-center py-20 gap-4">
                         <Spinner color="success" size="lg" />
-                        <p className="text-xs font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest animate-pulse">Cargando Historial...</p>
+                        <p className="text-xs font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest animate-pulse">Cargando Historial...</p>
                     </div>
                 ) : movementsError ? (
                     <Card className="card-base border-none border border-rose-200 dark:border-rose-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <CardBody className="py-16 flex flex-col items-center justify-center gap-3 text-center">
                             <p className="text-sm font-bold text-rose-500 uppercase">Error al cargar el historial</p>
-                            <p className="text-[10px] text-zinc-500">{movementsError?.message || 'Intenta cambiar la fecha o recargar la pagina.'}</p>
+                            <p className="text-[10px] text-gray-500 dark:text-zinc-500">{movementsError?.message || 'Intenta cambiar la fecha o recargar la pagina.'}</p>
                         </CardBody>
                     </Card>
                 ) : receptions.length === 0 ? (
                     <Card className="card-base border-none border border-zinc-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <CardBody className="py-20 flex flex-col items-center justify-center gap-4 text-center">
-                            <div className="h-16 w-16 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-zinc-300 dark:text-zinc-600">
+                            <div className="h-16 w-16 rounded-2xl bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center text-gray-600 dark:text-zinc-300 dark:text-zinc-600">
                                 <Package size={32} />
                             </div>
                             <div>
                                 <h3 className="text-sm font-bold text-zinc-900 dark:text-white uppercase">No hay recepciones</h3>
-                                <p className="text-[10px] text-zinc-500 mt-1">No se registraron entradas de mercancia el {displayDate}</p>
+                                <p className="text-[10px] text-gray-500 dark:text-zinc-500 mt-1">No se registraron entradas de mercancia el {displayDate}</p>
                             </div>
                         </CardBody>
                     </Card>
@@ -165,12 +185,15 @@ export default function ReceptionHistoryPage() {
                                                     <FileText size={16} />
                                                 </div>
                                                 <div className="flex flex-col min-w-0">
-                                                    <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-tighter truncate">{rec.id}</span>
-                                                    <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase">{formatTime(rec.date)}</span>
+                                                    <span className="text-[11px] font-semibold text-zinc-900 dark:text-zinc-100 uppercase tracking-tight truncate">
+                                                        {rec.supplierName || 'SIN PROVEEDOR'}
+                                                    </span>
+                                                    <span className="text-[9px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-wider">{rec.id}</span>
+                                                    <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase">{formatTime(rec.date)}</span>
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2 mt-2">
-                                                <User size={12} className="text-zinc-500 dark:text-zinc-400" />
+                                                <User size={12} className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400" />
                                                 <span className="text-[10px] font-medium text-zinc-600 dark:text-zinc-300 uppercase truncate">{rec.employee}</span>
                                             </div>
                                         </div>
@@ -209,7 +232,7 @@ export default function ReceptionHistoryPage() {
                                             removeWrapper 
                                             className="min-w-[400px]"
                                             classNames={{
-                                                th: "bg-transparent text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-8 border-b border-zinc-100 dark:border-white/5",
+                                                th: "bg-transparent text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-8 border-b border-zinc-100 dark:border-white/5",
                                                 td: "text-[10px] font-bold py-2 border-b border-zinc-50 dark:border-white/5 group-hover:bg-zinc-50/50 dark:group-hover:bg-[#18181b] transition-colors"
                                             }}
                                         >
@@ -224,11 +247,11 @@ export default function ReceptionHistoryPage() {
                                                         <TableCell>
                                                             <div className="flex flex-col">
                                                                 <span className="text-zinc-900 dark:text-white uppercase truncate max-w-[200px]">{item.name}</span>
-                                                                <span className="text-[8px] text-zinc-500 dark:text-zinc-400 font-medium tracking-wider">{item.barcode}</span>
+                                                                <span className="text-[8px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium tracking-wider">{item.barcode}</span>
                                                             </div>
                                                         </TableCell>
                                                         <TableCell>
-                                                            <Chip size="sm" variant="flat" color="success" className="font-medium text-[10px] bg-white/5 text-zinc-900 dark:text-zinc-100 border-none">
+                                                            <Chip size="sm" variant="flat" color="success" className="font-medium text-[10px] bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 border-none">
                                                                 +{item.quantity}
                                                             </Chip>
                                                         </TableCell>
@@ -268,7 +291,7 @@ export default function ReceptionHistoryPage() {
                         </div>
                         <div className="flex flex-col gap-2">
                             <p className="text-sm font-bold text-zinc-900 dark:text-white uppercase">Â¡ACCION CRITICA!</p>
-                            <p className="text-xs text-zinc-500 px-4">
+                            <p className="text-xs text-gray-500 dark:text-zinc-500 px-4">
                                 Al deshacer la recepcion <span className="font-medium text-zinc-900 dark:text-white">{receptionToDelete}</span>, se 
                                 <span className="text-rose-500 font-bold"> restara el stock</span> ingresado y se <span className="text-rose-500 font-bold"> eliminara el egreso</span> vinculado de la caja.
                             </p>

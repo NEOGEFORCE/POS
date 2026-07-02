@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -69,7 +69,7 @@ export default function AuditPage() {
   }
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -82,7 +82,7 @@ export default function AuditPage() {
               <h1 className="text-[13px] font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter uppercase tracking-tight leading-none">
                 Seguridad & <span className="text-zinc-900 dark:text-zinc-100">Auditoria</span>
               </h1>
-              <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
+              <p className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                 <RefreshCw size={10} className="text-zinc-900 dark:text-zinc-100" /> Monitoreo V5.0
               </p>
             </div>
@@ -93,7 +93,7 @@ export default function AuditPage() {
               isIconOnly
               onPress={loadData}
               isLoading={loading}
-              className="h-10 w-10 min-w-0 card-base border-none text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+              className="h-10 w-10 min-w-0 card-base border-none text-gray-500 dark:text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
             >
               {!loading && <RefreshCw size={16} />}
             </Button>
@@ -114,7 +114,7 @@ export default function AuditPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar gap-3 p-3 bg-gray-100/50 dark:bg-zinc-950/20 animate-in fade-in slide-in-from-bottom-4 duration-700">
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden gap-3 p-3 bg-gray-100/50 dark:bg-zinc-950/20 animate-in fade-in slide-in-from-bottom-4 duration-700">
         <MaintenancePanel />
         <AuditStats logs={logs} />
         <AuditTable logs={logs} />
@@ -123,6 +123,8 @@ export default function AuditPage() {
 
   );
 }
+
+
 
 
 

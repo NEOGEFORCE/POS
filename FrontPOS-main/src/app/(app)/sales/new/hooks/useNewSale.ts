@@ -574,6 +574,11 @@ export function useNewSale() {
                 return { ...prev, [currentKey]: filtered };
             }
 
+            // if (!item.isWeighted && newQty > item.quantity) {
+            //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${item.quantity} unidades de ${item.productName}` }), 0);
+            //     return prev;
+            // }
+
 
 
             current[idx] = { ...current[idx], cartQuantity: newQty };
@@ -611,6 +616,10 @@ export function useNewSale() {
                 if (selectedItemId === cartItemId) setSelectedItemId(null);
                 return { ...prev, [currentKey]: filtered };
             }
+            // if (!item.isWeighted && quantity > item.quantity) {
+            //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${item.quantity} unidades de ${item.productName}` }), 0);
+            //     return prev;
+            // }
             current[idx] = { ...item, cartQuantity: quantity, salePrice: salePrice };
             return { ...prev, [currentKey]: current };
         });
@@ -636,6 +645,11 @@ export function useNewSale() {
                 if (selectedItemId === cartItemId) setSelectedItemId(null);
                 return { ...prev, [currentKey]: filtered };
             }
+
+            // if (!item.isWeighted && quantity > item.quantity) {
+            //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${item.quantity} unidades de ${item.productName}` }), 0);
+            //     return prev;
+            // }
 
 
 
@@ -731,11 +745,19 @@ export function useNewSale() {
                 const idx = current.findIndex(item => item.cartItemId === p.barcode);
                 
                 if (idx > -1) {
-
-                    const updatedItem = { ...current[idx], cartQuantity: current[idx].cartQuantity + 1 };
+                    const newQty = current[idx].cartQuantity + 1;
+                    // if (!isProductWeighted(p) && newQty > p.quantity) {
+                    //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${p.quantity} unidades de ${p.productName}` }), 0);
+                    //     return prev;
+                    // }
+                    const updatedItem = { ...current[idx], cartQuantity: newQty };
                     current.splice(idx, 1);
                     current.push(updatedItem);
                 } else {
+                    // if (!isProductWeighted(p) && 1 > p.quantity) {
+                    //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${p.quantity} unidades de ${p.productName}` }), 0);
+                    //     return prev;
+                    // }
                     current.push({ ...p, cartQuantity: 1, cartItemId: p.barcode });
                 }
                 return { ...prev, [currentKey]: current };
@@ -915,7 +937,7 @@ export function useNewSale() {
         credit: number;
         totalPaid: number;
         change: number;
-    }) => {
+    }, pendingReturn?: any) => {
         if (submitting || submittingRef.current) return;
         if (currentCart.length === 0 && !splitItemsToPay) return;
         
@@ -1034,6 +1056,64 @@ export function useNewSale() {
         const token = Cookies.get('org-pos-token');
         const { cash, transfer, transferSource, transferNequi = 0, transferDaviplata = 0, credit, totalPaid, change } = paymentData;
 
+        // Si hay devolucion pendiente, llama a /sales/returns
+        if (pendingReturn) {
+            try {
+                const payload = {
+                    invoiceRef: Number(pendingReturn.saleId || 0),
+                    type: "EXCHANGE",
+                    refundAmount: change > 0 ? change : 0, 
+                    chargeAmount: totalPaid > 0 ? totalPaid : 0,
+                    returnedItems: pendingReturn.items,
+                    replacementItems: itemsToPay.map(item => ({
+                        barcode: item.barcode,
+                        qty: item.cartQuantity
+                    })),
+                    chargeMethod: totalPaid > 0 ? (transfer > 0 ? transferSource : "EFECTIVO") : ""
+                };
+
+                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/returns`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    toast({ variant: 'success', title: 'CAMBIO PROCESADO', description: 'SE COMPLETÓ LA DEVOLUCIÓN Y LA NUEVA VENTA' });
+                    localStorage.removeItem("pos-pending-return");
+                    
+                    if (typeof window !== 'undefined') {
+                        const event = new CustomEvent('return-completed');
+                        window.dispatchEvent(event);
+                    }
+
+                    setLastChange(change);
+                    setShowSuccessScreen(true);
+                    mutateProducts();
+                    
+                    // clean cart
+                    const updatedCarts = { ...carts };
+                    delete updatedCarts[currentKey];
+                    setCarts(updatedCarts);
+                    const newKeys = cartKeys.filter(k => k !== currentKey);
+                    setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
+                    setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
+                    if (newKeys.length === 0) addNewCart();
+                    
+                    broadcastRevalidate('SALE_MADE');
+                } else {
+                    const err = await res.json();
+                    toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'Error procesando cambio' });
+                }
+            } catch (err) {
+                 toast({ variant: "destructive", title: "ERROR INESPERADO", description: "Ocurrió un error de red" });
+            } finally {
+                setSubmitting(false);
+                submittingRef.current = false;
+            }
+            return;
+        }
+
         // --- INTELIGENCIA DE CATEGORIZACION (Sin "MIXTO") ---
         const paymentMethods: string[] = [];
         if (cash > 0) paymentMethods.push("EFECTIVO");
@@ -1113,14 +1193,8 @@ export function useNewSale() {
             
             if (isNetworkError) {
                 try {
-                    const { db } = await import('@/lib/db');
-                    await db.ventas_pendientes.add({
-                        cart: itemsToPay,
-                        total: localTotal,
-                        paymentMethod: paymentMethod,
-                        customerDni: selectedCustomerDni,
-                        timestamp: Date.now()
-                    });
+                    const { addToSyncQueue } = await import('@/lib/offline-db');
+                    await addToSyncQueue('SALE', saleData);
                     
                     toast({ 
                         variant: "success", 
@@ -1303,7 +1377,7 @@ export function useNewSale() {
     return {
         // Data
         products, customers, categories: sortedCategories,
-        currentCart: sortedCart, activeCartKey, cartKeys, cartCustomers,
+        currentCart: sortedCart, carts, activeCartKey, cartKeys, cartCustomers,
         selectedCustomer, selectedCustomerDni,
         
         // Computed
@@ -1353,4 +1427,5 @@ export function useNewSale() {
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight
     };
 }
+
 

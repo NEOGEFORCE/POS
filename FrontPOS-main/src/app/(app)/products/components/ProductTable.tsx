@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { memo, useEffect, useState, useCallback } from 'react';
 import {
@@ -60,28 +60,6 @@ const ProductTable = memo(({
     const isAdmin = role === "admin" || role === "administrador" || role === "superadmin";
     const canEdit = isAdmin || role === "empleado";
 
-    const sortedProducts = React.useMemo(() => {
-        if (!products) return [];
-        return [...products].sort((a, b) => {
-            const healthA = calculateStockHealth(a.quantity, a.minStock || 1);
-            const healthB = calculateStockHealth(b.quantity, b.minStock || 1);
-            
-            // 1. Salud (Rojo < Amarillo < Verde)
-            const wA = healthA === 'CRITICAL' ? 0 : healthA === 'WARNING' ? 1 : 2;
-            const wB = healthB === 'CRITICAL' ? 0 : healthB === 'WARNING' ? 1 : 2;
-            if (wA !== wB) return wA - wB;
-
-            // 2. Urgencia: Cantidad faltante vs meta (MinStock - Cantidad)
-            const diffA = (a.minStock || 0) - a.quantity;
-            const diffB = (b.minStock || 0) - b.quantity;
-            if (diffB !== diffA) return diffB - diffA;
-
-            // 3. Rotacion (Promedio de venta diaria)
-            const rotA = (a as any).avgSoldPerDay || 0;
-            const rotB = (b as any).avgSoldPerDay || 0;
-            return rotB - rotA;
-        });
-    }, [products]);
 
     useEffect(() => {
         const mql = window.matchMedia("(max-width: 768px)");
@@ -103,15 +81,15 @@ const ProductTable = memo(({
             ? 'bg-rose-500/10 border-rose-500/40 text-rose-500 animate-pulse'
             : isWarning
                 ? 'bg-amber-500/10 border-amber-500/40 text-amber-500 font-medium'
-                : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-emerald-500/20 text-zinc-900 dark:text-zinc-100';
+                : 'bg-emerald-500/10 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 font-medium';
 
-        const indicatorColor = isCritical ? 'bg-rose-500' : isWarning ? 'bg-amber-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5';
+        const indicatorColor = isCritical ? 'bg-rose-500' : isWarning ? 'bg-amber-500' : 'bg-emerald-500';
 
         switch (String(columnKey)) {
             case "identity":
                 return (
                     <div className="flex items-center gap-3 py-1">
-                        <div className="h-9 w-9 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 overflow-hidden">
+                        <div className="h-9 w-9 rounded-2xl bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0 overflow-hidden">
                             {product.imageUrl ? (
                                 <img src={product.imageUrl} className="h-full w-full object-cover" alt="" />
                             ) : (
@@ -122,7 +100,7 @@ const ProductTable = memo(({
                             <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate max-w-[180px]">
                                 {product.productName}
                             </span>
-                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight">BARCODE: {product.barcode}</span>
+                            <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight">BARCODE: {product.barcode}</span>
                         </div>
                     </div>
                 );
@@ -138,7 +116,7 @@ const ProductTable = memo(({
                                     size="sm"
                                     variant="light"
                                     radius="lg"
-                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-zinc-100 dark:bg-zinc-800"
+                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-white/5 dark:bg-transparent"
                                     onPress={() => onQuickUpdate(product.barcode, -1)}
                                 >
                                     <Minus className="h-4 w-4" strokeWidth={2.5} />
@@ -154,7 +132,7 @@ const ProductTable = memo(({
                                     size="sm"
                                     variant="light"
                                     radius="lg"
-                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-zinc-100 dark:bg-zinc-800"
+                                    className="h-9 w-9 min-w-9 shrink-0 text-current hover:bg-black/10 dark:hover:bg-white/5 dark:bg-transparent"
                                     onPress={() => onQuickUpdate(product.barcode, 1)}
                                 >
                                     <Plus className="h-4 w-4" strokeWidth={2.5} />
@@ -236,9 +214,9 @@ const ProductTable = memo(({
                             aria-label="Directorio Maestro Productos"
                             classNames={{
                                 base: "min-w-[720px]",
-                                th: "bg-gray-50/80 dark:bg-zinc-950/80  text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
+                                th: "bg-gray-50/80 dark:bg-zinc-950/80  text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
                                 td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-4",
-                                tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-default group h-10",
+                                tr: "hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:bg-white/5 cursor-default group h-10",
                             }}
                         >
                             <TableHeader columns={COLUMNS}>
@@ -249,7 +227,7 @@ const ProductTable = memo(({
                                 )}
                             </TableHeader>
                             <TableBody
-                                items={sortedProducts}
+                                items={products}
                                 emptyContent={
                                     <EmptyState
                                         title="Sin productos registrados"
@@ -268,8 +246,8 @@ const ProductTable = memo(({
                     </div>
                 ) : (
                     <div className="overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
-                        {sortedProducts.length > 0 ? (
-                            sortedProducts.map((p) => {
+                        {products.length > 0 ? (
+                            products.map((p) => {
                                 const minStock = p.minStock || 1;
                                 const health = calculateStockHealth(p.quantity, minStock);
                                 
@@ -387,7 +365,7 @@ const ProductTable = memo(({
                         </Button>
 
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <span className="text-[7px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
                             <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
                                 <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{(totalFiltered === 0 ? 0 : (currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span>
                                 <span className="opacity-20 text-[8px]">DE</span>

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
@@ -6,7 +6,7 @@ import {
     Button, Input, Pagination, Spinner
 } from "@heroui/react";
 import {
-    Search, History as HistoryIcon, Clock, Filter
+    Search, History as HistoryIcon, Clock, Filter, RefreshCw
 } from 'lucide-react';
 import dynamic from 'next/dynamic';
 import { useToast } from '@/hooks/use-toast';
@@ -81,12 +81,12 @@ export default function SalesHistoryPage() {
                 cartCustomers,
                 null
             );
-            router.push('/sales/new');
+            window.location.href = '/sales/new';
         } catch (error) {
             console.error("Error setting cart data:", error);
             localStorage.setItem(`pos_cart_${cartKey}`, JSON.stringify(cartItems));
             localStorage.setItem('pos_active_cart', cartKey);
-            router.push('/sales/new');
+            window.location.href = '/sales/new';
         }
     };
 
@@ -132,7 +132,7 @@ export default function SalesHistoryPage() {
     if (isLoading && page === 1) return <div className="flex-1 h-full w-full flex items-center justify-center bg-gray-50 dark:bg-zinc-950"><Spinner color="primary" size="lg" /></div>;
 
     return (
-        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent transition-all duration-500 relative">
+        <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent transition-all duration-500 relative">
 
             {/* HEADER SECTION: FIXED (TOP) */}
             <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 border-b border-gray-200 dark:border-white/5 card-base border-none dark:bg-zinc-950/80">
@@ -145,7 +145,7 @@ export default function SalesHistoryPage() {
                             <h1 className="text-[13px] font-medium text-zinc-900 dark:text-white tracking-tighter uppercase tracking-tight leading-none">
                                 Auditoria de <span className="text-zinc-900 dark:text-zinc-100">Ventas</span>
                             </h1>
-                            <p className="text-[8px] font-medium text-zinc-500 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
+                            <p className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                                 <Clock size={10} className="text-zinc-900 dark:text-zinc-100" /> Historial Maestro
                             </p>
                         </div>
@@ -156,7 +156,7 @@ export default function SalesHistoryPage() {
                             isIconOnly
                             onPress={() => mutate()}
                             isLoading={isLoading}
-                            className="h-10 w-10 min-w-0 card-base border-none text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+                            className="h-10 w-10 min-w-0 card-base border-none text-gray-500 dark:text-zinc-500 dark:text-zinc-400 rounded-2xl border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                         >
                             <RefreshCw size={16} />
                         </Button>
@@ -169,7 +169,7 @@ export default function SalesHistoryPage() {
                             placeholder="BUSCAR VENTA / CLIENTE..."
                             value={searchQuery}
                             onValueChange={(v) => setSearchQuery(v.toUpperCase())}
-                            startContent={<Search size={18} className="text-zinc-500 dark:text-zinc-400 group-focus-within/search:text-zinc-900 dark:text-zinc-100" />}
+                            startContent={<Search size={18} className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400 group-focus-within/search:text-zinc-900 dark:text-zinc-100" />}
                             classNames={{
                                 inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] rounded-2xl group-focus-within/search:border-emerald-500/50 group-focus-within/search:ring-2 group-focus-within/search:ring-emerald-500/20 transition-all",
                                 input: "text-xs font-bold tracking-widest tracking-tight uppercase text-zinc-900 dark:text-white"
@@ -208,10 +208,10 @@ export default function SalesHistoryPage() {
                             onChange={setPage}
                             classNames={{
                                 wrapper: "gap-2",
-                                item: "flex items-center justify-center w-8 h-8 rounded-2xl border transition-colors text-sm bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#18181b]/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:text-white",
+                                item: "flex items-center justify-center w-8 h-8 rounded-2xl border transition-colors text-sm bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#18181b]/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5 dark:bg-transparent dark:hover:text-white",
                                 cursor: "bg-gray-100 text-gray-900 font-bold dark:bg-zinc-800 dark:text-white border-gray-300 dark:border-white/20",
-                                prev: "flex items-center justify-center w-8 h-8 rounded-2xl border bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#18181b]/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:text-white",
-                                next: "flex items-center justify-center w-8 h-8 rounded-2xl border bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#18181b]/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:text-white"
+                                prev: "flex items-center justify-center w-8 h-8 rounded-2xl border bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#18181b]/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5 dark:bg-transparent dark:hover:text-white",
+                                next: "flex items-center justify-center w-8 h-8 rounded-2xl border bg-white border-gray-200 text-gray-700 hover:bg-gray-50 dark:bg-[#18181b]/50 dark:border-white/10 dark:text-zinc-400 dark:hover:bg-white/5 dark:bg-transparent dark:hover:text-white"
                             }}
                         />
                     </div>
@@ -248,9 +248,9 @@ export default function SalesHistoryPage() {
                 onOpenChange={setIsClientDialogOpen}
                 customers={customers}
                 onSelect={(c) => {
-                    // Si se selecciona un cliente desde el selector de la edicion
                     if (isEditOpen && selectedSale) {
-                        // El modal de edicion suele manejar su propio estado interno
+                        setSelectedSale({ ...selectedSale, client: c });
+                        setIsClientDialogOpen(false);
                     }
                 }}
             />

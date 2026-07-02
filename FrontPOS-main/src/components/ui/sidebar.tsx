@@ -198,7 +198,7 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[--sidebar-width] bg-white dark:bg-zinc-950 p-0 text-sidebar-foreground [&>button]:hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-[calc(100svh-48px)] flex flex-col mt-12"
+            className="w-[--sidebar-width] bg-white dark:bg-zinc-950 p-0 text-sidebar-foreground [&>button]:hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] max-h-[calc(100svh-48px)] h-[calc(100dvh-48px)] flex flex-col mt-12 overflow-hidden"
             style={
               {
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -212,7 +212,7 @@ const Sidebar = React.forwardRef<
                 Accede a las diferentes secciones del sistema POS
               </SheetDescription>
             </SheetHeader>
-            <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden">{children}</div>
+            <div className="flex-1 min-h-0 flex flex-col w-full overflow-hidden pb-[env(safe-area-inset-bottom)]">{children}</div>
           </SheetContent>
         </Sheet>
       )

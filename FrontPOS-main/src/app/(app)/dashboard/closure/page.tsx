@@ -20,7 +20,8 @@ import {
     ChevronDown,
     ChevronUp,
     ReceiptText,
-    Trash2
+    Trash2,
+    Pen
 } from 'lucide-react';
 
 import { 
@@ -77,6 +78,7 @@ interface CashierClosure {
     closedByDni: string;
     authorizedBy?: string;
     cashBills: number;
+    cashBreakdown?: string;
     coins1000: number;
     coins500: number;
     coins200: number;
@@ -111,11 +113,12 @@ export default function CashierClosurePage() {
     const [showAuthModal, setShowAuthModal] = useState(false);
     const [showDetailedAudit, setShowDetailedAudit] = useState(false);
     const [isRealExpenseModalOpen, setIsRealExpenseModalOpen] = useState(false);
+    const [isExpensesOpen, setIsExpensesOpen] = useState(false);
 
     // --- ESTADO CONFIRMACION EGRESOS ---
     const [isDeleteExpenseConfirmOpen, setIsDeleteExpenseConfirmOpen] = useState(false);
     const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
-
+    const [expenseToEdit, setExpenseToEdit] = useState<any>(null);
 
     const handleAdminVerify = async () => {
         setIsVerifying(true);
@@ -158,6 +161,8 @@ export default function CashierClosurePage() {
         if (typeof window !== 'undefined') return localStorage.getItem('pos_closure_note') || '';
         return '';
     });
+    const [customStartDate, setCustomStartDate] = useState<string>('');
+    const [customEndDate, setCustomEndDate] = useState<string>('');
 
     // Estado del calculador de billetes
     const [bills, setBills] = useState<Record<string, string>>(() => {
@@ -283,12 +288,38 @@ export default function CashierClosurePage() {
                         setActualCashInput(String(Math.round(enriched.physicalCash || 0)));
                     }
 
-                    // Precargar grilla de monedas conocidas
-                    setCoins({
-                        '500/1000': enriched.coins1000 ? String(enriched.coins1000) : '',
-                        '200':      enriched.coins200  ? String(enriched.coins200)  : '',
-                        '100':      enriched.coins100  ? String(enriched.coins100)  : '',
-                    });
+                    if (enriched.startDate) {
+                        const sd = new Date(enriched.startDate);
+                        sd.setMinutes(sd.getMinutes() - sd.getTimezoneOffset());
+                        setCustomStartDate(sd.toISOString().slice(0, 16));
+                    }
+                    if (enriched.endDate) {
+                        const ed = new Date(enriched.endDate);
+                        ed.setMinutes(ed.getMinutes() - ed.getTimezoneOffset());
+                        setCustomEndDate(ed.toISOString().slice(0, 16));
+                    } else if (enriched.date) {
+                        const ed = new Date(enriched.date);
+                        ed.setMinutes(ed.getMinutes() - ed.getTimezoneOffset());
+                        setCustomEndDate(ed.toISOString().slice(0, 16));
+                    }
+
+                    // Si existe el desglose exacto (nueva funcionalidad)
+                    if (enriched.cashBreakdown) {
+                        try {
+                            const breakdown = JSON.parse(enriched.cashBreakdown);
+                            if (breakdown.bills) setBills(breakdown.bills);
+                            if (breakdown.coins) setCoins(breakdown.coins);
+                        } catch (e) {
+                            console.error("Error al parsear cashBreakdown:", e);
+                        }
+                    } else {
+                        // Precargar grilla de monedas conocidas (legacy)
+                        setCoins({
+                            '500/1000': enriched.coins1000 ? String(enriched.coins1000) : '',
+                            '200':      enriched.coins200  ? String(enriched.coins200)  : '',
+                            '100':      enriched.coins100  ? String(enriched.coins100)  : '',
+                        });
+                    }
 
                     // Precargar nota / responsable visible
                     if (enriched.authorizedBy) {
@@ -366,15 +397,36 @@ export default function CashierClosurePage() {
                           (currentClosure?.totalCreditCollected ?? 0) + 
                           (currentClosure?.openingCash ?? 0);
 
-    const dbCashExpenses = (currentClosure?.expenses || [])
-        .filter((e: any) => e.paymentSource === 'EFECTIVO')
-        .reduce((sum: number, e: any) => sum + (Number(e.amount) || 0), 0);
+    const calculateCashFromExpense = (e: any) => {
+        if (e.cashAmount !== undefined && e.cashAmount !== null && Number(e.cashAmount) > 0) {
+            return Number(e.cashAmount);
+        }
+        const ps = String(e.paymentSource).toUpperCase();
+        if (ps === 'EFECTIVO' || ps === 'CASH' || ps === 'CAJA') {
+            return Number(e.amount) || 0;
+        }
+        if (ps.includes('CAJA:') || ps.includes('EFECTIVO:')) {
+            const match = ps.match(/(?:CAJA|EFECTIVO):\s*\$?([\d,.]+)/);
+            if (match && match[1]) {
+                return Number(match[1].replace(/[^\d]/g, ''));
+            }
+        }
+        return 0;
+    };
+
+    const dbCashExpensesPure = (currentClosure?.expenses || [])
+        .filter((e: any) => String(e.category).toUpperCase() !== 'DEVOLUCIONES')
+        .reduce((sum: number, e: any) => sum + calculateCashFromExpense(e), 0);
+
+    const dbCashExpensesReturns = (currentClosure?.expenses || [])
+        .filter((e: any) => String(e.category).toUpperCase() === 'DEVOLUCIONES')
+        .reduce((sum: number, e: any) => sum + calculateCashFromExpense(e), 0);
 
     // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja fisica)
-    const totalEgresosEfectivo = dbCashExpenses;
+    const totalEgresosEfectivo = dbCashExpensesPure;
 
     // Variables de apoyo para la UI
-    const totalDevoluciones = currentClosure?.totalReturns ?? 0;
+    const totalDevoluciones = dbCashExpensesReturns > 0 ? dbCashExpensesReturns : (currentClosure?.totalReturns ?? 0);
     const devolucionesCount = currentClosure?.returnsCount ?? 0;
 
     // 4. EFECTIVO ESPERADO (Entradas - Salidas)
@@ -418,6 +470,10 @@ export default function CashierClosurePage() {
         const c200 = parseInt(coins['200'] || '0');
         const c100 = parseInt(coins['100'] || '0');
 
+        const totalEgresosTotales = (currentClosure?.expenses || [])
+            .filter((e: any) => String(e.status).toUpperCase() !== 'PENDING')
+            .reduce((sum: number, e: any) => sum + Number(e.amount || 0) + Number(e.taxAmount || 0), 0);
+
         const closureData = {
             ...currentClosure,
             physicalCash: actualCash,
@@ -426,8 +482,9 @@ export default function CashierClosurePage() {
             closedByName: user?.name || 'SOPORTE',
             authorizedBy: isAdmin ? (user?.name || 'ADMIN') : adminAuthorizer,
 
-            totalExpenses: totalSalidasEfectivo,
+            totalExpenses: totalEgresosTotales,
             cashBills: totalBills,
+            cashBreakdown: JSON.stringify({ bills, coins }),
             coins1000: cCombined,
             coins500: 0,
             coins200: c200,
@@ -460,6 +517,9 @@ export default function CashierClosurePage() {
                     coins1000: cCombined,
                     cash_bills: totalBills,
                     authorized_by: closureData.authorizedBy,
+                    start_date: customStartDate ? customStartDate : undefined,
+                    end_date: customEndDate ? customEndDate : undefined,
+                    date: customEndDate ? customEndDate : undefined,
                 };
 
                 const res = await fetch(
@@ -525,15 +585,20 @@ export default function CashierClosurePage() {
         const c200 = parseInt(coins['200'] || '0');
         const c100 = parseInt(coins['100'] || '0');
 
+        const totalEgresosTotales = (currentClosure?.expenses || [])
+            .filter((e: any) => String(e.status).toUpperCase() !== 'PENDING')
+            .reduce((sum: number, e: any) => sum + Number(e.amount || 0) + Number(e.taxAmount || 0), 0);
+
         const closureData = {
             ...currentClosure,
             physicalCash: actualCash,
             difference: difference,
             closedByDni: user?.dni || 'S.N.',
             closedByName: user?.name || 'SOPORTE',
-            totalExpenses: totalEgresosEfectivo, // Solo efectivo para el balance en Telegram
+            totalExpenses: totalEgresosTotales,
             notes: closingNote,
             cashBills: totalBills,
+            cashBreakdown: JSON.stringify({ bills, coins }),
             coins1000: cCombined,
             coins500: 0,
             coins200: c200,
@@ -597,23 +662,33 @@ export default function CashierClosurePage() {
             const payload = {
                 description: data.description.toUpperCase(),
                 amount: Math.abs(parseFloat(String(data.amount)) || 0),
-                date: new Date().toISOString(),
+                date: expenseToEdit ? expenseToEdit.date : new Date().toISOString(),
                 paymentSource: data.paymentSource || 'EFECTIVO',
                 category: data.category,
                 status: data.status || 'PAID',
                 supplierId: data.category === 'Proveedores' && data.supplierId ? Number(data.supplierId) : null,
             };
 
-            await apiFetch('/expenses/create', {
-                method: 'POST',
-                body: JSON.stringify(payload),
-                fallbackError: 'FALLO AL REGISTRAR EGRESO'
-            }, token);
+            if (expenseToEdit) {
+                await apiFetch(`/expenses/update/${expenseToEdit.id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(payload),
+                    fallbackError: 'FALLO AL ACTUALIZAR EGRESO'
+                }, token);
+                toast({ variant: "success", title: "ÉXITO", description: "EGRESO ACTUALIZADO EN LA BASE DE DATOS" });
+            } else {
+                await apiFetch('/expenses/create', {
+                    method: 'POST',
+                    body: JSON.stringify(payload),
+                    fallbackError: 'FALLO AL REGISTRAR EGRESO'
+                }, token);
+                toast({ variant: "success", title: "ÉXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
+            }
 
-            toast({ variant: "success", title: "EXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
             const { broadcastRevalidate } = await import('@/lib/revalidate');
             broadcastRevalidate('EXPENSE_UPDATE');
             setIsRealExpenseModalOpen(false);
+            setExpenseToEdit(null);
             fetchCurrent(); // Refrescar auditoria para ver el nuevo gasto
         } catch (err: any) {
             toast({ variant: "destructive", title: "ERROR", description: err.message });
@@ -623,6 +698,11 @@ export default function CashierClosurePage() {
     const handleDeleteDBExpense = async (id: number) => {
         setExpenseToDelete(id);
         setIsDeleteExpenseConfirmOpen(true);
+    };
+
+    const handleEditDBExpense = (exp: any) => {
+        setExpenseToEdit(exp);
+        setIsRealExpenseModalOpen(true);
     };
 
     const confirmDeleteExpense = async () => {
@@ -695,7 +775,7 @@ export default function CashierClosurePage() {
                     </div>
                     <div>
                         <h1 className="text-lg font-medium uppercase tracking-tighter">Cierre de Caja</h1>
-                        <p className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
+                        <p className="text-[10px] text-gray-500 dark:text-zinc-500 font-bold uppercase tracking-widest flex items-center gap-2">
                             {currentClosure ? (
                                 <>
                                     <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 flex items-center gap-1">
@@ -745,8 +825,12 @@ export default function CashierClosurePage() {
                                 <span className="text-md font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100">+<RollingDigits value={Math.round(efectivoEnCaja || 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                             </div>
                             <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
-                                <span className="text-[9px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Efectivo</span>
+                                <span className="text-[9px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Egresos</span>
                                 <span className="text-md font-medium text-rose-700 dark:text-rose-500">-<RollingDigits value={Math.round(totalEgresosEfectivo || 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
+                            </div>
+                            <div className="flex items-center justify-between py-1 border-b border-gray-200 dark:border-emerald-500/10">
+                                <span className="text-[9px] font-bold text-rose-700 dark:text-rose-500/60 uppercase tracking-widest">Salidas Devoluciones</span>
+                                <span className="text-md font-medium text-rose-700 dark:text-rose-500">-<RollingDigits value={Math.round(totalDevoluciones || 0)} format={(n) => formatCurrency(n)} duration={1.4} /></span>
                             </div>
                         </div>
                     </section>
@@ -754,9 +838,13 @@ export default function CashierClosurePage() {
                     {/* 2. EGRESOS DEL TURNO (SIEMPRE VISIBLE PARA PERMITIR CUADRE) */}
                     <section className="card-base border-none/40 border border-gray-200 dark:border-white/5 rounded-2xl p-4 md:p-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                         <div className="flex items-center justify-between border-b border-gray-200 dark:border-white/5 pb-2 mb-4">
-                            <div className="flex items-center gap-2">
+                            <div 
+                                className="flex items-center gap-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-zinc-800 p-2 -ml-2 rounded-lg transition-colors select-none"
+                                onClick={() => setIsExpensesOpen(!isExpensesOpen)}
+                            >
                                 <TrendingDown size={14} className="text-rose-700 dark:text-rose-500" />
                                 <h3 className="text-[10px] font-bold text-gray-800 dark:text-zinc-400 uppercase tracking-wider">Registrar Egresos de Hoy</h3>
+                                {isExpensesOpen ? <ChevronUp size={14} className="text-gray-500" /> : <ChevronDown size={14} className="text-gray-500" />}
                             </div>
                             <div className="flex flex-wrap gap-2">
                                 <Button 
@@ -771,34 +859,47 @@ export default function CashierClosurePage() {
                             </div>
                         </div>
 
-                        <div className="space-y-3">
-                            {/* HISTORIAL DE EGRESOS YA GUARDADOS */}
-                            {currentClosure?.expenses?.map((exp, idx) => (
-                                <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
-                                    <div className="flex flex-col">
-                                        <span className="text-[9px] font-medium text-gray-400 uppercase">{exp.category}</span>
-                                        <span className="text-xs font-bold text-zinc-900 dark:text-zinc-50 uppercase">{exp.description}</span>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="text-right">
-                                            <span className="text-sm font-medium text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
-                                            <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
+                        {isExpensesOpen && (
+                            <div className="space-y-3">
+                                {/* HISTORIAL DE EGRESOS YA GUARDADOS */}
+                                {currentClosure?.expenses?.map((exp, idx) => (
+                                    <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
+                                        <div className="flex flex-col">
+                                            <span className="text-[9px] font-medium text-gray-400 uppercase">{exp.category}</span>
+                                            <span className="text-xs font-bold text-zinc-900 dark:text-zinc-50 uppercase">{exp.description}</span>
                                         </div>
-                                        {isAdmin && (
-                                            <Button 
-                                                isIconOnly 
-                                                size="sm" 
-                                                variant="light" 
-                                                onPress={() => handleDeleteDBExpense(exp.id)}
-                                                className="text-rose-500 hover:bg-rose-500/10 rounded-2xl"
-                                            >
-                                                <Trash2 size={14} />
-                                            </Button>
-                                        )}
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-right">
+                                                <span className="text-sm font-medium text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
+                                                <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
+                                            </div>
+                                            {isAdmin && (
+                                                <div className="flex items-center gap-1">
+                                                    <Button 
+                                                        isIconOnly 
+                                                        size="sm" 
+                                                        variant="light" 
+                                                        onPress={() => handleEditDBExpense(exp)}
+                                                        className="text-blue-500 hover:bg-blue-500/10 rounded-2xl"
+                                                    >
+                                                        <Pen size={14} />
+                                                    </Button>
+                                                    <Button 
+                                                        isIconOnly 
+                                                        size="sm" 
+                                                        variant="light" 
+                                                        onPress={() => handleDeleteDBExpense(exp.id)}
+                                                        className="text-rose-500 hover:bg-rose-500/10 rounded-2xl"
+                                                    >
+                                                        <Trash2 size={14} />
+                                                    </Button>
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
+                                ))}
+                            </div>
+                        )}
                     </section>
 
                     {/* 3. AUDITORIA DETALLADA (SOLO ADMIN) */}
@@ -839,8 +940,14 @@ export default function CashierClosurePage() {
                                             <div className="space-y-1">
                                                 {currentClosure?.creditsIssued?.map((sale, idx) => (
                                                     <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
-                                                        <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{sale.client?.name || 'Cliente'}</span>
-                                                        <span className="text-blue-700 dark:text-blue-400 font-medium">${formatCurrency(sale.creditAmount)}</span>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{sale.client?.name || 'Cliente'}</span>
+                                                            {sale.client && <span className="text-gray-400 dark:text-zinc-600 font-medium uppercase tracking-widest text-[8px]">Deuda Actual: ${formatCurrency(sale.client.currentCredit)}</span>}
+                                                        </div>
+                                                        <div className="flex flex-col items-end">
+                                                            <span className="text-[8px] font-bold uppercase text-blue-700/60 dark:text-blue-400/60 tracking-widest">Fiado Hoy</span>
+                                                            <span className="text-blue-700 dark:text-blue-400 font-medium">${formatCurrency(sale.creditAmount)}</span>
+                                                        </div>
                                                     </div>
                                                 ))}
                                             </div>
@@ -850,8 +957,14 @@ export default function CashierClosurePage() {
                                             <div className="space-y-1">
                                                 {currentClosure?.creditPayments?.map((p, idx) => (
                                                     <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
-                                                        <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
-                                                        <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 font-medium">${formatCurrency(p.totalPaid)}</span>
+                                                        <div className="flex flex-col">
+                                                            <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
+                                                            {p.client && <span className="text-gray-400 dark:text-zinc-600 font-medium uppercase tracking-widest text-[8px]">Deuda Actual: ${formatCurrency(p.client.currentCredit)}</span>}
+                                                        </div>
+                                                        <div className="flex flex-col items-end">
+                                                            <span className="text-[8px] font-bold uppercase text-gray-500 dark:text-zinc-500/60 dark:text-zinc-400/60 tracking-widest">Abono Hoy</span>
+                                                            <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 font-medium">${formatCurrency(p.totalPaid)}</span>
+                                                        </div>
                                                     </div>
                                                 ))}
                                             </div>
@@ -862,8 +975,8 @@ export default function CashierClosurePage() {
                         </div>
                     ) : (
                         <div className="p-6 card-base border-none/40 border border-gray-200 dark:border-white/5 rounded-2xl text-center">
-                            <Lock size={20} className="mx-auto text-zinc-500 dark:text-zinc-400 mb-2" />
-                            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest">Auditoria de Ventas restringida a Administradores</p>
+                            <Lock size={20} className="mx-auto text-gray-500 dark:text-zinc-500 dark:text-zinc-400 mb-2" />
+                            <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Auditoria de Ventas restringida a Administradores</p>
                         </div>
                     )}
                 </div>
@@ -872,6 +985,36 @@ export default function CashierClosurePage() {
                 <div className="bg-white border border-gray-200 dark:bg-[#18181b]/60 dark:border-white/5 rounded-2xl p-5 md:p-6 flex flex-col gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden">
                     
                     <div className="flex-1 flex flex-col gap-6">
+                        {isEditMode && (
+                            <div className="flex flex-col gap-2 bg-blue-500/5 p-4 rounded-2xl border border-blue-500/20">
+                                <span className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">Periodo del Cierre (Inicio - Fin)</span>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <Input
+                                        type="datetime-local"
+                                        variant="bordered"
+                                        value={customStartDate}
+                                        onValueChange={setCustomStartDate}
+                                        classNames={{
+                                            inputWrapper: "h-10 border-blue-500/30",
+                                            input: "text-zinc-900 dark:text-zinc-100 uppercase text-xs"
+                                        }}
+                                    />
+                                    <Input
+                                        type="datetime-local"
+                                        variant="bordered"
+                                        value={customEndDate}
+                                        onValueChange={setCustomEndDate}
+                                        classNames={{
+                                            inputWrapper: "h-10 border-blue-500/30",
+                                            input: "text-zinc-900 dark:text-zinc-100 uppercase text-xs"
+                                        }}
+                                    />
+                                </div>
+                                <span className="text-[9px] text-blue-500/70 font-medium tracking-tight">
+                                    Modifica estas fechas/horas para que el sistema recalcule las ventas y egresos de este turno.
+                                </span>
+                            </div>
+                        )}
                         <div className="flex flex-col gap-4">
                             <div className="flex items-center gap-2 px-1">
                                 <div className="h-4 w-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl" />
@@ -998,7 +1141,7 @@ export default function CashierClosurePage() {
                                 isDisabled={status === 'PENDING' || isSubmitting}
                                 className={`flex-1 h-16 rounded-2xl font-medium text-xl uppercase tracking-widest tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
                                     isEditMode ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30' :
-                                    (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5'
+                                    (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5'
                                 } text-white`}
                             >
                                 {isSubmitting ? 'PROCESANDO...' :
@@ -1022,7 +1165,7 @@ export default function CashierClosurePage() {
                     header: "border-none pt-8 px-8",
                     body: "py-2 px-8",
                     footer: "border-none pb-8 px-8 gap-4",
-                    closeButton: "hover:bg-black/5 dark:hover:bg-[#18181b] active:bg-black/10 dark:active:bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors right-4 top-4"
+                    closeButton: "hover:bg-black/5 dark:hover:bg-[#18181b] active:bg-black/10 dark:active:bg-zinc-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 transition-colors right-4 top-4"
                 }}
             >
                 <ModalContent>
@@ -1047,7 +1190,7 @@ export default function CashierClosurePage() {
                                         onValueChange={setAdminUser} 
                                         variant="bordered" 
                                         classNames={{ 
-                                            label: "text-zinc-500 font-bold text-[10px] tracking-widest", 
+                                            label: "text-gray-500 dark:text-zinc-500 font-bold text-[10px] tracking-widest", 
                                             inputWrapper: "border-black/10 dark:border-white/10 bg-black/5 dark:bg-[#18181b] rounded-2xl h-14",
                                             input: "font-bold text-zinc-900 dark:text-white"
                                         }} 
@@ -1059,7 +1202,7 @@ export default function CashierClosurePage() {
                                         onValueChange={setAdminPass} 
                                         variant="bordered" 
                                         classNames={{ 
-                                            label: "text-zinc-500 font-bold text-[10px] tracking-widest", 
+                                            label: "text-gray-500 dark:text-zinc-500 font-bold text-[10px] tracking-widest", 
                                             inputWrapper: "border-black/10 dark:border-white/10 bg-black/5 dark:bg-[#18181b] rounded-2xl h-14",
                                             input: "font-bold text-zinc-900 dark:text-white"
                                         }} 
@@ -1097,7 +1240,7 @@ export default function CashierClosurePage() {
                     header: "border-none pt-8 px-8",
                     body: "py-2 px-8",
                     footer: "border-none pb-8 px-8 gap-4",
-                    closeButton: "hover:bg-[#18181b] active:bg-zinc-100 dark:bg-zinc-800 text-zinc-500 dark:text-zinc-400 transition-colors right-4 top-4"
+                    closeButton: "hover:bg-[#18181b] active:bg-zinc-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 transition-colors right-4 top-4"
                 }}
 
             >
@@ -1114,7 +1257,7 @@ export default function CashierClosurePage() {
                             </ModalHeader>
                             <ModalBody>
                                 <div className="space-y-4">
-                                    <p className="text-[11px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed">
+                                    <p className="text-[11px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed">
                                         ESTAS A PUNTO DE BORRAR TODOS LOS BILLETES Y MONEDAS QUE HAS INGRESADO. 
                                         <span className="block mt-2 text-rose-500/80">ESTA ACCION NO SE PUEDE DESHACER.</span>
                                     </p>
@@ -1124,7 +1267,7 @@ export default function CashierClosurePage() {
                                 <Button 
                                     variant="light" 
                                     onPress={onClose}
-                                    className="font-medium text-xs uppercase tracking-widest text-zinc-500 hover:text-white transition-all px-6 h-12"
+                                    className="font-medium text-xs uppercase tracking-widest text-gray-500 dark:text-zinc-500 hover:text-white transition-all px-6 h-12"
                                 >
                                     CANCELAR
                                 </Button>
@@ -1142,7 +1285,12 @@ export default function CashierClosurePage() {
 
             <ExpenseFormModal 
                 isOpen={isRealExpenseModalOpen}
-                onClose={() => setIsRealExpenseModalOpen(false)}
+                onClose={() => {
+                    setIsRealExpenseModalOpen(false);
+                    setExpenseToEdit(null);
+                }}
+                isEdit={!!expenseToEdit}
+                initialExpense={expenseToEdit}
                 onSave={handleSaveRealExpense}
             />
 
@@ -1169,13 +1317,13 @@ export default function CashierClosurePage() {
                         <>
                             <ModalHeader className="flex flex-col gap-1">
                                 <span className="text-xl font-medium tracking-tight uppercase tracking-tighter text-zinc-900 dark:text-white">Reporte Detallado de Turno</span>
-                                <span className="text-[10px] text-zinc-500 uppercase font-medium">Control de Auditoria Interna</span>
+                                <span className="text-[10px] text-gray-500 dark:text-zinc-500 uppercase font-medium">Control de Auditoria Interna</span>
                             </ModalHeader>
                             <ModalBody>
                                 <div className="bg-white p-6 rounded-2xl border-2 border-dashed border-zinc-200 font-mono text-zinc-900">
                                     <div className="text-center mb-6 space-y-1">
                                         <h2 className="text-lg font-medium uppercase tracking-tight">POS PRO</h2>
-                                        <p className="text-[10px] uppercase font-medium text-zinc-500">Comprobante de Movimientos</p>
+                                        <p className="text-[10px] uppercase font-medium text-gray-500 dark:text-zinc-500">Comprobante de Movimientos</p>
                                         <div className="h-px bg-zinc-200 my-2" />
                                         <p className="text-[9px] uppercase">Cajero: {detailedReport?.employee || '---'}</p>
                                         <p className="text-[9px] uppercase">Inicio: {detailedReport?.startTime ? formatDateTime(detailedReport.startTime) : '---'}</p>
@@ -1192,7 +1340,7 @@ export default function CashierClosurePage() {
 
                                         {(detailedReport?.movements || []).map((m: any, i: number) => (
                                             <div key={i} className="grid grid-cols-4 text-[10px] leading-tight mb-2">
-                                                <div className="col-span-1 text-zinc-500 font-medium tracking-tight">
+                                                <div className="col-span-1 text-gray-500 dark:text-zinc-500 font-medium tracking-tight">
                                                     {formatTime(m.time)}
                                                 </div>
                                                 <div className="col-span-1 font-medium">
@@ -1200,14 +1348,14 @@ export default function CashierClosurePage() {
                                                         {m.type}
                                                     </span>
                                                 </div>
-                                                <div className="col-span-1 text-[9px] text-zinc-500 dark:text-zinc-400 font-medium">
+                                                <div className="col-span-1 text-[9px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium">
                                                     {m.method}
                                                 </div>
                                                 <div className={`col-span-1 text-right font-medium ${m.type === 'GASTO' ? 'text-rose-600' : 'text-zinc-900'}`}>
                                                     {m.type === 'GASTO' ? '-' : ''}${formatCurrency(m.amount)}
                                                 </div>
                                                 {m.description && (
-                                                    <div className="col-span-4 text-[8px] text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">
+                                                    <div className="col-span-4 text-[8px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-tight">
                                                         {m.description}
                                                     </div>
                                                 )}
@@ -1217,7 +1365,7 @@ export default function CashierClosurePage() {
                                         <div className="h-px bg-zinc-200 my-4 border-dashed border-t" />
                                         
                                         <div className="space-y-1">
-                                            <p className="text-[10px] font-medium uppercase tracking-tight text-zinc-500 dark:text-zinc-400">Balance por Metodo:</p>
+                                            <p className="text-[10px] font-medium uppercase tracking-tight text-gray-500 dark:text-zinc-500 dark:text-zinc-400">Balance por Metodo:</p>
                                             {Object.entries(detailedReport?.totals || {}).map(([method, total]) => (
                                                 <div key={method} className="flex justify-between text-[11px] font-medium uppercase">
                                                     <span>{method}</span>

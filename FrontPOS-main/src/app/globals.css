@@ -1,4 +1,5 @@
 @tailwind base;
+@tailwind base;
 @tailwind components;
 @tailwind utilities;
 
@@ -7,16 +8,16 @@
    ============================================================ */
 @layer base {
   :root, html, body {
-    background-color: #09090b !important;
-    color: #f4f4f5 !important;
+    background-color: var(--bg-app) !important;
+    color: var(--text-primary) !important;
     margin: 0 !important;
     padding: 0 !important;
-    overflow-x: hidden !important;
+    overflow-x: clip !important;
   }
   @media (min-width: 768px) {
     :root, html, body {
       height: 100vh !important;
-      overflow: hidden !important;
+      overflow: clip !important;
     }
   }
   @media (max-width: 767px) {
@@ -153,7 +154,7 @@
     display: none;  /* Chrome, Safari, Opera */
   }
 
-  /* EFECTO NEÓN (Para botones principales como "COBRAR") */
+  /* EFECTO NEON (Para botones principales como "COBRAR") */
   .glow-primary {
     box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.5);
   }
@@ -162,7 +163,7 @@
     box-shadow: 0 0 30px -2px hsl(var(--primary) / 0.7);
   }
 
-  /* EFECTO DE ESCÁNER LÁSER */
+  /* EFECTO DE ESCANER LASER */
   .animate-scan-y {
     animation: scan-y 2.5s ease-in-out infinite;
   }
@@ -230,7 +231,7 @@
     margin: 0;
     /* Previene el fondo negro expuesto en overscroll */
     overscroll-behavior: none;
-    background-color: #09090b;
+    background-color: var(--bg-app);
   }
 
   @media screen and (max-width: 768px) {
@@ -287,7 +288,7 @@
     border: 1px solid hsl(var(--border) / 0.5) !important;
   }
 
-  /* LEY DE MAYÚSCULAS ESTRICTA */
+  /* LEY DE MAYUSCULAS ESTRICTA */
   input[type="text"], 
   input[type="search"],
   [data-slot="input"] {
@@ -313,7 +314,7 @@
     border-color: rgba(255, 255, 255, 0.2) !important;
   }
 
-  /* FIX CRÍTICO: Etiquetas de Input (Fix Overlap) */
+  /* FIX CRITICO: Etiquetas de Input (Fix Overlap) */
   [data-slot="label"] {
     position: relative !important;
     transform: none !important;
@@ -333,7 +334,7 @@
   }
 
 
-  /* OPTIMIZACIÓN DE DENSIDAD 1440x900 */
+  /* OPTIMIZACION DE DENSIDAD 1440x900 */
   .p-5 {
     padding: 0.75rem !important;
   }
@@ -354,7 +355,7 @@
     gap: 0.5rem !important;
   }
 
-  /* OCULTAR FLECHAS DE INPUTS DE NÚMERO (Premium Look) */
+  /* OCULTAR FLECHAS DE INPUTS DE NUMERO (Premium Look) */
   input::-webkit-outer-spin-button,
   input::-webkit-inner-spin-button {
     -webkit-appearance: none;
@@ -409,8 +410,8 @@
    Anula reglas ocultas de HeroUI / Tailwind / SO overscroll.
    ============================================================ */
 :root, html, body {
-  background-color: #09090b !important;
-  color: #f4f4f5 !important;
+  background-color: var(--bg-app) !important;
+  color: var(--text-primary) !important;
   min-height: 100vh !important;
   height: 100% !important;
   margin: 0 !important;
@@ -427,14 +428,4 @@
   background-color: transparent !important;
 }
 
-
-
-html, body, #__next, [data-overlay-container="true"], main {
-  height: 100% !important;
-  min-height: 100vh !important;
-  background-color: #09090b !important;
-  display: flex !important;
-  flex-direction: column !important;
-  flex: 1 1 0% !important;
-}
 

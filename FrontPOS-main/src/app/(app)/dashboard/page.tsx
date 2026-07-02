@@ -237,7 +237,7 @@ export default function DashboardPage() {
                                     <h1 className="text-[13px] md:text-base font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter uppercase tracking-tight leading-none">
                                         Centro de <span className="text-zinc-900 dark:text-zinc-100">Control</span>
                                     </h1>
-                                    <p className="text-[8px] md:text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
+                                    <p className="text-[8px] md:text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight mt-1 flex items-center gap-1">
                                         <span className="h-1.5 w-1.5 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 animate-pulse" /> Inteligencia V5.3
                                     </p>
                                 </div>
@@ -256,7 +256,7 @@ export default function DashboardPage() {
                                             showFormatted={false}
                                         />
                                     </div>
-                                    <span className="text-zinc-400 dark:text-zinc-600 font-medium text-xs">→</span>
+                                    <span className="text-gray-500 dark:text-zinc-400 dark:text-zinc-600 font-medium text-xs">→</span>
                                     <div className="w-[180px]">
                                         <PremiumDateInput
                                             value={dateTo.split('T')[0]}
@@ -351,6 +351,9 @@ export default function DashboardPage() {
                                             <RecentActivity sales={data.recentSales} />
                                         </div>
                                     </div>
+
+                                    {/* Mueve el AutoTour al espacio vacío de la izquierda */}
+                                    <SalesAutoTourCard data={data.dailySalesLast7} />
                                 </div>
 
                                 {/* DERECHA: Acciones, Ranking y Graficas (Sticky) */}
@@ -370,9 +373,8 @@ export default function DashboardPage() {
                             {/* ABAJO: Grafica Financiera y Reportes */}
                             <AdvancedAnalyticsChart data={data.monthly} />
 
-                            {/* INSPIRADO EN YANN.UIUX — Auto-tour chart + Heatmap de top productos */}
-                            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                                <SalesAutoTourCard data={data.dailySalesLast7} />
+                            {/* Heatmap de top productos (ahora a todo el ancho o lo que requiera) */}
+                            <div className="grid grid-cols-1 gap-6">
                                 <CategoryHeatmapCard topProducts={data.topProducts} dailySales={data.dailySalesLast7} />
                             </div>
 

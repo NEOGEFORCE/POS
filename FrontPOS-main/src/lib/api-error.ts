@@ -118,15 +118,14 @@ function humanizeFieldName(field: string): string {
 function translateError(rawError: string): string | null {
   const lower = rawError.toLowerCase();
 
-  // Bloqueo de jerga tecnica (Go/JSON/GORM/MySQL)
-  const technicalJargon = [
-    'json:', 'unmarshal', 'marshal', 'struct', 'field', 'pointer', 'nil', 
-    'unexpected EOF', 'syntax error', 'mysql', 'sql', 'gorm', 'uint', 'int64'
-  ];
-
-  if (technicalJargon.some(word => lower.includes(word))) {
-    return 'FALLO DE PROCESAMIENTO: Uno de los datos tiene un formato no reconocido por el sistema';
-  }
+  // Bloqueo de jerga tecnica (Go/JSON/GORM/MySQL) removido temporalmente para debugging
+  // const technicalJargon = [
+  //   'json:', 'unmarshal', 'marshal', 'struct', 'field', 'pointer', 'nil', 
+  //   'unexpected EOF', 'syntax error', 'mysql', 'sql', 'gorm', 'uint', 'int64'
+  // ];
+  // if (technicalJargon.some(word => lower.includes(word))) {
+  //   return 'FALLO DE PROCESAMIENTO: Uno de los datos tiene un formato no reconocido por el sistema';
+  // }
 
   for (const [key, translation] of Object.entries(ERROR_TRANSLATIONS)) {
     if (lower.includes(key.toLowerCase())) {
@@ -149,8 +148,17 @@ export async function extractApiError(res: Response, fallback: string): Promise<
     
     // Prioridad 1: Nueva estructura global {"success": false, "message": "..."}
     if (data?.success === false && typeof data.message === 'string') {
-      const translated = translateError(data.message);
-      return translated || data.message;
+      let baseMsg = translateError(data.message) || data.message;
+      let extraDetail = "";
+      
+      if (data?.error && typeof data.error === 'object' && typeof data.error.details === 'string' && data.error.details !== '') {
+          extraDetail = translateError(data.error.details) || data.error.details;
+      }
+      
+      if (extraDetail) {
+          return `${baseMsg} - Detalles: ${extraDetail}`;
+      }
+      return baseMsg;
     }
 
     // Prioridad 2: Estructura de campos detallados { error: { fields: { ... } } }
@@ -169,14 +177,28 @@ export async function extractApiError(res: Response, fallback: string): Promise<
     // Prioridad 3: Formato estructurado legacy { error: { message, details } }
     if (data?.error && typeof data.error === 'object') {
       const { message, details } = data.error;
-      const translatedDetails = details ? translateError(details) : null;
-      if (translatedDetails) return translatedDetails;
       
-      const translatedMsg = message ? translateError(message) : null;
-      if (translatedMsg) return translatedMsg;
+      let finalDetails = details;
+      if (typeof details === 'string') {
+          const translatedDetails = translateError(details);
+          if (translatedDetails) finalDetails = translatedDetails;
+      } else if (details && typeof details === 'object') {
+          finalDetails = JSON.stringify(details);
+      }
 
-      if (message) return message;
-      if (details) return details;
+      let finalMsg = message;
+      if (typeof message === 'string') {
+          const translatedMsg = translateError(message);
+          if (translatedMsg) finalMsg = translatedMsg;
+      }
+      
+      if (finalMsg && finalDetails) {
+          return `${finalMsg} - Detalles: ${finalDetails}`;
+      } else if (finalDetails) {
+          return String(finalDetails);
+      } else if (finalMsg) {
+          return String(finalMsg);
+      }
     }
     
     // Formato 4: Simple { error: "string" } o { message: "string" }
@@ -212,49 +234,75 @@ export async function extractApiError(res: Response, fallback: string): Promise<
  * 
  * Uso:
  *   const data = await apiFetch('/admin/register-user', { method: 'POST', body: ... }, token);
+ * 
+ * SISTEMA DE RECUPERACION DE SESION:
+ * Si el servidor responde 401 (sesión expirada), en lugar de lanzar error inmediatamente:
+ * 1. Muestra un modal de re-login
+ * 2. Espera que el usuario se re-autentique
+ * 3. Reintenta la llamada original con el nuevo token
+ * El usuario NUNCA pierde su trabajo.
  */
 export async function apiFetch<T = any>(
   path: string, 
-  options: RequestInit & { fallbackError?: string } = {},
+  options: RequestInit & { fallbackError?: string; skipSessionRecovery?: boolean } = {},
   token?: string
 ): Promise<T> {
-  const { fallbackError = 'OPERACION FALLIDA', ...fetchOptions } = options;
+  const { fallbackError = 'OPERACION FALLIDA', skipSessionRecovery, ...fetchOptions } = options;
   
-  const headers: Record<string, string> = {
-    ...(fetchOptions.headers as Record<string, string> || {}),
-  };
-  
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-  
-  if (fetchOptions.body && !headers['Content-Type']) {
-    headers['Content-Type'] = 'application/json';
-  }
-
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}${path}`, {
-      ...fetchOptions,
-      headers,
-    });
-  } catch (networkError) {
-    throw new Error('SIN CONEXION: No se pudo comunicar con el servidor. Verifica tu red.');
-  }
-  
-  if (!res.ok) {
-    // Clonar la respuesta antes de consumirla para evitar el error "body is already used"
-    const clonedRes = res.clone();
-    const errorMsg = await extractApiError(res, fallbackError);
-    const errorData = await clonedRes.json().catch(() => null);
+  const makeRequest = async (authToken?: string): Promise<T> => {
+    const headers: Record<string, string> = {
+      ...(fetchOptions.headers as Record<string, string> || {}),
+    };
     
-    throw new ApiError(errorMsg, res.status, errorData);
-  }
-  
-  // Intentar parsear como JSON, si no se puede, devolver vacio
-  try {
-    return await res.json();
-  } catch {
-    return {} as T;
-  }
+    if (authToken) {
+      headers['Authorization'] = `Bearer ${authToken}`;
+    }
+    
+    if (fetchOptions.body && !headers['Content-Type']) {
+      headers['Content-Type'] = 'application/json';
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}${path}`, {
+        ...fetchOptions,
+        headers,
+      });
+    } catch (networkError) {
+      throw new Error('SIN CONEXION: No se pudo comunicar con el servidor. Verifica tu red.');
+    }
+    
+    if (!res.ok) {
+      // 401 = Sesión expirada → Intentar recuperación automática
+      if (res.status === 401 && !skipSessionRecovery && typeof window !== 'undefined') {
+        try {
+          // Importar dinámicamente para evitar dependencias circulares
+          const { requestSessionRecovery } = await import('@/lib/session-recovery');
+          const newToken = await requestSessionRecovery();
+          
+          // Re-autenticación exitosa → reintentar la llamada original
+          return makeRequest(newToken);
+        } catch {
+          // El usuario canceló la re-autenticación → lanzar error normal
+          throw new ApiError('Sesión cerrada por el usuario', 401);
+        }
+      }
+      
+      // Clonar la respuesta antes de consumirla para evitar el error "body is already used"
+      const clonedRes = res.clone();
+      const errorMsg = await extractApiError(res, fallbackError);
+      const errorData = await clonedRes.json().catch(() => null);
+      
+      throw new ApiError(errorMsg, res.status, errorData);
+    }
+    
+    // Intentar parsear como JSON, si no se puede, devolver vacio
+    try {
+      return await res.json();
+    } catch {
+      return {} as T;
+    }
+  };
+
+  return makeRequest(token);
 }

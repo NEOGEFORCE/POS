@@ -387,7 +387,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                     <span className="text-[10px] font-medium uppercase tracking-widest tracking-tight">Facturas Pendientes</span>
                                                     <Chip size="sm" className="bg-rose-500 text-white font-medium text-[9px] h-5">{dynamicPendingInvoices.length}</Chip>
                                                 </div>
-                                                <ScrollShadow className="max-h-[250px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
+                                                <ScrollShadow className="max-h-[250px] rounded-2xl border border-gray-100 dark:border-white/5 bg-black/5 dark:bg-[#18181b]/50">
                                                     <table className="w-full text-left text-[11px] border-separate border-spacing-0">
                                                         <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                             <tr>
@@ -444,9 +444,9 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                 <div className="flex items-center gap-2 px-1 mt-2">
                                                     <ArrowDownLeft size={14} className="text-zinc-900 dark:text-zinc-100" />
                                                     <span className="text-[10px] font-medium uppercase tracking-widest tracking-tight">Abonos del Ciclo</span>
-                                                    <Chip size="sm" className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] h-5">{data.payments.length}</Chip>
+                                                    <Chip size="sm" className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] h-5">{(data.payments || []).length}</Chip>
                                                 </div>
-                                                <ScrollShadow className="max-h-[180px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
+                                                <ScrollShadow className="max-h-[180px] rounded-2xl border border-gray-100 dark:border-white/5 bg-black/5 dark:bg-[#18181b]/50">
                                                     <table className="w-full text-left text-[11px] border-separate border-spacing-0">
                                                         <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                             <tr>
@@ -457,8 +457,8 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                             </tr>
                                                         </thead>
                                                         <tbody>
-                                                            {data.payments.map((p) => (
-                                                                <tr key={p.id} className="hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors group">
+                                                            {(data.payments || []).map((p) => (
+                                                                <tr key={p.id} className="hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors group">
                                                                     <td className="px-4 py-3 font-bold tabular-nums">{new Date(p.paymentDate).toLocaleDateString()}</td>
                                                                     <td className="px-4 py-3 font-medium text-zinc-900 dark:text-zinc-100 uppercase text-[9px]">
                                                                         {p.amountCash > 0 ? 'Efectivo' : p.transferSource || 'Transf.'}
@@ -473,7 +473,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                     </td>
                                                                 </tr>
                                                             ))}
-                                                            {data.payments.length === 0 && (
+                                                            {(data.payments || []).length === 0 && (
                                                                 <tr>
                                                                     <td colSpan={3} className="px-4 py-8 text-center text-gray-400 tracking-tight">No se registran abonos en este ciclo</td>
                                                                 </tr>
@@ -510,7 +510,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                 </div>
 
                                                 {/* Tabla cronologica tipo Libro Mayor */}
-                                                <ScrollShadow className="max-h-[350px] rounded-2xl border border-gray-100 dark:border-white/5 bg-white/50 dark:bg-[#18181b]/50">
+                                                <ScrollShadow className="max-h-[350px] rounded-2xl border border-gray-100 dark:border-white/5 bg-black/5 dark:bg-[#18181b]/50">
                                                     <table className="w-full text-left text-[11px] border-separate border-spacing-0">
                                                         <thead className="sticky top-0 bg-gray-50 dark:bg-zinc-950 z-10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                             <tr>
@@ -518,14 +518,14 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Tipo</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5">Detalle</th>
                                                                 <th className="px-3 py-3 font-medium text-rose-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Debito</th>
-                                                                <th className="px-3 py-3 font-medium text-zinc-300 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Credito</th>
+                                                                <th className="px-3 py-3 font-medium text-gray-600 dark:text-zinc-300 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Credito</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-right">Saldo</th>
                                                                 <th className="px-3 py-3 font-medium text-gray-400 uppercase tracking-widest text-[8px] border-b border-gray-100 dark:border-white/5 text-center w-8">Accion</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody>
                                                             {libroMayorEntries.map((entry, idx) => (
-                                                                <tr key={`${entry.type}-${entry.id}-${idx}`} className={`transition-colors ${entry.type === 'VENTA' ? 'hover:bg-rose-500/5' : 'hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5'}`}>
+                                                                <tr key={`${entry.type}-${entry.id}-${idx}`} className={`transition-colors ${entry.type === 'VENTA' ? 'hover:bg-rose-500/5' : 'hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5'}`}>
                                                                     <td className="px-3 py-2.5 font-bold tabular-nums text-[10px]">
                                                                         {entry.date.toLocaleDateString()}
                                                                     </td>
@@ -535,7 +535,7 @@ export default function ClientStatementModal({ isOpen, onOpenChange, customer }:
                                                                             className={`font-medium text-[8px] h-5 ${
                                                                                 entry.type === 'VENTA' 
                                                                                     ? 'bg-rose-500/10 text-rose-500 border border-rose-500/20' 
-                                                                                    : 'bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20'
+                                                                                    : 'bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20'
                                                                             }`}
                                                                         >
                                                                             {entry.type === 'VENTA' ? '📤 Fiado' : '💰 Abono'}

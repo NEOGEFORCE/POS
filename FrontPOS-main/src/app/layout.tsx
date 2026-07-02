@@ -9,6 +9,8 @@ import './globals.css';
 import SWRegister from './sw-register';
 import { GlobalSyncProvider } from "@/components/shared/GlobalSyncProvider";
 import { NetworkMonitor } from "@/components/shared/NetworkMonitor";
+import PWAInstallPrompt from "@/components/shared/PWAInstallPrompt";
+import ReLoginModal from "@/components/ReLoginModal";
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -26,8 +28,10 @@ export const metadata: Metadata = {
   title: 'POS Pro',
   description: 'Sistema de Punto de Venta Premium',
   manifest: '/manifest.json',
+  applicationName: 'POS PRO',
   other: {
-    'google': 'notranslate'
+    'google': 'notranslate',
+    'mobile-web-app-capable': 'yes'
   },
   appleWebApp: {
     capable: true,
@@ -42,7 +46,7 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
-  themeColor: '#10b981', // Verde Esmeralda POS PRO
+  themeColor: '#09090b', // Cambiado a oscuro para coincidir con la cabecera
 };
 
 export default function RootLayout({
@@ -54,6 +58,8 @@ export default function RootLayout({
     <html lang="es" className={`${dmSans.variable} ${dmMono.variable}`} suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
       </head>
       <body suppressHydrationWarning className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col antialiased overflow-x-hidden">
 
@@ -63,7 +69,9 @@ export default function RootLayout({
           <AuthProvider>
             <GlobalSyncProvider />
             <NetworkMonitor />
+            <ReLoginModal />
             {children}
+            <PWAInstallPrompt />
             <Toaster position="top-left" richColors expand={false} theme="system" closeButton />
           </AuthProvider>
         </Providers>

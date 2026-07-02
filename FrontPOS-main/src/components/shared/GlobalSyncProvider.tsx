@@ -56,7 +56,7 @@ export function GlobalSyncProvider() {
     if (eventSourceRef.current) return;
 
     const sseUrl = `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sse?token=${token}`;
-    console.log('[GlobalSync] 🔌 Intentando conectar a:', sseUrl);
+    console.log('[GlobalSync] 🔌 Intentando conectar al EventStream SSE...');
     const eventSource = new EventSource(sseUrl);
     eventSourceRef.current = eventSource;
 

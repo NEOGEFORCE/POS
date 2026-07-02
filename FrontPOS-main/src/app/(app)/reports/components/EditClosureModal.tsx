@@ -110,7 +110,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
                     <h3 className="text-xl font-medium text-zinc-900 dark:text-zinc-100 tracking-tight uppercase tracking-tighter leading-none">
                       Editar <span className="text-blue-500">Cierre #{closure.id}</span>
                     </h3>
-                    <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-[0.3em] mt-1 tracking-tight">Ajuste manual de totales</p>
+                    <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-[0.3em] mt-1 tracking-tight">Ajuste manual de totales</p>
                  </div>
               </div>
             </ModalHeader>
@@ -122,7 +122,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
                   variant="bordered"
                   value={formData.physicalCash.toString()}
                   onChange={(e) => handleChange('physicalCash', e.target.value)}
-                  startContent={<span className="text-zinc-500 text-sm">$</span>}
+                  startContent={<span className="text-gray-500 dark:text-zinc-500 text-sm">$</span>}
                 />
                 <Input
                   label="Efectivo Esperado (Sistema)"
@@ -130,7 +130,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
                   variant="bordered"
                   value={formData.expectedCash.toString()}
                   onChange={(e) => handleChange('expectedCash', e.target.value)}
-                  startContent={<span className="text-zinc-500 text-sm">$</span>}
+                  startContent={<span className="text-gray-500 dark:text-zinc-500 text-sm">$</span>}
                 />
                 <Input
                   label="Total Egresos"
@@ -138,7 +138,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
                   variant="bordered"
                   value={formData.totalExpenses.toString()}
                   onChange={(e) => handleChange('totalExpenses', e.target.value)}
-                  startContent={<span className="text-zinc-500 text-sm">$</span>}
+                  startContent={<span className="text-gray-500 dark:text-zinc-500 text-sm">$</span>}
                 />
                 <Input
                   label="Total Nequi Real"
@@ -146,7 +146,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
                   variant="bordered"
                   value={formData.totalNequiReal.toString()}
                   onChange={(e) => handleChange('totalNequiReal', e.target.value)}
-                  startContent={<span className="text-zinc-500 text-sm">$</span>}
+                  startContent={<span className="text-gray-500 dark:text-zinc-500 text-sm">$</span>}
                 />
                 <Input
                   label="Total Daviplata Real"
@@ -154,12 +154,12 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
                   variant="bordered"
                   value={formData.totalDaviplataReal.toString()}
                   onChange={(e) => handleChange('totalDaviplataReal', e.target.value)}
-                  startContent={<span className="text-zinc-500 text-sm">$</span>}
+                  startContent={<span className="text-gray-500 dark:text-zinc-500 text-sm">$</span>}
                 />
                 
                 <div className="pt-4 border-t border-zinc-200 dark:border-white/5">
                   <div className="flex justify-between items-center bg-zinc-50 dark:bg-[#18181b] p-3 rounded-xl border border-zinc-200 dark:border-white/5">
-                    <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Nueva Diferencia</span>
+                    <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Nueva Diferencia</span>
                     <span className={`text-sm font-bold tabular-nums ${formData.physicalCash - formData.expectedCash === 0 ? 'text-zinc-900 dark:text-zinc-100' : formData.physicalCash - formData.expectedCash < 0 ? 'text-rose-500' : 'text-amber-500'}`}>
                       {formData.physicalCash - formData.expectedCash > 0 ? '+' : ''}{formData.physicalCash - formData.expectedCash}
                     </span>
@@ -171,7 +171,7 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
               <Button 
                 variant="flat" 
                 onPress={onClose}
-                className="font-medium text-[10px] uppercase tracking-widest bg-white dark:bg-[#18181b] text-zinc-500 dark:text-zinc-400 rounded-2xl"
+                className="font-medium text-[10px] uppercase tracking-widest bg-white dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 rounded-2xl"
               >
                 Cancelar
               </Button>

@@ -192,7 +192,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                 <DialogHeader className="p-3 bg-gray-50 dark:bg-black border-b border-gray-200 dark:border-white/5 shrink-0">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                            <div className="h-8 w-8 rounded-2xl bg-zinc-800 border border-white/5 flex items-center justify-center">
+                            <div className="h-8 w-8 rounded-2xl bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 flex items-center justify-center">
                                 <Zap className="h-4 w-4 text-black" />
                             </div>
                             <div>
@@ -208,7 +208,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                     <div className="flex-1 flex flex-col bg-gray-50 dark:bg-black rounded-2xl border border-gray-200 dark:border-white/5 overflow-hidden shadow-inner">
                         <div className="p-2 bg-gray-100 dark:bg-[#18181b] border-b border-gray-200 dark:border-white/5 flex items-center justify-between shrink-0">
                             <span className="text-[8px] font-medium text-gray-900 dark:text-white uppercase tracking-widest">Cuenta Original</span>
-                            <span className="text-[7px] font-medium text-zinc-100 dark:text-zinc-100 uppercase bg-zinc-800 border border-white/5 dark:bg-white/5 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-500/20">Pendiente</span>
+                            <span className="text-[7px] font-medium text-zinc-100 dark:text-zinc-100 uppercase bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 dark:bg-white/5 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-500/20">Pendiente</span>
                         </div>
                         <ScrollArea className="flex-1">
                             <Table>
@@ -223,7 +223,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                     {leftItems.map(item => (
                                         <TableRow 
                                             key={item.cartItemId} 
-                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedLeft === item.cartItemId ? 'bg-zinc-800 border border-white/5 dark:bg-zinc-800 border border-white/5 text-zinc-100 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-900 dark:text-gray-100'}`}
+                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedLeft === item.cartItemId ? 'bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 dark:bg-zinc-800 border border-black/5 dark:border-white/5 text-zinc-100 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-black/5 dark:bg-white/5 text-gray-900 dark:text-gray-100'}`}
                                             onClick={() => setSelectedLeft(item.cartItemId)}
                                             onDoubleClick={() => moveToRight(item.cartItemId)}
                                         >
@@ -258,7 +258,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
 
                     {/* Cuenta de Pago (Split) */}
                     <div className="flex-1 flex flex-col bg-gray-50 dark:bg-black rounded-2xl border border-gray-200 dark:border-white/5 overflow-hidden shadow-inner">
-                        <div className="p-2 bg-zinc-800 border border-white/5 dark:bg-white/5 border-b border-emerald-100 dark:border-emerald-500/20 flex items-center justify-between shrink-0">
+                        <div className="p-2 bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 dark:bg-white/5 border-b border-emerald-100 dark:border-emerald-500/20 flex items-center justify-between shrink-0">
                             <span className="text-[8px] font-medium text-zinc-100 dark:text-zinc-100 uppercase tracking-widest">Cobrar Ahora</span>
                             
                             <Button 
@@ -266,7 +266,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                 variant="outline" 
                                 className={`h-9 px-3 min-w-0 rounded-2xl font-medium transition-all duration-300 border shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${
                                     targetCustomer?.dni !== currentCustomerDni 
-                                        ? 'bg-zinc-800 border border-white/5 text-white border-emerald-400 animate-in zoom-in-95 ' 
+                                        ? 'bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 text-white border-emerald-400 animate-in zoom-in-95 ' 
                                         : 'bg-white dark:bg-[#18181b] text-zinc-100 dark:text-zinc-300 border-emerald-100 dark:border-emerald-500/10'
                                 }`}
                                 onClick={() => setIsClientModalOpen(true)}
@@ -295,7 +295,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                     {rightItems.map(item => (
                                         <TableRow 
                                             key={item.cartItemId} 
-                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedRight === item.cartItemId ? 'bg-zinc-800 border border-white/5 dark:bg-zinc-800 border border-white/5 text-zinc-100 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-white/5 text-gray-900 dark:text-gray-100'}`}
+                                            className={`border-b border-gray-100 dark:border-white/5 transition-all cursor-pointer h-7 ${selectedRight === item.cartItemId ? 'bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 dark:bg-zinc-800 border border-black/5 dark:border-white/5 text-zinc-100 dark:text-black' : 'hover:bg-gray-100 dark:hover:bg-black/5 dark:bg-white/5 text-gray-900 dark:text-gray-100'}`}
                                             onClick={() => setSelectedRight(item.cartItemId)}
                                             onDoubleClick={() => moveToLeft(item.cartItemId)}
                                         >

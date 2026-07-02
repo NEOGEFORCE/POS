@@ -63,7 +63,7 @@ const CategoryTable = memo(({
             case "identity":
                 return (
                     <div className="flex-1 min-h-0 h-full flex items-center gap-4 py-0.5">
-                        <div className="h-10 w-10 shrink-0 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-2 group-hover:rotate-0 transition-transform">
+                        <div className="h-10 w-10 shrink-0 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-2 group-hover:rotate-0 transition-transform">
                             <LayoutGrid size={20} strokeWidth={2.5} />
                         </div>
                         <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full">
@@ -82,7 +82,7 @@ const CategoryTable = memo(({
                         <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-gray-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] group-hover:border-emerald-500/30 transition-all">
                             <Layers size={10} className="text-zinc-900 dark:text-zinc-100" />
                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 tabular-nums tracking-widest">{category.productCount || 0}</span>
-                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase mt-0.5">REFS</span>
+                            <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase mt-0.5">REFS</span>
                         </div>
                     </div>
                 );
@@ -95,7 +95,7 @@ const CategoryTable = memo(({
                                 isIconOnly 
                                 size="sm" 
                                 variant="flat" 
-                                className="h-9 w-9 bg-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white rounded-2xl transition-all border border-emerald-500/20" 
+                                className="h-9 w-9 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-white rounded-2xl transition-all border border-emerald-500/20" 
                                 onPress={() => onEdit(category)}
                             >
                                 <Edit size={14} />
@@ -132,9 +132,9 @@ const CategoryTable = memo(({
                             classNames={{ 
                                 base: "flex-1 overflow-hidden",
                                 wrapper: "overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none flex-1 min-h-0 h-full",
-                                th: "bg-gray-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
+                                th: "bg-gray-50 dark:bg-zinc-950 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-6", 
                                 td: "py-1.5 border-b border-gray-100 dark:border-white/5 px-6", 
-                                tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-pointer group h-10" 
+                                tr: "hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:bg-white/5 cursor-pointer group h-10" 
                             }}
                         >
                             <TableHeader>
@@ -203,7 +203,7 @@ const CategoryTable = memo(({
                                                     isIconOnly
                                                     size="sm" 
                                                     variant="flat" 
-                                                    className="h-9 w-9 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all rounded-2xl"
+                                                    className="h-9 w-9 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-white transition-all rounded-2xl"
                                                     onPress={() => onEdit(c)}
                                                 >
                                                     <Edit size={14} />
@@ -247,7 +247,7 @@ const CategoryTable = memo(({
                         </Button>
                         
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <span className="text-[7px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
                             <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
                                 <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span> 
                                 <span className="opacity-20 text-[8px]">DE</span> 

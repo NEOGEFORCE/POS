@@ -23,7 +23,7 @@ export default function ReportButtons({ onOpenRange }: ReportButtonsProps) {
                         href="/reports"
                         variant="flat"
                         startContent={<LayoutGrid size={20} strokeWidth={2.5} />}
-                        className="bg-gray-100 dark:bg-[#18181b] text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-all h-12 flex-1 sm:flex-none px-6"
+                        className="bg-gray-100 dark:bg-[#18181b] text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-zinc-900 dark:hover:bg-gray-100 dark:bg-zinc-800 dark:hover:text-zinc-100 transition-all h-12 flex-1 sm:flex-none px-6"
                     >
                         Vista Supervisor
                     </Button>
@@ -32,7 +32,7 @@ export default function ReportButtons({ onOpenRange }: ReportButtonsProps) {
                         onPress={onOpenRange}
                         variant="flat"
                         startContent={<Calendar size={20} strokeWidth={2.5} />}
-                        className="bg-gray-100 dark:bg-[#18181b] text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-all h-12 flex-1 sm:flex-none px-6"
+                        className="bg-gray-100 dark:bg-[#18181b] text-gray-700 dark:text-white font-bold uppercase tracking-widest text-[10px] rounded-2xl hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-zinc-900 dark:hover:bg-gray-100 dark:bg-zinc-800 dark:hover:text-zinc-100 transition-all h-12 flex-1 sm:flex-none px-6"
                     >
                         Rango de Fecha
                     </Button>

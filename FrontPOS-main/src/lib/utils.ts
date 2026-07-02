@@ -12,11 +12,8 @@ export const formatCurrency = (val: number | string): string => {
     
     let num: number;
     if (typeof val === 'string') {
-        // En es-CO el punto es separador de miles. Removemos todos los puntos primero.
         let clean = val.replace(/\./g, '');
-        // Reemplazamos coma decimal por punto para que parseFloat trabaje correctamente
         clean = clean.replace(/,/g, '.');
-        // Removemos cualquier cosa que no sea numero o el punto decimal resultante
         clean = clean.replace(/[^\d.]/g, '');
         num = parseFloat(clean);
     } else {
@@ -24,7 +21,23 @@ export const formatCurrency = (val: number | string): string => {
     }
 
     if (isNaN(num)) return '';
-    return num.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+    return Math.round(num).toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+};
+
+// Formato especifico para precios que exigen simbolo $ y siempre 2 decimales (ej: $0.00, $10.50)
+export const formatPrice = (val: number | string): string => {
+    if (val === undefined || val === null || val === '') return '$0.00';
+    let num: number;
+    if (typeof val === 'string') {
+        let clean = val.replace(/\./g, '');
+        clean = clean.replace(/,/g, '.');
+        clean = clean.replace(/[^\d.-]/g, '');
+        num = parseFloat(clean);
+    } else {
+        num = val;
+    }
+    if (isNaN(num)) return '$0.00';
+    return new Intl.NumberFormat('es-CO', { style: 'currency', currency: 'COP', minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(num);
 };
 
 export const parseCurrency = (val: string | number): number => {

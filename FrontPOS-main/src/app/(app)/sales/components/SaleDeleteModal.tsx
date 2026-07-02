@@ -144,7 +144,7 @@ export default function SaleDeleteModal({ isOpen, onOpenChange, sale, onSuccess 
                             <Button 
                                 variant="light" 
                                 onPress={onClose}
-                                className="text-[10px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400"
+                                className="text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400"
                             >
                                 Cancelar
                             </Button>

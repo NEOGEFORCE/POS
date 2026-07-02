@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { memo } from 'react';
 import {
@@ -67,7 +67,7 @@ const CustomerTable = memo(({
                             <Avatar
                                 size="sm"
                                 name={c.name[0]}
-                                className="h-10 w-10 text-xs font-medium bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-emerald-500/20 group-hover/id:scale-110 transition-transform"
+                                className="h-10 w-10 text-xs font-medium bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-emerald-500/20 group-hover/id:scale-110 transition-transform"
                             />
                             {Number(c.currentCredit) > 0 && (
                                 <div className="absolute -top-1 -right-1 h-3 w-3 bg-rose-500 border-2 border-white dark:border-zinc-900 rounded-2xl animate-pulse shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-10" />
@@ -77,7 +77,7 @@ const CustomerTable = memo(({
                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight truncate max-w-[150px] md:max-w-none group-hover/id:text-zinc-900 dark:text-zinc-100 transition-colors">
                                 {c.name}
                             </span>
-                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-0.5 leading-none">
+                            <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-0.5 leading-none">
                                 CC: {c.dni}
                             </span>
                         </div>
@@ -117,7 +117,7 @@ const CustomerTable = memo(({
                             <Button
                                 size="md"
                                 onPress={() => onPay(c)}
-                                className="h-11 px-6 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all animate-pulse flex items-center gap-3 border-2 border-white/20"
+                                className="h-11 px-6 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all animate-pulse flex items-center gap-3 border-2 border-black/10 dark:border-white/20"
                             >
                                 <DollarSign size={18} strokeWidth={4} />
                                 <span className="text-[12px] tracking-[0.15em] mb-0.5">ABONAR</span>
@@ -128,7 +128,7 @@ const CustomerTable = memo(({
                                 isIconOnly
                                 size="sm"
                                 variant="flat"
-                                className="h-8 w-8 md:h-9 md:w-9 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 hover:text-white hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-all rounded-2xl md:rounded-2xl border border-emerald-500/10 active:scale-90"
+                                className="h-8 w-8 md:h-9 md:w-9 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 hover:text-white hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-all rounded-2xl md:rounded-2xl border border-emerald-500/10 active:scale-90"
                                 onPress={() => onEdit(c)}
                             >
                                 <Edit size={14} />
@@ -166,7 +166,7 @@ const CustomerTable = memo(({
     }, [onPay, onEdit, onDelete, onViewStatement]);
 
     return (
-        <div className="flex-1 min-h-0 h-full w-full bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
+        <div className="flex-1 min-h-0 h-full w-full bg-black/5 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
 
             <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full relative">
                 {!isMobile ? (
@@ -180,7 +180,7 @@ const CustomerTable = memo(({
                                 base: "min-w-[720px]",
                                 th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
                                 td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5",
-                                tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 h-10 relative z-0"
+                                tr: "hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:bg-white/5 h-10 relative z-0"
                             }}
                         >
                             <TableHeader columns={COLUMNS}>
@@ -195,7 +195,6 @@ const CustomerTable = memo(({
                                 )}
                             </TableHeader>
                             <TableBody
-                                items={customers || []}
                                 emptyContent={
                                     <div className="py-24 flex flex-col items-center justify-center text-gray-400 dark:text-zinc-700">
                                         <div className="h-20 w-20 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl flex items-center justify-center mb-4 border border-emerald-500/10">
@@ -212,10 +211,13 @@ const CustomerTable = memo(({
                                         )}
                                     </div>
                                 }
+                                items={customers || []}
                             >
                                 {(item) => (
                                     <TableRow key={item.dni}>
-                                        {(columnKey) => <TableCell>{renderCell(item, columnKey)}</TableCell>}
+                                        {COLUMNS.map((column) => (
+                                            <TableCell key={column.uid}>{renderCell(item, column.uid)}</TableCell>
+                                        ))}
                                     </TableRow>
                                 )}
                             </TableBody>
@@ -244,7 +246,7 @@ const CustomerTable = memo(({
                                             <Avatar
                                                 size="sm"
                                                 name={c.name[0]}
-                                                className="h-10 w-10 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl font-medium tracking-tight shadow-inner border border-emerald-500/20"
+                                                className="h-10 w-10 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl font-medium tracking-tight shadow-inner border border-emerald-500/20"
                                             />
                                             {Number(c.currentCredit) > 0 && (
                                                 <div className="absolute -top-1 -right-1 h-3 w-3 bg-rose-500 border-2 border-white dark:border-zinc-900 rounded-2xl animate-pulse shadow-rose-500/50" />
@@ -310,7 +312,7 @@ const CustomerTable = memo(({
                         </Button>
 
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <span className="text-[7px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
                             <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
                                 <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalRecords)}</span>
                                 <span className="opacity-20 text-[8px]">DE</span>

@@ -86,10 +86,10 @@ export default function LowStockPanel({ items }: LowStockPanelProps) {
                                 {priorityItems.map((item) => {
                                     const isCritical = item.currentStatus === 'CRITICAL';
                                     return (
-                                        <tr key={item.barcode} className="hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 border-l-4 border-transparent hover:border-emerald-500 transition-colors">
+                                        <tr key={item.barcode} className="hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 border-l-4 border-transparent hover:border-emerald-500 transition-colors">
                                             <td className="px-4 py-3 truncate">
                                                 <p className="font-bold text-zinc-900 dark:text-zinc-50 uppercase tracking-tight text-xs truncate">{item.name}</p>
-                                                <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 tracking-widest truncate">{item.barcode}</span>
+                                                <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 tracking-widest truncate">{item.barcode}</span>
                                             </td>
                                             <td className="px-4 py-3 text-center">
                                                 <span className={`text-sm font-medium tabular-nums ${isCritical ? 'text-rose-500' : 'text-amber-500'}`}>{item.stock}</span>

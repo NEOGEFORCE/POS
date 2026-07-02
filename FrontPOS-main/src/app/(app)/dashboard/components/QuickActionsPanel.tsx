@@ -50,12 +50,12 @@ export default function QuickActionsPanel() {
         <Card className="card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-full" radius="lg">
             <CardBody className="p-4 md:p-6">
                 <div className="flex items-center gap-2 mb-6">
-                    <div className="p-2 bg-white/5 rounded-2xl">
+                    <div className="p-2 bg-black/5 dark:bg-white/5 rounded-2xl">
                         <Landmark size={20} strokeWidth={2.5} className="text-zinc-900 dark:text-zinc-100" />
                     </div>
                     <div>
                         <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Acciones Rapidas</h3>
-                        <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Gestion Inmediata</p>
+                        <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Gestion Inmediata</p>
                     </div>
                 </div>
 
@@ -64,7 +64,7 @@ export default function QuickActionsPanel() {
                         <Link key={i} href={action.href} className="block group">
                             <div className={`
                                 flex items-center justify-between p-3.5 rounded-2xl border border-transparent 
-                                bg-gray-50 dark:bg-[#18181b] hover:bg-white dark:hover:bg-zinc-100 dark:bg-zinc-800 
+                                bg-gray-50 dark:bg-[#18181b] hover:bg-white dark:hover:bg-white/5 dark:bg-transparent 
                                 hover:border-gray-200 dark:hover:border-zinc-200 dark:border-white/10 
                                 transition-all duration-300 ${action.shadow} hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]
                             `}>

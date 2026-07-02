@@ -35,14 +35,14 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
             scrollBehavior="inside"
             classNames={{
                 base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
-                closeButton: "hover:bg-white/5 hover:text-zinc-900 dark:text-zinc-100 transition-colors"
+                closeButton: "hover:bg-black/5 dark:bg-white/5 hover:text-zinc-900 dark:text-zinc-100 transition-colors"
             }}
         >
             <ModalContent>
                 {(onClose) => (
                     <>
                         <ModalHeader className="flex items-center gap-4 p-8 border-b border-gray-100 dark:border-white/5 rounded-t-[2rem]">
-                            <div className="bg-white/5 p-3 rounded-2xl text-zinc-900 dark:text-zinc-100 shadow-inner -rotate-3">
+                            <div className="bg-black/5 dark:bg-white/5 p-3 rounded-2xl text-zinc-900 dark:text-zinc-100 shadow-inner -rotate-3">
                                 <FileText size={24} />
                             </div>
                             <div className="flex flex-col min-w-0">
@@ -59,11 +59,11 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                                     <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Informacion del Cliente</h4>
                                     <div className="p-6 bg-gray-50 dark:bg-[#18181b] rounded-[2rem] border border-gray-100 dark:border-white/5 space-y-4">
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Nombre</span>
+                                            <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Nombre</span>
                                             <span className="text-sm font-medium text-zinc-900 dark:text-white uppercase tracking-tight">{sale.client?.name || 'Consumidor Final'}</span>
                                         </div>
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">DNI / NIT</span>
+                                            <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">DNI / NIT</span>
                                             <span className="text-sm font-medium text-zinc-900 dark:text-white font-mono">{sale.client?.dni || 'SN-0000'}</span>
                                         </div>
                                     </div>
@@ -72,11 +72,11 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                                     <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Resumen de Pago</h4>
                                     <div className="p-6 bg-gray-50 dark:bg-[#18181b] rounded-[2rem] border border-gray-100 dark:border-white/5 space-y-4">
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Metodo</span>
+                                            <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Metodo</span>
                                             <Chip size="sm" color={getPaymentColor(sale.paymentMethod)} variant="flat" className="font-medium uppercase text-[8px] tracking-[0.2em]">{getPaymentDescription(sale)}</Chip>
                                         </div>
                                         <div className="flex justify-between items-center">
-                                            <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Fecha</span>
+                                            <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em]">Fecha</span>
                                             <span className="text-sm font-medium text-zinc-900 dark:text-white tracking-tight">{new Date(sale.date || '').toLocaleDateString('es-CO')}</span>
                                         </div>
                                     </div>
@@ -86,7 +86,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                             <div className="space-y-4">
                                 <h4 className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest px-1">Articulos Vendidos</h4>
                                 <div className="rounded-[2rem] border border-gray-100 dark:border-white/5 overflow-hidden">
-                                    <Table isCompact removeWrapper aria-label="Detalle de productos" classNames={{ th: "bg-gray-50 dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400 h-10 px-6", td: "py-5 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-zinc-950 px-6 group-hover:bg-gray-50/50 dark:group-hover:bg-[#18181b] transition-colors" }}>
+                                    <Table isCompact removeWrapper aria-label="Detalle de productos" classNames={{ th: "bg-gray-50 dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 h-10 px-6", td: "py-5 border-b border-gray-100 dark:border-white/5 bg-white dark:bg-zinc-950 px-6 group-hover:bg-gray-50/50 dark:group-hover:bg-[#18181b] transition-colors" }}>
                                         <TableHeader>
                                             <TableColumn>PRODUCTO</TableColumn>
                                             <TableColumn align="center">CANT</TableColumn>
@@ -112,11 +112,11 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                             <div className="flex justify-end">
                                 <div className="w-80 space-y-4">
                                     <div className="flex justify-between items-center px-4">
-                                        <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Subtotal Gravado</span>
+                                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Subtotal Gravado</span>
                                         <span className="text-sm font-medium text-zinc-900 dark:text-white tabular-nums">${(sale.total || 0).toLocaleString()}</span>
                                     </div>
                                     <Divider className="bg-[#18181b]" />
-                                    <div className="flex justify-between items-center p-8 bg-white/5 dark:bg-white/5 rounded-[2rem] border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10">
+                                    <div className="flex justify-between items-center p-8 bg-black/5 dark:bg-white/5 dark:bg-white/5 rounded-[2rem] border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10">
                                         <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.3em]">Total Neto</span>
                                         <span className="text-3xl font-medium text-zinc-900 dark:text-zinc-100 dark:text-white tabular-nums tracking-tighter">${(sale.total || 0).toLocaleString()}</span>
                                     </div>
@@ -126,7 +126,7 @@ export default function SaleDetailModal({ isOpen, onOpenChange, sale, onPrint }:
                         <ModalFooter className="p-8 border-t border-gray-100 dark:border-white/5 flex gap-4 rounded-b-[2rem] bg-gray-50/50 dark:bg-transparent">
                             <Button 
                                 variant="flat" 
-                                className="flex-1 h-14 rounded-2xl font-medium uppercase text-[10px] bg-gray-200 dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 hover:bg-gray-300 dark:hover:bg-zinc-100 dark:bg-zinc-800 tracking-tight tracking-widest" 
+                                className="flex-1 h-14 rounded-2xl font-medium uppercase text-[10px] bg-gray-200 dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 hover:bg-gray-300 dark:hover:bg-white/5 dark:bg-transparent tracking-tight tracking-widest" 
                                 onPress={onClose}
                             >
                                 VOLVER <X size={14} className="ml-1" />

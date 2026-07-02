@@ -5,10 +5,11 @@ import {
 } from "@heroui/react";
 import {
   TrendingDown, Wallet, Zap, Building2, HandCoins, Sparkles,
-  FileText, CreditCard, Layers, UserPlus, Search, Landmark, Briefcase, Plus
+  FileText, CreditCard, Layers, UserPlus, Search, Landmark, Briefcase, Plus, X, ArrowRight
 } from 'lucide-react';
 import { Expense, Supplier } from '@/lib/definitions';
 import { useApi } from '@/hooks/use-api';
+import { ExpensePaymentModal } from './ExpensePaymentModal';
 import { formatCurrency, parseCurrency } from '@/lib/utils';
 import { validateExpense, FieldError } from '@/lib/formValidation';
 import ValidationErrors from '@/components/ValidationErrors';
@@ -84,6 +85,8 @@ const ExpenseFormModal = memo(({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { toast } = useToast();
 
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+
   const [localExpense, setLocalExpense] = useState<LocalExpenseState>({
     description: '',
     amount: '',
@@ -156,14 +159,12 @@ const ExpenseFormModal = memo(({
         supplierId: null,
         lenderName: '',
         status: 'PAID',
-        isManualDescription: false,
-        taxAmount: 0,
-        ...defaultMixed
       });
       setSupplierInputValue('');
     }
     // Resetear estado de envio al abrir/cerrar
     setIsSubmitting(false);
+    setIsPaymentModalOpen(false);
   }, [isOpen, initialExpense, suppliers]);
 
   // FILTRO MANUAL BLINDADO
@@ -252,22 +253,11 @@ const ExpenseFormModal = memo(({
     });
   };
 
-  // CALCULO AUTOMATICO 4x1000 PARA NEQUI
+  // CALCULO AUTOMATICO 4x1000 PARA NEQUI (Se maneja despues en el backend o en modal de pagos para Mixtos, aqui desactivado temporal)
   useEffect(() => {
-    let nequiBase = 0;
-    if (localExpense.paymentSource === 'NEQUI') {
-      nequiBase = Number(localExpense.amount) || 0;
-    } else if (localExpense.paymentSource === 'MIXTO') {
-      nequiBase = Number(localExpense.nequiAmount) || 0;
-    }
-    
-    if (nequiBase > 0) {
-      const tax = Math.ceil(nequiBase * 0.004); // 4x1000
-      setLocalExpense(prev => ({ ...prev, taxAmount: tax }));
-    } else {
-      setLocalExpense(prev => ({ ...prev, taxAmount: 0 }));
-    }
-  }, [localExpense.paymentSource, localExpense.amount, localExpense.nequiAmount]);
+    /* let nequiBase = 0;
+    if (addedPayments.length > 0) { ... } */
+  }, []);
 
   const handleSaveSupplier = async (supplierData: Partial<Supplier>) => {
     const token = Cookies.get('org-pos-token');
@@ -337,12 +327,32 @@ const ExpenseFormModal = memo(({
   }, [localExpense.category, localExpense.supplierId]);
 
   const paymentMethods = [
-    { id: 'EFECTIVO', label: 'Caja', icon: Wallet },
-    { id: 'FONDO', label: 'Fondo', icon: Landmark },
-    { id: 'NEQUI', label: 'Nequi', icon: Zap },
-    { id: 'DAVIPLATA', label: 'Davi', icon: Zap },
-    { id: 'PRESTAMO', label: 'Prest.', icon: HandCoins }
+    { id: 'EFECTIVO', label: 'Pago Inmediato', icon: Wallet },
+    { id: 'PRESTAMO', label: 'Deuda', icon: HandCoins }
   ];
+
+  // Helper para procesar prestamo directo
+  async function handleProcessDebt() {
+      setIsSubmitting(true);
+      try {
+        const payload = {
+            ...localExpense,
+            paymentSource: 'PRESTAMO',
+            amount: Number(localExpense.amount) || 0,
+            taxAmount: 0,
+            linkedOrderId: selectedOrderId,
+            status: 'PENDING',
+            cashAmount: 0,
+            nequiAmount: 0,
+            daviplataAmount: 0,
+            fondoAmount: 0
+        };
+        await onSave(payload);
+      } catch (error) {
+        console.error("Error:", error);
+        setIsSubmitting(false);
+      }
+  }
 
   return (
     <>
@@ -475,69 +485,34 @@ const ExpenseFormModal = memo(({
                       <Input
                         placeholder="0"
                         inputMode="decimal"
-                        isReadOnly={localExpense.paymentSource === 'MIXTO'}
                         value={localExpense.amount ? formatCurrency(localExpense.amount) : ''}
                         onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('amount', parseCurrency(v))}
                         startContent={<span className="text-xl font-medium text-rose-500">$</span>}
-                        classNames={{ inputWrapper: `h-16 bg-rose-50/50 dark:bg-rose-500/5 border border-rose-200 dark:border-rose-500/20 rounded-2xl px-6 ${localExpense.paymentSource === 'MIXTO' ? 'opacity-80' : ''}`, input: "font-medium text-2xl text-zinc-900 dark:text-zinc-50 tabular-nums" }}
                       />
                     </div>
                     <div className="space-y-3">
-                      <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">4. Pago por</label>
-                      <div className="grid grid-cols-3 gap-2">
+                      <div className="flex justify-between items-center">
+                        <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">4. Tipo de Egreso</label>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
                         {paymentMethods.map(method => (
                           <button
                             key={method.id}
-                            onClick={() => updateField('paymentSource', method.id)}
-                            className={`relative h-14 rounded-2xl flex flex-col items-center justify-center gap-1 border-2 transition-all ${localExpense.paymentSource === method.id
-                                ? (method.id === 'FONDO' 
-                                    ? 'bg-cyan-600 border-cyan-600 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-cyan-600/20' 
-                                    : 'bg-[#18181b] dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)]')
+                            onClick={() => {
+                               updateField('paymentSource', method.id);
+                            }}
+                            className={`relative h-14 rounded-2xl flex items-center justify-center gap-2 border-2 transition-all ${localExpense.paymentSource === method.id
+                                ? 'bg-[#18181b] dark:bg-white border-zinc-900 dark:border-white text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)]'
                                 : 'card-base border-none/30 border-gray-100 dark:border-white/5 text-gray-400 hover:border-gray-200'
                               }`}
                           >
-                            <method.icon size={16} />
-                            <span className="text-[8px] font-medium uppercase">{method.label}</span>
-                            {method.id === 'FONDO' && (
-                              <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-[5px] font-medium bg-cyan-500 text-white px-1 rounded-2xl whitespace-nowrap">BOVEDA</span>
-                            )}
+                            <method.icon size={18} />
+                            <span className="text-[10px] font-medium uppercase tracking-widest">{method.label}</span>
                           </button>
                         ))}
                       </div>
                     </div>
-
-                    {/* Campos de Pago Mixto */}
-                    {localExpense.paymentSource === 'MIXTO' && (
-                      <div className="mt-4 grid grid-cols-2 gap-4 p-4 bg-gray-50 dark:bg-white/5 border border-gray-200 dark:border-white/10 rounded-2xl animate-in fade-in slide-in-from-top-2 duration-400">
-                        {[
-                          { id: 'cashAmount', label: 'Caja', icon: Wallet }, 
-                          { id: 'nequiAmount', label: 'Nequi', icon: Zap }, 
-                          { id: 'daviplataAmount', label: 'Daviplata', icon: Zap }, 
-                          { id: 'fondoAmount', label: 'Fondo', icon: Landmark }
-                        ].map(field => (
-                          <div key={field.id} className="space-y-1.5">
-                            <label className="text-[9px] font-medium text-gray-500 uppercase tracking-widest">{field.label}</label>
-                            <Input
-                              placeholder="0"
-                              inputMode="decimal"
-                              value={(localExpense as any)[field.id] ? formatCurrency((localExpense as any)[field.id]) : ''}
-                              onFocus={(e) => e.target.select()}
-                              onValueChange={(v) => {
-                                const num = parseCurrency(v) || 0;
-                                setLocalExpense((prev: any) => {
-                                  const newState = { ...prev, [field.id]: num };
-                                  newState.amount = (newState.cashAmount || 0) + (newState.nequiAmount || 0) + (newState.daviplataAmount || 0) + (newState.fondoAmount || 0);
-                                  return newState;
-                                });
-                              }}
-                              startContent={<field.icon size={12} className="text-gray-400" />}
-                              classNames={{ inputWrapper: "h-10 bg-white dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-xl px-3", input: "font-medium text-sm text-zinc-900 dark:text-zinc-50 tabular-nums" }}
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    )}
 
                     {/* Campo de Acreedor - DISEÑO DE ALTO IMPACTO (ROJO) */}
                     {localExpense.paymentSource === 'PRESTAMO' && (
@@ -565,6 +540,40 @@ const ExpenseFormModal = memo(({
                         </p>
                       </div>
                     )}
+                    
+                    <div className="mt-8 flex gap-3">
+                      <Button
+                        className={`flex-1 h-14 ${isSubmitting ? 'bg-rose-400' : 'bg-rose-500 hover:bg-rose-600'} text-white font-medium uppercase tracking-[0.2em] rounded-2xl transition-all shadow-[0_8px_30px_rgb(244,63,94,0.3)] hover:shadow-[0_8px_30px_rgb(244,63,94,0.5)]`}
+                        onPress={() => {
+                          if (!localExpense.description?.trim()) {
+                            toast({ variant: 'destructive', title: 'DATOS FALTANTES', description: 'LA DESCRIPCION ES OBLIGATORIA' });
+                            return;
+                          }
+                          const baseAmount = Number(localExpense.amount) || 0;
+                          if (baseAmount <= 0) {
+                            toast({ variant: 'destructive', title: 'MONTO INVALIDO', description: 'EL MONTO DEBE SER MAYOR A CERO' });
+                            return;
+                          }
+
+                          if (localExpense.paymentSource === 'PRESTAMO' && !localExpense.lenderName?.trim()) {
+                            toast({ variant: 'destructive', title: 'DATOS FALTANTES', description: 'EL NOMBRE DEL PRESTAMISTA ES OBLIGATORIO' });
+                            return;
+                          }
+
+                          if (localExpense.paymentSource === 'PRESTAMO') {
+                              // Submit directamente como deuda
+                              handleProcessDebt();
+                          } else {
+                              // Abrir Modal Multi-Pago
+                              setIsPaymentModalOpen(true);
+                          }
+                        }}
+                        isLoading={isSubmitting}
+                      >
+                        {localExpense.paymentSource === 'PRESTAMO' ? 'CREAR DEUDA' : 'PROCEDER AL PAGO'}
+                        {!isSubmitting && <ArrowRight size={18} className="ml-2" />}
+                      </Button>
+                    </div>
                   </div>
 
                   {/* COL 3: CONCEPTO Y RESUMEN */}
@@ -596,97 +605,42 @@ const ExpenseFormModal = memo(({
                           </p>
                         </div>
                         <div className="pt-3 border-t border-gray-200 dark:border-white/5 space-y-2">
-                          {localExpense.taxAmount > 0 && (
-                            <div className="flex justify-between items-center bg-rose-500/5 p-2 rounded-2xl">
-                               <div className="flex flex-col">
-                                  <span className="text-[7px] font-medium text-rose-500 uppercase tracking-widest">GMF (4x1000 Nequi)</span>
-                                  <span className="text-[10px] font-medium text-rose-500 tracking-tight">+${formatCurrency(localExpense.taxAmount)}</span>
-                               </div>
-                               <Zap size={12} className="text-rose-500" />
-                            </div>
-                          )}
                           <p className="text-[8px] font-bold text-gray-400 uppercase">Valor Total a Descontar:</p>
-                          <p className="text-2xl font-medium text-rose-500 tabular-nums">${formatCurrency(Number(localExpense.amount || 0) + localExpense.taxAmount)}</p>
+                          <p className="text-2xl font-medium text-rose-500 tabular-nums">${formatCurrency(Number(localExpense.amount || 0))}</p>
                         </div>
                       </CardBody>
                     </Card>
                   </div>
                 </div>
               </ModalBody>
-
-              <ModalFooter className="px-8 py-6 border-t border-gray-100 dark:border-white/5 bg-gray-50/30 dark:bg-[#18181b]/50">
-                <div className="flex w-full gap-4">
-                  <Button variant="flat" className="flex-1 h-12 rounded-2xl font-medium uppercase text-[10px] tracking-widest border border-gray-200 dark:border-white/5" onPress={onClose}>
-                    DESCARTAR
-                  </Button>
-                  <Button
-                    className="flex-[2] h-12 bg-rose-500 text-white font-medium uppercase text-xs tracking-[0.2em] rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-[1.02] active:scale-95 transition-all"
-                    isLoading={isSubmitting}
-                    isDisabled={isSubmitting}
-                    onPress={async () => {
-                      if (isSubmitting) return;
-
-                      const result = validateExpense({
-                        description: localExpense.description,
-                        amount: localExpense.amount,
-                        category: localExpense.category,
-                        paymentSource: localExpense.paymentSource,
-                        lenderName: localExpense.lenderName,
-                      });
-                      if (!result.isValid) {
-                        setValidationErrors(result.errors);
-                        toast({ title: "Validacion Fallida", description: "Campos incompletos", variant: "destructive" });
-                        return;
-                      }
-                      setValidationErrors([]);
-
-                      // Validar Prestamista si es Prestamo
-                      if (localExpense.paymentSource === 'PRESTAMO' && !localExpense.lenderName?.trim()) {
-                        toast({ variant: 'destructive', title: 'DATOS FALTANTES', description: 'EL NOMBRE DEL PRESTAMISTA ES OBLIGATORIO' });
-                        return;
-                      }
-
-                      setIsSubmitting(true);
-                      try {
-                        let finalPaymentSource = localExpense.paymentSource;
-                        if (localExpense.paymentSource === 'MIXTO') {
-                          const parts = [];
-                          if (localExpense.nequiAmount > 0) parts.push(`NEQUI: $${formatCurrency(localExpense.nequiAmount)}`);
-                          if (localExpense.daviplataAmount > 0) parts.push(`DAVIPLATA: $${formatCurrency(localExpense.daviplataAmount)}`);
-                          if (localExpense.cashAmount > 0) parts.push(`CAJA: $${formatCurrency(localExpense.cashAmount)}`);
-                          if (localExpense.fondoAmount > 0) parts.push(`FONDO: $${formatCurrency(localExpense.fondoAmount)}`);
-                          finalPaymentSource = parts.join(' / ');
-                          if (!finalPaymentSource) finalPaymentSource = 'MIXTO';
-                        }
-
-                        const baseAmount = Number(localExpense.amount) || 0;
-                        const gmf = localExpense.taxAmount || 0;
-                        
-                        const payload = {
-                          ...localExpense,
-                          paymentSource: finalPaymentSource,
-                          amount: baseAmount + gmf,
-                          taxAmount: 0, // Se envia en 0 para evitar doble suma en el backend, ya que el amount incluye el GMF
-                          linkedOrderId: selectedOrderId,
-                          status: localExpense.paymentSource === 'PRESTAMO' ? 'PENDING' : 'PAID'
-                        };
-                        await onSave(payload);
-                      } catch (error) {
-                        console.error("Error al guardar egreso:", error);
-                        setIsSubmitting(false);
-                      }
-                    }}
-                  >
-                    <Sparkles size={18} className="mr-2" />
-                    {isSubmitting ? "PROCESANDO..." : (isEdit ? "GUARDAR CAMBIOS" : "AUTORIZAR PAGO")}
-                  </Button>
-                </div>
-                {validationErrors.length > 0 && <div className="w-full mt-4"><ValidationErrors errors={validationErrors} /></div>}
-              </ModalFooter>
             </>
           )}
         </ModalContent>
       </Modal>
+
+      {/* Modal Multi-Pago de Egresos */}
+      <ExpensePaymentModal 
+        isOpen={isPaymentModalOpen}
+        onOpenChange={setIsPaymentModalOpen}
+        totalToPay={Number(localExpense.amount) || 0}
+        onPay={async (data) => {
+            // Este onPay se llama desde el Modal Multi-Pago cuando autorizan el dinero
+            const baseAmount = Number(localExpense.amount) || 0;
+            const payload = {
+                ...localExpense,
+                paymentSource: data.paymentSourceString,
+                cashAmount: data.cash,
+                nequiAmount: data.nequi,
+                daviplataAmount: data.daviplata,
+                fondoAmount: data.fondo,
+                amount: baseAmount,
+                taxAmount: data.taxAmount || 0,
+                linkedOrderId: selectedOrderId,
+                status: 'PAID'
+            };
+            await onSave(payload);
+        }}
+      />
 
       <SupplierFormModal
         isOpen={isSupplierModalOpen}

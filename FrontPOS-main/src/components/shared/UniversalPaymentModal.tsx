@@ -36,10 +36,12 @@ interface UniversalPaymentModalProps {
   }) => Promise<void>;
   onCloseComplete?: () => void;
   showCreditTab?: boolean;
-  flowType?: "in" | "out";
   reason?: string;
   onReasonChange?: (reason: string) => void;
   isAbono?: boolean;
+  isRefund?: boolean;
+  onClientSelectorOpen?: () => void;
+  pendingReturnAmount?: number;
 }
 
 export default function UniversalPaymentModal({
@@ -58,8 +60,13 @@ export default function UniversalPaymentModal({
   flowType = "in",
   reason,
   onReasonChange,
-  isAbono = false
+  isAbono = false,
+  isRefund = false,
+  onClientSelectorOpen,
+  pendingReturnAmount = 0
 }: UniversalPaymentModalProps) {
+  
+  const effectiveTotal = Math.max(0, totalToPay - pendingReturnAmount);
   const isProcessingRef = useRef(false);
   const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'credit'>('cash');
   const [isMobileNumpadOpen, setIsMobileNumpadOpen] = useState(false);
@@ -69,9 +76,9 @@ export default function UniversalPaymentModal({
   // Clases estaticas para evitar problemas con el purgado de Tailwind y errores de referencia
   const isOut = flowType === "out";
   const theme = {
-    bg: isOut ? "bg-rose-500" : "bg-zinc-800 border border-white/5",
-    bgLight: isOut ? "bg-rose-500/10" : "bg-white/5",
-    bgHover: isOut ? "hover:bg-rose-500/10" : "hover:bg-white/5",
+    bg: isOut ? "bg-rose-500" : "bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5",
+    bgLight: isOut ? "bg-rose-500/10" : "bg-black/5 dark:bg-white/5",
+    bgHover: isOut ? "hover:bg-rose-500/10" : "hover:bg-black/5 dark:bg-white/5",
     text: isOut ? "text-rose-500" : "text-zinc-100",
     textDark: isOut ? "text-rose-600" : "text-zinc-100",
     border: isOut ? "border-rose-500" : "border-emerald-500",
@@ -115,9 +122,8 @@ export default function UniversalPaymentModal({
 
   const currentDialogVal = Number(dialogAmount) || 0;
   const totalAlreadyPaid = cashPaid + nequiPaid + daviplataPaid + creditPaid;
-  const remainingDebt = Math.max(0, totalToPay - totalAlreadyPaid);
+  const remainingDebt = Math.max(0, effectiveTotal - totalAlreadyPaid);
 
-  // Valor a mostrar en el display principal
   const amountToPayRaw = currentDialogVal > 0 
     ? currentDialogVal 
     : (Number(cashTendered) > 0 
@@ -146,23 +152,19 @@ export default function UniversalPaymentModal({
     }
   }, [currentDialogVal, remainingDebt, activePaymentTab]);
 
-    const isAmountIncomplete = false; // El usuario pidio que pase normal y autocomplete
+  const isCreditInvalid = !!(activePaymentTab === 'credit' && (!client || client.id === "0" || client.name === "CONSUMIDOR FINAL"));
+  const isOverCreditLimit = !!(activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit));
   
-      const isCreditInvalid = !!(activePaymentTab === 'credit' && (!client || client.id === "0" || client.name === "CONSUMIDOR FINAL"));
-      const isOverCreditLimit = !!(activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit));
-  
-    const processPayment = useCallback(async () => {
-        if (isProcessingRef.current || submittingPayment || isCreditInvalid || isOverCreditLimit || isAmountIncomplete) return;
+  const processPayment = useCallback(async () => {
+        if (isProcessingRef.current || submittingPayment || isCreditInvalid || isOverCreditLimit) return;
         isProcessingRef.current = true;
         
         let finalCash = cashPaid;
-      let finalNequi = nequiPaid;
-      let finalDaviplata = daviplataPaid;
-      let finalCredit = creditPaid;
-      let finalTendered = Number(cashTendered) || 0;
+        let finalNequi = nequiPaid;
+        let finalDaviplata = daviplataPaid;
+        let finalCredit = creditPaid;
+        let finalTendered = Number(cashTendered) || 0;
   
-      // --- INTELIGENCIA DE PAGOS MULTIPLES (Fase 2) ---
-      // Si el usuario digita un valor, lo tomamos en cuenta al procesar.
       if (currentDialogVal > 0) {
         if (activePaymentTab === 'cash') {
           finalCash += isAbono ? actualPayment : currentDialogVal;
@@ -175,9 +177,8 @@ export default function UniversalPaymentModal({
           finalCredit += currentDialogVal;
         }
       } else if (finalTendered > 0 && activePaymentTab === 'cash') {
-        finalCash += isAbono ? Math.min(finalTendered, remainingDebt) : remainingDebt; // Cash payment added via quick buttons
+        finalCash += isAbono ? Math.min(finalTendered, remainingDebt) : remainingDebt;
       } else if (!isAbono) {
-        // Autocompletar el resto con el mtodo activo si no digitaron nada (Solo si NO es abono)
         if (activePaymentTab === 'cash') {
           finalCash += remainingDebt;
           finalTendered = finalTendered > 0 ? finalTendered : remainingDebt;
@@ -190,10 +191,9 @@ export default function UniversalPaymentModal({
         }
       }
 
-      // Autocompletar monto faltante a EFECTIVO (solicitud del usuario: "si hay venta de 2000 y pagan 1000 nequi, el resto efectivo")
       if (!isAbono) {
         const totalCoveredSoFar = finalCash + finalNequi + finalDaviplata + finalCredit;
-        const leftToPay = totalToPay - totalCoveredSoFar;
+        const leftToPay = effectiveTotal - totalCoveredSoFar;
         if (leftToPay > 0) {
           finalCash += leftToPay;
           if (finalTendered < finalCash) {
@@ -206,7 +206,6 @@ export default function UniversalPaymentModal({
       const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
       const change = Math.max(0, effectiveCash - finalCash);
     
-    // Calcular transferSource principal para compatibilidad retroactiva temporal
     let mainTransferSource = "MIXTO";
     if (finalNequi > 0 && finalDaviplata === 0) mainTransferSource = "NEQUI";
     if (finalDaviplata > 0 && finalNequi === 0) mainTransferSource = "DAVIPLATA";
@@ -216,18 +215,15 @@ export default function UniversalPaymentModal({
         cash: finalCash,
         transfer: finalNequi + finalDaviplata,
         transferSource: mainTransferSource,
-        transferNequi: finalNequi,
-        transferDaviplata: finalDaviplata,
         credit: finalCredit,
         totalPaid: totalPaid,
         change: change
-      } as any);
+      });
     } finally {
       isProcessingRef.current = false;
     }
-  }, [isCreditInvalid, isOverCreditLimit, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, totalToPay, onPay]);
+  }, [isCreditInvalid, isOverCreditLimit, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, effectiveTotal, onPay, isAbono, actualPayment]);
 
-  // Teclado fisico
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (showSuccessScreen) {
@@ -238,7 +234,6 @@ export default function UniversalPaymentModal({
         return;
       }
       
-      // BLINDAJE: Si el foco esta en un input o textarea (notas, busqueda, etc), no interceptamos
       const target = e.target as HTMLElement;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
         return;
@@ -271,8 +266,6 @@ export default function UniversalPaymentModal({
 
   if (!isOpen) return null;
 
-
-
   return (
     <Modal 
       isOpen={isOpen} 
@@ -290,11 +283,10 @@ export default function UniversalPaymentModal({
       <ModalContent>
         {() => (
           <div className="flex flex-col md:flex-row h-full overflow-hidden relative">
-            {/* Pantalla de Exito Maestro */}
             {showSuccessScreen && (
-              <div className="absolute inset-0 z-[100] bg-zinc-950/95 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
-                <div className="bg-white dark:bg-[#18181b] p-10 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white/10 w-full max-w-sm relative overflow-hidden group">
-                  <div className={`h-20 w-20 rounded-[1.5rem] ${theme.bg} text-white flex items-center justify-center mb-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)] -rotate-3 scale-110 border-4 border-white/20`}>
+              <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
+                <div className="bg-white dark:bg-[#18181b] p-10 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-sm relative overflow-hidden group">
+                  <div className={`h-20 w-20 rounded-[1.5rem] ${theme.bg} text-white flex items-center justify-center mb-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)] -rotate-3 scale-110 border-4 border-black/10 dark:border-white/20`}>
                     <Check size={40} strokeWidth={4} />
                   </div>
                   <h2 className="text-3xl font-medium text-gray-900 dark:text-white uppercase mb-2 tracking-tight tracking-tighter text-center leading-none">
@@ -317,7 +309,6 @@ export default function UniversalPaymentModal({
               </div>
             )}
             
-            {/* Sidebar de Metodos Maestro */}
             <div className="w-full md:w-[220px] bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
               <div className="hidden md:flex flex-col mb-8 px-2">
                 <div className="flex items-center gap-2 mb-2">
@@ -333,7 +324,9 @@ export default function UniversalPaymentModal({
                   { id: 'NEQUI', label: 'Nequi', logo: '/logos/nequi.png' },
                   { id: 'DAVIPLATA', label: 'Daviplata', logo: '/logos/daviplata.png' },
                   { id: 'credit', label: 'Fiado', icon: <Users size={14} className="md:w-5 md:h-5" /> }
-                ].filter(tab => tab.id !== 'credit' || showCreditTab).map(tab => (
+                ].filter(tab => tab.id !== 'credit' || showCreditTab)
+                 .filter(tab => !isRefund || tab.id === 'cash')
+                 .map(tab => (
                   <button 
                     key={tab.id} 
                     onClick={() => { setActivePaymentTab(tab.id as any); setDialogAmount(''); setCashTendered(''); }} 
@@ -374,7 +367,6 @@ export default function UniversalPaymentModal({
               </Button>
             </div>
 
-            {/* Content Central */}
             <div className="flex-1 bg-gray-50 dark:bg-zinc-950 pt-2 md:pt-8 px-3 md:px-10 pb-3 flex flex-col relative overflow-hidden z-10">
               <header className="mb-1 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-1 md:gap-4">
                 <div className="flex flex-col min-w-0">
@@ -387,7 +379,6 @@ export default function UniversalPaymentModal({
                   </div>
                 </div>
                 
-                {/* Resumen de Pagos Acumulados (Chips) */}
                 <div className="flex items-center gap-2">
                   {nequiPaid > 0 && (
                     <div className="px-3 py-1 bg-[#23004C]/10 border border-[#23004C]/20 rounded-2xl flex items-center gap-2">
@@ -419,15 +410,15 @@ export default function UniversalPaymentModal({
               <div className="grid grid-cols-3 gap-1.5 mb-1.5">
                 <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
                   <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Wallet size={6} className="text-rose-500" /> TOTAL</p>
-                  <p className="text-sm md:text-2xl font-medium text-rose-500 tracking-tight tabular-nums leading-none">${formatCurrency(totalToPay)}</p>
+                  <p className="text-sm md:text-2xl font-medium text-rose-500 tracking-tight tabular-nums leading-none">${formatCurrency(effectiveTotal)}</p>
                 </div>
                 <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
-                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Check size={6} className={theme.text} /> ABONANDO</p>
+                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Check size={6} className={theme.text} /> {isRefund ? 'REEMBOLSANDO' : 'ABONANDO'}</p>
                   <p className={`text-sm md:text-2xl font-medium ${theme.text} tracking-tight tabular-nums leading-none`}>${formatCurrency(totalAlreadyPaid + actualPayment)}</p>
                 </div>
                 <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center border-emerald-500/30">
                   <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><TrendingUp size={6} className="text-sky-500" /> RESTANTE</p>
-                  <p className="text-sm md:text-2xl font-medium text-sky-500 tracking-tight tabular-nums leading-none">${formatCurrency(Math.max(0, totalToPay - (totalAlreadyPaid + actualPayment)))}</p>
+                  <p className="text-sm md:text-2xl font-medium text-sky-500 tracking-tight tabular-nums leading-none">${formatCurrency(Math.max(0, effectiveTotal - (totalAlreadyPaid + actualPayment)))}</p>
                 </div>
               </div>
 
@@ -510,7 +501,7 @@ export default function UniversalPaymentModal({
                         ))}
                       </div>
                       <div className="flex gap-2 mt-3">
-                        <Button className="flex-1 h-12 bg-zinc-800 text-white font-medium uppercase rounded-2xl text-[10px] tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2" onPress={() => setIsMobileNumpadOpen(false)}>
+                        <Button className="flex-1 h-12 bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium uppercase rounded-2xl text-[10px] tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2" onPress={() => setIsMobileNumpadOpen(false)}>
                           <Grid3X3 size={14} /> BILLETES
                         </Button>
                         <Button className={`flex-[2] h-12 ${theme.bg} text-white font-medium uppercase rounded-2xl tracking-tight tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
@@ -531,8 +522,12 @@ export default function UniversalPaymentModal({
                         <input 
                           type="text"
                           inputMode="numeric"
-                          value={(activePaymentTab === 'credit' && !dialogAmount) ? '' : (dialogAmount ? formatCurrency(dialogAmount) : formatCurrency(amountToPayRaw))}
-                          onFocus={(e) => e.target.select()}
+                          value={(activePaymentTab === 'credit' && !dialogAmount) ? '' : (dialogAmount ? formatCurrency(Number(dialogAmount)) : formatCurrency(Number(amountToPayRaw)))}
+                          onFocus={(e) => {
+                            const val = e.target.value.replace(/\D/g, '');
+                            e.target.value = val;
+                            e.target.select();
+                          }}
                           onChange={(e) => {
                             const val = e.target.value.replace(/\D/g, '');
                             setDialogAmount(val);
@@ -543,7 +538,6 @@ export default function UniversalPaymentModal({
                     </div>
                   </div>
 
-                  {/* Panel de Inteligencia Crediticia y Validaciones - FASE 1 & 2 */}
                   {activePaymentTab === 'credit' && (
                     <div className="mb-4 animate-in slide-in-from-top-2 duration-300">
                         {(!client || client.id === "0" || client.name === "CONSUMIDOR FINAL") ? (
@@ -551,9 +545,19 @@ export default function UniversalPaymentModal({
                                 <p className="text-amber-700 dark:text-amber-400 font-medium text-xs flex items-center gap-2 uppercase tracking-tight">
                                     ⚠️ CLIENTE NO SELECCIONADO
                                 </p>
-                                <p className="text-[10px] text-amber-600 dark:text-amber-500/70 font-medium leading-relaxed">
-                                    No se puede fiar a Consumidor Final. Por favor, cancela y selecciona un cliente registrado para asignar la deuda.
+                                <p className="text-[10px] text-amber-600 dark:text-amber-500/70 font-medium leading-relaxed mb-2">
+                                    No se puede fiar a Consumidor Final. Por favor, cancela y selecciona un cliente registrado para asignar la deuda, o pulsa el boton debajo.
                                 </p>
+                                {onClientSelectorOpen && (
+                                    <Button 
+                                        color="warning" 
+                                        size="sm" 
+                                        className="font-bold text-[10px] uppercase tracking-widest rounded-xl"
+                                        onPress={onClientSelectorOpen}
+                                    >
+                                        Seleccionar Cliente
+                                    </Button>
+                                )}
                             </div>
                         ) : (
                             <div className={`border rounded-2xl p-3 transition-all duration-300 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${
@@ -603,7 +607,6 @@ export default function UniversalPaymentModal({
                     </div>
                   )}
 
-                  {/* Numpad para Transferencia / Credito en Movil */}
                   <div className="grid grid-cols-3 gap-2">
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
                       <Button 
@@ -658,15 +661,19 @@ export default function UniversalPaymentModal({
                 <p className={`text-[10px] font-medium ${theme.text} uppercase tracking-[0.2em] tracking-tight flex items-center justify-end gap-2 relative z-10`}><Calculator size={12} /> DIGITANDO MONTO</p>
                 <div className="flex items-center justify-end gap-1 relative z-10">
                   <span className={`${theme.text} font-medium tracking-tight text-2xl md:text-4xl tracking-tighter`}>$</span>
-                  <input 
-                    type="text"
-                    inputMode="numeric"
-                    value={dialogAmount ? formatCurrency(dialogAmount) : formatCurrency(amountToPayRaw)}
-                    onFocus={(e) => e.target.select()}
-                    onChange={(e) => {
-                      const val = e.target.value.replace(/\D/g, '');
-                      setDialogAmount(val);
-                    }}
+                    <input 
+                      type="text"
+                      inputMode="numeric"
+                      value={dialogAmount ? formatCurrency(Number(dialogAmount)) : formatCurrency(Number(amountToPayRaw))}
+                      onFocus={(e) => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        e.target.value = val;
+                        e.target.select();
+                      }}
+                      onChange={(e) => {
+                        const val = e.target.value.replace(/\D/g, '');
+                        setDialogAmount(val);
+                      }}
                     className={`w-full font-medium text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent border-none text-right focus:outline-none tracking-tighter tabular-nums leading-none`}
                   />
                 </div>
@@ -727,8 +734,8 @@ export default function UniversalPaymentModal({
         
         {/* OVERLAY DE SEGURIDAD ANTIDUPLICADO */}
         {(submittingPayment || isProcessingRef.current) && (
-          <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-zinc-950/95 animate-in fade-in duration-300">
-            <div className="bg-white dark:bg-[#18181b] p-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center gap-6 border border-white/10 scale-110">
+          <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-white dark:bg-zinc-950/95 animate-in fade-in duration-300">
+            <div className="bg-white dark:bg-[#18181b] p-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center gap-6 border border-black/5 dark:border-white/10 scale-110">
               <div className="relative">
                 <div className={`h-20 w-20 rounded-2xl border-4 ${theme.border} border-t-transparent animate-spin`} />
                 <div className="absolute inset-0 flex items-center justify-center">

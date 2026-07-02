@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -62,7 +62,7 @@ export default function DebtsControlPage() {
       });
 
       if (res.ok) {
-        toast({ title: "EXITO", description: "Â¡Abono registrado con exito!" });
+        toast({ title: "EXITO", description: "¡Abono registrado con exito!" });
         onOpenChange();
         fetchDebts();
       } else {
@@ -95,9 +95,9 @@ export default function DebtsControlPage() {
   };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative p-4 md:p-8 gap-4 md:gap-8 animate-in fade-in slide-in-from-bottom-4">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative p-4 md:p-8 gap-4 md:gap-8 animate-in fade-in slide-in-from-bottom-4">
       {/* HEADER SECTION */}
-      <div className="shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-white/50 dark:bg-[#18181b]/50 p-8 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+      <div className="shrink-0 flex flex-col md:flex-row md:items-center justify-between gap-6 bg-black/5 dark:bg-[#18181b]/50 p-8 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
         <div className="flex items-center gap-6">
           <div className="h-20 w-20 bg-amber-500/10 text-amber-500 flex items-center justify-center rounded-[1.75rem] shadow-inner -rotate-3 border border-amber-500/20">
             <Landmark size={40} />
@@ -109,13 +109,13 @@ export default function DebtsControlPage() {
                 Control de <span className="text-amber-500 text-5xl">Cartera</span>
               </h1>
             </div>
-            <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] mt-3 tracking-tight opacity-70">Auditoria de Fiados y Cuentas por Cobrar</p>
+            <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] mt-3 tracking-tight opacity-70">Auditoria de Fiados y Cuentas por Cobrar</p>
           </div>
         </div>
 
         <div className="flex items-center gap-8">
           <div className="hidden md:flex flex-col items-end">
-            <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight opacity-60 mb-1">CAPITAL EN LA CALLE</span>
+            <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight opacity-60 mb-1">CAPITAL EN LA CALLE</span>
             <div className="flex items-baseline gap-2">
               <h2 className="text-4xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter">${totalCarpet.toLocaleString()}</h2>
               <span className="text-xs font-medium text-amber-500 uppercase">GLO</span>
@@ -143,7 +143,7 @@ export default function DebtsControlPage() {
             aria-label="Debts table"
             className="p-8"
             classNames={{
-              th: "bg-gray-50/50 dark:bg-[#18181b]/50 h-16 font-medium text-[11px] uppercase tracking-widest tracking-tight border-b border-gray-100 dark:border-white/5 text-zinc-500 dark:text-zinc-400",
+              th: "bg-gray-50/50 dark:bg-[#18181b]/50 h-16 font-medium text-[11px] uppercase tracking-widest tracking-tight border-b border-gray-100 dark:border-white/5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400",
               td: "py-7 font-bold text-sm",
               tbody: "divide-y divide-gray-100 dark:divide-white/5"
             }}
@@ -167,12 +167,12 @@ export default function DebtsControlPage() {
                       </div>
                       <div className="flex flex-col">
                         <span className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tight">{debt.client?.name}</span>
-                        <span className="text-[10px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-widest opacity-60">DNI: {debt.client?.dni}</span>
+                        <span className="text-[10px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-widest opacity-60">DNI: {debt.client?.dni}</span>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2 text-zinc-500 dark:text-zinc-400 font-mono text-xs">
+                    <div className="flex items-center gap-2 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-mono text-xs">
                       <Calendar size={14} />
                       {new Date(debt.date).toLocaleDateString()}
                     </div>
@@ -253,7 +253,7 @@ export default function DebtsControlPage() {
                   </div>
                   <div>
                     <h3 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">Liquidacion <span className="text-amber-500">Cartera</span></h3>
-                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Registrar Ingreso de Dinero</p>
+                    <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Registrar Ingreso de Dinero</p>
                   </div>
                 </div>
               </ModalHeader>
@@ -268,7 +268,7 @@ export default function DebtsControlPage() {
 
                 <div className="space-y-6">
                   <div className="space-y-3">
-                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1 tracking-tight">MONTO DEL ABONO</label>
+                    <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1 tracking-tight">MONTO DEL ABONO</label>
                     <Input
                       type="number"
                       placeholder="0"
@@ -283,7 +283,7 @@ export default function DebtsControlPage() {
                   </div>
 
                   <div className="space-y-3">
-                    <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1 tracking-tight">METODO DE PAGO</label>
+                    <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1 tracking-tight">METODO DE PAGO</label>
                     <div className="grid grid-cols-2 gap-3">
                       {["EFECTIVO", "NEQUI", "DAVIPLATA", "OTRO"].map(m => (
                         <Button
@@ -332,7 +332,7 @@ export default function DebtsControlPage() {
                   </div>
                   <div>
                     <h3 className="text-3xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter">Estado de <span className="text-blue-500">Cuenta</span></h3>
-                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight flex items-center gap-2">
+                    <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.4em] tracking-tight flex items-center gap-2">
                       <Clock size={10} className="text-blue-500" /> Historial de Ciclo Activo
                     </p>
                   </div>
@@ -444,6 +444,7 @@ export default function DebtsControlPage() {
     </div>
   );
 }
+
 
 
 

@@ -87,7 +87,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
             <ModalBody>
               {debts.length === 0 ? (
                 <div className="py-20 flex flex-col items-center justify-center text-center opacity-40">
-                  <div className="h-20 w-20 rounded-2xl bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 mb-4 border-2 border-dashed border-emerald-500/30">
+                  <div className="h-20 w-20 rounded-2xl bg-black/5 dark:bg-white/5 flex items-center justify-center text-zinc-900 dark:text-zinc-100 mb-4 border-2 border-dashed border-emerald-500/30">
                     <Activity size={32} />
                   </div>
                   <h3 className="text-sm font-medium uppercase tracking-widest text-zinc-900 dark:text-zinc-50">Todo al dia</h3>

@@ -45,11 +45,11 @@ const InventoryAlertsModal = memo(({ isOpen, onOpenChange, products }: Inventory
                         <ModalBody className="p-8 pb-12">
                             {products.length === 0 ? (
                                 <div className="py-20 flex flex-col items-center justify-center text-center">
-                                    <div className="h-20 w-20 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl flex items-center justify-center mb-6 shadow-inner animate-bounce">
+                                    <div className="h-20 w-20 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl flex items-center justify-center mb-6 shadow-inner animate-bounce">
                                         <Check size={40} />
                                     </div>
                                     <h3 className="text-sm font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-widest mb-2">Inventario Saludable</h3>
-                                    <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">No se detectaron quiebres de stock</p>
+                                    <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">No se detectaron quiebres de stock</p>
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -73,7 +73,7 @@ const InventoryAlertsModal = memo(({ isOpen, onOpenChange, products }: Inventory
                                                         <span className="text-xs font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter truncate leading-tight">
                                                             {p.productName}
                                                         </span>
-                                                        <span className="text-[8px] font-mono text-zinc-500 dark:text-zinc-400 tracking-[0.2em] uppercase">#{p.barcode}</span>
+                                                        <span className="text-[8px] font-mono text-gray-500 dark:text-zinc-500 dark:text-zinc-400 tracking-[0.2em] uppercase">#{p.barcode}</span>
                                                     </div>
                                                 </div>
 

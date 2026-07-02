@@ -102,7 +102,7 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                                                 <p className="font-bold text-zinc-900 dark:text-zinc-50 uppercase tracking-tight truncate group-hover:text-sky-600 dark:group-hover:text-sky-400 transition-colors text-xs">
                                                     {sale.client || 'Consumidor Final'}
                                                 </p>
-                                                <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 tracking-widest">
+                                                <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 tracking-widest">
                                                     {displayDate} {displayTime}
                                                 </span>
                                             </td>

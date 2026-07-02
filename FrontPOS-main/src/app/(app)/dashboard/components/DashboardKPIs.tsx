@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
-import { Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from "@heroui/react";
+import { Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Tooltip } from "@heroui/react";
 import React from 'react';
 import AuditModal from "./AuditModal";
 import Cookies from 'js-cookie';
@@ -71,14 +71,14 @@ function KpiCard({
                 {!hideHeader && (
                     <div className={`${isAudit ? 'p-6 pb-4 bg-gradient-to-br from-zinc-500/5 to-transparent' : 'mb-4'} flex justify-between items-start`}>
                         {!isAudit && (
-                            <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-white/8 text-zinc-500 dark:text-zinc-400 shrink-0">
+                            <div className="w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-100 dark:bg-zinc-800 border border-white/8 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 shrink-0">
                                 <Icon size={18} />
                             </div>
                         )}
                         
                         <div className={`flex flex-col ${isAudit ? 'items-start w-full' : 'items-end overflow-hidden'}`}>
                             <div className="flex items-center justify-between w-full gap-2">
-                                <span className={`uppercase tracking-widest leading-none mb-2 ${isAudit ? 'text-[11px] font-medium text-zinc-500' : 'text-[11px] font-medium text-zinc-500 truncate flex-1'}`}>
+                                <span className={`uppercase tracking-widest leading-none mb-2 ${isAudit ? 'text-[11px] font-medium text-gray-500 dark:text-zinc-500' : 'text-[11px] font-medium text-gray-500 dark:text-zinc-500 truncate flex-1'}`}>
                                     {label}
                                 </span>
                                 {topAction && <div className="mb-2">{topAction}</div>}
@@ -109,7 +109,7 @@ function KpiCard({
                     <div className={`${isAudit ? 'w-full' : 'text-xs text-zinc-600 mt-1'}`}>
                         <div className="break-words" style={{ color: subColor || undefined }}>{sub}</div>
                         {onClick && !isAudit && (
-                            <div className="text-[10px] font-medium text-zinc-500 flex items-center gap-1 mt-2 justify-end transition-all duration-150 group-hover:text-zinc-300">
+                            <div className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 flex items-center gap-1 mt-2 justify-end transition-all duration-150 group-hover:text-gray-600 dark:text-zinc-300">
                                 VER DETALLES <ChevronRight size={12} />
                             </div>
                         )}
@@ -228,27 +228,27 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
         >
             {/* FILA 1 */}
             <KpiCard
-                label="Ventas del Ultimo Cierre"
-                value={data.shiftSalesAmount || 0}
+                label="Venta Real del Cierre"
+                value={data.shiftVentaReal || 0}
                 sub={
                     <div className="flex flex-col gap-1 mt-1">
                         <span className="text-[10px] text-gray-500 dark:text-zinc-400">{data.shiftSalesCount || 0} transacciones</span>
                         <div className="grid grid-cols-2 gap-x-2 gap-y-1 mt-1">
                             <div className="flex items-center gap-1">
                                 <Coins size={10} className="text-zinc-900 dark:text-zinc-100" />
-                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">EFE: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.EFECTIVO || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">EFE: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.EFECTIVO || 0)}</span></span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <Smartphone size={10} className="text-purple-500" />
-                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">NEQUI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.NEQUI || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">NEQUI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.NEQUI || 0)}</span></span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <Smartphone size={10} className="text-rose-500" />
-                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">DAVI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.DAVIPLATA || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">DAVI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.DAVIPLATA || 0)}</span></span>
                             </div>
                             <div className="flex items-center gap-1">
                                 <Wallet size={10} className="text-blue-500" />
-                                <span className="text-[8.5px] font-medium uppercase text-zinc-500 dark:text-zinc-400">FIADOS: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.FIADO || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">FIADOS: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.FIADO || 0)}</span></span>
                             </div>
                         </div>
                     </div>
@@ -268,9 +268,19 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                 sub={
                                 <div className="flex flex-col gap-0 w-full">
                                     <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent flex flex-col items-start">
-                                        <span className="font-medium uppercase tracking-widest leading-none mb-3 tracking-tight text-[11px] text-zinc-500">
-                                            EFECTIVO REAL EN MANO (ACUMULADO)
-                                        </span>
+                                        <div className="flex items-center gap-1 mb-3">
+                                            <span className="font-medium uppercase tracking-widest leading-none tracking-tight text-[11px] text-gray-500 dark:text-zinc-500">
+                                                EFECTIVO REAL EN MANO (ACUMULADO)
+                                            </span>
+                                            <Tooltip content={
+                                                <div className="p-2 max-w-[250px]">
+                                                    <p className="text-[10px] font-bold text-gray-600 dark:text-zinc-300 mb-1 uppercase tracking-widest">Formula de Auditoria</p>
+                                                    <p className="text-[10px] text-gray-500 dark:text-zinc-400">Efectivo Fisico + Ingresos Digitales - Egresos Pagados = Efectivo Real</p>
+                                                </div>
+                                            } placement="top" className="bg-gray-50 dark:bg-zinc-900 border border-black/5 dark:border-white/10">
+                                                <Info size={12} className="text-gray-500 dark:text-zinc-500 cursor-help" />
+                                            </Tooltip>
+                                        </div>
                                         <div className="flex items-center gap-3">
                                             <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
                                                 {formatCurrencyWithColor(Math.round(data.reportedBalance || 0))}
@@ -295,7 +305,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                             footer={
                                 <>
                                     <div className="flex flex-col">
-                                        <span className="text-[9px] text-zinc-500 font-medium tracking-tight uppercase tracking-widest leading-none">
+                                        <span className="text-[9px] text-gray-500 dark:text-zinc-500 font-medium tracking-tight uppercase tracking-widest leading-none">
                                             Billeteras Digitales (Total)
                                         </span>
                                             <div className="flex items-center gap-3 mt-1.5">
@@ -340,7 +350,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                                 </div>
                                                 <div className="flex flex-col">
                                                     <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Reiniciar <span className="text-amber-500">Saldo Sistema</span></h3>
-                                                    <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Teorico</p>
+                                                    <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Teorico</p>
                                                 </div>
                                             </div>
                                         </ModalHeader>
@@ -376,14 +386,14 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
             <KpiCard
                 label="UTILIDAD DEL MES"
                 value={data.estimatedNetProfit || 0}
-                sub="Ganancia real del mes (Ventas - Costos - Gastos)"
+                sub="Ganancia real del mes (Ventas - Egresos)"
                 icon={LineChart}
                 color="#8b5cf6"
                 isCurrency={true}
                 topAction={
                     <button 
                         onClick={(e) => { e.stopPropagation(); setIsResetProfitModalOpen(true); }}
-                        className="p-1.5 hover:bg-rose-500/10 rounded-2xl text-zinc-500 hover:text-rose-500 transition-all active:scale-90 group/btn"
+                        className="p-1.5 hover:bg-rose-500/10 rounded-2xl text-gray-500 dark:text-zinc-500 hover:text-rose-500 transition-all active:scale-90 group/btn"
                         title="Reiniciar Conteo de Utilidad"
                     >
                         <RotateCcw size={14} className="group-hover/btn:rotate-[-45deg] transition-transform" />
@@ -410,7 +420,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                     </div>
                                     <div className="flex flex-col">
                                         <h3 className="font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter text-xl">Reiniciar <span className="text-rose-500">Utilidad</span></h3>
-                                        <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Maestro</p>
+                                        <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Punto de Partida Maestro</p>
                                     </div>
                                 </div>
                             </ModalHeader>
@@ -461,14 +471,14 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                     <div className="grid grid-cols-2 gap-8 items-center">
                         <div className="flex flex-col border-r border-zinc-200 dark:border-white/5 pr-4">
                             <span className="text-[10px] text-zinc-900 dark:text-zinc-100 font-medium tracking-tight uppercase leading-none mb-1">Capital Invertido</span>
-                            <span className="text-[8px] text-zinc-500 font-bold uppercase mb-2">(Stock × Compra)</span>
+                            <span className="text-[8px] text-gray-500 dark:text-zinc-500 font-bold uppercase mb-2">(Stock × Compra)</span>
                             <span className="text-lg sm:text-xl lg:text-2xl font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tighter truncate">
                                 ${formatCurrency(Math.round(data.inventoryCostValue || 0))}
                             </span>
                         </div>
                         <div className="flex flex-col pl-4">
                             <span className="text-[10px] text-purple-500 font-medium tracking-tight uppercase leading-none mb-1">Valor de Venta</span>
-                            <span className="text-[8px] text-zinc-500 font-bold uppercase mb-2">(Stock × Venta)</span>
+                            <span className="text-[8px] text-gray-500 dark:text-zinc-500 font-bold uppercase mb-2">(Stock × Venta)</span>
                             <span className="text-lg sm:text-xl lg:text-2xl font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tighter truncate">
                                 ${formatCurrency(Math.round(data.inventoryRetailValue || 0))}
                             </span>

@@ -5,11 +5,12 @@ import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, Truck, Calendar, Package, Plus, Receipt, Pencil } from "lucide-react";
-import { formatCOP } from "@/lib/utils";
+import { formatPrice } from "@/lib/utils";
 import Cookies from "js-cookie";
 import { useApi } from "@/hooks/use-api";
 import { format, differenceInDays } from "date-fns";
 import { es } from "date-fns/locale";
+import { setupSyncListener } from "@/lib/revalidate";
 
 interface UnifiedOrderItem {
     id?: number;
@@ -35,13 +36,20 @@ interface UnifiedOrder {
 }
 
 interface PendingOrdersViewProps {
-    onLoadOrder: (supplierId: number, items: any[]) => void;
+    onLoadOrder: (supplierId: number, items: any[], orderRefs?: { id: string | number, source: string }[]) => void;
     onGoToFreeMode: () => void;
 }
 
 export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: PendingOrdersViewProps) {
     const router = useRouter();
     const { data: orders, isLoading, mutate } = useApi<UnifiedOrder[]>("/inventory/orders");
+
+    useEffect(() => {
+        const cleanup = setupSyncListener((event) => {
+            if (event === 'ORDER_UPDATE' || event === 'INVENTORY_UPDATE') mutate();
+        });
+        return cleanup;
+    }, [mutate]);
 
     // Agrupar ordenes por Proveedor
     const groupedOrders = useMemo(() => {
@@ -60,7 +68,10 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
             originalOrders: UnifiedOrder[];
         }> = {};
 
-        orders.forEach(order => {
+        const closedStatuses = new Set(['RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED']);
+        const pendingOrders = orders.filter(o => !closedStatuses.has((o.status || '').toUpperCase()));
+
+        pendingOrders.forEach(order => {
             const dateStr = order.expectedDate ? order.expectedDate.split('T')[0] : 'Sin Fecha';
             const key = `${order.supplierId}_${dateStr}`;
             
@@ -157,7 +168,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                     <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">Pedidos Pendientes</h2>
                     <p className="text-muted-foreground">Selecciona un pedido consolidado para iniciar la recepcion.</p>
                 </div>
-                <Button className="bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-md gap-2" onClick={onGoToFreeMode}>
+                <Button className="bg-gray-50 dark:bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-md gap-2" onClick={onGoToFreeMode}>
                     <Plus className="h-4 w-4" />
                     Recepcion Libre (Sin Pedido)
                 </Button>
@@ -194,7 +205,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                             if (expectedDateStr < todayStr) {
                                 urgencyColor = "text-red-600";
                                 bgUrgency = "bg-red-50 dark:bg-red-950/30 border-red-200";
-                                dateText = "¡Retrasado!";
+                                dateText = "RETRASO";
                             } else if (expectedDateStr === todayStr) {
                                 urgencyColor = "text-amber-600";
                                 bgUrgency = "bg-amber-50 dark:bg-amber-950/30 border-amber-200";
@@ -216,7 +227,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                 <CardHeader className={`${bgUrgency} border-b py-4`}>
                                     <div className="flex justify-between items-start">
                                         <div className="flex items-center gap-3">
-                                            <div className={`p-2 rounded-lg bg-white/50 dark:bg-black/20 ${urgencyColor}`}>
+                                            <div className={`p-2 rounded-lg bg-black/5 dark:bg-black/20 ${urgencyColor}`}>
                                                 <Truck size={24} />
                                             </div>
                                             <div>
@@ -249,13 +260,13 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                                     <div className="pt-3 border-t flex justify-between items-center">
                                                         <span className="font-medium text-sm">Precio Real Factura</span>
                                                         <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">
-                                                            ${formatCOP(invoiceAsNumber)}
+                                                            {formatPrice(invoiceAsNumber)}
                                                         </span>
                                                     </div>
                                                     {/* Costo Estimado → secundario, mas pequeño */}
                                                     <div className="flex justify-between items-center text-xs text-muted-foreground">
                                                         <span className="flex items-center gap-1"><Receipt size={12} /> Estimado:</span>
-                                                        <span className="font-medium">${formatCOP(group.totalEstimated)}</span>
+                                                        <span className="font-medium">{formatPrice(group.totalEstimated)}</span>
                                                     </div>
                                                 </>
                                             ) : (
@@ -275,7 +286,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                                     <div className="pt-3 border-t flex justify-between items-center">
                                                         <span className="font-medium text-sm">Costo Estimado</span>
                                                         <span className="font-bold text-lg text-emerald-600 dark:text-emerald-400">
-                                                            ${formatCOP(group.totalEstimated)}
+                                                            {formatPrice(group.totalEstimated)}
                                                         </span>
                                                     </div>
                                                 </>
@@ -285,7 +296,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                                     <div className="flex gap-2 w-full mt-2 flex-wrap">
                                         <Button 
                                             className="flex-1" 
-                                            onClick={() => onLoadOrder(group.supplierId, group.mergedItems)}
+                                            onClick={() => onLoadOrder(group.supplierId, group.mergedItems, group.originalOrders.map((o: any) => ({ id: o.id, source: o.source })))}
                                         >
                                             Iniciar Recepcion
                                         </Button>

@@ -118,6 +118,7 @@ export default function SaleEditModal({
             submittingPayment={isUpdating}
             lastChange={lastChange}
             onPay={handleSaveEdit}
+            onClientSelectorOpen={onClientSelectorOpen}
             onCloseComplete={() => {
                 if (showSuccessScreen) window.location.reload();
             }}

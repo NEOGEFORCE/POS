@@ -155,7 +155,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                         isIconOnly 
                         size="sm" 
                         variant="flat" 
-                        className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+                        className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-white transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                         onPress={() => handleInspect(log)}
                     >
                         <Eye size={18} strokeWidth={2.5} />
@@ -205,7 +205,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
         </div>
       );
     } catch {
-      return <pre className="text-[10px] p-2 bg-[#18181b] text-zinc-300 rounded overflow-auto overscroll-contain">{changesStr}</pre>;
+      return <pre className="text-[10px] p-2 bg-[#18181b] text-gray-600 dark:text-zinc-300 rounded overflow-auto overscroll-contain">{changesStr}</pre>;
     }
   };
 
@@ -271,9 +271,9 @@ export default function AuditTable({ logs }: AuditTableProps) {
                     aria-label="Registro Maestro de Auditoria"
                     classNames={{
                         base: "min-w-[900px]",
-                        th: "bg-gray-50 dark:bg-zinc-950 text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
+                        th: "bg-gray-50 dark:bg-zinc-950 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium uppercase text-[9px] tracking-widest h-10 py-1 border-b border-gray-200 dark:border-white/5 sticky top-0 z-10 px-4",
                         td: "py-2 border-b border-gray-100 dark:border-white/5 px-4",
-                        tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 cursor-default group"
+                        tr: "hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:bg-white/5 cursor-default group"
                     }}
                 >
                     <TableHeader columns={COLUMNS}>
@@ -326,7 +326,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                             <p className="text-[11px] font-bold tracking-tight text-gray-700 dark:text-zinc-300 leading-tight border-t border-gray-100 dark:border-white/5 pt-2">
                                 {log.human_readable || log.details}
                             </p>
-                            <Button size="sm" variant="flat" className="w-full mt-1 bg-white/5 text-emerald-600 font-medium text-[9px] uppercase tracking-tight h-8" onPress={() => handleInspect(log)}>
+                            <Button size="sm" variant="flat" className="w-full mt-1 bg-black/5 dark:bg-white/5 text-emerald-600 font-medium text-[9px] uppercase tracking-tight h-8" onPress={() => handleInspect(log)}>
                                 Ver Detalles Tecnicos <Eye size={12} className="ml-1" />
                             </Button>
                         </div>
@@ -353,7 +353,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
                     </Button>
 
                     <div className="flex flex-col items-start px-1 leading-none">
-                        <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">EVENTOS</span>
+                        <span className="text-[7px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">EVENTOS</span>
                         <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
                             <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{(page - 1) * rowsPerPage + 1}-{Math.min(page * rowsPerPage, filteredLogs.length)}</span>
                             <span className="opacity-20 text-[8px]">DE</span>

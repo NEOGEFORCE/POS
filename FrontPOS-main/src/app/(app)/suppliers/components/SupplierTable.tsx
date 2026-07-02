@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { memo } from 'react';
 import {
@@ -63,14 +63,14 @@ const SupplierTable = memo(({
             case "identity":
                 return (
                     <div className="flex-1 min-h-0 h-full flex items-center gap-3 py-0.5">
-                        <div className="h-9 w-9 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0">
+                        <div className="h-9 w-9 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shrink-0">
                             <Building2 size={18} />
                         </div>
                         <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full">
                             <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight pr-2 whitespace-nowrap">
                                 {s.name}
                             </span>
-                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight pr-1">NIT: {s.id}</span>
+                            <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight pr-1">NIT: {s.id}</span>
                         </div>
                     </div>
                 );
@@ -86,7 +86,7 @@ const SupplierTable = memo(({
                         {s.vendorName && (
                             <div className="flex items-center gap-1.5 mt-0.5 group">
                                 <User size={10} className="text-gray-400 group-hover:text-zinc-900 dark:text-zinc-100 transition-colors" />
-                                <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:text-zinc-100 uppercase tracking-tight tracking-wider transition-colors">
+                                <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 group-hover:text-zinc-900 dark:text-zinc-100 uppercase tracking-tight tracking-wider transition-colors">
                                     ASESOR: {s.vendorName}
                                 </span>
                             </div>
@@ -113,7 +113,7 @@ const SupplierTable = memo(({
                                     visitDays.map((day, idx) => (
                                         <span
                                             key={idx}
-                                            className="inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-2xl bg-white/5 border border-emerald-500/30 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 text-[9px] font-medium"
+                                            className="inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-2xl bg-black/5 dark:bg-white/5 border border-emerald-500/30 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 text-[9px] font-medium"
                                         >
                                             {dayShortNames[day] || day.slice(0, 2).toUpperCase()}
                                         </span>
@@ -181,7 +181,7 @@ const SupplierTable = memo(({
     }, [onEdit, onDelete]);
 
     return (
-        <div className="flex-1 min-h-0 h-full w-full bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
+        <div className="flex-1 min-h-0 h-full w-full bg-white dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
             {/* AREA DE CONTENIDO PRINCIPAL */}
             <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full relative">
                 {!isMobile ? (
@@ -195,7 +195,7 @@ const SupplierTable = memo(({
                             wrapper: "overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none flex-1 min-h-0 h-full",
                             th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-widest h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
                             td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5",
-                            tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 h-10 relative z-0"
+                            tr: "hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border-b border-gray-100 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:active:bg-white/10 h-10 relative z-0"
                         }}
                     >
                         <TableHeader columns={COLUMNS}>
@@ -210,7 +210,6 @@ const SupplierTable = memo(({
                             )}
                         </TableHeader>
                         <TableBody
-                            items={suppliers || []}
                             emptyContent={
                                 <EmptyState
                                     title="Sin proveedores registrados"
@@ -219,11 +218,13 @@ const SupplierTable = memo(({
                                 />
                             }
                         >
-                            {(item) => (
+                            {(suppliers || []).map((item) => (
                                 <TableRow key={item.id}>
-                                    {(columnKey) => <TableCell>{renderCell(item, columnKey)}</TableCell>}
+                                    {COLUMNS.map((column) => (
+                                        <TableCell key={column.uid}>{renderCell(item, column.uid)}</TableCell>
+                                    ))}
                                 </TableRow>
-                            )}
+                            ))}
                         </TableBody>
                     </Table>
                 ) : (
@@ -233,7 +234,7 @@ const SupplierTable = memo(({
                                 <div key={s.id} className="p-4 rounded-2xl border card-base border-none border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-between shrink-0">
                                     {/* ... existing card content ... */}
                                     <div className="flex items-center gap-3">
-                                        <div className="h-10 w-10 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shrink-0">
+                                        <div className="h-10 w-10 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 shrink-0">
                                             <Building2 size={20} />
                                         </div>
                                         <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">
@@ -254,7 +255,7 @@ const SupplierTable = memo(({
                                                 )}
                                             </div>
                                             <div className="flex items-center gap-1.5 mt-2">
-                                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-2xl bg-white/5 border border-emerald-500/20">
+                                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-2xl bg-black/5 dark:bg-white/5 border border-emerald-500/20">
                                                     <Calendar size={8} className="text-zinc-900 dark:text-zinc-100" />
                                                     <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-tight pr-0.5 leading-none">
                                                         {s.visitDay || '---'}
@@ -303,7 +304,7 @@ const SupplierTable = memo(({
                         </Button>
 
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <span className="text-[7px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
                             <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
                                 <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalFiltered)}</span>
                                 <span className="opacity-20 text-[8px]">DE</span>

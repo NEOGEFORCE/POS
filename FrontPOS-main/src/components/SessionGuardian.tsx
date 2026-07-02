@@ -5,6 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Cookies from 'js-cookie';
 import { toast } from '@/hooks/use-toast';
 import { Wifi, WifiOff, ShieldCheck, AlertCircle } from 'lucide-react';
+import { isSessionRecoveryActive } from '@/lib/session-recovery';
 
 export default function SessionGuardian() {
     const router = useRouter();
@@ -17,6 +18,9 @@ export default function SessionGuardian() {
         const handleStorageChange = (e: StorageEvent) => {
             // Si detectamos que el token fue removido o cambio en otra pestaña
             if (e.key === 'org-pos-token' && !e.newValue) {
+                // No forzar redirect si hay una recuperación de sesión en progreso
+                if (isSessionRecoveryActive()) return;
+                
                 toast({
                     title: "SESION FINALIZADA",
                     description: "Se ha cerrado la sesion en otra ventana.",
@@ -62,6 +66,9 @@ export default function SessionGuardian() {
     // 3. HEARTBEAT / REFRESH DE TOKEN / AUTO-LOGOUT (MEGA-SPRINT)
     useEffect(() => {
         const checkSession = setInterval(() => {
+            // No forzar redirect si hay una recuperación de sesión en progreso
+            if (isSessionRecoveryActive()) return;
+            
             const token = Cookies.get('org-pos-token');
             if (!token && !pathname.includes('/login')) {
                 router.push('/login');

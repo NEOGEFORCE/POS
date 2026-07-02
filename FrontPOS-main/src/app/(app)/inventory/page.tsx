@@ -4,17 +4,22 @@ import { Card, CardBody, Button, Badge, Chip, Skeleton, Modal, ModalContent, Mod
 import { 
   Package, Truck, ShoppingBag, ArrowUpCircle, 
   Search, ShieldCheck, Sparkles, BarChart3, ChevronRight,
-  AlertTriangle, TrendingDown, DollarSign, ArrowRight, Send, Plus, Calendar, Building2
+  AlertTriangle, TrendingDown, DollarSign, ArrowRight, Send, Plus, Calendar, Building2, X
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useApi } from "@/hooks/use-api";
 import { Product } from "@/lib/definitions";
-import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime } from "@/lib/utils";
+import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime, formatPrice } from "@/lib/utils";
 import Cookies from 'js-cookie';
 import React, { useMemo, useState, useEffect } from "react";
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { useToast } from "@/hooks/use-toast";
 import CreateScheduledDeliveryModal from "./components/CreateScheduledDeliveryModal";
+import dynamic from "next/dynamic";
+import { apiFetch, ApiError } from '@/lib/api-error';
+
+const ProductFormModal = dynamic(() => import('../products/components/ProductFormModal'), { ssr: false });
 
 // Interfaz unificada — igual a lo que devuelve /inventory/orders
 interface OrderDetailItem {
@@ -54,11 +59,50 @@ export default function InventoryHub() {
     }).format(new Date());
   };
 
+  const { toast } = useToast();
+  const [editingStockProduct, setEditingStockProduct] = useState<Product | null>(null);
+  const { data: categoriesData, mutate: mutateCategories } = useApi<any[]>('/categories/all');
+  const { data: suppliersData, mutate: mutateSuppliers } = useApi<any[]>('/suppliers/all');
+  
+  const handleEditProduct = async () => {
+    if (!editingStockProduct) return;
+    const token = Cookies.get('org-pos-token');
+    try {
+        const payload = { ...editingStockProduct };
+        const urlBarcode = encodeURIComponent(String(editingStockProduct.barcode).trim());
+
+        await apiFetch(`/products/update-products/${urlBarcode}`, {
+            method: 'PUT', body: JSON.stringify(payload), fallbackError: 'FALLO AL ACTUALIZAR'
+        }, token!);
+        toast({ variant: 'success', title: 'EXITO', description: 'PRODUCTO ACTUALIZADO' });
+        setEditingStockProduct(null);
+        mutate();
+        broadcastRevalidate('PRODUCT_UPDATE');
+    } catch (err: any) {
+        toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+    }
+  };
+
   const [selectedDate, setSelectedDate] = useState(getBogotaDateStr());
   const [isPreventaModalOpen, setIsPreventaModalOpen] = useState(false);
   const [selectedOrderDetail, setSelectedOrderDetail] = useState<ExpectedOrder | null>(null);
   const [loadingOrderDetail, setLoadingOrderDetail] = useState(false);
   const [orderDetailItems, setOrderDetailItems] = useState<OrderDetailItem[]>([]);
+  const [orderSearchTerm, setOrderSearchTerm] = useState('');
+  
+  const [cancelConfirmId, setCancelConfirmId] = useState<number | string | null>(null);
+  const [cancelConfirmSupplier, setCancelConfirmSupplier] = useState<string>('');
+  const [isCanceling, setIsCanceling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  const filteredOrderItems = useMemo(() => {
+    if (!orderSearchTerm) return orderDetailItems;
+    const term = orderSearchTerm.toLowerCase();
+    return orderDetailItems.filter(item => 
+        (item.productName && item.productName.toLowerCase().includes(term)) ||
+        (item.barcode && item.barcode.toLowerCase().includes(term))
+    );
+  }, [orderDetailItems, orderSearchTerm]);
 
   const API_BASE = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
 
@@ -68,7 +112,7 @@ export default function InventoryHub() {
     setLoadingOrderDetail(true);
     try {
       const token = Cookies.get('org-pos-token');
-      const res = await fetch(`${API_BASE}/inventory/orders/${order.id}/items`, {
+      const res = await fetch(`${API_BASE}/inventory/orders/${order.id}/items?source=${order.source || ''}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
@@ -95,38 +139,65 @@ export default function InventoryHub() {
   // Usa el mismo endpoint que PendingOrdersView para ver TODOS los pedidos pendientes
   // (confirmed_orders + purchase_orders + expected_orders unificados).
   // Filtramos por fecha en el cliente para la vista de calendario.
-  const { 
-    data: allOrdersData, 
-    isLoading: loadingOrders, 
-    mutate: mutateOrders 
-  } = useApi<ExpectedOrder[]>(`/inventory/orders`);
+  const { data: allOrdersData, isLoading: loadingOrders, mutate: mutateOrders } = useApi<ExpectedOrder[]>(`/inventory/orders`);
+  const { data: allExpensesData } = useApi<any[]>("/expenses/list");
 
   useEffect(() => {
     console.log("Datos del Fetch Dashboard (unified):", allOrdersData);
     console.log("Fecha Buscada:", bogotaDateStr);
   }, [allOrdersData, bogotaDateStr]);
 
-  // Filtro local: mostrar solo los pedidos cuya expectedDate coincida con el dia
-  // seleccionado y que NO esten ya completados/recibidos/descartados. Cuando
-  // el backend marca un pedido como RECEIVED (por ejemplo tras registrar el
-  // egreso del proveedor), se oculta automaticamente al refrescar via SSE.
+  // Filtro local: mostrar los pedidos cuya expectedDate sea menor o igual al dia
+  // seleccionado y que NO esten ya completados/recibidos/descartados. Esto asegura
+  // que no se pierdan pedidos pendientes/atrasados de días anteriores.
   const expectedOrders = useMemo(() => {
     const closedStatuses = new Set([
       'RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED',
     ]);
+    
+    // Mapear fechas de egresos por proveedor para saber si ya se pago
+    const supplierExpenseDates = new Map<number, string[]>();
+    if (allExpensesData) {
+      allExpensesData.forEach(e => {
+        if (e.category === 'Proveedores' && e.supplierId) {
+          // Usamos formato local para evitar brincos de fecha por UTC
+          const expenseDate = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+          const arr = supplierExpenseDates.get(e.supplierId) || [];
+          arr.push(expenseDate);
+          supplierExpenseDates.set(e.supplierId, arr);
+        }
+      });
+    }
+
     return (allOrdersData || []).filter(o => {
       if (!o.expectedDate) return false;
       // Comparar solo YYYY-MM-DD (ignorar hora y timezone del string ISO)
       const orderDate = o.expectedDate.split('T')[0];
-      if (orderDate !== bogotaDateStr) return false;
+      
+      // Mostrar pedidos de la fecha seleccionada y atrasados que no se han cerrado
+      if (orderDate > bogotaDateStr) return false;
+
       // Excluir pedidos ya cerrados (case-insensitive — el backend mezcla
       // 'PENDING' uppercase de purchase_orders con 'pending' lowercase de
       // confirmed_orders).
       const status = (o.status || '').toUpperCase();
       if (closedStatuses.has(status)) return false;
+      
+      // Excluir si ya se pagó el egreso (fecha de egreso >= fecha esperada del pedido)
+      if (o.supplierId) {
+          const expenseDates = supplierExpenseDates.get(o.supplierId);
+          if (expenseDates) {
+              // Hay un pago el mismo dia del pedido o posterior
+              const hasPaidAfterOrder = expenseDates.some((ed: string) => ed >= orderDate);
+              if (hasPaidAfterOrder) {
+                  return false;
+              }
+          }
+      }
+      
       return true;
     });
-  }, [allOrdersData, bogotaDateStr]);
+  }, [allOrdersData, bogotaDateStr, allExpensesData]);
 
   // Enviar fila a Telegram
   const sendToTelegram = async () => {
@@ -143,6 +214,37 @@ export default function InventoryHub() {
       });
     } catch (err) {
       console.error('Error sending to Telegram:', err);
+    }
+  };
+
+  // Preparar cancelacion
+  const handleCancelOrder = (e: React.MouseEvent, id: number | string, supplierName: string) => {
+    e.stopPropagation();
+    setCancelConfirmId(id);
+    setCancelConfirmSupplier(supplierName);
+    setCancelError(null);
+  };
+
+  // Ejecutar cancelacion
+  const executeCancelOrder = async () => {
+    if (!cancelConfirmId) return;
+    setIsCanceling(true);
+    setCancelError(null);
+    try {
+      const token = Cookies.get('org-pos-token');
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
+      const res = await fetch(`${baseUrl}/inventory/receive/pending/${cancelConfirmId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to cancel');
+      setCancelConfirmId(null);
+      mutateOrders();
+    } catch (err) {
+      console.error('Error canceling order:', err);
+      setCancelError('Error al cancelar el pedido');
+    } finally {
+      setIsCanceling(false);
     }
   };
 
@@ -277,7 +379,7 @@ export default function InventoryHub() {
                             Consola de <span className="text-zinc-900 dark:text-zinc-100">Inventario</span>
                         </h1>
                     </div>
-                    <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight ml-1">Master Control Ledger</p>
+                    <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight ml-1">Master Control Ledger</p>
                 </div>
 
                 <div className="flex gap-2">
@@ -301,7 +403,7 @@ export default function InventoryHub() {
                                 <Skeleton className="h-5 w-20 rounded" />
                             ) : (
                                 <h3 className="text-base font-medium tracking-tight tracking-tighter truncate text-zinc-900 dark:text-zinc-50">
-                                    ${formatCOP(stats.totalCostValue)}
+                                    {formatPrice(stats.totalCostValue)}
                                 </h3>
                             )}
                         </div>
@@ -320,7 +422,7 @@ export default function InventoryHub() {
                                 <Skeleton className="h-5 w-20 rounded" />
                             ) : (
                                 <h3 className="text-base font-medium tracking-tight tracking-tighter truncate text-zinc-900 dark:text-zinc-50">
-                                    ${formatCOP(stats.totalSaleValue)}
+                                    {formatPrice(stats.totalSaleValue)}
                                 </h3>
                             )}
                         </div>
@@ -414,7 +516,8 @@ export default function InventoryHub() {
                             {stats.criticalItems.map((item) => (
                                 <div 
                                     key={item.barcode || item.id} 
-                                    className="flex items-center gap-2 p-2 card-base border-none rounded-2xl border border-rose-200 dark:border-rose-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
+                                    onClick={() => setEditingStockProduct(item)}
+                                    className="flex items-center gap-2 p-2 card-base border-none rounded-2xl border border-rose-200 dark:border-rose-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] cursor-pointer hover:scale-[1.02] hover:border-rose-400 transition-all"
                                 >
                                     <div className="flex-1 min-w-0">
                                         <p className="text-[10px] font-bold text-zinc-900 dark:text-zinc-50 truncate">
@@ -549,8 +652,8 @@ export default function InventoryHub() {
                                                       const inv = parseFloat((order.invoiceRef || '').replace(/[^0-9.]/g, ''));
                                                       const real = !isNaN(inv) && inv > 0 ? inv : null;
                                                       return real
-                                                        ? formatCurrency(Math.round(real))
-                                                        : formatCurrency(Math.round(order.estimatedCost || order.totalEstimated || 0));
+                                                        ? formatPrice(Math.round(real))
+                                                        : formatPrice(Math.round(order.estimatedCost || order.totalEstimated || 0));
                                                     })()}
                                                 </span>
                                                 <Chip 
@@ -561,6 +664,16 @@ export default function InventoryHub() {
                                                 >
                                                     En camino
                                                 </Chip>
+                                                <Button 
+                                                    isIconOnly
+                                                    size="sm"
+                                                    color="danger"
+                                                    variant="light"
+                                                    className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 z-10"
+                                                    onClick={(e) => handleCancelOrder(e, order.id, order.supplierName)}
+                                                >
+                                                    <X size={14} />
+                                                </Button>
                                             </div>
                                         </div>
                                     ))
@@ -602,11 +715,11 @@ export default function InventoryHub() {
                                 <div className="flex justify-between text-[10px]">
                                     <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">VALOR TOTAL:</span>
                                     <span className="text-zinc-900 dark:text-zinc-100 font-medium tabular-nums">
-                                        {formatCurrency(Math.round(expectedOrders.reduce((acc, o) => {
+                                        {formatPrice(expectedOrders.reduce((acc, o) => {
                                           const inv = parseFloat((o.invoiceRef || '').replace(/[^0-9.]/g, ''));
                                           const real = !isNaN(inv) && inv > 0 ? inv : (o.estimatedCost || o.totalEstimated || 0);
                                           return acc + real;
-                                        }, 0)))}
+                                        }, 0))}
                                     </span>
                                 </div>
                             </div>
@@ -630,7 +743,7 @@ export default function InventoryHub() {
             {/* MODAL DETALLE DEL PEDIDO */}
             <Modal 
                 isOpen={!!selectedOrderDetail} 
-                onOpenChange={(open) => { if (!open) setSelectedOrderDetail(null); }}
+                onOpenChange={(open) => { if (!open) { setSelectedOrderDetail(null); setOrderSearchTerm(''); } }}
                 size="2xl"
                 classNames={{
                     base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl",
@@ -639,34 +752,51 @@ export default function InventoryHub() {
                 }}
             >
                 <ModalContent>
-                    <ModalHeader className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-500">
-                            <Truck size={18} />
+                    <ModalHeader className="flex items-center justify-between gap-3 w-full pr-8">
+                        <div className="flex items-center gap-3">
+                            <div className="h-9 w-9 rounded-2xl bg-amber-500/10 flex items-center justify-center text-amber-500">
+                                <Truck size={18} />
+                            </div>
+                            <div>
+                                <p className="text-sm font-bold uppercase tracking-tight text-zinc-900 dark:text-white">
+                                    {selectedOrderDetail?.supplierName}
+                                </p>
+                                <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest mt-0.5">
+                                    Detalle del Pedido · En Camino
+                                </p>
+                            </div>
                         </div>
-                        <div>
-                            <p className="text-sm font-bold uppercase tracking-tight text-zinc-900 dark:text-white">
-                                {selectedOrderDetail?.supplierName}
-                            </p>
-                            <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mt-0.5">
-                                Detalle del Pedido · En Camino
-                            </p>
-                        </div>
+                        {orderDetailItems.length > 0 && (
+                            <div className="w-[200px]">
+                                <Input
+                                    size="sm"
+                                    placeholder="Buscar producto..."
+                                    value={orderSearchTerm}
+                                    onChange={(e) => setOrderSearchTerm(e.target.value)}
+                                    startContent={<Search size={14} className="text-zinc-400" />}
+                                    classNames={{
+                                        inputWrapper: "bg-zinc-100 dark:bg-zinc-900 border-none shadow-none",
+                                        input: "text-xs font-medium"
+                                    }}
+                                />
+                            </div>
+                        )}
                     </ModalHeader>
                     <ModalBody className="pb-6">
                         {/* Resumen */}
                         <div className="grid grid-cols-3 gap-3 mb-4">
                             <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-3 flex flex-col">
-                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Items</span>
+                                <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-1">Items</span>
                                 <span className="text-lg font-black text-zinc-900 dark:text-white">{selectedOrderDetail?.itemCount || orderDetailItems.length}</span>
                             </div>
                             <div className="bg-amber-50 dark:bg-amber-950/30 rounded-2xl p-3 flex flex-col border border-amber-200/50 dark:border-amber-500/20">
                                 <span className="text-[9px] font-bold text-amber-600 uppercase tracking-widest mb-1">Valor Est.</span>
                                 <span className="text-lg font-black text-amber-600 dark:text-amber-400">
-                                    ${formatCurrency(Math.round(selectedOrderDetail?.estimatedCost || selectedOrderDetail?.totalEstimated || 0))}
+                                    {formatPrice(Math.round(selectedOrderDetail?.estimatedCost || selectedOrderDetail?.totalEstimated || 0))}
                                 </span>
                             </div>
                             <div className="bg-gray-50 dark:bg-zinc-900 rounded-2xl p-3 flex flex-col">
-                                <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Llegada</span>
+                                <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-1">Llegada</span>
                                 <span className="text-sm font-black text-zinc-900 dark:text-white">
                                     {selectedOrderDetail?.expectedDate?.split('T')[0] || '—'}
                                 </span>
@@ -683,30 +813,36 @@ export default function InventoryHub() {
                                 <table className="w-full text-xs">
                                     <thead>
                                         <tr className="bg-gray-100 dark:bg-zinc-900 border-b border-gray-200 dark:border-white/10">
-                                            <th className="text-left p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Producto</th>
-                                            <th className="text-center p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Cant.</th>
-                                            <th className="text-right p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Costo Unit.</th>
-                                            <th className="text-right p-3 font-bold uppercase tracking-widest text-[9px] text-zinc-500">Subtotal</th>
+                                            <th className="text-left p-3 font-bold uppercase tracking-widest text-[9px] text-gray-500 dark:text-zinc-500">Producto</th>
+                                            <th className="text-center p-3 font-bold uppercase tracking-widest text-[9px] text-gray-500 dark:text-zinc-500">Cant.</th>
+                                            <th className="text-right p-3 font-bold uppercase tracking-widest text-[9px] text-gray-500 dark:text-zinc-500">Costo Unit.</th>
+                                            <th className="text-right p-3 font-bold uppercase tracking-widest text-[9px] text-gray-500 dark:text-zinc-500">Subtotal</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-100 dark:divide-white/5">
-                                        {orderDetailItems.map((item, idx) => (
-                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-zinc-900/50 transition-colors">
+                                        {filteredOrderItems.length > 0 ? filteredOrderItems.map((item, idx) => (
+                                            <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-50 dark:bg-zinc-900/50 transition-colors">
                                                 <td className="p-3">
                                                     <p className="font-medium text-zinc-900 dark:text-white truncate max-w-[200px]">{item.productName || item.barcode}</p>
-                                                    <p className="text-[9px] text-zinc-400 uppercase">{item.barcode}</p>
+                                                    <p className="text-[9px] text-gray-500 dark:text-zinc-400 uppercase">{item.barcode}</p>
                                                 </td>
                                                 <td className="p-3 text-center font-bold text-amber-600 dark:text-amber-400">{item.quantity}</td>
-                                                <td className="p-3 text-right text-zinc-700 dark:text-zinc-300">${formatCurrency(item.unitCost || 0)}</td>
-                                                <td className="p-3 text-right font-bold text-zinc-900 dark:text-white">${formatCurrency((item.quantity || 0) * (item.unitCost || 0))}</td>
+                                                <td className="p-3 text-right text-zinc-700 dark:text-zinc-300">{formatPrice(item.unitCost || 0)}</td>
+                                                <td className="p-3 text-right font-bold text-zinc-900 dark:text-white">{formatPrice((item.quantity || 0) * (item.unitCost || 0))}</td>
                                             </tr>
-                                        ))}
+                                        )) : (
+                                            <tr>
+                                                <td colSpan={4} className="p-8 text-center">
+                                                    <p className="text-xs font-bold text-zinc-500 uppercase tracking-widest">No se encontraron productos con "{orderSearchTerm}"</p>
+                                                </td>
+                                            </tr>
+                                        )}
                                     </tbody>
                                     <tfoot>
                                         <tr className="bg-gray-50 dark:bg-zinc-900 border-t border-gray-200 dark:border-white/10">
-                                            <td colSpan={3} className="p-3 text-right font-bold uppercase text-[9px] text-zinc-500 tracking-widest">TOTAL ESTIMADO</td>
+                                            <td colSpan={3} className="p-3 text-right font-bold uppercase text-[9px] text-gray-500 dark:text-zinc-500 tracking-widest">TOTAL ESTIMADO</td>
                                             <td className="p-3 text-right font-black text-amber-600 dark:text-amber-400">
-                                                ${formatCurrency(orderDetailItems.reduce((s, i) => s + (i.quantity || 0) * (i.unitCost || 0), 0))}
+                                                {formatPrice(orderDetailItems.reduce((s, i) => s + (i.quantity || 0) * (i.unitCost || 0), 0))}
                                             </td>
                                         </tr>
                                     </tfoot>
@@ -716,7 +852,7 @@ export default function InventoryHub() {
                             <div className="flex flex-col items-center justify-center py-10 opacity-50">
                                 <Package size={32} className="mb-2" />
                                 <p className="text-xs font-bold uppercase tracking-widest">Sin detalle de productos disponible</p>
-                                <p className="text-[9px] text-zinc-500 mt-1">El pedido fue creado sin items individuales.</p>
+                                <p className="text-[9px] text-gray-500 dark:text-zinc-500 mt-1">El pedido fue creado sin items individuales.</p>
                             </div>
                         )}
                     </ModalBody>
@@ -729,6 +865,54 @@ export default function InventoryHub() {
                             setSelectedOrderDetail(null);
                         }}>
                             Editar Pedido
+                        </Button>
+                    </ModalFooter>
+                </ModalContent>
+            </Modal>
+
+            <ProductFormModal
+                isOpen={editingStockProduct !== null}
+                onOpenChange={(open) => { if (!open) setEditingStockProduct(null); }}
+                addDialogOpen={false}
+                newProduct={{} as any}
+                setNewProduct={() => {}}
+                editingProduct={editingStockProduct}
+                setEditingProduct={setEditingStockProduct as any}
+                categories={categoriesData || []}
+                suppliers={suppliersData || []}
+                mutateSuppliers={mutateSuppliers}
+                mutateCategories={mutateCategories}
+                allProducts={products || []}
+                onConfirm={handleEditProduct}
+                onScan={() => {}}
+            />
+
+            <Modal isOpen={cancelConfirmId !== null} onClose={() => setCancelConfirmId(null)} placement="center" backdrop="blur" classNames={{base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl"}}>
+                <ModalContent>
+                    <ModalHeader className="flex flex-col gap-1 pb-0 pt-6 px-6">
+                        <h2 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                            <AlertTriangle className="text-rose-500" size={24} />
+                            ¿Cancelar Pedido?
+                        </h2>
+                    </ModalHeader>
+                    <ModalBody className="py-4 px-6">
+                        <p className="text-gray-600 dark:text-gray-400 text-sm">
+                            Estás a punto de cancelar y eliminar el pedido programado de <strong className="text-gray-900 dark:text-white uppercase tracking-wider">{cancelConfirmSupplier}</strong>.
+                            Esta acción quitará el pedido del plan de entregas.
+                        </p>
+                        {cancelError && (
+                            <div className="mt-2 p-3 bg-rose-50 dark:bg-rose-500/10 border border-rose-100 dark:border-rose-500/20 rounded-xl flex items-center gap-2">
+                                <AlertTriangle className="text-rose-500 shrink-0" size={16} />
+                                <p className="text-xs font-semibold text-rose-600 dark:text-rose-400">{cancelError}</p>
+                            </div>
+                        )}
+                    </ModalBody>
+                    <ModalFooter className="px-6 pb-6 pt-2 flex justify-end gap-2">
+                        <Button variant="light" className="font-bold text-gray-500 rounded-xl" onPress={() => setCancelConfirmId(null)} isDisabled={isCanceling}>
+                            No, Volver
+                        </Button>
+                        <Button color="danger" className="font-bold bg-rose-500 text-white rounded-xl" onPress={executeCancelOrder} isLoading={isCanceling}>
+                            Sí, Cancelar Pedido
                         </Button>
                     </ModalFooter>
                 </ModalContent>

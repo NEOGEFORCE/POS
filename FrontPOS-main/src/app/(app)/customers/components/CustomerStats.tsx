@@ -59,11 +59,11 @@ const CustomerStats = memo(({ totalDebt, totalClients, withDebt }: StatsProps) =
                                 <NumberDigits value={k.val} />
                               )}
                           </span>
-                          <span className="text-[9px] font-bold text-zinc-500 dark:text-zinc-400 uppercase opacity-0 group-hover:opacity-100 transition-opacity tracking-widest">{k.sub}</span>
+                          <span className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase opacity-0 group-hover:opacity-100 transition-opacity tracking-widest">{k.sub}</span>
                         </div>
                     </div>
                     <div className={`p-4 rounded-[1.2rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]  relative z-10 ${
-                        k.color === 'rose' ? 'bg-rose-500/10 text-rose-500 shadow-rose-500/20' : k.color === 'emerald' ? 'bg-white/5 text-zinc-900 dark:text-zinc-100 ' : 'bg-amber-500/10 text-amber-500 shadow-amber-500/20'
+                        k.color === 'rose' ? 'bg-rose-500/10 text-rose-500 shadow-rose-500/20' : k.color === 'emerald' ? 'bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 ' : 'bg-amber-500/10 text-amber-500 shadow-amber-500/20'
                     } transition-transform group-hover:-rotate-6`}>
                         <k.icon size={28} />
                     </div>

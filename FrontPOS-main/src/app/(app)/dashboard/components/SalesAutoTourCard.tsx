@@ -17,6 +17,7 @@ interface SalesAutoTourCardProps {
 }
 
 const DAY_FORMATTER = new Intl.DateTimeFormat("es-CO", {
+  weekday: "short",
   day: "2-digit",
   month: "short",
   timeZone: "America/Bogota",
@@ -32,7 +33,7 @@ export default function SalesAutoTourCard({ data, rangeLabel }: SalesAutoTourCar
   const points: SalesPoint[] = React.useMemo(
     () =>
       (data || []).map((d) => ({
-        label: d?.date ? DAY_FORMATTER.format(new Date(d.date)).toUpperCase() : "—",
+        label: d?.date ? DAY_FORMATTER.format(new Date(d.date + "T12:00:00")).toUpperCase() : "—",
         value: Number(d?.amount) || 0,
       })),
     [data],
@@ -46,7 +47,7 @@ export default function SalesAutoTourCard({ data, rangeLabel }: SalesAutoTourCar
   const computedRange = rangeLabel
     ? rangeLabel
     : data.length > 0
-      ? `${DAY_FORMATTER.format(new Date(data[0].date)).toUpperCase()} — ${DAY_FORMATTER.format(new Date(data[data.length - 1].date)).toUpperCase()}`
+      ? `${DAY_FORMATTER.format(new Date(data[0].date + "T12:00:00")).toUpperCase()} — ${DAY_FORMATTER.format(new Date(data[data.length - 1].date + "T12:00:00")).toUpperCase()}`
       : "Ultimos 7 dias";
 
   return (

@@ -190,7 +190,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
         base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0 translate-y-2 md:translate-y-4",
         wrapper: "items-center justify-center p-8 md:p-12",
         backdrop: "bg-[#18181b] ",
-        closeButton: "absolute right-5 top-5 text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
+        closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
       }}
     >
       <ModalContent>
@@ -257,8 +257,8 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                             variant={isSelected ? 'solid' : 'flat'}
                             className={`h-8 min-w-[40px] text-[10px] font-medium ${
                               isSelected 
-                                ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' 
-                                : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:bg-gray-200'
+                                ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)]' 
+                                : 'bg-gray-100 dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 hover:bg-gray-200 border border-transparent dark:border-white/5'
                             }`}
                             onPress={() => toggleVisitDay(day)}
                           >
@@ -291,7 +291,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                             className={`h-8 min-w-[40px] text-[10px] font-medium ${
                               isSelected 
                                 ? 'bg-orange-500 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-orange-500/20' 
-                                : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-400 hover:bg-gray-200'
+                                : 'bg-gray-100 dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 hover:bg-gray-200 border border-transparent dark:border-white/5'
                             }`}
                             onPress={() => toggleDeliveryDay(day)}
                           >
@@ -327,7 +327,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                       }}
                       listboxProps={{
                         itemClasses: {
-                          base: "font-extrabold uppercase tracking-tight text-[10px] text-white data-[selected=true]:bg-white/5 data-[selected=true]:text-zinc-300 hover:bg-[#18181b]",
+                          base: "font-extrabold uppercase tracking-tight text-[10px] text-white data-[selected=true]:bg-black/5 dark:bg-white/5 data-[selected=true]:text-gray-600 dark:text-zinc-300 hover:bg-[#18181b]",
                         }
                       }}
                     >

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { memo } from 'react';
 import {
@@ -63,7 +63,7 @@ const UserTable = memo(({
                                 size="sm"
                                 name={nameDisplay}
                                 className={`transition-all border-2 ${isSuperAdmin ? 'border-black dark:border-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'border-emerald-500/20'}`}
-                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-white/5", name: isSuperAdmin ? "text-white dark:text-black font-medium" : "text-zinc-900 dark:text-zinc-100 font-medium text-[10px]" }}
+                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-black/5 dark:bg-white/5", name: isSuperAdmin ? "text-white dark:text-black font-medium" : "text-zinc-900 dark:text-zinc-100 font-medium text-[10px]" }}
                             />
                             {isSuperAdmin && (
                                 <div className="absolute -bottom-1 -right-1 bg-black dark:bg-white text-white dark:text-black rounded-2xl p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white dark:border-zinc-950 z-20 scale-90">
@@ -73,7 +73,7 @@ const UserTable = memo(({
                         </div>
                         <div className="flex flex-col items-start">
                             <span className="text-[11px] font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight leading-tight">{nameDisplay}</span>
-                            <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight">DNI: {u.dni}</span>
+                            <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-tight">DNI: {u.dni}</span>
                         </div>
                     </div>
                 );
@@ -101,7 +101,7 @@ const UserTable = memo(({
                                 {isOnline ? "EN LINEA" : "DESCONECTADO"}
                             </span>
                         </div>
-                        <span className="text-[7px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
+                        <span className="text-[7px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
                             {lastLoginDate ? formatDateTime(lastLoginDate) : "SIN REGISTRO"}
                         </span>
                     </div>
@@ -132,7 +132,7 @@ const UserTable = memo(({
     }, [onEdit, onDelete, onResetPassword]);
 
     return (
-        <div className="bg-white/50 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
+        <div className="bg-black/5 dark:bg-[#18181b]/30 border border-gray-200 dark:border-white/5 rounded-2xl overflow-hidden flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/5 transition-all">
             {/* AREA DE CONTENIDO PRINCIPAL */}
             <div className="flex flex-col">
                 {/* VISTA DESKTOP */}
@@ -147,7 +147,7 @@ const UserTable = memo(({
                             wrapper: "overflow-auto custom-scrollbar bg-transparent shadow-none p-0 rounded-none flex-1 min-h-0 h-full",
                             th: "bg-[#f9fafb] dark:bg-[#09090b] text-gray-500 dark:text-zinc-400 font-extrabold uppercase text-[10px] tracking-[0.2em] h-12 py-2 border-b-2 border-gray-200 dark:border-white/10 sticky top-0 !z-[500] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
                             td: "py-1.5 font-medium border-b border-gray-100 dark:border-white/5",
-                            tr: "hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-white/5 h-10 relative z-0"
+                            tr: "hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:bg-white/5 h-10 relative z-0"
                         }}
                     >
                         <TableHeader columns={COLUMNS}>
@@ -161,12 +161,14 @@ const UserTable = memo(({
                                 </TableColumn>
                             )}
                         </TableHeader>
-                        <TableBody items={users ?? []} emptyContent="SIN REGISTROS">
-                            {(item) => (
+                        <TableBody emptyContent="SIN REGISTROS">
+                            {(users ?? []).map((item) => (
                                 <TableRow key={item.id || item.dni}>
-                                    {(columnKey) => <TableCell>{renderCell(item, columnKey)}</TableCell>}
+                                    {COLUMNS.map((column) => (
+                                        <TableCell key={column.uid}>{renderCell(item, column.uid)}</TableCell>
+                                    ))}
                                 </TableRow>
-                            )}
+                            ))}
                         </TableBody>
                     </Table>
                 )}
@@ -187,7 +189,7 @@ const UserTable = memo(({
                                                 size="sm"
                                                 name={nameDisplay}
                                                 className={`h-10 w-10 border ${isSuperAdmin ? 'border-black dark:border-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'border-emerald-500/20'}`}
-                                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-white/5", name: isSuperAdmin ? "text-white dark:text-black font-medium text-[10px]" : "text-zinc-900 dark:text-zinc-100 font-medium text-[10px]" }}
+                                                classNames={{ base: isSuperAdmin ? "bg-black dark:bg-white" : "bg-black/5 dark:bg-white/5", name: isSuperAdmin ? "text-white dark:text-black font-medium text-[10px]" : "text-zinc-900 dark:text-zinc-100 font-medium text-[10px]" }}
                                             />
                                             {isSuperAdmin && (
                                                 <div className="absolute -bottom-1 -right-1 bg-black dark:bg-white text-white dark:text-black rounded-2xl p-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-white dark:border-zinc-950 z-20 scale-90">
@@ -200,7 +202,7 @@ const UserTable = memo(({
                                             <div className="flex items-center gap-1.5 mt-0.5">
                                                 <span className={`text-[7px] font-medium uppercase tracking-widest leading-tight ${isSuperAdmin ? 'text-black dark:text-white' : 'text-zinc-900 dark:text-zinc-100'}`}>{roleDisplay}</span>
                                                 <span className="text-[6px] font-bold text-gray-300 dark:text-zinc-600">|</span>
-                                                <span className="text-[6px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
+                                                <span className="text-[6px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter">
                                                     {(() => {
                                                         const lastLoginStr = u.last_login || u.lastLogin;
                                                         const lastLoginDate = lastLoginStr ? new Date(lastLoginStr) : null;
@@ -242,7 +244,7 @@ const UserTable = memo(({
                         </Button>
 
                         <div className="flex flex-col items-start px-1 leading-none">
-                            <span className="text-[7px] text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
+                            <span className="text-[7px] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase font-medium tracking-tighter">MOSTRANDO</span>
                             <p className="text-[10px] text-zinc-900 dark:text-zinc-50 uppercase tracking-widest flex items-center gap-1">
                                 <span className="tracking-tight font-medium text-zinc-900 dark:text-zinc-100">{((currentPage - 1) * pageSize + 1)}-{Math.min(currentPage * pageSize, totalRecords)}</span>
                                 <span className="opacity-20 text-[8px]">DE</span>

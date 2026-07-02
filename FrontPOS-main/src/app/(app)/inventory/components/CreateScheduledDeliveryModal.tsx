@@ -97,7 +97,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
               
               {/* PROVEEDOR */}
               <div className="flex flex-col gap-1.5">
-                <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Proveedor / Marca</label>
+                <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Proveedor / Marca</label>
                 <Autocomplete
                   placeholder="Buscar proveedor..."
                   variant="flat"
@@ -134,7 +134,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
                 {/* VALOR ESTIMADO */}
                 {/* VALOR ESTIMADO */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Valor Estimado</label>
+                  <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Valor Estimado</label>
                   <Input
                     type="text"
                     inputMode="decimal"
@@ -155,7 +155,7 @@ export default function CreateScheduledDeliveryModal({ isOpen, onClose, onSucces
 
                 {/* FECHA DE ENTREGA */}
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Fecha Programada</label>
+                  <label className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Fecha Programada</label>
                   <Input
                     type="date"
                     variant="flat"

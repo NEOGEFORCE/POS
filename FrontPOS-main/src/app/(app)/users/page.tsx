@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 import { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
@@ -51,7 +51,7 @@ async function resetPassword(dni: string, userData: { password?: string }, token
   return await apiFetch(`/admin/force-reset-password/${dni}`, {
     method: 'PATCH',
     body: JSON.stringify(userData),
-    fallbackError: 'FALLO AL RESETEAR CONTRASEÃ‘A'
+    fallbackError: 'FALLO AL RESETEAR CONTRASEÑA'
   }, token);
 }
 
@@ -112,7 +112,7 @@ const UserHeader = memo(({ searchInput, onSearch, onAdd, onReload, isLoading }: 
       value={searchInput}
       onValueChange={onSearch}
       classNames={{
-        inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        inputWrapper: "h-11 px-4 rounded-2xl bg-black/5 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
         input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
       }}
       startContent={<Search size={14} className="text-zinc-900 dark:text-zinc-100 mr-1" />}
@@ -224,7 +224,7 @@ export default function UsersPage() {
     }
     if (!data.dni) { toast({ variant: 'destructive', title: 'DATOS INVALIDOS', description: 'EL DNI ES OBLIGATORIO PARA EL ACCESO' }); return; }
     if (!data.name) { toast({ variant: 'destructive', title: 'DATOS INVALIDOS', description: 'EL NOMBRE ES REQUERIDO' }); return; }
-    if (!data.password) { toast({ variant: 'destructive', title: 'DATOS INVALIDOS', description: 'DEBES ASIGNAR UNA CONTRASEÃ‘A' }); return; }
+    if (!data.password) { toast({ variant: 'destructive', title: 'DATOS INVALIDOS', description: 'DEBES ASIGNAR UNA CONTRASEÑA' }); return; }
     const roleStr = (data.role || "").toLowerCase();
     const isTargetAdmin = ['admin', 'administrador', 'superadmin'].includes(roleStr);
     if (isTargetAdmin && !data.email) {
@@ -278,7 +278,7 @@ export default function UsersPage() {
     const token = Cookies.get('org-pos-token');
     try {
       await resetPassword(resetUser.dni!, { password: newPassword }, token!);
-      toast({ variant: 'success', title: 'EXITO', description: 'CONTRASEÃ‘A ACTUALIZADA' });
+      toast({ variant: 'success', title: 'EXITO', description: 'CONTRASEÑA ACTUALIZADA' });
       setResetDialogOpen(false);
       setResetUser(null);
       broadcastRevalidate('USER_UPDATE');
@@ -341,7 +341,7 @@ export default function UsersPage() {
   if (role !== 'admin' && role !== 'administrador' && role !== 'superadmin') return null;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -356,7 +356,7 @@ export default function UsersPage() {
       </div>
 
       {/* LIST SECTION - STRICT INTERNAL SCROLL */}
-      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-hidden">
         <UserTable
           users={paginatedUsers}
           currentDni={user?.dni}
@@ -403,6 +403,8 @@ export default function UsersPage() {
     </div>
   );
 }
+
+
 
 
 

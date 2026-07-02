@@ -55,7 +55,21 @@ export interface CashierClosure {
   coins200: number;
   coins500: number;
   coins1000: number;
+  expectedNequi: number;
+  expectedDaviplata: number;
+  differenceNequi: number;
+  differenceDaviplata: number;
 }
+
+const getPaymentSourceStyle = (source: string) => {
+  const s = source?.toUpperCase() || 'EFECTIVO';
+  if (s === 'NEQUI') return 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400';
+  if (s === 'DAVIPLATA' || s === 'DAVI') return 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400';
+  if (s === 'FONDO') return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-400';
+  if (s === 'PRESTAMO' || s === 'PREST.') return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400';
+  if (s.includes('MIXTO') || s.includes('/')) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border border-emerald-500/30';
+  return 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300';
+};
 
 export default function ClosuresHistory() {
   const { user } = useAuth();
@@ -252,7 +266,7 @@ export default function ClosuresHistory() {
     return (
       <div className="flex flex-col items-center justify-center p-20 gap-4">
         <Spinner color="success" size="lg" />
-        <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-zinc-500 animate-pulse">Cargando Historial Auditado</p>
+        <p className="text-[10px] font-medium uppercase tracking-[0.4em] text-gray-500 dark:text-zinc-500 animate-pulse">Cargando Historial Auditado</p>
       </div>
     );
   }
@@ -272,7 +286,7 @@ export default function ClosuresHistory() {
                      </div>
                      <div>
                         <h4 className="text-[11px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tighter tracking-tight">Ultimo Cierre de Caja</h4>
-                        <p className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest tracking-tight">Analisis del turno mas reciente</p>
+                        <p className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest tracking-tight">Analisis del turno mas reciente</p>
                      </div>
                   </div>
                   {closures[0] && (
@@ -281,12 +295,12 @@ export default function ClosuresHistory() {
                </div>
                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
-                     <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest block">Efectivo Real</span>
+                     <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest block">Efectivo Real</span>
                      <span className="text-xl font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tight">${formatCurrency(closures[0]?.physicalCash || 0)}</span>
                   </div>
                   <div className="space-y-1 text-right">
-                     <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest block">Diferencia</span>
-                     <span className={`text-xl font-medium tabular-nums tracking-tight ${closures[0]?.difference === 0 ? 'text-zinc-900 dark:text-zinc-100' : closures[0]?.difference < 0 ? 'text-rose-500' : 'text-amber-500'}`}>
+                     <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest block">Diferencia</span>
+                     <span className={`text-xl font-bold tabular-nums tracking-tight ${closures[0]?.difference === 0 ? 'text-zinc-900 dark:text-zinc-100' : closures[0]?.difference < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
                         {closures[0]?.difference > 0 ? '+' : ''}${formatCurrency(closures[0]?.difference || 0)}
                      </span>
                   </div>
@@ -342,7 +356,7 @@ export default function ClosuresHistory() {
       {sortedDates.length === 0 ? (
         <div className="p-20 text-center bg-white dark:bg-zinc-950/20 rounded-[2rem] border border-dashed border-zinc-200 dark:border-white/5">
            <AlertCircle className="mx-auto mb-4 text-zinc-600" size={40} />
-           <p className="text-sm font-medium text-zinc-500 uppercase tracking-tight">No se encontraron cierres registrados</p>
+           <p className="text-sm font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-tight">No se encontraron cierres registrados</p>
         </div>
       ) : (
         <div className="space-y-8">
@@ -350,7 +364,7 @@ export default function ClosuresHistory() {
             <div key={date} className="space-y-3">
               <div className="flex items-center gap-4 ml-4">
                 <div className="h-2 w-2 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-                <h3 className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight">
+                <h3 className="text-xs font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight">
                   {formatLocalDate(date)}
                 </h3>
                 <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
@@ -361,7 +375,7 @@ export default function ClosuresHistory() {
                   <div className="flex items-center gap-2 ml-6 animate-pulse">
                     <ShieldAlert size={14} className="text-amber-500" />
                     <span className="text-[9px] font-medium text-amber-500 uppercase tracking-widest">
-                      âš ï¸ {groupedClosures[date].length} cierres detectados este dia â€” Verificar posibles duplicados
+                      ⚠️ {groupedClosures[date].length} cierres detectados este dia — Verificar posibles duplicados
                     </span>
                   </div>
                 )}
@@ -377,11 +391,11 @@ export default function ClosuresHistory() {
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                         {/* Info General */}
                         <div className="flex items-center gap-4">
-                          <div className={`h-12 w-12 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${closure.difference === 0 ? 'text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 ' : closure.difference < 0 ? 'text-white bg-rose-500 shadow-rose-500/20' : 'text-white bg-amber-500 shadow-amber-500/20'}`}>
+                          <div className={`h-12 w-12 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${closure.difference === 0 ? 'text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 ' : closure.difference < 0 ? 'text-white bg-rose-500 shadow-rose-500/20' : 'text-white bg-emerald-500 shadow-emerald-500/20'}`}>
                             <FileText size={20} />
                           </div>
                           <div className="flex flex-col">
-                            <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest leading-none mb-1">Cierre #{closure.id}</span>
+                            <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mb-1">Cierre #{closure.id}</span>
                             <div className="flex items-center gap-2">
                                <span className="text-lg font-medium text-zinc-900 dark:text-zinc-100 tracking-tight tracking-tight">{closure?.date ? formatTime(closure.date) : '---'}</span>
                                <Chip size="sm" variant="flat" color="default" className="h-5 text-[9px] font-medium uppercase tracking-tight">{closure?.closedByName || '---'}</Chip>
@@ -393,26 +407,43 @@ export default function ClosuresHistory() {
                         </div>
 
                         {/* Metricas Rapidas */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 flex-1 md:justify-center px-4">
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1">Ventas Totales</span>
-                            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(closure.totalSales)}</span>
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1">Efectivo Real</span>
-                            <span className="text-sm font-medium text-zinc-300 tabular-nums">${formatCurrency(closure.physicalCash)}</span>
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1">Egresos</span>
-                            <span className="text-sm font-medium text-rose-400 tabular-nums">${formatCurrency(closure.totalExpenses)}</span>
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1">Diferencia</span>
-                            <span className={`text-sm font-medium tabular-nums ${closure.difference === 0 ? 'text-zinc-900 dark:text-zinc-100' : closure.difference < 0 ? 'text-rose-500' : 'text-amber-500'}`}>
-                              {closure.difference > 0 ? '+' : ''}${formatCurrency(closure.difference)}
-                            </span>
-                          </div>
-                        </div>
+                        {(() => {
+                           let displaySales = closure.totalSales;
+                           let displayExpenses = closure.totalExpenses;
+                           if (closure.expensesDetail) {
+                              try {
+                                  const expensesArr = JSON.parse(closure.expensesDetail);
+                                  const totalExp = expensesArr
+                                      .filter((e: any) => String(e.status).toUpperCase() !== 'PENDING')
+                                      .reduce((acc: number, e: any) => acc + (Number(e.amount) || 0) + (Number(e.taxAmount) || 0), 0);
+                                  displayExpenses = totalExp;
+                              } catch (e) {
+                                  // Fallback
+                              }
+                           }
+                           return (
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 flex-1 md:justify-center px-4">
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-1">Ventas Totales</span>
+                                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(displaySales)}</span>
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-1">Efectivo Real</span>
+                                <span className="text-sm font-medium text-gray-600 dark:text-zinc-300 tabular-nums">${formatCurrency(closure.physicalCash)}</span>
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-1">Egresos</span>
+                                <span className="text-sm font-medium text-rose-400 tabular-nums">${formatCurrency(displayExpenses)}</span>
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-1">Diferencia</span>
+                                <span className={`text-sm font-bold tabular-nums ${closure.difference === 0 ? 'text-zinc-900 dark:text-zinc-100' : closure.difference < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                                  {closure.difference > 0 ? '+' : ''}${formatCurrency(closure.difference)}
+                                </span>
+                              </div>
+                            </div>
+                           );
+                        })()}
 
                         {/* Botones de Accion */}
                         <div className="flex items-center gap-1 justify-end">
@@ -446,7 +477,7 @@ export default function ClosuresHistory() {
                                  isIconOnly
                                  variant="light"
                                  onClick={(e) => e.stopPropagation()}
-                                 className="text-zinc-500 group-hover:text-zinc-900 dark:text-zinc-100 transition-colors"
+                                 className="text-gray-500 dark:text-zinc-500 group-hover:text-zinc-900 dark:text-zinc-100 transition-colors"
                                >
                                  <ChevronRight size={20} />
                                </Button>
@@ -540,362 +571,395 @@ export default function ClosuresHistory() {
                       <h3 className="text-xl font-medium text-zinc-900 dark:text-zinc-100 tracking-tight uppercase tracking-tighter leading-none">
                         Detalle de <span className="text-zinc-900 dark:text-zinc-100">Auditoria</span>
                       </h3>
-                      <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-[0.3em] mt-1 tracking-tight">Cierre #{selectedClosure?.id} - Ref: {selectedClosure?.date ? formatShortDateTime(selectedClosure.date) : '---'}</p>
+                      <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-[0.3em] mt-1 tracking-tight">Cierre #{selectedClosure?.id} - Ref: {selectedClosure?.date ? formatShortDateTime(selectedClosure.date) : '---'}</p>
                    </div>
                 </div>
               </ModalHeader>
               <ModalBody>
-                {selectedClosure && (
-                  <div className="space-y-8">
-                    {/* Resumen de Arqueo */}
-                    <div className="grid grid-cols-3 gap-4">
-                       <div className="bg-white dark:bg-[#18181b] p-4 rounded-2xl border border-zinc-200 dark:border-white/5 flex flex-col items-center text-center">
-                          <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1 tracking-tight">Saldo Inicial</span>
-                          <span className="text-xl font-medium text-amber-500 tabular-nums tracking-tight">${formatCurrency(selectedClosure.openingCash)}</span>
-                       </div>
-                       <div className="bg-white dark:bg-[#18181b] p-4 rounded-2xl border border-zinc-200 dark:border-white/5 flex flex-col items-center text-center border-l-4 border-l-blue-500/50">
-                          <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1 tracking-tight">Saldo Esperado</span>
-                          <span className="text-xl font-medium text-blue-400 tabular-nums tracking-tight">${formatCurrency(selectedClosure.expectedCash || (selectedClosure.totalCash - selectedClosure.totalExpenses))}</span>
-                       </div>
-                       <div className="bg-white dark:bg-[#18181b] p-4 rounded-2xl border border-zinc-200 dark:border-white/5 flex flex-col items-center text-center border-l-4 border-l-emerald-500/50">
-                          <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest mb-1 tracking-tight">Arqueo Fisico</span>
-                          <span className="text-xl font-medium text-zinc-300 tabular-nums tracking-tight">${formatCurrency(selectedClosure.physicalCash)}</span>
-                       </div>
-                    </div>
-
-                    {/* CUADRE REAL — Formula visible */}
-                    {fullDetail?.realCashFormula && (
-                      <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-[2rem] p-6">
-                        <div className="flex items-center gap-3 mb-4">
-                          <div className="h-9 w-9 rounded-2xl bg-emerald-500 text-white flex items-center justify-center shadow-[0_0_20px_rgba(16,185,129,0.3)]">
-                            <Wallet size={16} />
-                          </div>
-                          <div className="flex flex-col">
-                            <h4 className="text-[11px] font-medium text-emerald-500 uppercase tracking-tighter">Cuadre Real (Fisico)</h4>
-                            <p className="text-[8px] font-bold text-emerald-500/70 uppercase tracking-widest">Efectivo Real + Transferencias - Egresos</p>
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="bg-white dark:bg-[#18181b] p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                            <span className="text-[8px] font-medium text-zinc-500 uppercase tracking-widest mb-1 block">Efectivo Real</span>
-                            <span className="text-base font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(fullDetail.realCashFormula.physicalCash || 0)}</span>
-                          </div>
-                          <div className="bg-white dark:bg-[#18181b] p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                            <span className="text-[8px] font-medium text-zinc-500 uppercase tracking-widest mb-1 block">+ Transferencias</span>
-                            <span className="text-base font-medium text-purple-400 tabular-nums">${formatCurrency(fullDetail.realCashFormula.transferReal || 0)}</span>
-                          </div>
-                          <div className="bg-white dark:bg-[#18181b] p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                            <span className="text-[8px] font-medium text-zinc-500 uppercase tracking-widest mb-1 block">- Egresos</span>
-                            <span className="text-base font-medium text-rose-400 tabular-nums">${formatCurrency(fullDetail.realCashFormula.expenses || 0)}</span>
-                          </div>
-                          <div className="bg-emerald-500/10 p-3 rounded-2xl border border-emerald-500/30 text-center">
-                            <span className="text-[8px] font-medium text-emerald-500 uppercase tracking-widest mb-1 block">= BALANCE REAL</span>
-                            <span className="text-base font-bold text-emerald-500 tabular-nums">${formatCurrency(fullDetail.realCashFormula.balanceReal || 0)}</span>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Desglose de Monedas */}
-                    {(selectedClosure.coins100 > 0 || selectedClosure.coins200 > 0 || selectedClosure.coins500 > 0 || selectedClosure.coins1000 > 0) && (
-                      <div className="space-y-4">
-                         <h4 className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-2">Desglose de Monedas en el Arqueo</h4>
-                         <div className="grid grid-cols-4 gap-3">
-                            <div className="bg-zinc-50/50 dark:bg-[#18181b]/30 p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                               <span className="text-[9px] font-medium text-zinc-500 uppercase mb-1 block">$100</span>
-                               <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(selectedClosure.coins100)}</span>
-                            </div>
-                            <div className="bg-zinc-50/50 dark:bg-[#18181b]/30 p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                               <span className="text-[9px] font-medium text-zinc-500 uppercase mb-1 block">$200</span>
-                               <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(selectedClosure.coins200)}</span>
-                            </div>
-                            <div className="bg-zinc-50/50 dark:bg-[#18181b]/30 p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                               <span className="text-[9px] font-medium text-zinc-500 uppercase mb-1 block">$500</span>
-                               <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(selectedClosure.coins500)}</span>
-                            </div>
-                            <div className="bg-zinc-50/50 dark:bg-[#18181b]/30 p-3 rounded-2xl border border-zinc-200 dark:border-white/5 text-center">
-                               <span className="text-[9px] font-medium text-zinc-500 uppercase mb-1 block">$1.000</span>
-                               <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(selectedClosure.coins1000)}</span>
-                            </div>
-                         </div>
-                      </div>
-                    )}
-
-                    {/* Alerta de Diferencia */}
-                    {selectedClosure.difference !== 0 && (
-                      <div className={`p-4 rounded-2xl flex items-center gap-4 border ${selectedClosure.difference < 0 ? 'bg-rose-500/10 border-rose-500/20 text-rose-500' : 'bg-amber-500/10 border-amber-500/20 text-amber-500'}`}>
-                         <AlertCircle size={20} />
-                         <div className="flex flex-col">
-                            <span className="text-xs font-medium uppercase tracking-tight">Deteccion de {selectedClosure.difference < 0 ? 'Faltante' : 'Sobrante'}</span>
-                            <p className="text-[10px] font-bold opacity-80 uppercase tracking-widest">Se ha registrado una discrepancia de ${formatCurrency(selectedClosure.difference)} en este turno.</p>
-                         </div>
-                      </div>
-                    )}
-
-                    {/* Desglose por Medio de Pago */}
-                    <div className="space-y-4">
-                       <h4 className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-2">Distribucion por Medios de Pago</h4>
-                       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                          <div className="bg-zinc-50 dark:bg-[#18181b]/50 p-4 rounded-2xl border border-zinc-200 dark:border-white/5">
-                             <div className="flex items-center gap-2 text-zinc-500 mb-2">
-                                <Banknote size={14} />
-                                <span className="text-[10px] font-medium uppercase tracking-tight">Efectivo</span>
-                             </div>
-                             <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(selectedClosure.totalCash)}</span>
-                          </div>
-                          <div className="bg-zinc-50 dark:bg-[#18181b]/50 p-4 rounded-2xl border border-zinc-200 dark:border-white/5">
-                             <div className="flex items-center gap-2 text-zinc-500 mb-2">
-                                <Wallet size={14} />
-                                <span className="text-[10px] font-medium uppercase tracking-tight">Nequi</span>
-                             </div>
-                             <span className="text-sm font-medium text-purple-400 tabular-nums">${formatCurrency(selectedClosure.totalNequi)}</span>
-                          </div>
-                          <div className="bg-zinc-50 dark:bg-[#18181b]/50 p-4 rounded-2xl border border-zinc-200 dark:border-white/5">
-                             <div className="flex items-center gap-2 text-zinc-500 mb-2">
-                                <Landmark size={14} />
-                                <span className="text-[10px] font-medium uppercase tracking-tight">Daviplata</span>
-                             </div>
-                             <span className="text-sm font-medium text-rose-400 tabular-nums">${formatCurrency(selectedClosure.totalDaviplata)}</span>
-                          </div>
-                          {/* Tarjetas dinamicas: una por cada metodo EXTRA usado en el turno
-                              (Bancolombia, Mastercard, Visa, etc.) — sin agrupacion "Otros".
-                              Filtramos los 4 metodos ya cubiertos arriba (Efectivo, Nequi,
-                              Daviplata, Fiado). */}
-                          {(() => {
-                            const breakdown = selectedClosure.paymentMethodsBreakdown || [];
-                            const fixed = new Set(['EFECTIVO', 'NEQUI', 'DAVIPLATA', 'FIADO']);
-                            const extras = breakdown.filter(
-                              (m) => m && m.method && m.total > 0 && !fixed.has(m.method.toUpperCase())
-                            );
-                            if (extras.length === 0) return null;
-
-                            const iconFor = (raw: string) => {
-                              const m = raw.toUpperCase();
-                              if (m.includes('BANCOLOMBIA') || m.includes('BANCO')) return <Landmark size={14} />;
-                              return <CreditCard size={14} />;
-                            };
-                            const colorFor = (raw: string) => {
-                              const m = raw.toUpperCase();
-                              if (m.includes('BANCOLOMBIA')) return 'text-sky-400';
-                              if (m.includes('MASTERCARD')) return 'text-orange-400';
-                              if (m.includes('VISA')) return 'text-blue-400';
-                              if (m.includes('AMEX') || m.includes('AMERICAN')) return 'text-emerald-400';
-                              return 'text-sky-400';
-                            };
-
-                            return extras.map((mt) => (
-                              <div key={mt.method} className="bg-zinc-50 dark:bg-[#18181b]/50 p-4 rounded-2xl border border-zinc-200 dark:border-white/5">
-                                <div className="flex items-center gap-2 text-zinc-500 mb-2">
-                                  {iconFor(mt.method)}
-                                  <span className="text-[10px] font-medium uppercase tracking-tight">{mt.method}</span>
-                                </div>
-                                <span className={`text-sm font-medium ${colorFor(mt.method)} tabular-nums`}>${formatCurrency(mt.total)}</span>
-                              </div>
-                            ));
-                          })()}
-                       </div>
-                    </div>
-
-                      <Divider className="bg-white dark:bg-[#18181b]" />
-
-                    {/* Gastos Detallados */}
-                    {selectedClosure.expensesDetail && (
-                      <div className="space-y-4">
-                        <h4 className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight ml-2">Egresos Reportados en el Turno</h4>
-                        <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
-                          <Table 
-                            aria-label="Expenses Detail" 
-                            removeWrapper
-                            classNames={{
-                              th: "bg-white dark:bg-[#18181b] text-xs font-semibold uppercase tracking-widest text-zinc-500",
-                              td: "text-[10px] font-medium text-zinc-900 dark:text-zinc-100 border-b border-zinc-200 dark:border-white/5"
-                            }}
-                          >
-                            <TableHeader>
-                              <TableColumn>DESCRIPCION</TableColumn>
-                              <TableColumn>CANAL</TableColumn>
-                              <TableColumn align="end">MONTO</TableColumn>
-                            </TableHeader>
-                            <TableBody>
-                              {(() => {
-                                try {
-                                  if (!selectedClosure?.expensesDetail) return <TableRow><TableCell>Sin detalles</TableCell><TableCell>{" "}</TableCell><TableCell>{" "}</TableCell></TableRow>;
-                                  const expenses = JSON.parse(selectedClosure.expensesDetail);
-                                  if (!Array.isArray(expenses)) return <TableRow><TableCell>Formato invalido</TableCell><TableCell>{" "}</TableCell><TableCell>{" "}</TableCell></TableRow>;
-                                  return expenses.map((e: any, i: number) => (
-                                    <TableRow key={i}>
-                                      <TableCell>{e?.description || '---'}</TableCell>
-                                      <TableCell>
-                                        <Chip size="sm" variant="flat" color="warning" className="h-5 text-[8px] font-medium uppercase">{e.paymentSource || 'EFECTIVO'}</Chip>
-                                      </TableCell>
-                                      <TableCell className="text-red-400 font-medium">-${formatCurrency(e?.amount || 0)}</TableCell>
-                                    </TableRow>
-                                  ));
-                                } catch (e) {
-                                  return <TableRow><TableCell>Error al cargar detalles</TableCell><TableCell>{" "}</TableCell><TableCell>{" "}</TableCell></TableRow>;
+                {selectedClosure && (() => {
+                    const digitalIncome = (selectedClosure.totalNequi || 0) + (selectedClosure.totalDaviplata || 0) + (selectedClosure.totalCard || 0) + (selectedClosure.totalBancolombia || 0) + (selectedClosure.totalOtherTransfer || 0);
+                    
+                    let egresosCaja = 0;
+                    let egresosGlobales = 0;
+                    let parsedExpenses: any[] = [];
+                    try {
+                        parsedExpenses = JSON.parse(selectedClosure.expensesDetail);
+                        parsedExpenses.forEach((e: any) => {
+                            if (String(e.status).toUpperCase() !== 'PENDING') {
+                                const rawCash = Number(e.cashAmount || e.cash_amount || 0);
+                                const rawNequi = Number(e.nequiAmount || e.nequi_amount || 0);
+                                const rawDavi = Number(e.daviplataAmount || e.daviplata_amount || 0);
+                                const rawFondo = Number(e.fondoAmount || e.fondo_amount || 0);
+                                const tax = Number(e.taxAmount || 0);
+                                const base = Number(e.amount || 0);
+                                
+                                let finalCash = rawCash;
+                                let finalNequi = rawNequi;
+                                let finalDavi = rawDavi;
+                                let finalFondo = rawFondo;
+                                
+                                const sum = rawCash + rawNequi + rawDavi + rawFondo;
+                                if (sum === 0) {
+                                   const src = (e.paymentSource || '').toUpperCase();
+                                   if (src === 'NEQUI') finalNequi = base + tax;
+                                   else if (src === 'DAVIPLATA') finalDavi = base + tax;
+                                   else if (src === 'FONDO') finalFondo = base + tax;
+                                   else if (src !== 'PREST.' && src !== 'DEUDA' && src !== 'PRESTAMO') finalCash = base + tax;
+                                } else if (tax > 0 && sum === base) {
+                                   const isSingle = (rawCash>0?1:0) + (rawNequi>0?1:0) + (rawDavi>0?1:0) + (rawFondo>0?1:0) <= 1;
+                                   if (isSingle) {
+                                      if (rawCash > 0) finalCash += tax;
+                                      if (rawNequi > 0) finalNequi += tax;
+                                      if (rawDavi > 0) finalDavi += tax;
+                                      if (rawFondo > 0) finalFondo += tax;
+                                   } else {
+                                      if (rawNequi > 0) finalNequi += tax;
+                                      else if (rawDavi > 0) finalDavi += tax;
+                                      else if (rawFondo > 0) finalFondo += tax;
+                                      else finalCash += tax;
+                                   }
                                 }
-                              })()}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </div>
-                    )}
+                                
+                                e._finalCash = finalCash;
+                                e._finalNequi = finalNequi;
+                                e._finalDavi = finalDavi;
+                                e._finalFondo = finalFondo;
+                                
+                                egresosCaja += finalCash;
+                                egresosGlobales += finalCash + finalNequi + finalDavi + finalFondo;
+                            }
+                        });
+                    } catch(e) {}
+                    
+                    const expectedCashFinal = selectedClosure.expectedCash || (selectedClosure.totalCash - egresosCaja - (selectedClosure.totalReturns || 0));
+                    const ventasCajero = selectedClosure.physicalCash + digitalIncome + egresosCaja;
+                    const ventasSistema = expectedCashFinal + digitalIncome + egresosCaja;
+                    const balanceReal = ventasCajero - ventasSistema;
 
-                    <Divider className="bg-white dark:bg-[#18181b]" />
+                    const summaryTableClasses = {
+                        th: "bg-white dark:bg-[#18181b] text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500 border-b-2 border-zinc-200 dark:border-white/10",
+                        td: "text-[11px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight border-b border-zinc-200 dark:border-white/5 py-3"
+                    };
 
-                    {/* VENTAS DETALLADAS DEL TURNO (desde BD) */}
-                    {loadingDetail && (
-                      <div className="flex items-center justify-center p-8">
-                        <Spinner color="success" size="sm" />
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest ml-3">Cargando detalle...</span>
-                      </div>
-                    )}
-                    {!loadingDetail && fullDetail?.sales && Array.isArray(fullDetail.sales) && fullDetail.sales.length > 0 && (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between ml-2">
-                          <h4 className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight">
-                            Ventas del Turno ({fullDetail.counts?.salesCount ?? fullDetail.sales.length})
-                          </h4>
-                          <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest">
-                            Total: ${formatCurrency(fullDetail.sales.reduce((acc: number, s: any) => acc + (Number(s.total) || 0), 0))}
-                          </span>
-                        </div>
-                        <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden max-h-[300px] overflow-y-auto">
-                          <Table
-                            aria-label="Sales Detail"
-                            removeWrapper
-                            classNames={{
-                              th: "bg-white dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-zinc-500 sticky top-0 z-10",
-                              td: "text-[10px] font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-tight border-b border-zinc-200 dark:border-white/5"
-                            }}
-                          >
-                            <TableHeader>
-                              <TableColumn>HORA</TableColumn>
-                              <TableColumn>ID</TableColumn>
-                              <TableColumn>CLIENTE</TableColumn>
-                              <TableColumn>METODO</TableColumn>
-                              <TableColumn align="end">TOTAL</TableColumn>
-                            </TableHeader>
-                            <TableBody>
-                              {fullDetail.sales.map((s: any) => (
-                                <TableRow key={s.id || s.saleId}>
-                                  <TableCell>{s.date ? formatTime(s.date) : '---'}</TableCell>
-                                  <TableCell>#{s.id || s.saleId}</TableCell>
-                                  <TableCell className="truncate max-w-[180px]">{s.client?.name || 'CONSUMIDOR FINAL'}</TableCell>
-                                  <TableCell>
-                                    <Chip size="sm" variant="flat" className="h-5 text-[8px] font-medium uppercase">
-                                      {s.cashAmount > 0 && s.transferAmount > 0 ? 'MIXTO' :
-                                       s.cashAmount > 0 ? 'EFECTIVO' :
-                                       s.transferNequi > 0 ? 'NEQUI' :
-                                       s.transferDaviplata > 0 ? 'DAVIPLATA' :
-                                       s.transferAmount > 0 ? 'TRANSFER' :
-                                       s.creditAmount > 0 ? 'FIADO' : '---'}
-                                    </Chip>
-                                  </TableCell>
-                                  <TableCell className="text-emerald-500">${formatCurrency(Number(s.total) || 0)}</TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* EGRESOS DEL TURNO DESDE BD (no del JSON serializado) */}
-                    {!loadingDetail && fullDetail?.expenses && Array.isArray(fullDetail.expenses) && fullDetail.expenses.length > 0 && (
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between ml-2">
-                          <h4 className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight">
-                            Egresos Cargados en BD ({fullDetail.counts?.expensesCount ?? fullDetail.expenses.length})
-                          </h4>
-                          <span className="text-[9px] font-bold text-rose-400 uppercase tracking-widest">
-                            Total: ${formatCurrency(fullDetail.expenses.reduce((acc: number, e: any) => acc + (Number(e.amount) || 0), 0))}
-                          </span>
-                        </div>
-                        <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden max-h-[300px] overflow-y-auto">
-                          <Table
-                            aria-label="DB Expenses Detail"
-                            removeWrapper
-                            classNames={{
-                              th: "bg-white dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-zinc-500 sticky top-0 z-10",
-                              td: "text-[10px] font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-tight border-b border-zinc-200 dark:border-white/5"
-                            }}
-                          >
-                            <TableHeader>
-                              <TableColumn>HORA</TableColumn>
-                              <TableColumn>DESCRIPCION</TableColumn>
-                              <TableColumn>CATEGORIA</TableColumn>
-                              <TableColumn>FUENTE</TableColumn>
-                              <TableColumn align="end">MONTO</TableColumn>
-                            </TableHeader>
-                            <TableBody>
-                              {fullDetail.expenses.map((e: any) => (
-                                <TableRow key={e.id}>
-                                  <TableCell>{e.date ? formatTime(e.date) : '---'}</TableCell>
-                                  <TableCell className="truncate max-w-[180px]">{e.description || '---'}</TableCell>
-                                  <TableCell>
-                                    <Chip size="sm" variant="flat" color="warning" className="h-5 text-[8px] font-medium uppercase">
-                                      {e.category || 'Otros'}
-                                    </Chip>
-                                  </TableCell>
-                                  <TableCell>
-                                    <Chip size="sm" variant="flat" className="h-5 text-[8px] font-medium uppercase">
-                                      {e.paymentSource || 'EFECTIVO'}
-                                    </Chip>
-                                  </TableCell>
-                                  <TableCell className="text-rose-400">-${formatCurrency(Number(e.amount) || 0)}</TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* RESUMEN RAPIDO POR METODO DE PAGO (calculado de las ventas reales) */}
-                    {!loadingDetail && fullDetail?.paymentSummary && (
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                        {Object.entries(fullDetail.paymentSummary as Record<string, number>)
-                          .filter(([_, v]) => Number(v) > 0)
-                          .map(([method, amount]) => (
-                            <div key={method} className="bg-zinc-50 dark:bg-[#18181b]/40 p-3 rounded-xl border border-zinc-200 dark:border-white/5">
-                              <span className="text-[9px] font-medium text-zinc-500 uppercase tracking-widest block mb-1">{method}</span>
-                              <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(Number(amount))}</span>
+                    return (
+                        <div className="space-y-6">
+                            {/* Cabecera Principal (Ventas Totales y Balance) */}
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="bg-white dark:bg-[#18181b] p-4 rounded-2xl border border-zinc-200 dark:border-white/10 flex flex-col items-center text-center">
+                                    <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-2">Ventas Totales (Cajero)</span>
+                                    <span className="text-xl font-bold text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(ventasCajero)}</span>
+                                </div>
+                                <div className="bg-white dark:bg-[#18181b] p-4 rounded-2xl border border-zinc-200 dark:border-white/10 flex flex-col items-center text-center">
+                                    <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-2">Ventas Totales (Sist.)</span>
+                                    <span className="text-xl font-bold text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(ventasSistema)}</span>
+                                </div>
+                                <div className={`p-4 rounded-2xl border flex flex-col items-center text-center ${balanceReal >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
+                                    <span className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${balanceReal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>Balance Real</span>
+                                    <span className={`text-xl font-bold tabular-nums ${balanceReal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>${formatCurrency(balanceReal)}</span>
+                                </div>
                             </div>
-                          ))}
-                      </div>
-                    )}
+                            
+                            <p className="text-[9px] font-medium text-gray-400 dark:text-zinc-600 tracking-wider">
+                                * Ventas Cajero = Efectivo Contado + Digital + Egresos Caja <br/>
+                                * Ventas Sistema = Efectivo Esperado + Digital + Egresos Caja
+                            </p>
 
-                    {/* Auditoria */}
-                    <div className="bg-zinc-50/50 dark:bg-[#18181b]/30 p-6 rounded-[2rem] border border-zinc-200 dark:border-white/5 space-y-4">
-                       <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                             <User size={16} className="text-zinc-900 dark:text-zinc-100" />
-                             <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Responsable del Cierre</span>
-                          </div>
-                          <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight tracking-widest">{selectedClosure.closedByName}</span>
-                       </div>
-                       <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                             <Calendar size={16} className="text-zinc-900 dark:text-zinc-100" />
-                             <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Periodo de Turno</span>
-                          </div>
-                          <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tight">
-                            {formatDateTime(selectedClosure.startDate)} - {formatDateTime(selectedClosure.endDate)}
-                          </span>
-                       </div>
-                       {selectedClosure.authorizedBy && (
-                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-3">
-                               <CheckCircle2 size={16} className="text-zinc-900 dark:text-zinc-100" />
-                               <span className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Autorizado por</span>
+                            {/* RESUMEN FINANCIERO GLOBAL */}
+                            <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
+                                <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b]">Resumen Financiero Global</h4>
+                                <Table aria-label="Resumen Global" removeWrapper classNames={summaryTableClasses}>
+                                    <TableHeader>
+                                        <TableColumn>CONCEPTO</TableColumn>
+                                        <TableColumn align="end">MONTO</TableColumn>
+                                    </TableHeader>
+                                    <TableBody>
+                                        <TableRow>
+                                            <TableCell>(+) Ingresos Totales (Efectivo + Digital)</TableCell>
+                                            <TableCell className="text-right">${formatCurrency(selectedClosure.totalSales)}</TableCell>
+                                        </TableRow>
+                                        <TableRow>
+                                            <TableCell>(-) Egresos Totales (Todos los canales)</TableCell>
+                                            <TableCell className="text-right text-rose-500 font-bold">${formatCurrency(egresosGlobales)}</TableCell>
+                                        </TableRow>
+                                        <TableRow>
+                                            <TableCell>(-) Devoluciones Totales</TableCell>
+                                            <TableCell className="text-right text-rose-500">${formatCurrency(selectedClosure.totalReturns || 0)}</TableCell>
+                                        </TableRow>
+                                        <TableRow className="bg-emerald-500/5">
+                                            <TableCell className="font-bold text-emerald-600 dark:text-emerald-400">(=) BALANCE NETO DEL TURNO</TableCell>
+                                            <TableCell className="text-right font-bold text-emerald-600 dark:text-emerald-400">${formatCurrency(selectedClosure.netBalance || (selectedClosure.totalSales - egresosGlobales - (selectedClosure.totalReturns || 0)))}</TableCell>
+                                        </TableRow>
+                                    </TableBody>
+                                </Table>
                             </div>
-                            <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight tracking-widest">{selectedClosure.authorizedBy}</span>
-                         </div>
-                       )}
-                    </div>
-                  </div>
-                )}
+
+                            {/* CUADRE DE CAJA FISICA */}
+                            <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
+                                <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b]">Cuadre de Caja Fisica</h4>
+                                <Table aria-label="Cuadre Fisico" removeWrapper classNames={summaryTableClasses}>
+                                    <TableHeader>
+                                        <TableColumn>CONCEPTO</TableColumn>
+                                        <TableColumn align="end">MONTO</TableColumn>
+                                    </TableHeader>
+                                    <TableBody>
+                                        <TableRow>
+                                            <TableCell>(+) Ingresos en Efectivo (Ventas + Recaudos)</TableCell>
+                                            <TableCell className="text-right">${formatCurrency(selectedClosure.totalCash)}</TableCell>
+                                        </TableRow>
+                                        <TableRow>
+                                            <TableCell>(-) Salidas de Efectivo (Egresos de Caja)</TableCell>
+                                            <TableCell className="text-right text-rose-500">${formatCurrency(egresosCaja)}</TableCell>
+                                        </TableRow>
+                                        <TableRow>
+                                            <TableCell>(-) Devoluciones de Mercancia en Efectivo</TableCell>
+                                            <TableCell className="text-right text-rose-500">${formatCurrency(0)}</TableCell>
+                                        </TableRow>
+                                        <TableRow className="bg-blue-500/5">
+                                            <TableCell className="font-bold text-blue-600 dark:text-blue-400">(=) EFECTIVO ESPERADO EN CAJA</TableCell>
+                                            <TableCell className="text-right font-bold text-blue-600 dark:text-blue-400">${formatCurrency(expectedCashFinal)}</TableCell>
+                                        </TableRow>
+                                    </TableBody>
+                                </Table>
+                            </div>
+
+                            {/* DESGLOSE DE EFECTIVO REPORTADO */}
+                            <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
+                                <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b]">Desglose de Efectivo Reportado</h4>
+                                <Table aria-label="Desglose Billetes" removeWrapper classNames={summaryTableClasses}>
+                                    <TableHeader>
+                                        <TableColumn>DENOMINACION</TableColumn>
+                                        <TableColumn align="end">MONTO</TableColumn>
+                                    </TableHeader>
+                                    <TableBody>
+                                        <TableRow><TableCell>Billetes</TableCell><TableCell className="text-right">${formatCurrency(selectedClosure.cashBills || 0)}</TableCell></TableRow>
+                                        <TableRow><TableCell>Monedas 1000</TableCell><TableCell className="text-right">${formatCurrency(selectedClosure.coins1000 || 0)}</TableCell></TableRow>
+                                        <TableRow><TableCell>Monedas 500</TableCell><TableCell className="text-right">${formatCurrency(selectedClosure.coins500 || 0)}</TableCell></TableRow>
+                                        <TableRow><TableCell>Monedas 200</TableCell><TableCell className="text-right">${formatCurrency(selectedClosure.coins200 || 0)}</TableCell></TableRow>
+                                        <TableRow><TableCell>Monedas 100</TableCell><TableCell className="text-right">${formatCurrency(selectedClosure.coins100 || 0)}</TableCell></TableRow>
+                                    </TableBody>
+                                </Table>
+                            </div>
+
+                            {/* CANALES DIGITALES (TRANSFERENCIAS) */}
+                            <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
+                                <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b]">Canales Digitales (Transferencias)</h4>
+                                <Table aria-label="Canales Digitales" removeWrapper classNames={summaryTableClasses}>
+                                    <TableHeader>
+                                        <TableColumn>NEQUI</TableColumn>
+                                        <TableColumn>DAVIPLATA</TableColumn>
+                                        <TableColumn>TARJETA</TableColumn>
+                                        <TableColumn>OTROS</TableColumn>
+                                    </TableHeader>
+                                    <TableBody>
+                                        <TableRow>
+                                            <TableCell className="font-bold text-purple-500">${formatCurrency(selectedClosure.totalNequi || 0)}</TableCell>
+                                            <TableCell className="font-bold text-rose-500">${formatCurrency(selectedClosure.totalDaviplata || 0)}</TableCell>
+                                            <TableCell className="font-bold text-orange-500">${formatCurrency(selectedClosure.totalCard || 0)}</TableCell>
+                                            <TableCell className="font-bold text-sky-500">${formatCurrency((selectedClosure.totalBancolombia || 0) + (selectedClosure.totalOtherTransfer || 0))}</TableCell>
+                                        </TableRow>
+                                    </TableBody>
+                                </Table>
+                            </div>
+
+                            {/* EGRESOS POR CANAL DETALLADO */}
+                            {parsedExpenses.length > 0 && (
+                                <div className="space-y-4">
+                                    {[
+                                      { name: 'EFECTIVO', key: '_finalCash', icon: <Banknote size={14}/>, color: 'text-zinc-600 dark:text-zinc-400' },
+                                      { name: 'NEQUI', key: '_finalNequi', icon: <Wallet size={14}/>, color: 'text-purple-500' },
+                                      { name: 'DAVIPLATA', key: '_finalDavi', icon: <Landmark size={14}/>, color: 'text-rose-500' },
+                                      { name: 'FONDO', key: '_finalFondo', icon: <Banknote size={14}/>, color: 'text-cyan-500' }
+                                    ].map(method => {
+                                        const mExps = parsedExpenses.filter(e => e[method.key] > 0);
+                                        if (mExps.length === 0) return null;
+                                        
+                                        const total = mExps.reduce((acc, e) => acc + e[method.key], 0);
+
+                                        return (
+                                            <div key={method.name} className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
+                                                <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b] flex items-center gap-2">
+                                                    {method.icon} EGRESOS: {method.name}
+                                                </h4>
+                                                <Table aria-label={`Egresos ${method.name}`} removeWrapper classNames={summaryTableClasses}>
+                                                    <TableHeader>
+                                                        <TableColumn>DESCRIPCION</TableColumn>
+                                                        <TableColumn align="end">MONTO</TableColumn>
+                                                    </TableHeader>
+                                                    <TableBody>
+                                                        {mExps.map((e, i) => (
+                                                            <TableRow key={i}>
+                                                                <TableCell className="uppercase">{e.description}</TableCell>
+                                                                <TableCell className="text-right font-bold text-rose-500">-${formatCurrency(e[method.key])}</TableCell>
+                                                            </TableRow>
+                                                        ))}
+                                                        <TableRow className="bg-rose-500/5">
+                                                            <TableCell className="font-bold text-rose-600 dark:text-rose-400 uppercase">TOTAL EGRESOS {method.name}</TableCell>
+                                                            <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400">-${formatCurrency(total)}</TableCell>
+                                                        </TableRow>
+                                                    </TableBody>
+                                                </Table>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            )}
+
+                            <Divider className="bg-white dark:bg-[#18181b]" />
+
+                            {/* VENTAS DETALLADAS DEL TURNO (desde BD) */}
+                            {loadingDetail && (
+                              <div className="flex items-center justify-center p-8">
+                                <Spinner color="success" size="sm" />
+                                <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest ml-3">Cargando detalle...</span>
+                              </div>
+                            )}
+                            {!loadingDetail && fullDetail?.sales && Array.isArray(fullDetail.sales) && fullDetail.sales.length > 0 && (
+                              <div className="space-y-4">
+                                <div className="flex items-center justify-between ml-2">
+                                  <h4 className="text-[11px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight">
+                                    Ventas del Turno ({fullDetail.counts?.salesCount ?? fullDetail.sales.length})
+                                  </h4>
+                                  <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-widest">
+                                    Total: ${formatCurrency(fullDetail.sales.reduce((acc: number, s: any) => acc + (Number(s.total) || 0), 0))}
+                                  </span>
+                                </div>
+                                <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden max-h-[300px] overflow-y-auto">
+                                  <Table
+                                    aria-label="Sales Detail"
+                                    removeWrapper
+                                    classNames={{
+                                      th: "bg-white dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500 sticky top-0 z-10",
+                                      td: "text-[10px] font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-tight border-b border-zinc-200 dark:border-white/5"
+                                    }}
+                                  >
+                                    <TableHeader>
+                                      <TableColumn>HORA</TableColumn>
+                                      <TableColumn>ID</TableColumn>
+                                      <TableColumn>CLIENTE</TableColumn>
+                                      <TableColumn>METODO</TableColumn>
+                                      <TableColumn align="end">TOTAL</TableColumn>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {fullDetail.sales.map((s: any) => (
+                                        <TableRow key={s.id || s.saleId}>
+                                          <TableCell>{s.date ? formatTime(s.date) : '---'}</TableCell>
+                                          <TableCell>#{s.id || s.saleId}</TableCell>
+                                          <TableCell className="truncate max-w-[180px]">{s.client?.name || 'CONSUMIDOR FINAL'}</TableCell>
+                                          <TableCell>
+                                            <Chip size="sm" variant="flat" className="h-5 text-[8px] font-medium uppercase">
+                                              {s.cashAmount > 0 && s.transferAmount > 0 ? 'MIXTO' :
+                                               s.cashAmount > 0 ? 'EFECTIVO' :
+                                               s.transferNequi > 0 ? 'NEQUI' :
+                                               s.transferDaviplata > 0 ? 'DAVIPLATA' :
+                                               s.transferAmount > 0 ? 'TRANSFER' :
+                                               s.creditAmount > 0 ? 'FIADO' : '---'}
+                                            </Chip>
+                                          </TableCell>
+                                          <TableCell className="text-emerald-500">${formatCurrency(Number(s.total) || 0)}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* EGRESOS DEL TURNO DESDE BD (no del JSON serializado) */}
+                            {!loadingDetail && fullDetail?.expenses && Array.isArray(fullDetail.expenses) && fullDetail.expenses.length > 0 && (
+                              <div className="space-y-4">
+                                <div className="flex items-center justify-between ml-2">
+                                  <h4 className="text-[11px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight">
+                                    Egresos Cargados en BD ({fullDetail.counts?.expensesCount ?? fullDetail.expenses.length})
+                                  </h4>
+                                  <span className="text-[9px] font-bold text-rose-400 uppercase tracking-widest">
+                                    Total: ${formatCurrency(fullDetail.expenses.reduce((acc: number, e: any) => acc + (Number(e.amount) || 0), 0))}
+                                  </span>
+                                </div>
+                                <div className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden max-h-[300px] overflow-y-auto">
+                                  <Table
+                                    aria-label="DB Expenses Detail"
+                                    removeWrapper
+                                    classNames={{
+                                      th: "bg-white dark:bg-[#18181b] text-[9px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500 sticky top-0 z-10",
+                                      td: "text-[10px] font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-tight border-b border-zinc-200 dark:border-white/5"
+                                    }}
+                                  >
+                                    <TableHeader>
+                                      <TableColumn>HORA</TableColumn>
+                                      <TableColumn>DESCRIPCION</TableColumn>
+                                      <TableColumn>CATEGORIA</TableColumn>
+                                      <TableColumn>FUENTE</TableColumn>
+                                      <TableColumn align="end">MONTO</TableColumn>
+                                    </TableHeader>
+                                    <TableBody>
+                                      {fullDetail.expenses.map((e: any) => (
+                                        <TableRow key={e.id}>
+                                          <TableCell>{e.date ? formatTime(e.date) : '---'}</TableCell>
+                                          <TableCell className="truncate max-w-[180px]">{e.description || '---'}</TableCell>
+                                          <TableCell>
+                                            <Chip size="sm" variant="flat" color="warning" className="h-5 text-[8px] font-medium uppercase">
+                                              {e.category || 'Otros'}
+                                            </Chip>
+                                          </TableCell>
+                                          <TableCell>
+                                            <Chip size="sm" variant="flat" className="h-5 text-[8px] font-medium uppercase">
+                                              {e.paymentSource || 'EFECTIVO'}
+                                            </Chip>
+                                          </TableCell>
+                                          <TableCell className="text-rose-400">-${formatCurrency(Number(e.amount) || 0)}</TableCell>
+                                        </TableRow>
+                                      ))}
+                                    </TableBody>
+                                  </Table>
+                                </div>
+                              </div>
+                            )}
+
+                            {/* RESUMEN RAPIDO POR METODO DE PAGO (calculado de las ventas reales) */}
+                            {!loadingDetail && fullDetail?.paymentSummary && (
+                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                {Object.entries(fullDetail.paymentSummary as Record<string, number>)
+                                  .filter(([_, v]) => Number(v) > 0)
+                                  .map(([method, amount]) => (
+                                    <div key={method} className="bg-zinc-50 dark:bg-[#18181b]/40 p-3 rounded-xl border border-zinc-200 dark:border-white/5">
+                                      <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest block mb-1">{method}</span>
+                                      <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(Number(amount))}</span>
+                                    </div>
+                                  ))}
+                              </div>
+                            )}
+
+                            {/* Auditoria */}
+                            <div className="bg-zinc-50/50 dark:bg-[#18181b]/30 p-6 rounded-[2rem] border border-zinc-200 dark:border-white/5 space-y-4">
+                               <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                     <User size={16} className="text-zinc-900 dark:text-zinc-100" />
+                                     <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Responsable del Cierre</span>
+                                  </div>
+                                  <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight tracking-widest">{selectedClosure.closedByName}</span>
+                               </div>
+                               <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                     <Calendar size={16} className="text-zinc-900 dark:text-zinc-100" />
+                                     <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Periodo de Turno</span>
+                                  </div>
+                                  <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 tabular-nums tracking-tight">
+                                    {formatDateTime(selectedClosure.startDate)} - {formatDateTime(selectedClosure.endDate)}
+                                  </span>
+                               </div>
+                               {selectedClosure.authorizedBy && (
+                                 <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                       <CheckCircle2 size={16} className="text-zinc-900 dark:text-zinc-100" />
+                                       <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">Autorizado por</span>
+                                    </div>
+                                    <span className="text-xs font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-tight tracking-widest">{selectedClosure.authorizedBy}</span>
+                                 </div>
+                               )}
+                            </div>
+                        </div>
+                    );
+                })()}
               </ModalBody>
             </>
           )}
@@ -926,7 +990,7 @@ export default function ClosuresHistory() {
                       <h3 className="text-xl font-medium text-zinc-900 dark:text-zinc-100 tracking-tight uppercase tracking-tighter leading-none">
                         Eliminar <span className="text-rose-500">Cierre de Caja</span>
                       </h3>
-                      <p className="text-[9px] font-medium text-zinc-500 uppercase tracking-[0.3em] mt-1 tracking-tight">Accion irreversible â€” Solo administradores</p>
+                      <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-[0.3em] mt-1 tracking-tight">Accion irreversible â€” Solo administradores</p>
                    </div>
                 </div>
               </ModalHeader>
@@ -943,27 +1007,27 @@ export default function ClosuresHistory() {
 
                     <div className="bg-white dark:bg-[#18181b] rounded-2xl border border-zinc-200 dark:border-white/5 p-5 space-y-3">
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">ID del Cierre</span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">ID del Cierre</span>
                         <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">#{closureToDelete.id}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Fecha</span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Fecha</span>
                         <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">{formatDateTime(closureToDelete.date)}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Responsable</span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Responsable</span>
                         <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{closureToDelete.closedByName}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Ventas Totales</span>
-                        <span className="text-sm font-medium text-zinc-300 tabular-nums">${formatCurrency(closureToDelete.totalSales)}</span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Ventas Totales</span>
+                        <span className="text-sm font-medium text-gray-600 dark:text-zinc-300 tabular-nums">${formatCurrency(closureToDelete.totalSales)}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Efectivo Fisico</span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Efectivo Fisico</span>
                         <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(closureToDelete.physicalCash)}</span>
                       </div>
                       <div className="flex justify-between items-center">
-                        <span className="text-[10px] font-medium text-zinc-500 uppercase tracking-widest">Diferencia</span>
+                        <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">Diferencia</span>
                         <span className={`text-sm font-medium tabular-nums ${closureToDelete.difference === 0 ? 'text-zinc-900 dark:text-zinc-100' : closureToDelete.difference < 0 ? 'text-rose-500' : 'text-amber-500'}`}>
                           {closureToDelete.difference > 0 ? '+' : ''}${formatCurrency(closureToDelete.difference)}
                         </span>
@@ -976,7 +1040,7 @@ export default function ClosuresHistory() {
                 <Button 
                   variant="flat" 
                   onPress={onClose}
-                  className="font-medium text-[10px] uppercase tracking-widest bg-white dark:bg-[#18181b] text-zinc-500 dark:text-zinc-400 rounded-2xl"
+                  className="font-medium text-[10px] uppercase tracking-widest bg-white dark:bg-[#18181b] text-gray-500 dark:text-zinc-500 dark:text-zinc-400 rounded-2xl"
                 >
                   Cancelar
                 </Button>

@@ -99,7 +99,7 @@ export default function ManualWeightModal({
                                 </div>
                             )}
                             <Button
-                                className="w-full h-16 rounded-[2rem] font-medium uppercase tracking-widest text-base bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-95 tracking-tight"
+                                className="w-full h-16 rounded-[2rem] font-medium uppercase tracking-widest text-base bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-95 tracking-tight"
                                 onPress={() => {
                                     const result = validateManualWeight(manualWeightValue);
                                     if (!result.isValid) {

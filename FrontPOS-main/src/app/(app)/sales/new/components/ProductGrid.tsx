@@ -27,14 +27,14 @@ const ProductItem = memo(({ product, onAdd }: { product: Product, onAdd: (p: Pro
             }}
         >
             <div className="flex justify-between items-start w-full shrink-0">
-                <div className="h-5 w-5 rounded flex items-center justify-center bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-white/8 text-zinc-500 dark:text-zinc-400 shrink-0">
+                <div className="h-5 w-5 rounded flex items-center justify-center bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-white/8 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 shrink-0">
                     {isProductWeighted(product) ? <Scale className="h-3 w-3" /> : <Package className="h-3 w-3" />}
                 </div>
                 <div className="flex flex-col items-end leading-none">
                     <span className={`text-[10px] font-medium rounded px-1.5 py-0.5 ${
                         getStockStatus(product.quantity, product.minStock || 0) === 'CRITICAL' ? 'text-red-500/80 bg-red-500/10' :
                         getStockStatus(product.quantity, product.minStock || 0) === 'REORDER' ? 'text-amber-500/80 bg-amber-500/10' :
-                        'text-zinc-500 bg-zinc-100 dark:bg-zinc-800'
+                        'text-gray-500 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800'
                     }`}>
                         STK:{product.quantity}
                     </span>

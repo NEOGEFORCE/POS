@@ -27,6 +27,7 @@ const SupplierFormModal = dynamic(() => import('../../suppliers/components/Suppl
 const ProductFormModal = dynamic(() => import('../../products/components/ProductFormModal'), { ssr: false });
 const InvoiceReaderModal = dynamic(() => import('./components/InvoiceReaderModal'), { ssr: false });
 const UnmatchedItemsReviewer = dynamic(() => import('./components/UnmatchedItemsReviewer'), { ssr: false });
+import { ExpensePaymentModal } from '../../expenses/components/ExpensePaymentModal';
 
 // Stats Component inline (mismo patron que ProductStats)
 const SPARKLINE_DATA_1 = [{ val: 40 }, { val: 30 }, { val: 45 }, { val: 20 }, { val: 50 }];
@@ -50,6 +51,8 @@ export interface ReceiveItem {
     bonusQuantity?: number;
     newPurchasePrice: number; // Precio Unitario BASE
     newSalePrice: number;
+    oldPurchasePrice: number;
+    oldSalePrice: number;
     marginPercentage: number;
     entryType: 'purchase' | 'gift' | 'return';
     iva: number; // Porcentaje (%)
@@ -113,9 +116,12 @@ export default function ReceiveInventoryPage() {
     const [pendingOrders, setPendingOrders] = useState<any[]>([]);
     const [isLoadingOrders, setIsLoadingOrders] = useState(false);
     const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+    const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+    const [selectedOrderRefs, setSelectedOrderRefs] = useState<{id: string | number, source: string}[]>([]);
     const [isAddSupplierOpen, setIsAddSupplierOpen] = useState(false);
     const { user, loading: authLoading } = useAuth();
     const [bypassExpense, setBypassExpense] = useState(false);
+    const [leaveAsDebt, setLeaveAsDebt] = useState(false);
     const [mixedPayments, setMixedPayments] = useState<{ [key: string]: number }>({
         'EFECTIVO': 0,
         'FONDO': 0,
@@ -124,6 +130,7 @@ export default function ReceiveInventoryPage() {
         'PRESTAMO': 0
     });
     const [isSyncConfirmOpen, setIsSyncConfirmOpen] = useState(false);
+    const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
     const [totalWeight, setTotalWeight] = useState<number>(0);
     const [freightCost, setFreightCost] = useState<number>(0);
     
@@ -208,6 +215,8 @@ export default function ReceiveInventoryPage() {
                             addedQuantity: Math.abs(addedQuantity),
                             newPurchasePrice: newPurchasePrice,
                             newSalePrice: newSalePrice,
+                            oldPurchasePrice: item.product?.purchasePrice || 0,
+                            oldSalePrice: item.product?.salePrice || 0,
                             marginPercentage: item.product?.marginPercentage || 0,
                             entryType: 'purchase',
                             iva: iva,
@@ -275,7 +284,7 @@ export default function ReceiveInventoryPage() {
             setReceiveList(prevList => {
                 if (prevList.length === 0) return prevList;
                 return prevList.map(item => {
-                    const matchedProduct = freshProducts.find(p => p.barcode === item.barcode);
+                    const matchedProduct = freshProducts.find(p => p.barcode === item.barcode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(item.barcode)));
                     if (matchedProduct) {
                         return {
                             ...item,
@@ -337,7 +346,7 @@ export default function ReceiveInventoryPage() {
                         setReceiveList(prevList => {
                             if (prevList.length === 0) return prevList;
                             return prevList.map(item => {
-                                const matchedProduct = freshProducts.find(p => p.barcode === item.barcode);
+                                const matchedProduct = freshProducts.find(p => p.barcode === item.barcode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(item.barcode)));
                                 if (matchedProduct) {
                                     return {
                                         ...item,
@@ -371,6 +380,7 @@ export default function ReceiveInventoryPage() {
     useEffect(() => {
         const savedList = localStorage.getItem('org-pos-reception-list');
         const savedSupplier = localStorage.getItem('org-pos-reception-supplier');
+        const savedOrderRefs = localStorage.getItem('org-pos-reception-order-refs');
         if (savedList) {
             try {
                 const parsed = JSON.parse(savedList);
@@ -386,6 +396,12 @@ export default function ReceiveInventoryPage() {
         }
         if (savedSupplier && savedSupplier !== 'none') setSelectedGlobalSupplier(savedSupplier);
         else setSelectedGlobalSupplier('');
+        
+        if (savedOrderRefs) {
+            try {
+                setSelectedOrderRefs(JSON.parse(savedOrderRefs));
+            } catch (e) { console.error("Error loading saved order refs", e); }
+        }
     }, []);
 
     useEffect(() => {
@@ -437,7 +453,8 @@ export default function ReceiveInventoryPage() {
         const normSearch = normalizeText(searchQuery);
         return products.filter(p =>
             normalizeText(p.productName).includes(normSearch) ||
-            p.barcode.includes(normSearch)
+            p.barcode.includes(normSearch) ||
+            (p.alternateCodes && p.alternateCodes.includes(normSearch))
         ).slice(0, 10);
     }, [products, searchQuery]);
 
@@ -451,6 +468,8 @@ export default function ReceiveInventoryPage() {
                 addedQuantity: 1,
                 newPurchasePrice: 0,
                 newSalePrice: 0,
+                oldPurchasePrice: 0,
+                oldSalePrice: 0,
                 marginPercentage: 0,
                 entryType: 'purchase',
                 iva: 0,
@@ -485,6 +504,8 @@ export default function ReceiveInventoryPage() {
                 addedQuantity: customQty !== undefined ? customQty : 1,
                 newPurchasePrice: basePrice,
                 newSalePrice: salePrice,
+                oldPurchasePrice: Number(product.purchasePrice) || 0,
+                oldSalePrice: Number(product.salePrice) || 0,
                 marginPercentage: margin,
                 entryType: 'purchase',
                 iva: iva,
@@ -502,10 +523,10 @@ export default function ReceiveInventoryPage() {
 
     const handleInvoiceMatch = useCallback((items: any[]) => {
         // Items vienen del modal con shape:
-        //   matched (isMatched=true):    ScannedItem  Ã¢â€ â€™ { barcode, productName, quantity,
+        //   matched (isMatched=true):    ScannedItem  ↤ { barcode, productName, quantity,
         //                                                 costUnit, pvpActual, pvpSugerido,
         //                                                 marginUsed, iva, icui, ibua, currentStock }
-        //   unmatched (isMatched=false): UnmatchedItem Ã¢â€ â€™ { invoiceName, quantity, unitPrice, suggestions }
+        //   unmatched (isMatched=false): UnmatchedItem ↤ { invoiceName, quantity, unitPrice, suggestions }
         let addedCount = 0;
         let updatedCount = 0;
         let skippedCount = 0;
@@ -516,7 +537,7 @@ export default function ReceiveInventoryPage() {
 
             items.forEach(ocr => {
                 if (ocr.isMatched === false) {
-                    // Sin emparejar Ã¢â‚¬â€ encolar para el reviewer (no pierde estos items)
+                    // Sin emparejar — encolar para el reviewer (no pierde estos items)
                     unmatched.push({
                         invoiceName: ocr.invoiceName || ocr.name || 'Sin nombre',
                         quantity: Number(ocr.quantity) || 0,
@@ -553,10 +574,10 @@ export default function ReceiveInventoryPage() {
                     if (ocr.ibua !== undefined) newList[existIdx].ibua = Number(ocr.ibua || 0);
                     updatedCount++;
                 } else {
-                    const p = products.find(prod => prod.barcode === ocrBarcode);
+                    const p = products.find(prod => prod.barcode === ocrBarcode || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(ocrBarcode)));
                     if (p) {
                         // Mapeo lineType (REGULAR/BONUS/RETURN del backend OCR)
-                        // Ã¢â€ â€™ entryType del carrito (purchase/gift/return).
+                        // ↤ entryType del carrito (purchase/gift/return).
                         const lt = String(ocr.lineType || '').toUpperCase();
                         const entryType: 'purchase' | 'gift' | 'return' =
                             lt === 'BONUS' ? 'gift'
@@ -578,6 +599,8 @@ export default function ReceiveInventoryPage() {
                             newSalePrice: Number(ocr.pvpSugerido) > 0
                                 ? Number(ocr.pvpSugerido)
                                 : Number(p.salePrice),
+                            oldPurchasePrice: Number(p.purchasePrice || 0),
+                            oldSalePrice: Number(p.salePrice || 0),
                             marginPercentage: ocr.marginUsed ? Number(ocr.marginUsed) : 20,
                             entryType,
                             iva: Number(ocr.iva ?? p.iva ?? 0),
@@ -609,11 +632,11 @@ export default function ReceiveInventoryPage() {
         if (parts.length > 0) {
             toast({
                 title: 'Factura cargada al carrito',
-                description: parts.join(' Ã‚Â· '),
+                description: parts.join(' · '),
             });
         }
 
-        // Si hay items sin emparejar Ã¢â€ â€™ abrir reviewer para procesarlos uno a uno
+        // Si hay items sin emparejar ↤ abrir reviewer para procesarlos uno a uno
         if (unmatched.length > 0) {
             setUnmatchedQueue(unmatched);
             // pequeño delay para que el toast anterior se vea antes de abrir el modal
@@ -628,7 +651,7 @@ export default function ReceiveInventoryPage() {
         }
     }, [products, toast]);
 
-    // Callback del UnmatchedItemsReviewer: aÃ±ade los items resueltos al carrito principal.
+    // Callback del UnmatchedItemsReviewer: añade los items resueltos al carrito principal.
     const handleUnmatchedResolved = useCallback((resolved: any[]) => {
         if (!resolved || resolved.length === 0) {
             setUnmatchedQueue([]);
@@ -661,14 +684,16 @@ export default function ReceiveInventoryPage() {
                     newList[existIdx].addedQuantity = Number(newList[existIdx].addedQuantity) + Number(r.addedQuantity);
                     newList[existIdx].matchStatus = 'match';
                 } else {
-                    const p = products.find(prod => prod.barcode === r.barcode);
+                    const p = products.find(prod => prod.barcode === r.barcode || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(r.barcode)));
                     newList.push({
                         lineId: crypto.randomUUID(),
                         barcode: r.barcode,
                         productName: r.productName,
                         addedQuantity: Number(r.addedQuantity) || 0,
                         newPurchasePrice: Number(r.newPurchasePrice) || 0,
-                        newSalePrice: Number(r.newSalePrice) || (p ? Number(p.salePrice) : 0),
+                        newSalePrice: Number(r.newSalePrice) || 0,
+                        oldPurchasePrice: Number(r.oldPurchasePrice) || 0,
+                        oldSalePrice: Number(r.oldSalePrice) || 0,
                         marginPercentage: Number(r.marginPercentage) || 20,
                         entryType: 'purchase',
                         iva: Number(r.iva) || 0,
@@ -689,7 +714,7 @@ export default function ReceiveInventoryPage() {
         toast({
             variant: 'success',
             title: `Factura completa`,
-            description: `${resolved.length} ${resolved.length === 1 ? 'item aÃ±adido' : 'items aÃ±adidos'} al carrito desde la revision.`,
+            description: `${resolved.length} ${resolved.length === 1 ? 'item añadido' : 'items añadidos'} al carrito desde la revision.`,
         });
     }, [products, toast]);
 
@@ -824,7 +849,7 @@ export default function ReceiveInventoryPage() {
             setProducts(prev => [...prev, createdProduct]);
 
             // 2. Si la creacion fue iniciada desde el reviewer del OCR,
-            //    NO agregamos al carrito directamente Ã¢â‚¬â€ disparamos external
+            //    NO agregamos al carrito directamente — disparamos external
             //    resolution para que el reviewer avance al siguiente item y
             //    el carrito reciba el item correctamente formateado.
             if (pendingReviewItem) {
@@ -870,7 +895,7 @@ export default function ReceiveInventoryPage() {
         const finalCode = code.trim().toUpperCase();
         if (!finalCode) return;
 
-        const product = products.find(p => p.barcode === finalCode);
+        const product = products.find(p => p.barcode === finalCode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(finalCode)));
         if (product) {
             addToReceive(product);
             toast({ variant: 'success', title: 'AGREGADO', description: product.productName });
@@ -911,10 +936,12 @@ export default function ReceiveInventoryPage() {
         }
     }, [isProductModalOpen, scanMode, handleCodeSubmit]);
 
-    const loadOrderIntoList = (supplierId: number, items: any[]) => {
+    const loadOrderIntoList = (supplierId: number, items: any[], orderRefs: {id: string | number, source: string}[] = []) => {
         console.log("Orden seleccionada - ID Proveedor:", supplierId, "Items recibidos:", items);
         // Establecer proveedor
         setSelectedGlobalSupplier(String(supplierId));
+        setSelectedOrderRefs(orderRefs);
+        localStorage.setItem('org-pos-reception-order-refs', JSON.stringify(orderRefs));
         
         // Limpiar lista actual y cargar nuevos
         setReceiveList([]);
@@ -922,7 +949,7 @@ export default function ReceiveInventoryPage() {
             const newLines: ReceiveItem[] = [];
             items.forEach((item: any) => {
                 const searchCode = String(item.barcode || item.product_id || item.productId || "").trim();
-                const p = products.find(prod => String(prod.barcode).trim() === searchCode);
+                const p = products.find(prod => String(prod.barcode).trim() === searchCode || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(searchCode)));
                 if (p) {
                     const qty = Number(item.quantity || item.expectedQuantity || item.qty || 1);
                     const cost = Number(item.unit_cost || item.unitCost || p.purchasePrice || 0);
@@ -943,6 +970,8 @@ export default function ReceiveInventoryPage() {
                         addedQuantity: qty,
                         newPurchasePrice: basePrice,
                         newSalePrice: salePrice,
+                        oldPurchasePrice: Number(p.purchasePrice || 0),
+                        oldSalePrice: Number(p.salePrice || 0),
                         marginPercentage: margin,
                         entryType: 'purchase',
                         iva,
@@ -957,7 +986,7 @@ export default function ReceiveInventoryPage() {
             });
             setReceiveList(newLines);
             setViewMode('active');
-            toast({ title: "Pedido Cargado", description: `Se han aÃ±adido ${newLines.length} productos para revision.` });
+            toast({ title: "Pedido Cargado", description: `Se han añadido ${newLines.length} productos para revision.` });
         }, 100);
     };
 
@@ -965,6 +994,8 @@ export default function ReceiveInventoryPage() {
     const handleClearList = useCallback(() => {
         setReceiveList([]);
         localStorage.removeItem('org-pos-reception-list');
+        localStorage.removeItem('org-pos-reception-order-ids');
+        setSelectedOrderIds([]);
         toast({ variant: 'success', title: 'LISTA VACIADA', description: 'Todos los productos han sido eliminados' });
         setIsClearConfirmOpen(false);
     }, [setReceiveList, toast]);
@@ -1022,13 +1053,13 @@ export default function ReceiveInventoryPage() {
     }, []);
 
     const sumPayments = Object.values(mixedPayments).reduce((a, b) => a + (Number(b) || 0), 0);
+
     const expectedTotal = useMemo(() => {
         const total = receiveList.reduce((sum, item) => {
             const basePrice = Number(item.newPurchasePrice);
             const ivaPct = Number(item.iva || 0);
             const icuiPct = Number(item.icui || 0);
             const ibuaPct = Number(item.ibua || 0);
-            const discountPct = Number(item.discount || 0);
 
             const totalUnit = basePrice 
                 * (1 + (ivaPct / 100) + (icuiPct / 100) + (ibuaPct / 100));
@@ -1074,17 +1105,17 @@ export default function ReceiveInventoryPage() {
         }, { subtotalOrderValue: 0, taxesOrderValue: 0, totalOrderValue: 0 });
     }, [receiveList]);
 
-    const handleConfirmReceive = async () => {
-        console.log("Ã°Å¸Å¡â‚¬ INICIANDO PROCESO DE SINCRONIZACION...");
+    const handleConfirmReceive = async (payments?: any) => {
+        console.log("🛠️ INICIANDO PROCESO DE SINCRONIZACION...");
         
         if (receiveList.length === 0) {
-            console.warn("Ã¢Å¡Â Ã¯Â¸Â ABORTO: La lista de recepcion esta vacia.");
+            console.warn("⚠️ ABORTO: La lista de recepcion esta vacia.");
             toast({ variant: 'destructive', title: "LISTA VACIA", description: "No hay productos para sincronizar" });
             return;
         }
 
         if (!selectedGlobalSupplier) {
-            console.warn("Ã¢Å¡Â Ã¯Â¸Â ABORTO: No se ha seleccionado proveedor.");
+            console.warn("⚠️ ABORTO: No se ha seleccionado proveedor.");
             toast({
                 variant: 'destructive',
                 title: "PROVEEDOR REQUERIDO",
@@ -1128,6 +1159,8 @@ export default function ReceiveInventoryPage() {
                     addedQuantity: isReturn ? -finalQuantity : finalQuantity,
                     newPurchasePrice: isGift ? 0 : basePrice,
                     newSalePrice: Number(item.newSalePrice),
+                    oldPurchasePrice: Number(item.oldPurchasePrice),
+                    oldSalePrice: Number(item.oldSalePrice),
                     supplierId: selectedGlobalSupplier !== 'none' ? Number(selectedGlobalSupplier) : null,
                     iva: unitIvaAmount,
                     icui: unitIcuiAmount,
@@ -1144,16 +1177,26 @@ export default function ReceiveInventoryPage() {
 
             const payload = {
                 orderId: selectedOrderId,
+                orderIds: selectedOrderIds,
+                orderRefs: selectedOrderRefs,
                 entries,
-                bypassExpense: bypassExpense,
-                paymentSource: JSON.stringify(mixedPayments),
+                // bypassExpense: solo cuando el usuario activó el toggle en la pantalla principal
+                // Cuando es deuda, NO hacemos bypass — creamos el egreso como PENDIENTE
+                bypassExpense: bypassExpense && !leaveAsDebt,
+                paymentSource: (bypassExpense && !leaveAsDebt) ? "BYPASS" : leaveAsDebt ? "DEUDA" : (payments ? JSON.stringify({
+                    CAJA: payments.cash,
+                    NEQUI: payments.nequi,
+                    DAVIPLATA: payments.daviplata,
+                    FONDO: payments.fondo,
+                    PRESTAMO: 0
+                }) : JSON.stringify(mixedPayments)),
                 freightCost: freightCost,
                 totalWeight: totalWeight,
                 supplierId: selectedGlobalSupplier ? Number(selectedGlobalSupplier) : null,
                 editReceptionId: editReceptionId
             };
 
-            console.log("Ã°Å¸Å¡â‚¬ INTENTANDO SINCRONIZAR. PAYLOAD BRUTO:", payload);
+            console.log("🚀 INTENTANDO SINCRONIZAR. PAYLOAD BRUTO:", payload);
 
             const result = await apiFetch('/products/bulk-receive', {
                 method: 'POST',
@@ -1161,16 +1204,20 @@ export default function ReceiveInventoryPage() {
                 fallbackError: 'ERROR AL SINCRONIZAR INVENTARIO'
             }, token);
 
-            console.log("Ã¢Å“â€¦ SINCRONIZACION EXITOSA:", result);
+            console.log("✅ SINCRONIZACION EXITOSA:", result);
 
             toast({
                 variant: 'success',
                 title: "OPERACION EXITOSA",
-                description: bypassExpense ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : "INVENTARIO Y EGRESO SINCRONIZADOS"
+                description: (bypassExpense && !leaveAsDebt) ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : leaveAsDebt ? "INVENTARIO ACTUALIZADO — DEUDA REGISTRADA" : "INVENTARIO Y EGRESO SINCRONIZADOS"
             });
             localStorage.removeItem('org-pos-reception-list');
             localStorage.removeItem('org-pos-reception-supplier');
+            localStorage.removeItem('org-pos-reception-order-ids');
+            localStorage.removeItem('org-pos-reception-order-refs');
             setReceiveList([]);
+            setSelectedOrderIds([]);
+            setSelectedOrderRefs([]);
 
             // Reproducir sonido de exito (Beep alegre)
             try {
@@ -1198,23 +1245,24 @@ export default function ReceiveInventoryPage() {
             // SINCRONIZACION GLOBAL: Notificar que productos y dashboard cambiaron
             broadcastRevalidate('PRODUCT_UPDATE');
             broadcastRevalidate('DASHBOARD_UPDATE');
-            if (!bypassExpense) broadcastRevalidate('EXPENSE_UPDATE');
+            broadcastRevalidate('ORDER_UPDATE');
+            if (!(bypassExpense && !leaveAsDebt)) broadcastRevalidate('EXPENSE_UPDATE');
 
             // Detectar cambios de precio
             const changedItems = receiveList.filter(item => {
-                const oldProduct = products.find(p => p.barcode === item.barcode);
+                const oldProduct = products.find(p => p.barcode === item.barcode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(item.barcode)));
                 const oldPrice = oldProduct ? Number(oldProduct.salePrice) : 0;
                 return Number(item.newSalePrice) !== oldPrice;
             });
 
             if (changedItems.length > 0) {
-                let msg = "Â¡Hola! Se actualizaron los precios de venta de estos productos:\n\n";
+                let msg = "¡Hola! Se actualizaron los precios de venta de estos productos:\n\n";
                 changedItems.forEach((item, idx) => {
-                    const oldProduct = products.find(p => p.barcode === item.barcode);
+                    const oldProduct = products.find(p => p.barcode === item.barcode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(item.barcode)));
                     const oldPrice = oldProduct ? Number(oldProduct.salePrice) : 0;
                     msg += `${idx + 1}. ${item.productName}\n   Antes: $${oldPrice}\n   NUEVO PRECIO: $${item.newSalePrice}\n\n`;
                 });
-                msg += "Por favor actualizar las etiquetas de los estantes. Â¡Gracias!";
+                msg += "Por favor actualizar las etiquetas de los estantes. ¡Gracias!";
                 setPriceChangeText(msg);
                 
                 // Enviar notificacion a Telegram automaticamente en segundo plano
@@ -1231,7 +1279,7 @@ export default function ReceiveInventoryPage() {
                 }, 1500);
             }
         } catch (err: any) {
-            console.error("Ã°Å¸â€™Â¥ ERROR CAPTURADO EN CATCH:", err);
+            console.error("💥 ERROR CAPTURADO EN CATCH:", err);
             
             // Error details logged to console above (L659)
             const errorRaw = err.data || err.response?.data || err.message || err;
@@ -1493,7 +1541,7 @@ export default function ReceiveInventoryPage() {
                                 onInputChange={(v) => setSearchQuery(v.toUpperCase())}
                                 onSelectionChange={(key) => {
                                     if (!key) return;
-                                    const p = products.find(prod => prod.barcode === String(key));
+                                    const p = products.find(prod => prod.barcode === String(key) || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(String(key))));
                                     if (p) {
                                         addToReceive(p);
                                         toast({ variant: 'success', title: 'AGREGADO', description: p.productName });
@@ -1826,12 +1874,11 @@ export default function ReceiveInventoryPage() {
                 apiFieldErrors={apiFieldErrors}
             />
 
-            {/* MODAL DE CONFIRMACION DE SINCRONIZACION Ã¢â‚¬â€ diseño en 3 pasos al
-                estilo "Autorizar Egreso": (1) Resumen de Carga, (2) Costo de Flete,
-                (3) Pago por con soporte de pagos mixtos y validacion de cuadre. */}
+            {/* MODAL DE CONFIRMACION DE SINCRONIZACION */}
             <Modal
                 isOpen={isSyncConfirmOpen}
                 onOpenChange={setIsSyncConfirmOpen}
+                placement="center"
                 backdrop="blur"
                 size="4xl"
                 classNames={{
@@ -1858,29 +1905,56 @@ export default function ReceiveInventoryPage() {
                             </ModalHeader>
 
                             <ModalBody className="px-8 py-8">
-                                {/* ALERTA BYPASS Ã¢â‚¬â€ banda full-width arriba de los pasos */}
-                                {bypassExpense && (
-                                    <div className="mb-6 p-4 bg-rose-500/10 border-2 border-rose-500/50 rounded-2xl flex items-start gap-3 animate-pulse shadow-[0_0_15px_rgba(244,63,94,0.1)]">
-                                        <AlertTriangle className="text-rose-500 shrink-0 mt-0.5" size={24} />
+                                {leaveAsDebt && (
+                                    <div className="mb-6 p-4 bg-amber-500/10 border-2 border-amber-500/50 rounded-2xl flex items-start gap-3 animate-pulse shadow-[0_0_15px_rgba(245,158,11,0.1)]">
+                                        <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={24} />
                                         <div className="flex flex-col">
-                                            <span className="text-[12px] font-medium text-rose-600 dark:text-rose-500 uppercase tracking-wider">Ã¢Å¡Â Ã¯Â¸Â ALERTA DE CAJA: BYPASS ACTIVADO</span>
-                                            <p className="text-[11px] font-bold text-rose-600/90 dark:text-rose-400 leading-tight mt-1">
-                                                Solo se actualizara el inventario fisico. <span className="underline decoration-2">NO se registrara salida de dinero</span> ni egresos en la contabilidad.
+                                            <span className="text-[12px] font-medium text-amber-600 dark:text-amber-500 uppercase tracking-wider">⚠️ REGISTRO COMO DEUDA</span>
+                                            <p className="text-[11px] font-bold text-amber-600/90 dark:text-amber-400 leading-tight mt-1">
+                                                El inventario será actualizado pero <span className="underline decoration-2">NO se registrará pago inmediato</span> en caja. El valor quedará como deuda pendiente.
+                                            </p>
+                                        </div>
+                                    </div>
+                                )}
+                                {bypassExpense && !leaveAsDebt && (
+                                    <div className="mb-6 p-4 bg-orange-500/10 border-2 border-orange-500/50 rounded-2xl flex items-start gap-3 shadow-[0_0_15px_rgba(249,115,22,0.1)]">
+                                        <AlertTriangle className="text-orange-500 shrink-0 mt-0.5" size={24} />
+                                        <div className="flex flex-col">
+                                            <span className="text-[12px] font-medium text-orange-600 dark:text-orange-400 uppercase tracking-wider">⚡ MODO BYPASS ACTIVO</span>
+                                            <p className="text-[11px] font-bold text-orange-600/90 dark:text-orange-400 leading-tight mt-1">
+                                                El egreso <span className="underline decoration-2">NO se registrará en caja</span>. Solo se actualizará el inventario.
                                             </p>
                                         </div>
                                     </div>
                                 )}
 
-                                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-10 mt-6 relative z-10">
                                     {/* COL 1: RESUMEN DE CARGA */}
-                                    <div className="space-y-6">
+                                    <div className="md:col-span-2 space-y-6">
                                         <div className="space-y-3">
-                                            <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">1. Resumen de Carga</label>
-                                            <Card className="bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-                                                <CardBody className="p-5 space-y-4">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="h-12 w-12 bg-emerald-500/10 text-emerald-500 flex items-center justify-center rounded-2xl">
-                                                            <Package size={20} />
+                                            <div className="flex justify-between items-end mb-2">
+                                                <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">1. Resumen de Carga</label>
+                                                <button
+                                                    onClick={() => setLeaveAsDebt(!leaveAsDebt)}
+                                                    className={`h-8 px-4 rounded-2xl border-2 transition-all flex items-center justify-center gap-2 ${
+                                                        !leaveAsDebt 
+                                                        ? 'bg-white/5 border-emerald-500/40 text-zinc-900 dark:text-zinc-100' 
+                                                        : 'bg-amber-500/20 border-amber-500 text-amber-500 shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                                                    }`}
+                                                >
+                                                    <div className={`w-3 h-3 rounded-full border-2 ${!leaveAsDebt ? 'border-gray-400' : 'border-amber-500 bg-amber-500'} flex items-center justify-center transition-all`}>
+                                                        {leaveAsDebt && <Check size={8} className="text-amber-900" strokeWidth={4} />}
+                                                    </div>
+                                                    <span className="text-[10px] font-medium uppercase tracking-widest leading-none">
+                                                        Dejar como Deuda
+                                                    </span>
+                                                </button>
+                                            </div>
+                                            <Card className="bg-gray-50 dark:bg-zinc-900/50 border border-gray-200 dark:border-white/5 shadow-none rounded-[1.5rem]">
+                                                <CardBody className="p-6">
+                                                    <div className="flex items-center gap-4 mb-4">
+                                                        <div className="w-12 h-12 rounded-2xl bg-white dark:bg-zinc-800 flex items-center justify-center text-emerald-500 shadow-sm">
+                                                            <Package size={24} />
                                                         </div>
                                                         <div className="flex flex-col">
                                                             <span className="text-3xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tabular-nums leading-none">
@@ -1916,88 +1990,16 @@ export default function ReceiveInventoryPage() {
                                                 value={String(freightCost || '')}
                                                 onValueChange={(v) => setFreightCost(Number(v) || 0)}
                                                 onFocus={(e) => e.target.select()}
-                                                isDisabled={bypassExpense}
+                                                isDisabled={bypassExpense && !leaveAsDebt}
                                                 startContent={<span className="text-xl font-medium text-amber-500">$</span>}
                                                 classNames={{
-                                                    inputWrapper: `h-16 ${bypassExpense ? 'bg-gray-100 dark:bg-zinc-900 opacity-50' : 'bg-amber-50/50 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20'} rounded-2xl px-6`,
+                                                    inputWrapper: `h-16 ${(bypassExpense && !leaveAsDebt) ? 'bg-gray-100 dark:bg-zinc-900 opacity-50' : 'bg-amber-50/50 dark:bg-amber-500/5 border border-amber-200 dark:border-amber-500/20'} rounded-2xl px-6`,
                                                     input: "font-medium text-2xl text-zinc-900 dark:text-zinc-50 tabular-nums"
                                                 }}
                                             />
                                             <p className="text-[8px] font-bold text-amber-500 uppercase tracking-widest pl-1">
-                                                {bypassExpense ? "Deshabilitado por bypass" : "Suma al egreso (opcional)"}
+                                                {(bypassExpense && !leaveAsDebt) ? "Deshabilitado por bypass" : "Suma al egreso (opcional)"}
                                             </p>
-                                        </div>
-                                    </div>
-
-                                    {/* COL 3: PAGO POR Ã¢â‚¬â€ pagos mixtos por canal */}
-                                    <div className="space-y-6">
-                                        <div className="space-y-3">
-                                            <div className="flex items-center justify-between">
-                                                <label className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">3. Pago por</label>
-                                                <span className="text-[8px] font-bold text-emerald-500 uppercase tracking-widest">Mixto permitido</span>
-                                            </div>
-
-                                            {bypassExpense ? (
-                                                <div className="flex items-center justify-center p-6 bg-gray-50 dark:bg-[#18181b]/30 border border-dashed border-gray-200 dark:border-white/5 rounded-2xl">
-                                                    <div className="text-center">
-                                                        <ShieldCheck size={28} className="text-gray-400 mx-auto mb-2" />
-                                                        <p className="text-[9px] font-medium text-gray-400 uppercase tracking-widest leading-tight">
-                                                            Bypass activo:<br />no se cobra
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        {paymentMethods.map(method => {
-                                                            const value = mixedPayments[method.id] || 0;
-                                                            const active = value > 0;
-                                                            return (
-                                                                <div
-                                                                    key={method.id}
-                                                                    className={`relative flex flex-col rounded-2xl p-3 gap-1 transition-all border-2 ${
-                                                                        active
-                                                                            ? 'bg-emerald-500/10 border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.1)]'
-                                                                            : 'bg-gray-50 dark:bg-[#18181b] border-gray-200 dark:border-white/5 focus-within:border-emerald-500/50'
-                                                                    }`}
-                                                                >
-                                                                    <div className="flex items-center gap-1.5 mb-1">
-                                                                        <method.icon size={12} className={active ? 'text-emerald-500' : 'text-gray-400'} />
-                                                                        <span className={`text-[9px] font-medium uppercase ${active ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-gray-300'}`}>{method.label}</span>
-                                                                    </div>
-                                                                    <div className="flex items-center gap-1">
-                                                                        <span className={`font-medium text-xs ${active ? 'text-emerald-500' : 'text-zinc-500'}`}>$</span>
-                                                                        <input
-                                                                            type="number"
-                                                                            value={mixedPayments[method.id] || ''}
-                                                                            onChange={(e) => setMixedPayments(prev => ({ ...prev, [method.id]: Number(e.target.value) || 0 }))}
-                                                                            onFocus={(e) => e.target.select()}
-                                                                            className="bg-transparent w-full text-sm font-medium text-zinc-900 dark:text-white outline-none tabular-nums"
-                                                                            placeholder="0"
-                                                                        />
-                                                                    </div>
-                                                                </div>
-                                                            );
-                                                        })}
-                                                    </div>
-
-                                                    {/* VALIDACION DE SUMA */}
-                                                    <div className={`flex justify-between items-center px-4 py-3 rounded-2xl border-2 transition-all ${
-                                                        isPaymentsValid
-                                                            ? 'bg-emerald-500/5 border-emerald-500/40'
-                                                            : 'bg-rose-500/5 border-rose-500/40'
-                                                    }`}>
-                                                        <span className={`text-[10px] font-bold uppercase tracking-widest ${isPaymentsValid ? 'text-emerald-500' : 'text-rose-500'}`}>
-                                                            {isPaymentsValid ? 'Ã¢Å“â€œ Cuadre exacto' : 'Ã¢Å¡Â  No cuadra'}
-                                                        </span>
-                                                        <span className={`text-sm font-medium tabular-nums ${
-                                                            isPaymentsValid ? 'text-emerald-500' : 'text-rose-500'
-                                                        }`}>
-                                                            ${formatCurrency(sumPayments)} / ${formatCurrency(expectedTotal)}
-                                                        </span>
-                                                    </div>
-                                                </>
-                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -2013,16 +2015,23 @@ export default function ReceiveInventoryPage() {
                                         DESCARTAR
                                     </Button>
                                     <Button
-                                        className={`flex-[2] h-12 font-medium uppercase text-xs tracking-[0.2em] rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
-                                            (!bypassExpense && !isPaymentsValid)
-                                                ? 'bg-gray-200 dark:bg-zinc-800 text-gray-400 cursor-not-allowed'
-                                                : 'bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-[1.02] active:scale-95'
-                                        }`}
-                                        isDisabled={!bypassExpense && !isPaymentsValid}
-                                        onPress={() => { onClose(); handleConfirmReceive(); }}
+                                        className={`flex-[2] h-12 font-medium uppercase text-xs tracking-[0.2em] rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all bg-emerald-500 text-white hover:bg-emerald-600 hover:scale-[1.02] active:scale-95`}
+                                        onPress={() => {
+                                            onClose();
+                                            if (bypassExpense && !leaveAsDebt) {
+                                                // Bypass: sincronizar directamente SIN egreso
+                                                handleConfirmReceive();
+                                            } else if (leaveAsDebt) {
+                                                // Deuda: sincronizar directamente, el backend crea egreso PENDIENTE
+                                                handleConfirmReceive();
+                                            } else {
+                                                // Normal: ir al modal de pago
+                                                setIsPaymentModalOpen(true);
+                                            }
+                                        }}
                                     >
                                         <Sparkles size={18} className="mr-2" />
-                                        SINCRONIZAR AHORA
+                                        {(bypassExpense && !leaveAsDebt) ? "SINCRONIZAR (SIN EGRESO)" : leaveAsDebt ? "REGISTRAR COMO DEUDA" : "CONTINUAR AL PAGO"}
                                     </Button>
                                 </div>
                             </ModalFooter>
@@ -2030,6 +2039,18 @@ export default function ReceiveInventoryPage() {
                     )}
                 </ModalContent>
             </Modal>
+
+            {/* MODAL DE PAGOS (IGUAL A EGRESOS) */}
+            <ExpensePaymentModal
+                isOpen={isPaymentModalOpen}
+                onOpenChange={setIsPaymentModalOpen}
+                totalToPay={expectedTotal}
+                title="PAGO DE MERCANCÍA"
+                onPay={async (payments) => {
+                    setIsPaymentModalOpen(false);
+                    await handleConfirmReceive(payments);
+                }}
+            />
 
             <Modal isOpen={notFoundDialogOpen} onOpenChange={setNotFoundDialogOpen} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl" }}>
                 <ModalContent>
@@ -2054,7 +2075,7 @@ export default function ReceiveInventoryPage() {
                                             defaultItems={products}
                                             selectedKey={selectedAssociateProduct?.barcode || null}
                                             onSelectionChange={(key) => {
-                                                const p = products.find(prod => String(prod.barcode) === String(key));
+                                                const p = products.find(prod => String(prod.barcode) === String(key) || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(String(key))));
                                                 setSelectedAssociateProduct(p || null);
                                             }}
                                             classNames={{
@@ -2121,6 +2142,8 @@ export default function ReceiveInventoryPage() {
                                                             addedQuantity: 1,
                                                             newPurchasePrice: Number(p.purchasePrice || 0),
                                                             newSalePrice: Number(p.salePrice || 0),
+                                                            oldPurchasePrice: Number(p.purchasePrice || 0),
+                                                            oldSalePrice: Number(p.salePrice || 0),
                                                             marginPercentage: Number(p.marginPercentage || 20),
                                                             entryType: 'purchase',
                                                             iva: Number(p.iva || 0),

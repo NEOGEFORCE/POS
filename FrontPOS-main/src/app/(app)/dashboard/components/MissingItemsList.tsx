@@ -60,7 +60,7 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                         <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">
                             Control <span className="text-rose-500">Faltantes</span>
                         </h3>
-                        <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
+                        <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
                             Productos agotados reportados
                         </p>
                     </div>
@@ -93,11 +93,11 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                                         {item.product_name}
                                     </h4>
                                     <div className="flex flex-wrap gap-3">
-                                        <div className="flex items-center gap-1.5 text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                                        <div className="flex items-center gap-1.5 text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase">
                                             <User size={10} className="text-rose-500" />
                                             {item.reporter?.name || "SISTEMA"}
                                         </div>
-                                        <div className="flex items-center gap-1.5 text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase">
+                                        <div className="flex items-center gap-1.5 text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase">
                                             <Clock size={10} className="text-rose-500" />
                                             {formatTime(item.created_at)}
                                         </div>
@@ -132,7 +132,7 @@ const MissingItemsList = memo(({ items, onRefresh }: MissingItemsListProps) => {
                 <Button
                     fullWidth
                     variant="light"
-                    className="h-10 text-[9px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400 tracking-tight hover:text-rose-500 transition-all"
+                    className="h-10 text-[9px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 tracking-tight hover:text-rose-500 transition-all"
                 >
                     Ver todo el historial
                 </Button>

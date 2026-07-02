@@ -30,7 +30,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
                         <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tight tracking-tighter leading-none">
                             Top <span className="text-amber-500">Ventas</span>
                         </h3>
-                        <p className="text-[10px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
+                        <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mt-1.5 leading-none">
                             Productos con mayor rotacion
                         </p>
                     </div>
@@ -61,7 +61,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
                             <div key={p.barcode} className="group flex flex-col gap-2">
                                 <div className="flex justify-between items-end">
                                     <div className="flex flex-col max-w-[70%]">
-                                        <span className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mb-1 leading-none tracking-tight">
+                                        <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest mb-1 leading-none tracking-tight">
                                             #{index + 1} {p.barcode}
                                         </span>
                                         <span className="text-xs font-medium text-gray-800 dark:text-zinc-900 dark:text-zinc-100 uppercase truncate tracking-tight">
@@ -96,7 +96,7 @@ const RankingList = memo(({ products }: RankingListProps) => {
             </div>
 
             <div className="mt-6 pt-6 border-t border-gray-100 dark:border-white/5">
-                <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight text-center">
+                <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] tracking-tight text-center">
                     Calculo basado en movimientos de los ultimos 30 dias
                 </p>
             </div>

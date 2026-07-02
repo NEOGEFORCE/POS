@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
@@ -87,7 +87,7 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
       value={filter}
       onValueChange={onSearch}
       classNames={{
-        inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
+        inputWrapper: "h-11 px-4 rounded-2xl bg-black/5 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-emerald-500/30 transition-all w-full shadow-inner",
         input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest tracking-tight"
       }}
       startContent={<Search size={14} className="text-zinc-900 dark:text-zinc-100 mr-1" />}
@@ -305,7 +305,7 @@ export default function CustomersPage() {
   </div>;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) - PARIDAD TOTAL CON USERS/SUPPLIERS */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -324,7 +324,7 @@ export default function CustomersPage() {
       </div>
 
       {/* CONTENT SECTION (SCROLLABLE) */}
-      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0 overflow-hidden">
         <CustomerTable
           customers={currentCustomers}
           onPay={(c) => { setPayingClient(c); setShowSuccessScreen(false); setPayCreditDialogOpen(true); }}
@@ -387,6 +387,8 @@ export default function CustomersPage() {
     </div>
   );
 }
+
+
 
 
 

@@ -78,11 +78,9 @@ export default function DashboardCharts({
     const totalPayments = paymentDonutData.reduce((s, d) => s + d.value, 0);
 
     return (
-        <div className="grid gap-6 grid-cols-1 lg:grid-cols-7 shrink-0">
-
-
+        <div className="grid gap-6 grid-cols-1 shrink-0">
             {/* --- Donut Metodos de Pago + Progress Rings --- */}
-            <Card className="col-span-1 lg:col-span-3 card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors" radius="lg">
+            <Card className="col-span-1 card-base border-none dark:bg-[#18181b]/50 border border-gray-200/80 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors" radius="lg">
                 <CardHeader className="px-6 pt-6 pb-2">
                     <div className="flex items-center gap-3">
                         <div className="bg-violet-100 dark:bg-violet-500/10 p-2.5 rounded-2xl text-violet-600 dark:text-violet-500 border border-violet-200 dark:border-violet-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><DollarSign size={18} /></div>
@@ -118,7 +116,7 @@ export default function DashboardCharts({
                                 </ResponsiveContainer>
                                 <div className="absolute inset-0 flex flex-col items-center justify-center">
                                     <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tabular-nums tracking-tighter">${formatCurrency(totalPayments)}</span>
-                                    <span className="text-[8px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Total</span>
+                                    <span className="text-[8px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Total</span>
                                 </div>
                             </div>
 
@@ -140,7 +138,7 @@ export default function DashboardCharts({
                     ) : (
                         <div className="flex flex-col items-center justify-center h-40 gap-2">
                             <DollarSign className="h-8 w-8 text-gray-300 dark:text-zinc-700" />
-                            <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Sin datos de pago</p>
+                            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Sin datos de pago</p>
                         </div>
                     )}
                 </CardBody>

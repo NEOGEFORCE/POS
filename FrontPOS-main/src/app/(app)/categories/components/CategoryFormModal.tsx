@@ -70,7 +70,7 @@ const CategoryFormModal = memo(({
       classNames={{ 
         base: "bg-white/95 dark:bg-zinc-950/95 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0",
         wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
-        closeButton: "absolute right-5 top-5 text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
+        closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
       }}
     >
       <ModalContent>
@@ -118,7 +118,7 @@ const CategoryFormModal = memo(({
                       startContent={<Sparkles size={22} className="text-zinc-900 dark:text-zinc-100 mr-3" />}
                     />
                   )}
-                  <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight px-2">
+                  <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight px-2">
                     * El nombre se normalizara automaticamente a mayusculas para mantener la integridad del catalogo.
                   </p>
                 </div>
@@ -134,7 +134,7 @@ const CategoryFormModal = memo(({
               <div className="flex w-full gap-3 md:gap-4">
                 <Button
                   variant="flat"
-                  className="flex-1 h-12 md:h-14 rounded-2xl font-medium uppercase text-[10px] card-base border-none text-zinc-500 dark:text-zinc-400 border border-gray-200 dark:border-white/10 tracking-tight tracking-widest hover:bg-white/5 hover:text-zinc-900 dark:text-zinc-100 transition-all opacity-70 hover:opacity-100"
+                  className="flex-1 h-12 md:h-14 rounded-2xl font-medium uppercase text-[10px] card-base border-none text-gray-500 dark:text-zinc-500 dark:text-zinc-400 border border-gray-200 dark:border-white/10 tracking-tight tracking-widest hover:bg-black/5 dark:bg-white/5 hover:text-zinc-900 dark:text-zinc-100 transition-all opacity-70 hover:opacity-100"
                   onPress={onClose}
                 >
                   DESCARTAR

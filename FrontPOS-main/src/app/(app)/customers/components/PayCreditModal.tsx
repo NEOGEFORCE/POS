@@ -81,7 +81,7 @@ export default function PayCreditModal({
             {showSuccessScreen && (
               <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/40 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
                 <div className="card-base border-none p-10 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-zinc-200 dark:border-white/10 w-full max-w-sm relative overflow-hidden group">
-                  <div className="h-20 w-20 rounded-[1.5rem] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center mb-6 shadow-[0_20px_50px_rgba(16,185,129,0.3)] -rotate-3 scale-110 border-4 border-white/20">
+                  <div className="h-20 w-20 rounded-[1.5rem] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center mb-6 shadow-[0_20px_50px_rgba(16,185,129,0.3)] -rotate-3 scale-110 border-4 border-black/10 dark:border-white/20">
                     <Check size={40} strokeWidth={4} />
                   </div>
                   <h2 className="text-3xl font-medium text-zinc-900 dark:text-zinc-50 uppercase mb-2 tracking-tight tracking-tighter text-center leading-none">
@@ -121,11 +121,11 @@ export default function PayCreditModal({
                       onClick={() => { setActivePaymentTab(tab); setDialogAmount(''); setCashTendered(''); }} 
                       className={`h-10 md:h-14 px-2 md:px-5 rounded-2xl md:rounded-2xl flex items-center justify-center md:justify-start gap-1.5 md:gap-4 border transition-all group ${
                         activePaymentTab === tab 
-                          ? 'bg-white/5 dark:bg-white/5 border-emerald-500/50 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 shadow-[0_0_20px_rgba(16,185,129,0.15)] tracking-tight' 
-                          : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 hover:bg-white/5'
+                          ? 'bg-black/5 dark:bg-white/5 dark:bg-white/5 border-emerald-500/50 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 shadow-[0_0_20px_rgba(16,185,129,0.15)] tracking-tight' 
+                          : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 hover:bg-black/5 dark:bg-white/5'
                       }`}
                     >
-                      <div className={`p-1 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:bg-white/5'}`}>
+                      <div className={`p-1 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:bg-black/5 dark:bg-white/5'}`}>
                         {tab === 'cash' ? (
                           <Banknote size={14} className="md:w-5 md:h-5" />
                         ) : (
@@ -164,8 +164,8 @@ export default function PayCreditModal({
                 <div className="flex flex-col min-w-0">
                   <h1 className="text-lg md:text-3xl font-medium dark:text-white uppercase tracking-tight tracking-tighter leading-none mb-0.5 md:mb-2 text-center md:text-left">Gestion de <span className="text-zinc-900 dark:text-zinc-100">Abonos</span></h1>
                   <div className="flex items-center justify-center md:justify-start gap-1.5">
-                    <Avatar size="sm" name={client?.name} className="h-4 w-4 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 text-[6px]" />
-                    <p className="text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">{client?.name} / CC: {client?.dni}</p>
+                    <Avatar size="sm" name={client?.name} className="h-4 w-4 rounded-2xl bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 text-[6px]" />
+                    <p className="text-[8px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight">{client?.name} / CC: {client?.dni}</p>
                   </div>
                 </div>
                 
@@ -178,7 +178,7 @@ export default function PayCreditModal({
                     </div>
                   )}
                   {numCashPaid > 0 && (
-                    <div className="px-3 py-1 bg-white/5 border border-emerald-500/20 rounded-2xl flex items-center gap-2">
+                    <div className="px-3 py-1 bg-black/5 dark:bg-white/5 border border-emerald-500/20 rounded-2xl flex items-center gap-2">
                        <Banknote size={12} className="text-zinc-900 dark:text-zinc-100" />
                        <span className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">${formatCurrency(numCashPaid)}</span>
                     </div>
@@ -201,7 +201,7 @@ export default function PayCreditModal({
                 <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                   <div className={`p-2 md:p-4 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden group transition-all duration-500 ${
                     amountToPayRaw > remainingDebt 
-                      ? 'bg-white/5 border-emerald-500/30' 
+                      ? 'bg-black/5 dark:bg-white/5 border-emerald-500/30' 
                       : 'card-base border-none border-gray-200 dark:border-emerald-500/20'
                   }`}>
                     <div className="absolute top-0 right-0 p-2 opacity-5 text-zinc-900 dark:text-zinc-100 group-hover:scale-125 transition-transform">
@@ -290,7 +290,7 @@ export default function PayCreditModal({
               ) : (
                 <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1">
                   <div className="card-base border-none p-4 rounded-2xl border-2 border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center justify-center gap-2 mb-3 relative overflow-hidden group">
-                    <div className="absolute inset-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 group-hover:bg-white/5 transition-colors" />
+                    <div className="absolute inset-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 group-hover:bg-black/5 dark:bg-white/5 transition-colors" />
                     <img 
                       src={activePaymentTab === 'NEQUI' ? '/logos/nequi.png' : '/logos/daviplata.png'} 
                       className="h-12 w-12 object-contain relative z-10 animate-in zoom-in duration-500" 

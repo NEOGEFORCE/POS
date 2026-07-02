@@ -1,10 +1,11 @@
 import useSWR, { SWRConfiguration } from 'swr';
 import Cookies from 'js-cookie';
 import { extractApiError } from '@/lib/api-error';
+import { requestSessionRecovery } from '@/lib/session-recovery';
 
 import { API_URL } from '@/lib/constants';
 
-const fetcher = async (url: string) => {
+const fetcher = async (url: string): Promise<any> => {
   const token = Cookies.get('org-pos-token');
   const res = await fetch(`${API_URL}${url}`, {
     headers: {
@@ -15,11 +16,33 @@ const fetcher = async (url: string) => {
   });
 
   if (res.status === 401) {
-    // Limpieza global de sesion por expiracion o token invalido
-    Cookies.remove('org-pos-token');
-    Cookies.remove('org-pos-user');
-    window.location.href = '/login?expired=true';
-    return;
+    // En lugar de forzar logout, intentar recuperar la sesión
+    try {
+      const newToken = await requestSessionRecovery();
+      // Re-autenticación exitosa → reintentar la llamada
+      const retryRes = await fetch(`${API_URL}${url}`, {
+        headers: {
+          'Authorization': `Bearer ${newToken}`,
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+      });
+      if (!retryRes.ok) {
+        const errorMsg = await extractApiError(retryRes, 'Error al cargar datos');
+        const error = new Error(errorMsg);
+        (error as any).status = retryRes.status;
+        throw error;
+      }
+      return retryRes.json();
+    } catch (recoveryError: any) {
+      // El usuario canceló la re-autenticación → ir al login
+      if (recoveryError?.message !== 'Error al cargar datos') {
+        Cookies.remove('org-pos-token');
+        Cookies.remove('org-pos-user');
+        window.location.href = '/login?expired=true';
+      }
+      throw recoveryError;
+    }
   }
 
   if (!res.ok) {
@@ -32,6 +55,7 @@ const fetcher = async (url: string) => {
   return res.json();
 };
 
+
 export function useApi<T = any>(
   endpoint: string | null,
   options?: SWRConfiguration
@@ -43,7 +67,7 @@ export function useApi<T = any>(
       revalidateOnFocus: true,
       revalidateOnMount: true,
       revalidateOnReconnect: true,
-      dedupingInterval: 0,
+      keepPreviousData: true,
       ...options,
     }
   );
@@ -74,7 +98,7 @@ export function useApiWithPagination<T = any>(
       revalidateOnFocus: true,
       revalidateOnMount: true,
       revalidateOnReconnect: true,
-      dedupingInterval: 0,
+      keepPreviousData: true,
       ...options,
     }
   );

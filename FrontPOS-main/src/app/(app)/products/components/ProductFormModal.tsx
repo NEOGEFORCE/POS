@@ -449,7 +449,7 @@ const ProductFormModal = memo(function ProductFormModal({
 
   // CLASES COMPARTIDAS PARA INPUTS (Optimizado para movil)
   const itemInputClass = {
-    label: "text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight text-center w-full mb-0.5",
+    label: "text-xs font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight text-center w-full mb-0.5",
     inputWrapper: "h-9 bg-gray-50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 rounded-2xl group-data-[focus=true]:border-emerald-500 transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5",
     input: "font-medium text-sm uppercase tracking-tight text-zinc-900 dark:text-zinc-50 text-left py-0"
   };
@@ -474,21 +474,21 @@ const ProductFormModal = memo(function ProductFormModal({
       classNames={{
         base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden max-h-[95vh] flex flex-col mx-2 md:mx-0",
         wrapper: "items-center justify-center p-8 md:p-12",
-        closeButton: "absolute right-5 top-5 text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
+        closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
         backdrop: "bg-[#18181b] "
       }}
     >
       <ModalContent>
         <ModalHeader className="px-6 md:px-10 py-3 md:py-3 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-[#18181b]/50 rounded-t-[2.5rem]">
               <div className="flex items-center gap-3">
-                <div className="h-9 w-9 bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 rotate-3">
+                <div className="h-9 w-9 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl border border-emerald-500/20 rotate-3">
                   <Package size={18} />
                 </div>
                 <div className="flex flex-col">
                   <h2 className="text-base md:text-lg font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter uppercase leading-none">
                     {addDialogOpen ? "Protocolo " : "Modificar "} <span className="text-zinc-900 dark:text-zinc-100">Producto</span>
                   </h2>
-                  <p className="text-[7px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] mt-0.5 tracking-tight opacity-80">Edicion Compacta v5.2</p>
+                  <p className="text-[7px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] mt-0.5 tracking-tight opacity-80">Edicion Compacta v5.2</p>
                 </div>
               </div>
             </ModalHeader>
@@ -513,7 +513,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       </div>
                     )}
                   </div>
-                  <div className="absolute -bottom-1 -right-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-white dark:border-zinc-950 cursor-pointer active:scale-90 transition-all hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5">
+                  <div className="absolute -bottom-1 -right-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-white dark:border-zinc-950 cursor-pointer active:scale-90 transition-all hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5">
                     <Camera size={10} />
                     <input
                       type="file"
@@ -550,7 +550,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} pr-14 ${duplicateFound ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : ''}` }}
                       />
                       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 transform scale-90">
-                        <Button isIconOnly size="sm" onPress={onScan} className="h-7 w-7 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
+                        <Button isIconOnly size="sm" onPress={onScan} className="h-7 w-7 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
                           <Camera size={12} />
                         </Button>
                       </div>
@@ -627,7 +627,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       }}
                     />
                     <div className="absolute right-1 top-1/2 -translate-y-1/2 transform scale-90">
-                      <Button isIconOnly size="sm" onPress={onScanAlternate} className="h-7 w-7 bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
+                      <Button isIconOnly size="sm" onPress={onScanAlternate} className="h-7 w-7 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
                         <Camera size={12} />
                       </Button>
                     </div>
@@ -777,7 +777,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       else setEditingProduct((p: any) => p ? { ...p, salePrice: cleaned } : null);
                     }}
                     classNames={{
-                      inputWrapper: `h-9 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5 ${hasFieldError('salePrice') ? 'bg-rose-500/5 border-rose-500' : 'bg-white/5 border-emerald-500/20'}`,
+                      inputWrapper: `h-9 border rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5 ${hasFieldError('salePrice') ? 'bg-rose-500/5 border-rose-500' : 'bg-black/5 dark:bg-white/5 border-emerald-500/20'}`,
                       input: `font-medium text-sm tabular-nums tracking-tight text-left py-0 ${hasFieldError('salePrice') ? 'text-rose-500' : 'text-zinc-900 dark:text-zinc-100'}`
                     }}
                   />
@@ -880,7 +880,7 @@ const ProductFormModal = memo(function ProductFormModal({
                               className={`flex items-center justify-between p-3 rounded-2xl border transition-all duration-300 ${
                                 isCheapest 
                                   ? "card-base border-none border-emerald-500/40 shadow-[0_4px_12px_rgba(16,185,129,0.08)]" 
-                                  : "bg-white/50 dark:bg-[#18181b] border-gray-100 dark:border-white/5 opacity-80"
+                                  : "bg-black/5 dark:bg-[#18181b] border-gray-100 dark:border-white/5 opacity-80"
                               }`}
                             >
                               <div className="flex flex-col gap-0.5">
@@ -897,7 +897,7 @@ const ProductFormModal = memo(function ProductFormModal({
                               <div className="flex flex-col items-end gap-1">
                                 <div className="flex items-center gap-2">
                                   {isCheapest && idx < supplierPrices.length - 1 && (
-                                    <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 bg-white/5 px-2 py-0.5 rounded-2xl uppercase tracking-tight">
+                                    <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 bg-black/5 dark:bg-white/5 px-2 py-0.5 rounded-2xl uppercase tracking-tight">
                                       -{formatCOP(supplierPrices[idx+1].purchasePrice - price.purchasePrice)} ahorro
                                     </span>
                                   )}
@@ -962,7 +962,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         <Button
                           isIconOnly
                           variant="flat"
-                          className="h-11 w-11 min-w-0 bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 rounded-2xl active:scale-95"
+                          className="h-11 w-11 min-w-0 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 rounded-2xl active:scale-95"
                           onPress={() => setQuickSupplierOpen(true)}
                         >
                           <PlusCircle size={18} />
@@ -983,7 +983,7 @@ const ProductFormModal = memo(function ProductFormModal({
                                 variant="flat"
                                 color="success"
                                 onClose={() => handleRemoveSupplier(s.id)}
-                                className="bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 font-medium text-[8px] uppercase tracking-tight"
+                                className="bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 font-medium text-[8px] uppercase tracking-tight"
                               >
                                 {fullInfo?.name || `ID: ${s.id}`}
                               </Chip>
@@ -1031,7 +1031,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       <Button
                         isIconOnly
                         variant="flat"
-                        className="h-11 w-11 min-w-0 bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 rounded-2xl active:scale-95"
+                        className="h-11 w-11 min-w-0 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-500/20 rounded-2xl active:scale-95"
                         onPress={() => setQuickCategoryOpen(true)}
                       >
                         <PlusCircle size={18} />
@@ -1274,7 +1274,7 @@ const ProductFormModal = memo(function ProductFormModal({
                     className={`flex-[2] h-10 font-medium uppercase tracking-widest rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-[0.98] tracking-tight text-[10px] ${
                       duplicateFound 
                         ? "bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-600" 
-                        : "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white  hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5"
+                        : "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white  hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5"
                     }`}
                     onPress={() => {
                       if (addDialogOpen && duplicateFound) {
@@ -1287,8 +1287,8 @@ const ProductFormModal = memo(function ProductFormModal({
                       const result = validateProduct({
                         barcode: current?.barcode,
                         productName: current?.productName,
-                        purchasePrice: current?.purchasePrice,
-                        salePrice: current?.salePrice,
+                        purchasePrice: typeof current?.purchasePrice === 'string' ? parseCOP(current.purchasePrice) : current?.purchasePrice,
+                        salePrice: typeof current?.salePrice === 'string' ? parseCOP(current.salePrice) : current?.salePrice,
                         quantity: current?.quantity,
                         minStock: current?.minStock,
                         marginPercentage: current?.marginPercentage,

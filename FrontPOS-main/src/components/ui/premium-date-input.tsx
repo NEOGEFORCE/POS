@@ -112,7 +112,7 @@ export function PremiumDateInput({
       {label && (
         <label
           htmlFor={inputId}
-          className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-1"
+          className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.2em] ml-1"
         >
           {label}
         </label>
@@ -176,12 +176,12 @@ export function PremiumDateInput({
       {(hint || showFormatted) && (
         <div className="flex items-center justify-between px-1.5">
           {hint && (
-            <span className="text-[9px] font-medium text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">
+            <span className="text-[9px] font-medium text-gray-500 dark:text-zinc-400 dark:text-zinc-600 uppercase tracking-widest">
               {hint}
             </span>
           )}
           {showFormatted && value && (
-            <span className="text-[9px] font-bold tabular-nums text-zinc-500 dark:text-zinc-400 uppercase tracking-wider ml-auto">
+            <span className="text-[9px] font-bold tabular-nums text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-wider ml-auto">
               {formatPretty(value, type)}
             </span>
           )}

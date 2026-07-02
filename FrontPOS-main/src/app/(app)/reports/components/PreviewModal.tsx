@@ -149,7 +149,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
           <Icon size={20} />
         </div>
         <div>
-          <p className="text-[9px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none mb-1">{label}</p>
+          <p className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest leading-none mb-1">{label}</p>
           <p className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter tracking-tight">
             {typeof value === 'number' ? `$${formatCurrency(value)}` : value}
           </p>
@@ -169,7 +169,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
       scrollBehavior="inside"
       backdrop="blur"
       classNames={{
-        base: "bg-white/95 dark:bg-zinc-950/95  border border-white/20 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+        base: "bg-white/95 dark:bg-zinc-950/95  border border-black/10 dark:border-white/20 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
         header: "border-b border-gray-100 dark:border-white/5 pb-6",
         body: "py-6",
       }}
@@ -179,7 +179,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
           <>
             <ModalHeader className="flex flex-col gap-1">
               <div className="flex items-center gap-4">
-                <div className="p-3 rounded-2xl bg-white/5 text-zinc-900 dark:text-zinc-100 shadow-inner">
+                <div className="p-3 rounded-2xl bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 shadow-inner">
                   <FileSearch size={24} />
                 </div>
                 <div>
@@ -228,7 +228,7 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                     aria-label="Preview Table"
                     removeWrapper
                     classNames={{
-                        th: "bg-gray-100/50 dark:bg-[#18181b] text-[10px] font-medium uppercase tracking-widest text-zinc-500 dark:text-zinc-400 py-5 tracking-tight",
+                        th: "bg-gray-100/50 dark:bg-[#18181b] text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 py-5 tracking-tight",
                         td: "py-4 text-sm font-bold border-b border-gray-50 dark:border-white/5 dark:text-zinc-300",
                     }}
                 >

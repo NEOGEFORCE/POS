@@ -3,16 +3,16 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import {
-  ShoppingBag, Truck, Building2, FileText, Calendar, DollarSign, PackageSearch, Check, ChevronDown, CheckCircle, AlertTriangle, Edit2, X, Package, Trash2
+  ShoppingBag, Truck, Building2, FileText, Calendar, DollarSign, PackageSearch, Check, ChevronDown, CheckCircle, AlertTriangle, Edit2, X, Package, Trash2, Search
 } from 'lucide-react';
 import {
-  Card, CardBody, Button, Input, Autocomplete, AutocompleteItem, Pagination, Skeleton, Badge, Popover, PopoverTrigger, PopoverContent
+  Card, CardBody, Button, Input, Autocomplete, AutocompleteItem, Pagination, Skeleton, Badge, Popover, PopoverTrigger, PopoverContent, Tooltip
 } from "@heroui/react";
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import Cookies from 'js-cookie';
 import { Supplier } from '@/lib/definitions';
-import { formatCurrency } from "@/lib/utils";
+import { formatPrice } from "@/lib/utils";
 import { API_URL } from '@/lib/constants';
 
 interface SuggestedOrder {
@@ -64,6 +64,35 @@ const getNextDays = (count: number) => {
   return days;
 };
 
+const getFrontendStatus = (item: SuggestedOrder) => {
+  const ratio = item.minStock > 0 ? (item.stock / item.minStock) : 0;
+  if (item.stock <= 0 || ratio <= 0.25) return 0; // CRITICO
+  if (ratio > 0.25 && ratio <= 0.50) return 1; // ADVERTENCIA
+  return 2; // OPTIMO
+};
+
+const sortOrderItems = (a: SuggestedOrder, b: SuggestedOrder) => {
+  const inTransitA = (a.pendingOrderQty || 0) > 0;
+  const inTransitB = (b.pendingOrderQty || 0) > 0;
+  
+  if (inTransitA && !inTransitB) return 1;
+  if (!inTransitA && inTransitB) return -1;
+
+  const statusA = getFrontendStatus(a);
+  const statusB = getFrontendStatus(b);
+
+  const priorityA = a.isHighRotation ? 0 : statusA;
+  const priorityB = b.isHighRotation ? 0 : statusB;
+
+  if (priorityA !== priorityB) return priorityA - priorityB;
+
+  if (a.isHighRotation && !b.isHighRotation) return -1;
+  if (!a.isHighRotation && b.isHighRotation) return 1;
+  if (statusA !== statusB) return statusA - statusB;
+  if (b.suggested !== a.suggested) return (b.suggested || 0) - (a.suggested || 0);
+  return (b.avgDailySales || 0) - (a.avgDailySales || 0);
+};
+
 export default function SmartRestockPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -86,7 +115,9 @@ export default function SmartRestockPage() {
   const [orderItems, setOrderItems] = useState<SuggestedOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<string>("global");
-  const [supplierSearch, setSupplierSearch] = useState("");
+  const [radarSearch, setRadarSearch] = useState('');
+  const [itemSearch, setItemSearch] = useState('');
+  const [supplierSearch, setSupplierSearch] = useState('');
   
   const filteredSuppliers = useMemo(() => {
     if (!supplierSearch) return suppliers;
@@ -98,6 +129,28 @@ export default function SmartRestockPage() {
 
   // Form states per supplier
   const [quantities, setQuantities] = useState<Record<string, number>>({});
+
+  // Cargar quantities desde localStorage al montar
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('pos_order_quantities');
+      if (saved) {
+        setQuantities(JSON.parse(saved));
+      }
+    } catch (e) {
+      console.error('Error loading saved order quantities', e);
+    }
+  }, []);
+
+  // Guardar quantities en localStorage cada vez que cambia
+  useEffect(() => {
+    try {
+      localStorage.setItem('pos_order_quantities', JSON.stringify(quantities));
+    } catch (e) {
+      console.error('Error saving order quantities', e);
+    }
+  }, [quantities]);
+
   const [groupForms, setGroupForms] = useState<Record<string, { date: string, invoiceRef: string }>>({});
   const [submittingGroups, setSubmittingGroups] = useState<Record<string, boolean>>({});
 
@@ -107,6 +160,47 @@ export default function SmartRestockPage() {
   const [editingMinStock, setEditingMinStock] = useState<string | null>(null);
   const [editMinStockValue, setEditMinStockValue] = useState<string>("");
   const [savingMinStock, setSavingMinStock] = useState<string | null>(null);
+
+  const [supplierProducts, setSupplierProducts] = useState<any[]>([]);
+  const [productSearch, setProductSearch] = useState('');
+
+  useEffect(() => {      
+    if (selectedSupplier !== "global" && selectedSupplier) {
+      fetch(`${apiUrl}/inventory/suggested-orders?supplier_id=${selectedSupplier}&all=true`, { headers: authHeaders() })
+        .then(res => res.json())
+        .then(data => {
+          setSupplierProducts(data || []);
+        })
+        .catch(err => console.error(err));
+    } else {
+      setSupplierProducts([]);
+    }
+    setProductSearch('');
+  }, [selectedSupplier, apiUrl, authHeaders]);
+
+  const handleAddManualProduct = (product: any) => {
+    if (!orderItems.some(item => item.barcode === product.barcode)) {
+      const newItem: SuggestedOrder = {
+        barcode: product.barcode,
+        productName: product.productName || product.product_name || "Desconocido",
+        stock: product.stock !== undefined ? product.stock : (product.quantity || 0),
+        minStock: product.minStock || product.min_stock || 0,
+        avgDailySales: 0,
+        suggested: 0,
+        purchasePrice: product.purchasePrice || product.purchase_price || 0,
+        bestSupplierId: product.bestSupplierId || Number(selectedSupplier),
+        bestSupplierName: product.bestSupplierName || suppliers.find(s => s.id.toString() === selectedSupplier)?.name || "Desconocido",
+        lowestPrice: product.lowestPrice
+      };
+      setOrderItems(prev => [newItem, ...prev]);
+    }
+    
+    // Iniciar el input en 0 de todas formas, pero el item ya aparece en la lista
+    if (quantities[product.barcode] === undefined) {
+      setQuantities(prev => ({ ...prev, [product.barcode]: 0 }));
+    }
+    setProductSearch('');
+  };
 
   const fetchMissingItems = useCallback(async () => {
     setLoadingMissingItems(true);
@@ -132,23 +226,24 @@ export default function SmartRestockPage() {
   const loadGlobalSuggestions = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/inventory/restock/suggestions`, { headers: authHeaders(), cache: 'no-store' });
+      const res = await fetch(`${apiUrl}/inventory/restock/suggestions?all=true`, { headers: authHeaders(), cache: 'no-store' });
       if (res.ok) {
         const groups = await res.json();
         // Flatten the categorized data
         let allItems: SuggestedOrder[] = [];
-        groups.forEach((g: any) => {
+        (groups || []).forEach((g: any) => {
             allItems = [...allItems, ...g.items];
         });
         
         // Remove duplicates by barcode since an item might be in multiple categories
         const uniqueItems = Array.from(new Map(allItems.map(item => [item.barcode, item])).values());
         
-        setItems(uniqueItems);
+        // Filtrar para mostrar SOLO los que no tienen proveedor asignado
+        const orphanedItems = uniqueItems.filter(item => !item.bestSupplierId || item.bestSupplierId === 0);
         
-        // El input numerico de cantidad a pedir debe inicializarse vacio
-        const initialQts: Record<string, number> = {};
-        setQuantities(initialQts);
+        setItems(orphanedItems);
+        
+        // Do not wipe quantities on reload to preserve user selections
       } else {
         console.error("Error fetching suggestions");
       }
@@ -162,62 +257,100 @@ export default function SmartRestockPage() {
   const loadSuggestionsBySupplier = useCallback(async (supplierId: string) => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiUrl}/inventory/restock/suggestions`, { headers: authHeaders(), cache: 'no-store' });
-      if (res.ok) {
-        const groups = await res.json();
-        const group = groups.find((g: any) => g.supplierId.toString() === supplierId);
-        let data: SuggestedOrder[] = group ? group.items : [];
-        
-        if (editingOrderData && String(editingOrderData.supplierId) === supplierId) {
-          const newQuantities: Record<string, number> = {};
-          const mergedData = [...data];
-          
-          editingOrderData.items?.forEach((orderItem: any) => {
-            const barcode = orderItem.productId;
-            newQuantities[barcode] = orderItem.quantity;
-            
-            // Si el item del pedido no esta en las sugerencias, lo agregamos
-            if (!mergedData.some(item => item.barcode === barcode)) {
-              mergedData.push({
-                barcode: barcode,
-                productName: orderItem.product?.productName || "Producto Desconocido",
-                stock: orderItem.product?.quantity || 0,
-                minStock: orderItem.product?.minStock || 0,
-                avgDailySales: 0,
-                suggested: orderItem.quantity,
-                purchasePrice: orderItem.estimatedPrice || orderItem.product?.purchasePrice || 0,
-                bestSupplierId: editingOrderData.supplierId,
-                bestSupplierName: editingOrderData.supplier?.name || ""
-              });
-            }
-          });
-          
-          setOrderItems(mergedData);
-          setQuantities(prev => ({ ...prev, ...newQuantities }));
+      // 1. Traer TODOS los productos vinculados a este proveedor
+      const [allRes, restockRes] = await Promise.all([
+        fetch(`${apiUrl}/products/all-products?supplier=${supplierId}`, { headers: authHeaders(), cache: 'no-store' }),
+        fetch(`${apiUrl}/inventory/restock/suggestions?all=true`, { headers: authHeaders(), cache: 'no-store' })
+      ]);
 
-          // Pre-llenar los formularios (fecha y ref factura) para este proveedor
-          const supplierName = editingOrderData.supplier?.name || "Sin Proveedor";
-          setGroupForms(prev => ({
-            ...prev,
-            [supplierName]: {
-              date: editingOrderData.expectedDate ? editingOrderData.expectedDate.split('T')[0] : '',
-              invoiceRef: editingOrderData.invoiceRef || ''
-            }
-          }));
-        } else {
-          setOrderItems(data);
-          const initialQts: Record<string, number> = {};
-          setQuantities(initialQts);
+      if (!allRes.ok) {
+        console.error("Error fetching supplier products");
+        return;
+      }
+
+      const allProducts: any[] = await allRes.json();
+      const supplierObj = suppliers.find(s => s.id.toString() === supplierId);
+      const supplierName = supplierObj?.name || '';
+
+      // 2. Construir mapa de restock data (sugerencias) por barcode
+      const restockMap: Record<string, any> = {};
+      if (restockRes.ok) {
+        const groups = await restockRes.json();
+        const group = (groups || []).find((g: any) => g.supplierId.toString() === supplierId);
+        if (group) {
+          group.items.forEach((item: any) => {
+            restockMap[item.barcode] = item;
+          });
         }
+      }
+
+      // 3. Mapear TODOS los productos a SuggestedOrder, enriquecidos con datos de restock
+      let data: SuggestedOrder[] = allProducts.map((p: any) => {
+        const restock = restockMap[p.barcode];
+        if (restock) {
+          return {
+            ...restock,
+            bestSupplierId: Number(supplierId),
+            bestSupplierName: supplierName
+          } as SuggestedOrder;
+        }
+        return {
+          barcode: p.barcode,
+          productName: p.productName || p.product_name || 'Desconocido',
+          stock: p.quantity ?? p.stock ?? 0,
+          minStock: p.minStock ?? p.min_stock ?? 0,
+          avgDailySales: 0,
+          suggested: 0,
+          purchasePrice: p.purchasePrice ?? p.purchase_price ?? 0,
+          bestSupplierId: Number(supplierId),
+          bestSupplierName: supplierName,
+          status: (p.quantity ?? 0) <= 0 ? 0 : ((p.quantity ?? 0) <= (p.minStock ?? p.min_stock ?? 0) ? 1 : 2),
+        } as SuggestedOrder;
+      });
+
+      if (editingOrderData && String(editingOrderData.supplierId) === supplierId) {
+        const newQuantities: Record<string, number> = {};
+        const mergedData = [...data];
+
+        editingOrderData.items?.forEach((orderItem: any) => {
+          const barcode = orderItem.product_id || orderItem.productId;
+          newQuantities[barcode] = orderItem.quantity;
+
+          if (!mergedData.some(item => item.barcode === barcode)) {
+            mergedData.push({
+              barcode: barcode,
+              productName: orderItem.product?.product_name || orderItem.product?.productName || 'Producto Desconocido',
+              stock: orderItem.product?.quantity || 0,
+              minStock: orderItem.product?.min_stock || orderItem.product?.minStock || 0,
+              avgDailySales: 0,
+              suggested: orderItem.quantity,
+              purchasePrice: orderItem.estimated_price || orderItem.estimatedPrice || orderItem.product?.purchase_price || orderItem.product?.purchasePrice || 0,
+              bestSupplierId: editingOrderData.supplierId || editingOrderData.supplier_id,
+              bestSupplierName: editingOrderData.supplier?.name || ''
+            });
+          }
+        });
+
+        setOrderItems(mergedData);
+        setQuantities(prev => ({ ...prev, ...newQuantities }));
+
+        const sName = editingOrderData.supplier?.name || 'Sin Proveedor';
+        setGroupForms(prev => ({
+          ...prev,
+          [sName]: {
+            date: editingOrderData.expectedDate ? editingOrderData.expectedDate.split('T')[0] : '',
+            invoiceRef: editingOrderData.invoiceRef || ''
+          }
+        }));
       } else {
-        console.error("Error fetching supplier suggestions");
+        setOrderItems(data);
       }
     } catch (err) {
       console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, authHeaders, editingOrderData]);
+  }, [apiUrl, authHeaders, editingOrderData, suppliers]);
 
   useEffect(() => {
     const editOrderParam = searchParams?.get('edit_order');
@@ -280,16 +413,31 @@ export default function SmartRestockPage() {
     } catch (err) { }
   };
 
+  const [productToUnlink, setProductToUnlink] = useState<{barcode: string, supplierId: string} | null>(null);
+  const [productToLink, setProductToLink] = useState<{barcode: string, productName: string} | null>(null);
+  const [selectedSupplierToLink, setSelectedSupplierToLink] = useState<string>("");
   const handleQtyChange = (barcode: string, val: string | number) => {
-    let num = typeof val === 'string' ? parseInt(val) : val;
-    if (isNaN(num)) num = 0;
-    setQuantities(prev => ({ ...prev, [barcode]: Math.max(0, num) }));
+    if (typeof val === 'string') {
+      // Allow empty, strings ending in dot, etc., while typing
+      if (val === '') {
+        setQuantities(prev => ({ ...prev, [barcode]: 0 }));
+        return;
+      }
+      if (/^\d*\.?\d*$/.test(val)) {
+        setQuantities(prev => ({ ...prev, [barcode]: val as any }));
+      }
+    } else {
+      setQuantities(prev => ({ ...prev, [barcode]: Math.max(0, val) }));
+    }
   };
 
-  const handleUnlinkSupplier = async (barcode: string, supplierId: string) => {
-    if (!window.confirm("¿Seguro que deseas desligar este producto de este proveedor? No volvera a aparecer en sus sugerencias.")) {
-      return;
-    }
+  const handleUnlinkSupplier = (barcode: string, supplierId: string) => {
+    setProductToUnlink({ barcode, supplierId });
+  };
+
+  const executeUnlinkSupplier = async () => {
+    if (!productToUnlink) return;
+    const { barcode, supplierId } = productToUnlink;
     try {
       const res = await fetch(`${apiUrl}/inventory/products/${barcode}/unlink-supplier`, {
         method: 'PATCH',
@@ -298,22 +446,52 @@ export default function SmartRestockPage() {
       });
       if (res.ok) {
         toast({ title: "Exito", description: "Producto desvinculado del proveedor" });
-        // Update both local states to remove the item
         setItems(prev => prev.filter(item => item.barcode !== barcode));
         setOrderItems(prev => prev.filter(item => item.barcode !== barcode));
+        setSupplierProducts(prev => prev.filter(p => p.barcode !== barcode));
       } else {
         toast({ title: "Error", description: "No se pudo desvincular", variant: "destructive" });
       }
     } catch (err) {
       toast({ title: "Error", description: "Fallo de red", variant: "destructive" });
     }
+    setProductToUnlink(null);
+  };
+
+  const handleLinkSupplier = (barcode: string, productName: string) => {
+    setProductToLink({ barcode, productName });
+    setSelectedSupplierToLink("");
+  };
+
+  const executeLinkSupplier = async () => {
+    if (!productToLink || !selectedSupplierToLink) return;
+    try {
+      const res = await fetch(`${apiUrl}/inventory/products/${productToLink.barcode}/link-supplier`, {
+        method: 'PATCH',
+        headers: authHeaders(),
+        body: JSON.stringify({ supplierId: parseInt(selectedSupplierToLink) })
+      });
+      if (res.ok) {
+        toast({ title: "Exito", description: "Producto vinculado al proveedor" });
+        setItems(prev => prev.filter(item => item.barcode !== productToLink.barcode));
+        // Recargar si estamos en global
+        if (selectedSupplier === "global") {
+          loadGlobalSuggestions();
+        }
+      } else {
+        toast({ title: "Error", description: "No se pudo vincular el proveedor", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "Error", description: "Fallo de red", variant: "destructive" });
+    }
+    setProductToLink(null);
   };
 
   const handleUpdateMinStock = async (barcode: string) => {
     if (!editMinStockValue) return;
     setSavingMinStock(barcode);
     try {
-      const res = await fetch(`${apiUrl}/admin/products/update-min-stock/${barcode}`, {
+      const res = await fetch(`${apiUrl}/products/update-min-stock/${barcode}`, {
         method: 'PATCH',
         headers: authHeaders(),
         body: JSON.stringify({ minStock: parseFloat(editMinStockValue) })
@@ -338,26 +516,7 @@ export default function SmartRestockPage() {
 
   const currentItems = useMemo(() => {
     const arr = selectedSupplier === "global" ? items : orderItems;
-    return [...arr].sort((a, b) => {
-      // 1. Determinar el estado de 'a' (1: Critico, 2: Advertencia, 3: Optimo)
-      let statusA = 3;
-      if (a.stock <= 0) statusA = 1;
-      else if (a.stock <= (a.minStock || 0)) statusA = 2;
-
-      // 2. Determinar el estado de 'b'
-      let statusB = 3;
-      if (b.stock <= 0) statusB = 1;
-      else if (b.stock <= (b.minStock || 0)) statusB = 2;
-
-      // 3. Ordenar por estado
-      if (statusA !== statusB) return statusA - statusB;
-
-      // 4. Si tienen el mismo estado, ordenar por rotacion / ventas
-      if (a.isHighRotation && !b.isHighRotation) return -1;
-      if (!a.isHighRotation && b.isHighRotation) return 1;
-      if (b.suggested !== a.suggested) return (b.suggested || 0) - (a.suggested || 0);
-      return (b.avgDailySales || 0) - (a.avgDailySales || 0);
-    });
+    return [...arr].sort(sortOrderItems);
   }, [selectedSupplier, items, orderItems]);
 
   const totalItemsCount = currentItems.length;
@@ -391,30 +550,78 @@ export default function SmartRestockPage() {
        }
     }
 
-    // Ordenamiento de prioridades antes de retornar
-    Object.values(groups).forEach(group => {
-      group.items.sort((a, b) => {
-        const aRisk = (a.stock <= 0 && a.avgDailySales >= 0.3) ? 1 : 0;
-        const bRisk = (b.stock <= 0 && b.avgDailySales >= 0.3) ? 1 : 0;
-        if (aRisk !== bRisk) return bRisk - aRisk;
-
-        const aCrit = a.stock <= a.minStock ? 1 : 0;
-        const bCrit = b.stock <= b.minStock ? 1 : 0;
-        if (aCrit !== bCrit) return bCrit - aCrit;
-
-        const aWarn = a.stock <= (a.minStock * 1.5) ? 1 : 0;
-        const bWarn = b.stock <= (b.minStock * 1.5) ? 1 : 0;
-        if (aWarn !== bWarn) return bWarn - aWarn;
-
-        return 0;
-      });
-    });
-
     return Object.values(groups).sort((a, b) => b.items.length - a.items.length);
-  }, [paginatedItems]);
+  }, [paginatedItems, selectedSupplier, suppliers]);
+
+  const filteredGroups = useMemo(() => {
+    if (selectedSupplier === "global") {
+      if (!radarSearch) return groupedBySupplier;
+      const searchLower = radarSearch.toLowerCase();
+      return groupedBySupplier.map(g => ({
+        ...g,
+        items: g.items.filter(item =>
+          (item.productName && String(item.productName).toLowerCase().includes(searchLower)) ||
+          (item.barcode && String(item.barcode).toLowerCase().includes(searchLower))
+        )
+      })).filter(g => g.items.length > 0);
+    } else {
+      return groupedBySupplier.map(g => {
+        const searchLower = itemSearch ? itemSearch.toLowerCase() : "";
+        
+        const filteredSuggested = g.items.filter(item => 
+          (!searchLower || (item.productName && String(item.productName).toLowerCase().includes(searchLower)) || 
+          (item.barcode && String(item.barcode).toLowerCase().includes(searchLower)))
+        );
+
+        // BUSQUEDA EN CATÁLOGO MAESTRO DEL PROVEEDOR
+        const matchingFromCatalog = supplierProducts.filter(p => 
+          (!searchLower || (String(p.productName || p.product_name || "")).toLowerCase().includes(searchLower) || 
+          (String(p.barcode || "")).toLowerCase().includes(searchLower))
+        );
+
+        // OPTIMIZACION: Usar un Set para busquedas O(1) y evitar lag al teclear
+        const suggestedSet = new Set(filteredSuggested.map(item => item.barcode));
+
+        // Solo agregar los que no estén ya en filteredSuggested
+        let missingItems = matchingFromCatalog
+          .filter(p => !suggestedSet.has(p.barcode))
+          .map(p => {
+             const stock = p.quantity || 0;
+             const minStock = p.minStock || 0;
+             const status = stock <= 0 ? 0 : (stock <= minStock ? 1 : 2);
+             
+             return {
+               barcode: p.barcode,
+               productName: p.productName || p.product_name || "Desconocido",
+               stock: stock,
+               minStock: minStock,
+               avgDailySales: 0,
+               purchasePrice: p.purchasePrice || p.purchase_price || 0,
+               suggested: 0,
+               alert: "",
+               alertType: "",
+               isHighRotation: false,
+               bestSupplierId: Number(selectedSupplier),
+               bestSupplierName: g.supplierName,
+               isFromCatalog: true,
+               status: status
+             } as SuggestedOrder;
+          });
+
+          // Se eliminó la optimización de slice(0, 200) a petición del usuario para ver todo el catálogo del proveedor
+
+        const combinedItems = [...filteredSuggested, ...missingItems].sort(sortOrderItems);
+
+        return {
+          ...g,
+          items: combinedItems
+        };
+      });
+    }
+  }, [groupedBySupplier, radarSearch, selectedSupplier, itemSearch, supplierProducts]);
 
   // Manejar el submit de un grupo especifico
-  const handleConfirmGroup = async (groupName: string, supplierId: number, groupItems: SuggestedOrder[]) => {
+  const handleConfirmGroup = async (groupName: string, supplierId: number) => {
     const form = groupForms[groupName] || { date: '', invoiceRef: '' };
     
     if (!form.date) {
@@ -422,15 +629,43 @@ export default function SmartRestockPage() {
       return;
     }
 
-    const itemsToOrder = groupItems.map(item => {
-      const qty = quantities[item.barcode] !== undefined ? quantities[item.barcode] : (item.suggested || 0);
-      return {
-        product_id: item.barcode, 
-        barcode: item.barcode, 
+    // Include ALL items for this supplier, not just the paginated ones
+    const allSupplierItems = (selectedSupplier === "global" ? items : orderItems).filter(item => {
+      const sName = item.bestSupplierName || "Sin Proveedor";
+      if (selectedSupplier !== "global") return true; // Single supplier view
+      return sName === groupName;
+    });
+
+    const itemsToOrder: any[] = [];
+    
+    // Primero, agregamos todos los sugeridos por la IA que estén en la lista, si tienen cantidad > 0.
+    // También procesamos cualquier producto que tenga cantidad > 0 en el objeto quantities.
+    Object.entries(quantities).forEach(([barcode, rawQty]) => {
+      const qty = parseFloat(rawQty as any) || 0;
+      if (qty <= 0) return;
+      let unitCost = 0;
+
+      // Buscar en items sugeridos
+      const suggestedMatch = allSupplierItems.find(i => i.barcode === barcode);
+      if (suggestedMatch) {
+        unitCost = suggestedMatch.purchasePrice || 0;
+      } else {
+        // Si no es un sugerido, debe venir de la búsqueda en el catálogo
+        const catalogMatch = supplierProducts.find(p => p.barcode === barcode);
+        if (catalogMatch) {
+          unitCost = catalogMatch.purchasePrice || catalogMatch.purchase_price || 0;
+        } else {
+          return; // No se encontró en ningún lado
+        }
+      }
+
+      itemsToOrder.push({
+        product_id: barcode,
+        barcode: barcode,
         quantity: qty,
-        unit_cost: item.purchasePrice || 0
-      };
-    }).filter(i => i.quantity > 0);
+        unit_cost: unitCost
+      });
+    });
 
     // Se permite enviar orden con 0 items para logistica de entregas programadas
 
@@ -459,7 +694,7 @@ export default function SmartRestockPage() {
         // Clear quantities of confirmed items from state
         setQuantities(prev => {
           const next = { ...prev };
-          groupItems.forEach(item => {
+          allSupplierItems.forEach(item => {
             delete next[item.barcode];
           });
           return next;
@@ -491,13 +726,13 @@ export default function SmartRestockPage() {
               <ShoppingBag className="text-amber-500" size={24} />
               Pedidos Inteligentes
             </h1>
-            <p className="text-xs text-zinc-500 uppercase tracking-widest mt-1">Radar Global y Generacion de Ordenes</p>
+            <p className="text-xs text-gray-500 dark:text-zinc-500 uppercase tracking-widest mt-1">Radar Global y Generacion de Ordenes</p>
           </div>
 
           <div className="flex items-center gap-2 bg-white dark:bg-zinc-950 p-1.5 rounded-2xl border border-gray-200 dark:border-white/10 shadow-[0_4px_20px_rgb(0,0,0,0.05)] w-full md:w-auto">
             <button
               onClick={() => setSelectedSupplier("global")}
-              className={`px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all h-10 ${selectedSupplier === "global" ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100' : 'text-zinc-500 hover:bg-gray-100 dark:hover:bg-zinc-900'}`}
+              className={`px-4 py-2 rounded-xl text-[11px] font-bold uppercase tracking-widest transition-all h-10 ${selectedSupplier === "global" ? 'bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100' : 'text-gray-500 dark:text-zinc-500 hover:bg-gray-100 dark:hover:bg-gray-50 dark:bg-zinc-900'}`}
             >
               RADAR GLOBAL
             </button>
@@ -511,7 +746,7 @@ export default function SmartRestockPage() {
                 onInputChange={setSupplierSearch}
                 items={filteredSuppliers}
                 aria-label="Filtrar por proveedor"
-                inputProps={{ classNames: { inputWrapper: "bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-zinc-800 border-none shadow-none h-10 rounded-xl transition-colors", input: "text-[11px] font-bold uppercase" } }}
+                inputProps={{ classNames: { inputWrapper: "bg-zinc-100 dark:bg-zinc-900 hover:bg-zinc-200 dark:hover:bg-gray-100 dark:bg-zinc-800 border-none shadow-none h-10 rounded-xl transition-colors", input: "text-[11px] font-bold uppercase" } }}
                 popoverProps={{ classNames: { content: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10" } }}
               >
                 {(s) => (
@@ -559,7 +794,7 @@ export default function SmartRestockPage() {
             <CardBody className="p-3 flex flex-col gap-2">
               <div className="flex items-center gap-2">
                 <PackageSearch size={16} className="text-rose-500" />
-                <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Faltantes en Caja</h3>
+                <h3 className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">Faltantes en Caja</h3>
               </div>
               <div className="flex flex-row gap-2 overflow-x-auto custom-scrollbar pb-1">
                 {loadingMissingItems ? <Skeleton className="h-10 w-64 rounded-2xl shrink-0" /> : missingItems.length > 0 ? (
@@ -571,29 +806,48 @@ export default function SmartRestockPage() {
                       </div>
                     </div>
                   ))
-                ) : <div className="p-2 text-[9px] font-bold text-zinc-500 uppercase">Sin pendientes</div>}
+                ) : <div className="p-2 text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase">Sin pendientes</div>}
               </div>
             </CardBody>
           </Card>
         </div>
 
         {/* CENTRAL AREA: Grouped Suggestions */}
-        <div className="flex flex-col">
-            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden flex flex-col">
-              <CardBody className="p-0 flex flex-col overflow-hidden">
-                <div className="overflow-y-auto custom-scrollbar p-3 md:p-6 flex flex-col gap-8">
+        <div className="flex flex-col h-full gap-4">
+            {/* BUSCADOR RADAR */}
+            {selectedSupplier === "global" ? (
+                <Input 
+                    placeholder="BUSCAR PRODUCTO POR NOMBRE O REFERENCIA..."
+                      value={radarSearch}
+                      onValueChange={setRadarSearch}
+                      startContent={<Search size={16} className="text-gray-500 dark:text-zinc-400" />}
+                    classNames={{ inputWrapper: "h-12 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}
+                />
+            ) : (
+                <Input 
+                    placeholder="BUSCAR PRODUCTO POR NOMBRE O REFERENCIA..."
+                    value={itemSearch}
+                    onValueChange={setItemSearch}
+                    startContent={<Search size={16} className="text-gray-500 dark:text-zinc-400" />}
+                    classNames={{ inputWrapper: "h-12 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}
+                />
+            )}
+
+            <Card className="bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col flex-1">
+              <CardBody className="p-0 flex flex-col">
+                <div className="p-3 md:p-6 flex flex-col gap-8">
                   
                   {loading ? (
                     <div className="flex justify-center p-10"><Skeleton className="h-8 w-32 rounded-lg" /></div>
-                  ) : groupedBySupplier.length === 0 ? (
+                  ) : filteredGroups.length === 0 ? (
                     <div className="flex flex-col justify-center items-center h-full opacity-50 p-10">
                       <CheckCircle size={48} className="text-emerald-500 mb-4" />
-                      <p className="text-sm font-bold uppercase tracking-widest">Stock Optimo</p>
+                      <p className="text-sm font-bold uppercase tracking-widest">Stock Optimo o Sin Coincidencias</p>
                     </div>
                   ) : (
                     <div className="space-y-6">
-                      {groupedBySupplier.map((group) => {
-                        const groupTotal = group.items.reduce((acc, item) => acc + (quantities[item.barcode] || 0) * (item.purchasePrice || 0), 0);
+                      {filteredGroups.map((group) => {
+                        const groupTotal = group.items.reduce((acc, item) => acc + (parseFloat(quantities[item.barcode] as any) || 0) * (item.purchasePrice || 0), 0);
                         const form = groupForms[group.supplierName] || { date: '', invoiceRef: '' };
                         const isSubmitting = submittingGroups[group.supplierName] || false;
                         
@@ -603,7 +857,7 @@ export default function SmartRestockPage() {
                               <div className="flex items-center gap-3">
                                 <Building2 className="text-amber-500" size={20} />
                                 <h3 className="font-bold text-sm uppercase tracking-tight">{group.supplierName}</h3>
-                                <Badge color="default" className="text-[10px] uppercase">{group.items.length} items</Badge>
+                                <Badge color="default" className="text-[10px] uppercase">{group.items.length} artículos</Badge>
                               </div>
                             </div>
                             
@@ -611,21 +865,31 @@ export default function SmartRestockPage() {
                               {group.items.length === 0 ? (
                                 <div className="flex flex-col justify-center items-center opacity-70 p-10">
                                   <CheckCircle size={40} className="text-emerald-500 mb-3" />
-                                  <p className="text-sm font-bold uppercase tracking-widest text-emerald-600">Stock Optimo</p>
-                                  <p className="text-[10px] text-zinc-500 mt-2 text-center max-w-xs">Puedes programar una entrega manualmente asignando la fecha abajo.</p>
+                                  <p className="text-sm font-bold uppercase tracking-widest text-emerald-600">
+                                    {itemSearch ? "Sin Coincidencias en Catalogo" : "Stock Optimo"}
+                                  </p>
+                                  <p className="text-[10px] text-gray-500 dark:text-zinc-500 mt-2 text-center max-w-xs">
+                                    {itemSearch ? "No se encontro ningun producto en el catalogo maestro con ese termino." : "Puedes programar una entrega manualmente asignando la fecha abajo."}
+                                  </p>
                                 </div>
                               ) : (
-                                group.items.map((item) => {
-                                  const isCritical = item.stock <= 0;
+                                  group.items.map((item) => {
+                                  const ratio = item.minStock > 0 ? (item.stock / item.minStock) : 0;
+                                  const isCritical = item.stock <= 0 || ratio <= 0.25;
+                                  const isWarning = ratio > 0.25 && ratio <= 0.50;
+                                  const isOptimal = ratio > 0.50;
                                   const inTransit = (item.pendingOrderQty || 0) > 0;
                                   const effectiveStock = item.stock + (item.pendingOrderQty || 0);
                                   const coveredByTransit = inTransit && effectiveStock >= item.minStock;
                                   return (
-                                    <div key={item.barcode} className={`p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 transition-colors hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 ${isCritical && !inTransit ? 'bg-red-50/20 dark:bg-red-950/10' : ''} ${coveredByTransit ? 'bg-amber-50/20 dark:bg-amber-950/10' : ''}`}>
+                                    <div key={item.barcode} className={`p-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4 bg-white dark:bg-zinc-950 transition-colors hover:bg-gray-50/50 dark:hover:bg-zinc-900/50 ${isCritical && !inTransit ? 'border-l-[4px] border-red-500' : ''} ${isWarning && !inTransit ? 'border-l-[4px] border-yellow-500' : ''} ${isOptimal && !inTransit ? 'border-l-[4px] border-green-500' : ''} ${coveredByTransit ? 'border-l-[4px] border-green-500' : (!isCritical && !isWarning && !isOptimal ? 'border-l-[4px] border-transparent' : '')}`}>
                                       <div className="flex-1 min-w-0">
-                                        <div className="flex items-center gap-2 mb-1">
-                                          <p className="font-medium truncate text-sm">{item.productName}</p>
-                                          {isCritical && !inTransit && <Badge color="danger" className="h-5 text-[10px] px-1.5 shrink-0">Critico</Badge>}
+                                        <div className="flex flex-wrap items-center gap-2 mb-1">
+                                          <p className="font-medium text-sm w-full md:w-auto">{item.productName}</p>
+                                          {isCritical && !inTransit && <span className="h-5 text-[10px] px-2 py-0.5 rounded-full bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400 font-bold uppercase tracking-wider shrink-0">Critico</span>}
+                                          {isWarning && !inTransit && <span className="h-5 text-[10px] px-2 py-0.5 rounded-full bg-yellow-100 text-yellow-700 dark:bg-yellow-500/20 dark:text-yellow-400 font-bold uppercase tracking-wider shrink-0">Advertencia</span>}
+                                          {isOptimal && !inTransit && <span className="h-5 text-[10px] px-2 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-500/20 dark:text-green-400 font-bold uppercase tracking-wider shrink-0">Optimo</span>}
+                                          {item.isHighRotation && !inTransit && <span className="h-5 text-[10px] px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400 font-bold uppercase tracking-wider shrink-0">Ventas Altas</span>}
                                           {coveredByTransit && (
                                             <span className="inline-flex items-center gap-1 bg-amber-100 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border border-amber-300 dark:border-amber-500/30 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full shrink-0">
                                               <Truck size={9} />
@@ -639,22 +903,24 @@ export default function SmartRestockPage() {
                                             </span>
                                           )}
                                           {item.alert && !coveredByTransit && (
-                                            <Badge color={item.alertType === "SLOW_MOVER" ? "warning" : "success"} className="h-5 text-[10px] px-1.5 shrink-0 whitespace-nowrap">
-                                              {item.alert}
-                                            </Badge>
+                                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl shadow-sm border ${item.alertType === "SLOW_MOVER" ? "bg-amber-100/80 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/30" : "bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/30"}`}>
+                                              <span className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
+                                                {item.alert}
+                                              </span>
+                                            </div>
                                           )}
                                         </div>
-                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-zinc-500 uppercase font-medium">
+                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500 dark:text-zinc-500 uppercase font-medium">
                                           <span>REF: {item.barcode}</span>
                                           <span>Stock: <strong className={item.stock <= 0 ? "text-red-500" : "text-zinc-900 dark:text-zinc-100"}>{item.stock}</strong></span>
-                                          {inTransit && <span className="text-amber-600 dark:text-amber-400 font-bold">Efectivo: {effectiveStock} (con transito)</span>}
+                                          {inTransit && <span className="text-amber-600 dark:text-amber-400 font-bold">Proyectado: {effectiveStock} (con transito)</span>}
                                           {editingMinStock === item.barcode ? (
                                             <div className="flex items-center gap-1 bg-white dark:bg-zinc-950 px-2 py-0.5 rounded-md border border-amber-500/50">
                                               <span className="text-[10px]">Stock Base:</span>
                                               <input 
                                                 autoFocus
                                                 type="number"
-                                                className="w-12 text-center bg-transparent border-b border-amber-500 outline-none text-zinc-900 dark:text-white font-bold"
+                                                className="w-12 text-center bg-transparent border-b border-amber-50 outline-none text-zinc-900 dark:text-white font-bold"
                                                 value={editMinStockValue}
                                                 onChange={(e) => setEditMinStockValue(e.target.value)}
                                                 onKeyDown={(e) => {
@@ -665,28 +931,30 @@ export default function SmartRestockPage() {
                                               <button onClick={() => handleUpdateMinStock(item.barcode)} disabled={savingMinStock === item.barcode} className="text-emerald-500 hover:text-emerald-600 ml-1">
                                                 <CheckCircle size={14} />
                                               </button>
-                                              <button onClick={() => setEditingMinStock(null)} className="text-zinc-400 hover:text-zinc-600">
+                                              <button onClick={() => setEditingMinStock(null)} className="text-gray-500 dark:text-zinc-400 hover:text-zinc-600">
                                                 <X size={14} />
                                               </button>
                                             </div>
                                           ) : (
                                             <div className="flex items-center gap-1 group cursor-pointer" onClick={() => { setEditingMinStock(item.barcode); setEditMinStockValue(String(item.minStock || 0)); }}>
                                               <span>Stock Base: <strong className="text-amber-600 dark:text-amber-400">{item.minStock}</strong></span>
-                                              <Edit2 size={10} className="text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                              <Edit2 size={10} className="text-gray-500 dark:text-zinc-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                                             </div>
                                           )}
-                                          {item.minShelfStock !== undefined && <span>Min. Estante: {item.minShelfStock}</span>}
                                           <span>Venta prom.: {Number(item.avgDailySales || 0).toFixed(1)}/dia</span>
                                         </div>
                                         
-                                        {selectedSupplier !== "global" && item.bestSupplierId && item.bestSupplierId.toString() !== selectedSupplier && (
-                                          <div className="mt-2 flex items-center gap-2 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 p-2 rounded-lg w-fit">
-                                            <AlertTriangle size={14} className="text-amber-500 shrink-0" />
-                                            <p className="text-[10px] md:text-[11px] font-bold text-amber-700 dark:text-amber-400 m-0 leading-tight">
-                                              💡 RECOMENDACION: No pidas con este proveedor. Con <span className="uppercase">{item.bestSupplierName}</span> sale mas economico ({formatCurrency(item.lowestPrice || 0)}).
+                                        {(selectedSupplier !== "global" && item.bestSupplierId && item.bestSupplierId.toString() !== selectedSupplier && !item.isFromCatalog && (
+                                          <div className="mt-2.5 flex items-start sm:items-center gap-3 bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-500/10 dark:to-orange-500/5 border border-amber-200/60 dark:border-amber-500/20 p-2.5 rounded-xl shadow-sm w-full md:w-fit transition-all hover:shadow-md">
+                                            <div className="bg-amber-100 dark:bg-amber-500/20 p-1.5 rounded-lg shrink-0 mt-0.5 sm:mt-0">
+                                              <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400" />
+                                            </div>
+                                            <p className="text-[11px] md:text-xs font-medium text-amber-800 dark:text-amber-300/90 m-0 leading-snug">
+                                              <span className="font-bold text-amber-900 dark:text-amber-400 mr-1">OFERTA MEJOR:</span> 
+                                              Te sugerimos pedir con <span className="font-bold uppercase text-amber-900 dark:text-amber-200 bg-amber-200/50 dark:bg-amber-500/30 px-1.5 py-0.5 rounded-md mx-0.5">{item.bestSupplierName}</span> a <span className="font-bold tracking-tight text-emerald-700 dark:text-emerald-400">{formatPrice(item.lowestPrice || 0)}</span>.
                                             </p>
                                           </div>
-                                        )}
+                                        ))}
                                       </div>
                                       
                                       {/* CONTROLES: Si ya esta cubierto por transito, mostrar badge. Si no, mostrar +/- */}
@@ -700,26 +968,26 @@ export default function SmartRestockPage() {
                                           <div className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-900/50 p-2 rounded-xl">
                                             <div className="text-right flex flex-col justify-center">
                                               <div className="flex flex-col items-end gap-1">
-                                                  <span className="text-[10px] text-zinc-400 font-bold ml-1">Sugerido: {item.suggested || 0}</span>
+                                                  <span className="text-[10px] text-indigo-500 dark:text-indigo-400 font-bold ml-1 tracking-wide">IA Sugiere: {item.suggested || 0}</span>
                                                   <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-900 rounded-lg p-1 border border-gray-200 dark:border-white/5 shadow-inner">
                                                   <button 
-                                                      onClick={() => handleQtyChange(item.barcode, (quantities[item.barcode] || 0) - 1)}
-                                                      className="w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-all font-bold"
+                                                      onClick={() => handleQtyChange(item.barcode, (quantities[item.barcode] !== undefined ? quantities[item.barcode] : 0) - 1)}
+                                                      className="w-7 h-7 flex items-center justify-center text-gray-500 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-gray-100 dark:hover:bg-gray-100 dark:bg-zinc-800 rounded-md transition-all font-bold"
                                                   >
                                                       -
                                                   </button>
                                                   <input 
                                                       type="number" 
                                                       min={0}
-                                                      placeholder={String(item.suggested || 0)}
+                                                      placeholder="0"
                                                       value={quantities[item.barcode] === undefined ? "" : quantities[item.barcode]}
                                                       onChange={(e) => handleQtyChange(item.barcode, e.target.value)}
                                                       className="w-10 text-center text-xs font-bold bg-transparent outline-none"
                                                       style={{ appearance: 'textfield', WebkitAppearance: 'none' }}
                                                   />
                                                   <button 
-                                                      onClick={() => handleQtyChange(item.barcode, (quantities[item.barcode] || 0) + 1)}
-                                                      className="w-7 h-7 flex items-center justify-center text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-gray-100 dark:hover:bg-zinc-800 rounded-md transition-all font-bold"
+                                                      onClick={() => handleQtyChange(item.barcode, (quantities[item.barcode] !== undefined ? quantities[item.barcode] : 0) + 1)}
+                                                      className="w-7 h-7 flex items-center justify-center text-gray-500 dark:text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 hover:bg-gray-100 dark:hover:bg-gray-100 dark:bg-zinc-800 rounded-md transition-all font-bold"
                                                   >
                                                       +
                                                   </button>
@@ -729,13 +997,25 @@ export default function SmartRestockPage() {
                                           </div>
                                         )}
                                         
-                                        <button
-                                          onClick={() => handleUnlinkSupplier(item.barcode, selectedSupplier === "global" ? String(item.bestSupplierId) : selectedSupplier)}
-                                          title="Desvincular de este proveedor"
-                                          className="p-2 ml-1 rounded-xl text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-500/20"
-                                        >
-                                          <Trash2 size={16} />
-                                        </button>
+                                        {(item.bestSupplierId === 0 || !item.bestSupplierId) ? (
+                                          <Tooltip content="Vincular a proveedor" placement="top" color="primary">
+                                            <button
+                                              onClick={() => handleLinkSupplier(item.barcode, item.productName)}
+                                              className="p-2 ml-2 rounded-xl text-gray-400 dark:text-zinc-500 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors border border-transparent hover:border-blue-200 dark:hover:border-blue-500/20"
+                                            >
+                                              <Building2 size={16} />
+                                            </button>
+                                          </Tooltip>
+                                        ) : (
+                                          <Tooltip content="Desvincular producto" placement="top" color="danger">
+                                            <button
+                                              onClick={() => handleUnlinkSupplier(item.barcode, selectedSupplier === "global" ? String(item.bestSupplierId) : selectedSupplier)}
+                                              className="p-2 ml-2 rounded-xl text-gray-400 dark:text-zinc-500 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 transition-colors border border-transparent hover:border-red-200 dark:hover:border-red-500/20"
+                                            >
+                                              <Trash2 size={16} />
+                                            </button>
+                                          </Tooltip>
+                                        )}
                                       </div>
                                     </div>
                                   );
@@ -747,27 +1027,27 @@ export default function SmartRestockPage() {
                             <div className="bg-amber-500/5 dark:bg-amber-500/10 p-4 border-t border-amber-500/20 flex flex-col md:flex-row items-end md:items-center justify-between gap-4">
                               <div className="flex flex-col md:flex-row items-center gap-3 w-full md:w-auto">
                                 <div className="flex flex-col gap-1 w-full md:w-auto">
-                                  <label className="text-[9px] font-bold uppercase text-zinc-500 tracking-widest pl-1">Fecha Entrega</label>
+                                  <label className="text-[9px] font-bold uppercase text-gray-500 dark:text-zinc-500 tracking-widest pl-1">Fecha Entrega</label>
                                   <Popover placement="top">
                                     <PopoverTrigger>
-                                      <button className="h-10 w-full md:w-40 bg-white dark:bg-zinc-900 rounded-xl flex items-center px-3 gap-2 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors border border-gray-200 dark:border-white/5 shadow-sm text-left">
-                                        <Calendar size={14} className="text-zinc-500 shrink-0" />
+                                      <button className="h-10 w-full md:w-40 bg-white dark:bg-zinc-900 rounded-xl flex items-center px-3 gap-2 hover:bg-zinc-50 dark:hover:bg-gray-100 dark:bg-zinc-800 transition-colors border border-gray-200 dark:border-white/5 shadow-sm text-left">
+                                        <Calendar size={14} className="text-gray-500 dark:text-zinc-500 shrink-0" />
                                         <div className="flex flex-col overflow-hidden">
                                           <span className="text-[11px] font-bold text-zinc-900 dark:text-zinc-100 truncate uppercase">
-                                            {form.date === new Date().toISOString().split('T')[0] ? "HOY" : form.date}
+                                            {form.date === new Intl.DateTimeFormat('en-CA', {timeZone: 'America/Bogota'}).format(new Date()) ? "HOY" : form.date}
                                           </span>
                                         </div>
                                       </button>
                                     </PopoverTrigger>
                                     <PopoverContent className="p-3 w-72 bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-2xl shadow-2xl">
                                       <div className="flex flex-col gap-3 w-full">
-                                        <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest text-center mt-1">Dias de Llegada</p>
+                                        <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest text-center mt-1">Dias de Llegada</p>
                                         <div className="grid grid-cols-3 gap-2">
                                           {getNextDays(6).map(d => (
                                             <button
                                               key={d.date}
                                               onClick={() => setGroupForms(prev => ({ ...prev, [group.supplierName]: { ...form, date: d.date } }))}
-                                              className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all border ${form.date === d.date ? 'bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-500/20 scale-105' : 'bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-zinc-800'}`}
+                                              className={`flex flex-col items-center justify-center p-2 rounded-xl transition-all border ${form.date === d.date ? 'bg-amber-500 border-amber-500 text-white shadow-md shadow-amber-500/20 scale-105' : 'bg-gray-50 dark:bg-zinc-900 border-gray-200 dark:border-white/5 text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-gray-100 dark:bg-zinc-800'}`}
                                             >
                                               <span className={`text-[14px] font-black leading-none mb-1 ${form.date === d.date ? 'text-white' : 'text-zinc-900 dark:text-zinc-100'}`}>{d.dayNumber}</span>
                                               <span className="text-[9px] uppercase tracking-widest font-medium">{d.label}</span>
@@ -776,7 +1056,7 @@ export default function SmartRestockPage() {
                                         </div>
                                         <div className="w-full h-[1px] bg-gray-100 dark:bg-zinc-800 my-2" />
                                         <div className="flex flex-col gap-1 w-full relative">
-                                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest px-1">Otra Fecha</label>
+                                          <label className="text-[9px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest px-1">Otra Fecha</label>
                                           <Input 
                                             type="date" 
                                             size="sm" 
@@ -790,14 +1070,14 @@ export default function SmartRestockPage() {
                                   </Popover>
                                 </div>
                                 <div className="flex flex-col gap-1 w-full md:w-auto">
-                                  <label className="text-[9px] font-bold uppercase text-zinc-500 tracking-widest pl-1">Ref / Factura Real</label>
+                                  <label className="text-[9px] font-bold uppercase text-gray-500 dark:text-zinc-500 tracking-widest pl-1">Ref / Factura Real</label>
                                   <Input
                                     type="text"
                                     size="sm"
                                     placeholder="Opcional..."
                                     value={form.invoiceRef}
                                     onChange={(e) => setGroupForms(prev => ({ ...prev, [group.supplierName]: { ...form, invoiceRef: e.target.value } }))}
-                                    startContent={<FileText size={14} className="text-zinc-500" />}
+                                    startContent={<FileText size={14} className="text-gray-500 dark:text-zinc-500" />}
                                     classNames={{ inputWrapper: "h-10 w-full md:w-40 bg-white dark:bg-zinc-900 border-none" }}
                                   />
                                 </div>
@@ -805,14 +1085,14 @@ export default function SmartRestockPage() {
                               
                               <div className="flex items-center gap-4 w-full md:w-auto justify-between md:justify-end">
                                 <div className="text-right">
-                                  <p className="text-[9px] font-bold uppercase text-zinc-500 tracking-widest">WAC Estimado</p>
-                                  <p className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{formatCurrency(groupTotal)}</p>
+                                  <p className="text-[9px] font-bold uppercase text-gray-500 dark:text-zinc-500 tracking-widest">WAC Estimado</p>
+                                  <p className="text-lg font-bold text-zinc-900 dark:text-zinc-100">{formatPrice(groupTotal)}</p>
                                 </div>
                                 <Button
                                   color="warning"
                                   className="h-11 px-6 font-bold uppercase tracking-widest text-[11px] shadow-lg shadow-amber-500/20"
                                   isLoading={isSubmitting}
-                                  onPress={() => handleConfirmGroup(group.supplierName, group.supplierId, group.items)}
+                                  onPress={() => handleConfirmGroup(group.supplierName, group.supplierId)}
                                   startContent={!isSubmitting && <CheckCircle size={16} />}
                                 >
                                   Confirmar
@@ -861,6 +1141,75 @@ export default function SmartRestockPage() {
             </Card>
           </div>
       </div>
+      {productToLink && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-zinc-950 p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4 text-blue-500">
+              <div className="p-3 bg-blue-100 dark:bg-blue-500/20 rounded-full">
+                <Building2 size={24} className="text-blue-600 dark:text-blue-400" />
+              </div>
+              <h3 className="text-lg font-black text-zinc-900 dark:text-zinc-100">Vincular Proveedor</h3>
+            </div>
+            <p className="text-sm text-zinc-600 dark:text-zinc-400 font-medium mb-4">
+              Selecciona un proveedor para asignar al producto <strong className="text-zinc-900 dark:text-white uppercase">{productToLink.productName}</strong>.
+            </p>
+            <div className="mb-6">
+              <select 
+                value={selectedSupplierToLink}
+                onChange={(e) => setSelectedSupplierToLink(e.target.value)}
+                className="w-full h-12 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10 rounded-xl px-4 outline-none focus:border-blue-500 font-bold uppercase text-sm"
+              >
+                <option value="">Seleccionar Proveedor...</option>
+                {suppliers.map(s => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setProductToLink(null)}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-zinc-600 dark:text-zinc-400 bg-gray-100 dark:bg-zinc-900 hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={executeLinkSupplier}
+                disabled={!selectedSupplierToLink}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-blue-500 hover:bg-blue-600 shadow-md shadow-blue-500/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Vincular
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {productToUnlink && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-zinc-950 p-6 rounded-2xl shadow-2xl max-w-sm w-full mx-4 border border-gray-200 dark:border-white/10 animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 mb-4 text-red-500">
+              <AlertTriangle size={24} />
+              <h3 className="font-bold text-lg text-zinc-900 dark:text-white uppercase tracking-tight">¿Desvincular producto?</h3>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-zinc-400 mb-6">
+              No volvera a aparecer en las sugerencias de este proveedor.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setProductToUnlink(null)}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-zinc-600 dark:text-zinc-400 bg-gray-100 dark:bg-zinc-900 hover:bg-gray-200 dark:hover:bg-zinc-800 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button 
+                onClick={executeUnlinkSupplier}
+                className="px-4 py-2 rounded-xl text-sm font-bold text-white bg-red-500 hover:bg-red-600 shadow-md shadow-red-500/20 transition-colors"
+              >
+                Desvincular
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

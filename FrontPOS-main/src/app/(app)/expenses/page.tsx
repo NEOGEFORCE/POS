@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
@@ -73,7 +73,7 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
         value={filter}
         onValueChange={onSearch}
         classNames={{
-          inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+          inputWrapper: "h-11 px-4 rounded-2xl bg-black/5 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
           input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
         }}
         startContent={<Search size={14} className="text-rose-500 mr-1" />}
@@ -91,7 +91,7 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
         }}
         inputProps={{
           classNames: {
-            inputWrapper: "h-11 px-4 rounded-2xl bg-white/50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
+            inputWrapper: "h-11 px-4 rounded-2xl bg-black/5 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 focus-within:!border-rose-500/30 transition-all w-full shadow-inner",
             input: "font-medium text-[11px] uppercase text-zinc-900 dark:text-zinc-50 placeholder:text-gray-400 dark:placeholder:text-zinc-600 bg-transparent tracking-widest"
           }
         }}
@@ -105,7 +105,7 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
       </Autocomplete>
       <Button
         onPress={onApplyFilters}
-        className="h-11 bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium uppercase text-[10px] rounded-2xl px-6"
+        className="h-11 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium uppercase text-[10px] rounded-2xl px-6"
       >
         Buscar (Servidor)
       </Button>
@@ -207,16 +207,20 @@ export default function ExpensesPage() {
       const d = new Date(e.date);
       return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
     });
-    const totalMonth = currentMonth.reduce((acc, e) => acc + Number(e.amount), 0);
-    const bySource = expenses.reduce((acc: any, e) => {
-      const source = e.paymentSource || 'EFECTIVO';
-      acc[source] = (acc[source] || 0) + Number(e.amount);
-      return acc;
-    }, {});
+    const totalMonth = currentMonth
+      .filter(e => (e.status === 'PAID' || !e.status) && e.paymentSource?.toUpperCase() !== 'PRESTAMO' && e.paymentSource?.toUpperCase() !== 'PREST.')
+      .reduce((acc, e) => acc + Number(e.amount) + Number(e.taxAmount || 0), 0);
+    const bySource = expenses
+      .filter(e => (e.status === 'PAID' || !e.status) && e.paymentSource?.toUpperCase() !== 'PRESTAMO' && e.paymentSource?.toUpperCase() !== 'PREST.')
+      .reduce((acc: any, e) => {
+        const source = e.paymentSource || 'EFECTIVO';
+        acc[source] = (acc[source] || 0) + Number(e.amount) + Number(e.taxAmount || 0);
+        return acc;
+      }, {});
     const topSource = Object.entries(bySource).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'EFECTIVO';
 
-    const pendingExpenses = expenses.filter(e => e.status === 'PENDING' || e.paymentSource === 'PRESTAMO' || e.paymentSource === 'PREST.');
-    const totalPending = pendingExpenses.reduce((acc, e) => acc + Number(e.amount), 0);
+    const pendingExpenses = expenses.filter(e => e.status === 'PENDING' && (e.remainingAmount > 0 || Number(e.amount) > 0));
+    const totalPending = pendingExpenses.reduce((acc, e) => acc + (e.remainingAmount > 0 ? e.remainingAmount : Number(e.amount)), 0);
 
     return { totalMonth, topSource, count: expenses.length, totalPending, pendingExpenses };
   }, [expenses]);
@@ -227,6 +231,9 @@ export default function ExpensesPage() {
     const currentYear = now.getFullYear();
 
     return expenses.filter(e => {
+      // Ocultar deudas pendientes y saldadas de la tabla principal para evitar duplicidad visual
+      if (e.status === 'PENDING' || e.status === 'SETTLED') return false;
+
       const d = new Date(e.date);
       const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
       
@@ -237,7 +244,7 @@ export default function ExpensesPage() {
       }
       
       return isCurrentMonth;
-    });
+    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [expenses, filter, supplierFilter]);
 
   const [pageSize, setPageSize] = useState(10);
@@ -297,6 +304,11 @@ export default function ExpensesPage() {
       const payload: any = {
         description: data.description.toUpperCase(),
         amount: Math.abs(parseFloat(String(data.amount)) || 0),
+        taxAmount: data.taxAmount || 0,
+        cashAmount: data.cashAmount || 0,
+        nequiAmount: data.nequiAmount || 0,
+        daviplataAmount: data.daviplataAmount || 0,
+        fondoAmount: data.fondoAmount || 0,
         date: currentDate,
         paymentSource: data.paymentSource || 'EFECTIVO',
         category: data.category,
@@ -400,10 +412,46 @@ export default function ExpensesPage() {
     }
   };
 
+  const handleForceCloseDebt = async (id: string) => {
+    const token = Cookies.get('org-pos-token');
+    if (!token) return;
+
+    try {
+      const expenseToUpdate = expenses.find(e => String(e.id) === id);
+      if (!expenseToUpdate) return;
+      
+      const updateData = {
+        ...expenseToUpdate,
+        status: 'PAID',
+        remainingAmount: 0,
+      };
+
+      await apiFetch(`/expenses/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify(updateData),
+        fallbackError: 'FALLO AL CONDONAR DEUDA'
+      }, token);
+
+      toast({
+        variant: "success",
+        title: "DEUDA CONDONADA",
+        description: `EL EGRESO SE HA MARCADO COMO PAGADO FORZOSAMENTE`,
+      });
+      loadExpenses();
+      broadcastRevalidate('EXPENSE_UPDATE');
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "FALLO AL CONDONAR",
+        description: err.message || 'FALLO AL CONDONAR DEUDA',
+      });
+    }
+  };
+
   if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b]"><Spinner color="danger" size="lg" /></div>;
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto md:overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">
 
       {/* HEADER SECTION: FIXED (TOP) */}
       <div className="shrink-0 px-3 pt-1.5 pb-2 flex flex-col gap-3 md:gap-4 border-b border-gray-200/50 dark:border-white/5 bg-gray-50/50 dark:bg-zinc-950/50">
@@ -428,7 +476,7 @@ export default function ExpensesPage() {
       </div>
 
       {/* CONTENT SECTION (INTERNAL SCROLLABLE) */}
-      <div className="px-1 md:px-2 py-1 flex flex-col">
+      <div className="px-1 md:px-2 py-1 flex flex-col flex-1 min-h-0">
         <ExpenseTable
           expenses={paginatedExpenses}
           isAdmin={isAdmin}
@@ -486,12 +534,12 @@ export default function ExpensesPage() {
         onOpenChange={setPendingModalOpen}
         debts={stats.pendingExpenses}
         onSettle={handleSettleDebt}
+        isAdmin={isAdmin}
+        onForceClose={handleForceCloseDebt}
       />
 
     </div>
   );
+
+
 }
-
-
-
-

@@ -68,7 +68,7 @@ const CategoryStats = memo(({ total, topCat, totalProds }: StatsProps) => {
                     </div>
 
                     <div className="relative z-10 flex flex-col min-w-0 pr-1">
-                        <span className="text-[7px] md:text-[8px] font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter tracking-tight leading-none mb-1">{k.label}</span>
+                        <span className="text-[7px] md:text-[8px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-tighter tracking-tight leading-none mb-1">{k.label}</span>
                         <div className="flex items-baseline gap-1">
                             <span className="text-xs md:text-sm font-medium tabular-nums tracking-tight leading-none truncate pr-1" style={{ color: k.color }}>
                                 {k.val}

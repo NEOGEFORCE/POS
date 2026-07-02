@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -32,6 +32,7 @@ const ManualWeightModal = dynamic(() => import('./components/ManualWeightModal')
 const MissingItemModal = dynamic(() => import('./components/MissingItemModal'), { ssr: false });
 const AlertTriangleIcon = dynamic(() => import('lucide-react').then(m => m.AlertTriangle), { ssr: false });
 import { EditCartItemModal } from './components/EditCartItemModal';
+import ProductSearchModal from './components/ProductSearchModal';
 
 export default function NewSalePage() {
     const {
@@ -62,6 +63,30 @@ export default function NewSalePage() {
     } = useNewSale();
 
     const [editingCartItem, setEditingCartItem] = useState<any | null>(null);
+    const [isProductSearchOpen, setIsProductSearchOpen] = useState(false);
+    const [pendingReturn, setPendingReturn] = useState<any | null>(null);
+
+    useEffect(() => {
+        const storedReturn = localStorage.getItem("pos-pending-return");
+        if (storedReturn) {
+            try {
+                setPendingReturn(JSON.parse(storedReturn));
+            } catch (e) {
+                console.error("Error parsing pending return", e);
+            }
+        }
+
+        const handleReturnCompleted = () => {
+            setPendingReturn(null);
+        };
+        window.addEventListener('return-completed', handleReturnCompleted);
+        return () => window.removeEventListener('return-completed', handleReturnCompleted);
+    }, []);
+
+    const cancelPendingReturn = () => {
+        localStorage.removeItem("pos-pending-return");
+        setPendingReturn(null);
+    };
 
     const { user } = useAuth();
     const { toast } = useToast();
@@ -222,10 +247,29 @@ export default function NewSalePage() {
                     setIsSplitDialogOpen(false);
                     setIsMissingItemOpen(false);
                     setEditingCartItem(null);
+                    setIsProductSearchOpen(false);
                 }
                 setScannerBuffer('');
                 isScanningRef.current = false;
                 if (isSearchFocused) searchRef.current?.blur();
+                return;
+            }
+
+            if (e.key === 'PageUp') {
+                e.preventDefault();
+                setIsClientDialogOpen(true);
+                return;
+            }
+
+            if (e.key === 'PageDown') {
+                e.preventDefault();
+                if (currentCart.length > 0) setIsSplitDialogOpen(true);
+                return;
+            }
+
+            if (e.key === 'Insert') {
+                e.preventDefault();
+                setIsProductSearchOpen(true);
                 return;
             }
 
@@ -314,6 +358,20 @@ export default function NewSalePage() {
             <div id="pos-main-container" className="flex flex-col gap-1 overflow-y-auto md:overflow-hidden custom-scrollbar relative flex-1 min-h-0 h-full w-full">
                 {/* SECCIÃƒâ€œN SUPERIOR: CARRITO + NUMERIC PAD */}
                 <div className="flex-[1.6] flex flex-col lg:flex-row gap-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
+                    {pendingReturn && (
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-2 flex items-center justify-between text-xs font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-2">
+                            <span>DEVOLUCIÓN EN CURSO - Saldo a favor: ${(pendingReturn.totalDev || 0).toLocaleString('es-CO')}</span>
+                            <Button 
+                                size="sm" 
+                                variant="light" 
+                                color="danger" 
+                                onPress={cancelPendingReturn}
+                                className="h-6 min-w-0 px-2 rounded-md"
+                            >
+                                CANCELAR
+                            </Button>
+                        </div>
+                    )}
                     {/* PANEL IZQUIERDO: CARRITO */}
                     <div className="flex-1 flex flex-col rounded-2xl border border-gray-200 dark:border-white/5 card-base overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] min-h-0">
                         <div className="bg-gray-50 dark:bg-[#18181b]/50 border-b border-gray-200 dark:border-white/5 p-2 shrink-0 flex justify-between items-center">
@@ -365,10 +423,13 @@ export default function NewSalePage() {
                                     </div>
                                 </div>
                                 <Button size="sm" variant="flat" onPress={() => setIsClientDialogOpen(true)} className="h-8 px-2 sm:px-3 rounded-2xl font-bold text-[10px] uppercase bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 border border-sky-200 dark:border-sky-500/20">
-                                    <User size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline tracking-tight">CLIENTE</span>
+                                    <User size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline tracking-tight">CLIENTE (Re Pág)</span>
                                 </Button>
                                 <Button size="sm" variant="flat" onPress={() => setIsSplitDialogOpen(true)} isDisabled={currentCart.length === 0} className="h-8 px-2 sm:px-3 rounded-2xl font-bold text-[10px] uppercase bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 hover:bg-amber-100 border border-amber-200 dark:border-amber-500/20">
-                                    <Grid size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline">Dividir</span>
+                                    <Grid size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline">Dividir (Av Pág)</span>
+                                </Button>
+                                <Button size="sm" variant="flat" onPress={() => setIsProductSearchOpen(true)} className="h-8 px-2 sm:px-3 rounded-2xl font-bold text-[10px] uppercase bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-500 hover:bg-purple-100 border border-purple-200 dark:border-purple-500/20">
+                                    <Search size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline">BUSCAR PRODUCTO (Insert)</span>
                                 </Button>
                             </div>
                         </div>
@@ -386,13 +447,13 @@ export default function NewSalePage() {
                                     }}
                                 >
                                     <TableHeader>
-                                        <TableColumn>ARTÃƒÂCULO</TableColumn>
+                                        <TableColumn>ARTÍCULO</TableColumn>
                                         <TableColumn align="center">PVP</TableColumn>
                                         <TableColumn align="center">CANT</TableColumn>
                                         <TableColumn align="end">TOTAL</TableColumn>
                                         <TableColumn align="center" width={30}> </TableColumn>
                                     </TableHeader>
-                                    <TableBody emptyContent={<div className="py-10 text-gray-400 text-xs font-bold uppercase tracking-widest text-center">Carrito vacÃƒÂ­o</div>}>
+                                    <TableBody emptyContent={<div className="py-10 text-gray-400 text-xs font-bold uppercase tracking-widest text-center">Carrito vacío</div>}>
                                         {currentCart.map((item) => (
                                             <TableRow 
                                                 key={item.cartItemId} 
@@ -460,14 +521,14 @@ export default function NewSalePage() {
                         </div>
                     </div>
 
-                    {/* PANEL DERECHO: TECLADO Y ESCÃƒÂNER */}
+                    {/* PANEL DERECHO: TECLADO Y ESCÁNER */}
                     <aside className="w-full lg:w-[260px] flex flex-col shrink-0">
                         <div className="flex-1 card-base rounded-2xl p-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-1 border border-gray-200 dark:border-white/5 overflow-hidden min-h-0">
                             <div className="flex items-center gap-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 px-2 py-1 rounded-2xl shadow-inner h-10 shrink-0">
                                 <Barcode className="h-4 w-4 text-zinc-900 dark:text-zinc-100 shrink-0" />
                                 <div className="relative flex-1 h-8 flex items-center px-1">
                                     <div className="font-mono font-bold text-xs text-gray-900 dark:text-zinc-100 bg-transparent flex-1 truncate">
-                                        {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÃƒÂNER...")}
+                                        {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÁNER...")}
                                     </div>
                                     {!scannerBuffer && feedbackCode && (
                                         <div className={`absolute left-0 pointer-events-none font-mono font-bold text-xs tracking-tight ${isFeedbackError ? 'text-rose-400' : 'text-zinc-900 dark:text-zinc-100/50'} animate-out fade-out duration-1000 fill-mode-forwards`}>
@@ -519,19 +580,16 @@ export default function NewSalePage() {
                     </aside>
                 </div>
 
-                {/* SECCIÃƒâ€œN INFERIOR: CATEGORÃƒÂAS Y PRODUCTOS Ã¢â‚¬â€ flex-1 con altura mÃƒÂ­nima para no colapsar */}
+                {/* SECCIÃƒâ€œN INFERIOR: CATEGORÃƒÂ AS Y PRODUCTOS Ã¢â‚¬â€  flex-1 con altura mÃƒÂ­nima para no colapsar */}
                 <div className="flex-1 w-full shrink-0 flex gap-1 card-base rounded-2xl p-1 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-t border-white/10" style={{ minHeight: '320px' }}>
                     <aside className="w-28 shrink-0 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
-                        <Button size="sm" className={`justify-start h-8 min-h-[32px] rounded-2xl font-bold text-[9px] px-2 ${selectedCategory === 'all' ? 'bg-emerald-500 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory('all'); returnFocusToScanner(); }}>TODOS</Button>
+                        <Button size="md" className={`justify-start h-10 min-h-[40px] rounded-2xl font-bold text-[11px] px-3 ${selectedCategory === 'all' ? 'bg-emerald-500 text-white shadow-md' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory('all'); returnFocusToScanner(); }}>TODOS</Button>
                         {categories.map(cat => (
-                            <Button key={cat.id} size="sm" className={`justify-start h-8 min-h-[32px] rounded-2xl font-bold text-[9px] uppercase truncate px-2 ${selectedCategory === String(cat.id) ? 'bg-emerald-500 text-white' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory(String(cat.id)); returnFocusToScanner(); }}>{cat.name}</Button>
+                            <Button key={cat.id} size="md" className={`justify-start h-10 min-h-[40px] rounded-2xl font-bold text-[11px] uppercase truncate px-3 ${selectedCategory === String(cat.id) ? 'bg-emerald-500 text-white shadow-md' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory(String(cat.id)); returnFocusToScanner(); }}>{cat.name}</Button>
                         ))}
                     </aside>
 
                     <section className="flex-1 flex flex-col overflow-hidden min-h-0 bg-gray-50 dark:bg-zinc-950 rounded-2xl border border-gray-200 dark:border-white/5">
-                        <div className="p-1.5 border-b border-gray-200 dark:border-white/5 card-base shrink-0">
-                            <Input size="sm" placeholder="BUSCAR PRODUCTO..." value={searchQuery} onValueChange={setSearchQuery} ref={searchRef} startContent={<Search className="text-gray-400 h-3 w-3" />} classNames={{ inputWrapper: "bg-gray-100 dark:bg-zinc-950 border-transparent h-8 min-h-[32px] rounded-2xl", input: "text-[10px] font-bold uppercase text-zinc-900 dark:text-zinc-50" }} />
-                        </div>
                         <ProductGrid
                             products={filteredProductsGrid}
                             addToCart={(p) => { addToCart(p); }}
@@ -540,8 +598,23 @@ export default function NewSalePage() {
                 </div>
             </div>
 
-            {/* MODALES DINÃƒÂMICOS */}
-            <UniversalPaymentModal isOpen={isPaymentDialogOpen} onOpenChange={setIsPaymentDialogOpen} title="Cobrar Venta" client={selectedCustomer} totalToPay={total} showSuccessScreen={showSuccessScreen} submittingPayment={submitting} lastChange={lastChange} onPay={handleConfirmSale} onCloseComplete={returnFocusToScanner} />
+            {/* MODALES DINÃƒÂ MICOS */}
+            <UniversalPaymentModal 
+                isOpen={isPaymentDialogOpen}
+                onOpenChange={setIsPaymentDialogOpen}
+                title="Cobrar Venta" 
+                client={selectedCustomer} 
+                totalToPay={total} 
+                pendingReturnAmount={pendingReturn?.totalDev || 0}
+                showSuccessScreen={showSuccessScreen} 
+                submittingPayment={submitting} 
+                lastChange={lastChange} 
+                onPay={(method, receivedAmount) => {
+                    setIsPaymentDialogOpen(false);
+                    handleConfirmSale(method, receivedAmount, pendingReturn);
+                }} 
+                onCloseComplete={returnFocusToScanner} 
+            />
             <ClientSelectionModal isOpen={isClientDialogOpen} onOpenChange={(open) => { setIsClientDialogOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }} clientSearch={clientSearch} setClientSearch={setClientSearch} filteredCustomers={filteredCustomers} handleClientSelect={handleClientSelect} selectedClientDni={selectedCustomerDni} />
             <ManualWeightModal isOpen={isManualWeightOpen} onOpenChange={(open) => { setIsManualWeightOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }} manualWeightProduct={manualWeightProduct} manualWeightValue={manualWeightValue} setManualWeightValue={setManualWeightValue} confirmManualWeight={confirmManualWeight} />
             <ScannerOverlay isOpen={isScannerOpen} onClose={() => setIsScannerOpen(false)} onResult={(res) => { handleCodeSubmit(res); setIsScannerOpen(false); }} title="Escaner POS" />
@@ -595,15 +668,15 @@ export default function NewSalePage() {
                             <ModalHeader className="flex flex-col gap-1 text-rose-500 font-medium tracking-tight">
                                 <div className="flex items-center gap-2">
                                     <AlertTriangleIcon size={24} />
-                                    Ã‚Â¿ELIMINAR FACTURA?
+                                    ¿ELIMINAR FACTURA?
                                 </div>
                             </ModalHeader>
                             <ModalBody>
                                 <p className="text-white font-bold">
-                                    Esta factura contiene productos registrados. Si la elimina, se perderan los cambios y esto podrÃƒÂ­a afectar la trazabilidad de su inventario.
+                                    Esta factura contiene productos registrados. Si la elimina, se perderán los cambios y esto podría afectar la trazabilidad de su inventario.
                                 </p>
                                 <p className="text-zinc-500 dark:text-zinc-400 text-xs tracking-tight">
-                                    Ã‚Â¿Esta seguro de que desea proceder con la eliminacion total?
+                                    ¿Está seguro de que desea proceder con la eliminación total?
                                 </p>
                             </ModalBody>
                             <ModalFooter>
@@ -618,13 +691,19 @@ export default function NewSalePage() {
                                     }}
                                     className="font-medium tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20"
                                 >
-                                    SÃƒÂ, ELIMINAR FACTURA
+                                    SÍ, ELIMINAR FACTURA
                                 </Button>
                             </ModalFooter>
                         </>
                     )}
                 </ModalContent>
             </Modal>
+            <ProductSearchModal
+                isOpen={isProductSearchOpen}
+                onOpenChange={(open) => { setIsProductSearchOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }}
+                products={products}
+                onSelect={(p) => addToCart(p)}
+            />
         </div>
     );
 }

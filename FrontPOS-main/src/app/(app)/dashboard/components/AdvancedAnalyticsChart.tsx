@@ -59,12 +59,12 @@ export default function AdvancedAnalyticsChart({ data }: AdvancedAnalyticsChartP
             <CardBody className="p-4 md:p-6">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                     <div className="flex items-center gap-3">
-                        <div className="p-2.5 bg-white/5 rounded-2xl">
+                        <div className="p-2.5 bg-black/5 dark:bg-white/5 rounded-2xl">
                             <TrendingUp className="h-6 w-6 text-zinc-900 dark:text-zinc-100" />
                         </div>
                         <div>
                             <h3 className="text-lg font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter">Analisis Comparativo</h3>
-                            <p className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Ingresos vs Egresos Mensuales</p>
+                            <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest">Ingresos vs Egresos Mensuales</p>
                         </div>
                     </div>
                     
