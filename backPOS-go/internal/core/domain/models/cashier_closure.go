@@ -22,6 +22,8 @@ type CashierClosure struct {
 	TotalCreditIssued float64      `json:"totalCreditIssued"`
 	TotalCreditCollected float64   `json:"totalCreditCollected"`
 	OpeningCash     float64        `json:"openingCash"`
+	OpeningNequi    float64        `json:"openingNequi"`
+	OpeningDaviplata float64       `json:"openingDaviplata"`
 	TotalNequi      float64        `json:"totalNequi"`
 	TotalDaviplata  float64        `json:"totalDaviplata"`
 	TotalBancolombia float64       `json:"totalBancolombia"`

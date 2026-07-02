@@ -95,7 +95,7 @@ func (h *DashboardExportHandler) ExportReport(c *gin.Context) {
 			SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error obteniendo datos detallados", err)
 			return
 		}
-		
+		normalizeExpensesForReport(expenses)
 		pdfBuf, err := h.exportService.GenerateConsolidatedClosurePDF(closures, expenses, payments, from, to)
 		if err != nil {
 			SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error construyendo PDF", err)
@@ -103,6 +103,9 @@ func (h *DashboardExportHandler) ExportReport(c *gin.Context) {
 		}
 
 		if telegramFlag {
+			msgStr := h.formatAggregatedClosureReport(closures, expenses, payments, from, to)
+			go h.telegramService.SendMarkdownAlert(msgStr)
+
 			_ = h.telegramService.SendDocument(pdfBuf, filename, fmt.Sprintf("📊 Reporte Consolidado\n📅 %s - %s", from.Format("02/01/2006"), to.Format("02/01/2006")))
 		}
 
@@ -487,22 +490,14 @@ func (h *DashboardExportHandler) GetClosureFullDetail(c *gin.Context) {
 	}
 
 	// Cuadre real para este cierre especÃ­fico
-	transfer := closure.TotalNequiReal + closure.TotalDaviplataReal
-	balanceReal := closure.PhysicalCash + transfer - closure.TotalExpenses
+
 
 	c.JSON(http.StatusOK, gin.H{
 		"closure":         closure,
 		"sales":           sales,
 		"expenses":        expenses,
 		"paymentSummary":  paymentSummary,
-		"realCashFormula": gin.H{
-			"physicalCash":   closure.PhysicalCash,
-			"transferReal":   transfer,
-			"expenses":       closure.TotalExpenses,
-			"balanceReal":    balanceReal,
-			"differenceTeo":  closure.Difference,
-			"formula":        "physicalCash + transferReal - expenses",
-		},
+
 		"counts": gin.H{
 			"salesCount":    len(sales),
 			"expensesCount": len(expenses),
@@ -693,8 +688,12 @@ func realCashToPayload(r *services.RealCashReport, title string) services.Report
 		Headers: []string{"Fecha", "ID", "Cajero", "Efectivo Real", "Nequi", "Daviplata", "Egresos", "Balance Real"},
 	}
 	for _, row := range r.Rows {
+		dateDisplay := row.StartDate.Format("02/01/06 15:04") + " a " + row.EndDate.Format("02/01/06 15:04")
+		if row.StartDate.IsZero() || row.EndDate.IsZero() {
+			dateDisplay = row.Date.Format("02/01/2006")
+		}
 		p.Rows = append(p.Rows, []string{
-			row.Date.Format("02/01/2006 15:04"),
+			dateDisplay,
 			fmt.Sprintf("#%d", row.ClosureID),
 			row.ClosedByName,
 			fmtMoney(row.PhysicalCash),
@@ -724,9 +723,13 @@ func boxClosureToPayload(closures []models.CashierClosure, from, to time.Time) s
 	}
 	var totalSales, totalReal, totalExpenses float64
 	for _, c := range closures {
+		dateDisplay := c.StartDate.Format("02/01/06 15:04") + " a " + c.EndDate.Format("02/01/06 15:04")
+		if c.StartDate.IsZero() || c.EndDate.IsZero() {
+			dateDisplay = c.Date.Format("02/01/2006")
+		}
 		p.Rows = append(p.Rows, []string{
 			fmt.Sprintf("#%d", c.ID),
-			c.Date.Format("02/01/2006 15:04"),
+			dateDisplay,
 			c.ClosedByName,
 			fmtMoney(c.TotalSales),
 			fmtMoney(c.PhysicalCash),
@@ -988,4 +991,5 @@ func cashflowDetailedToPayload(r *services.CashFlowDetailedReport, from, to time
 
 	return p
 }
+
 

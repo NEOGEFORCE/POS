@@ -164,7 +164,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			continue
 		}
 
-		deficit = math.Max(sugeridoBase, sugeridoPorVentas)
+		deficit = math.Max(0.0, sugeridoBase)
 		
 		alert := ""
 		alertType := ""
@@ -208,7 +208,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			alert = fmt.Sprintf("Aumentado a %.0f: Alta rotación", totalIdeal)
 		}
 		
-		isHighRotation := (sugeridoPorVentas > sugeridoBase && totalIdeal > 0) || alertType == "HIGH_MOVER"
+		isHighRotation := sugeridoPorVentas > sugeridoBase || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
 
 		requiredMin := math.Max(0, sugeridoBase)
 		projectedSales := math.Max(0, sugeridoPorVentas)
@@ -412,7 +412,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		if effectiveStock >= p.MinStock && pendingQty <= 0 {
 			continue
 		} else {
-			deficit = math.Max(sugeridoBase, sugeridoPorVentas)
+			deficit = math.Max(0.0, sugeridoBase)
 		}
 		
 		alert := ""
@@ -455,7 +455,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 			alert = fmt.Sprintf("Aumentado a %.0f: Alta rotación", totalIdeal)
 		}
 		
-		isHighRotation := (sugeridoPorVentas > sugeridoBase && totalIdeal > 0) || alertType == "HIGH_MOVER"
+		isHighRotation := sugeridoPorVentas > sugeridoBase || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
 
 		requiredMin := math.Max(0, sugeridoBase)
 		projectedSales := math.Max(0, sugeridoPorVentas)

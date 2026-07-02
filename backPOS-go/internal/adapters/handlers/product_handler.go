@@ -249,7 +249,7 @@ func (h *ProductHandler) GetInventory(c *gin.Context) {
 }
 
 func (h *ProductHandler) Update(c *gin.Context) {
-	barcode := c.Param("barcode")
+	barcode := strings.TrimSpace(c.Param("barcode"))
 	var product models.Product
 	if err := c.ShouldBindJSON(&product); err != nil {
 		fmt.Printf("[ERROR] ShouldBindJSON failed: %v\n", err)
@@ -259,6 +259,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	}
 
 	// SanitizaciÃ³n
+	product.Barcode = strings.ToUpper(strings.TrimSpace(product.Barcode))
 	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
 	
 	if product.SupplierID != nil && *product.SupplierID == 0 {
@@ -288,9 +289,9 @@ func (h *ProductHandler) Update(c *gin.Context) {
 			SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
 			return
 		}
-		// TEMPORAL: Devolver error REAL al frontend para diagnÃ³stico
+		// TEMPORAL: Devolver error REAL al frontend para diagnóstico
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "UPDATE_FAILED",
+			"error":   "Fallo al actualizar: " + err.Error(),
 			"message": err.Error(),
 			"detail":  fmt.Sprintf("Barcode: %s | Error: %v", barcode, err),
 		})
@@ -422,6 +423,8 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 func (h *ProductHandler) BulkReceive(c *gin.Context) {
 	var body struct {
 		OrderID         *uint                `json:"orderId"`
+		OrderIDs        []interface{}        `json:"orderIds"`
+		OrderRefs       []ports.OrderRef     `json:"orderRefs"`
 		Entries         []ports.ReceiveEntry `json:"entries" binding:"required"`
 		BypassExpense   bool                 `json:"bypassExpense"`
 		PaymentSource   string               `json:"paymentSource"`
@@ -468,8 +471,8 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 		isEgreso = *body.IsEgreso
 	}
 
-	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.BypassExpense, body.PaymentSource, dniStr, body.SupplierID, body.FreightCost, body.TotalWeight, isEgreso, body.EditReceptionID); err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepciÃ³n masiva", err)
+	if err := h.service.BulkReceiveStock(body.Entries, body.OrderID, body.OrderIDs, body.OrderRefs, body.BypassExpense, body.PaymentSource, dniStr, body.SupplierID, body.FreightCost, body.TotalWeight, isEgreso, body.EditReceptionID); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al procesar recepcion masiva", err)
 		return
 	}
 

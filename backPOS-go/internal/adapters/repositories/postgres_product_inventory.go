@@ -2,6 +2,7 @@ package repositories
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -100,6 +101,23 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 		return err
 	}
 
+	// Sincronizar automáticamente los packs que dependan de los productos base ajustados
+	packUpdateQuery := `
+		UPDATE products p
+		SET quantity = FLOOR(b.quantity / p."packMultiplier")
+		FROM products b
+		WHERE p."isPack" = true 
+		  AND p."baseProductBarcode" = b.barcode 
+		  AND p."packMultiplier" > 0 
+		  AND b.barcode IN ?
+	`
+	if err := gormDB.Exec(packUpdateQuery, barcodes).Error; err != nil {
+		if !ok {
+			gormDB.Rollback()
+		}
+		return err
+	}
+
 	if !ok {
 		err := gormDB.Commit().Error
 		if err == nil {
@@ -128,7 +146,7 @@ func (r *PostgresProductRepository) SyncSuppliers(barcode string, supplierIDs []
 
 // BulkReceive procesa una recepción masiva de mercancía, gestionando costos, impuestos y productos tipo pack.
 // Si bypassExpense es false, registra automáticamente un egreso contable.
-func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error) {
+func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, orderID *uint, orderIDs []interface{}, orderRefs []ports.OrderRef, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error) {
 	var changedProducts []string
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// Opción A: si estamos en modo edición, eliminar/dar de baja la recepción anterior y revertir stock antes de procesar el consolidado
@@ -160,6 +178,9 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			if err := tx.Where("dni = ?", employeeDNI).First(&emp).Error; err == nil {
 				employeeName = emp.Name
 			}
+			if employeeName == "" {
+				employeeName = employeeDNI
+			}
 		}
 
 		// Lookup del nombre del proveedor global para el historial
@@ -175,7 +196,30 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 		for _, entry := range entries {
 			var product models.Product
 			if err := tx.Where("barcode = ?", entry.Barcode).First(&product).Error; err != nil {
-				return err
+				if errors.Is(err, gorm.ErrRecordNotFound) && strings.HasPrefix(entry.Barcode, "FREE-ITEM-") {
+					// Crear el "Item Libre" sobre la marcha para que pueda ser recibido e inventariado
+					var defaultCat models.Category
+					tx.Order("id asc").First(&defaultCat)
+					
+					product = models.Product{
+						Barcode:       entry.Barcode,
+						ProductName:   "Item Libre",
+						Quantity:      0,
+						PurchasePrice: entry.NewPurchasePrice,
+						SalePrice:     entry.NewSalePrice,
+						Iva:           entry.IvaPct,
+						Icui:          entry.IcuiPct,
+						Ibua:          entry.IbuaPct,
+						CategoryID:    defaultCat.ID,
+						IsActive:      true,
+					}
+					// Si fallara por defaultCat.ID = 0, se asume que CategoryID = 0 es válido o la BD no tiene constraint duro.
+					if errCreate := tx.Create(&product).Error; errCreate != nil {
+						return fmt.Errorf("fallo al crear item libre %s: %v", entry.Barcode, errCreate)
+					}
+				} else {
+					return err
+				}
 			}
 
 			oldSalePrice := product.SalePrice
@@ -326,12 +370,24 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				currentStock = 0
 			}
 
+			// Mantenemos el costo total para ProductSupplier si se necesita
 			totalEntryCost := entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount
 			
-			if totalEntryCost > 0 {
-				// MODO PLAZA/DIRECTO: Si se especifica un costo nuevo, este manda sobre el promedio
-				// para productos de alta volatilidad de precio.
-				product.PurchasePrice = totalEntryCost
+			oldPurchasePrice := product.PurchasePrice
+
+			if entry.NewPurchasePrice > 0 {
+				// WAC (Promedio Ponderado) para suavizar cambios bruscos ("precio moderado")
+				if currentStock > 0 && entry.AddedQuantity > 0 {
+					totalOldValue := currentStock * oldPurchasePrice
+					totalNewValue := entry.AddedQuantity * entry.NewPurchasePrice
+					newWAC := (totalOldValue + totalNewValue) / (currentStock + entry.AddedQuantity)
+					
+					// Redondear a 2 decimales
+					product.PurchasePrice = math.Round(newWAC*100) / 100
+				} else {
+					// Si no había stock, el costo asume el nuevo completo
+					product.PurchasePrice = entry.NewPurchasePrice
+				}
 
 				product.Iva = entry.IvaPct
 				product.Icui = entry.IcuiPct
@@ -352,23 +408,36 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 			}
 
-			// 3. Actualización de Precios de Venta (PROTEGIDA)
-			// 3. Actualización de Precios de Venta (CON REDONDEO POS)
-			if entry.NewSalePrice > 0 {
-				// Aplicar la misma lógica de redondeo que en el update individual
-				base := float64(int64(entry.NewSalePrice) / 100 * 100)
-				remainder := float64(int64(entry.NewSalePrice) % 100)
-				if remainder >= 25 {
-					product.SalePrice = base + 100
-				} else {
-					product.SalePrice = base
+			// 3. Actualización de Precios de Venta (CON REDONDEO POS Y AUTO-MARGEN)
+			if product.PurchasePrice > 0 {
+				var targetMargin float64
+				if oldSalePrice > 0 && oldPurchasePrice > 0 {
+					targetMargin = (oldSalePrice / oldPurchasePrice) - 1
 				}
 
-				if product.PurchasePrice > 0 {
-					product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
+				// Si el margen anterior era válido y se trata de un ingreso de mercancía,
+				// automatizamos el precio de venta para mantener la misma ganancia y evitar saltos
+				if targetMargin > 0 && entry.AddedQuantity > 0 {
+					suggestedSalePrice := product.PurchasePrice * (1 + targetMargin)
+					
+					base := float64(int64(suggestedSalePrice) / 100 * 100)
+					remainder := float64(int64(suggestedSalePrice) % 100)
+					if remainder >= 25 {
+						product.SalePrice = base + 100
+					} else {
+						product.SalePrice = base
+					}
+				} else if entry.NewSalePrice > 0 {
+					// Fallback: usar el digitado
+					base := float64(int64(entry.NewSalePrice) / 100 * 100)
+					remainder := float64(int64(entry.NewSalePrice) % 100)
+					if remainder >= 25 {
+						product.SalePrice = base + 100
+					} else {
+						product.SalePrice = base
+					}
 				}
-			} else if product.PurchasePrice > 0 {
-				// No actualizamos el precio de venta, solo recalculamos el margen informativo
+
 				product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 			}
 
@@ -640,12 +709,41 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 		}
 
 		// 5. Cierre de Órdenes Relacionadas
-		if orderID != nil && *orderID > 0 {
-			tx.Model(&models.PurchaseOrder{}).Where("id = ?", *orderID).Update("status", models.PurchaseOrderReceived)
-			tx.Model(&models.ExpectedOrder{}).Where("id = ?", *orderID).Update("status", "RECEIVED")
-		}
-		if mainSupplierID != nil && *mainSupplierID > 0 {
-			tx.Model(&models.ConfirmedOrder{}).Where("supplier_id = ? AND status != 'received' AND status != 'dismissed'", *mainSupplierID).Update("status", "received")
+		if len(orderRefs) > 0 {
+			for _, ref := range orderRefs {
+				switch ref.Source {
+				case "purchase_order":
+					tx.Model(&models.PurchaseOrder{}).Where("id = ?", ref.ID).Update("status", models.PurchaseOrderReceived)
+				case "expected":
+					tx.Model(&models.ExpectedOrder{}).Where("id = ?", ref.ID).Update("status", "RECEIVED")
+				case "confirmed":
+					tx.Model(&models.ConfirmedOrder{}).Where("id = ?", ref.ID).Update("status", "received")
+				}
+			}
+		} else {
+			// Fallback para clientes antiguos
+			var idsToClose []uint
+			if orderID != nil && *orderID > 0 {
+				idsToClose = append(idsToClose, *orderID)
+			}
+			for _, rawID := range orderIDs {
+				switch v := rawID.(type) {
+				case float64:
+					if uint(v) > 0 {
+						idsToClose = append(idsToClose, uint(v))
+					}
+				case int:
+					if uint(v) > 0 {
+						idsToClose = append(idsToClose, uint(v))
+					}
+				}
+			}
+
+			for _, id := range idsToClose {
+				// Cuidado: ConfirmedOrder no usa uint, evitar error de BD ignorando ConfirmedOrder aquí si es int
+				tx.Model(&models.PurchaseOrder{}).Where("id = ?", id).Update("status", models.PurchaseOrderReceived)
+				tx.Model(&models.ExpectedOrder{}).Where("id = ?", id).Update("status", "RECEIVED")
+			}
 		}
 
 		return nil

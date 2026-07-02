@@ -56,6 +56,7 @@ type SaleRepository interface {
 	GetSoldQuantityByProduct(barcode string, from, to time.Time) (float64, error)
 	GetSoldQuantitiesByBarcodes(barcodes []string, from, to time.Time) (map[string]float64, error)
 	GetTopSellingProducts(from, to time.Time, limit int) ([]ProductRankingItem, error)
+	GetMajorityDayForRange(from, to time.Time) (string, error)
 	GetDailySalesByRange(from, to time.Time) (map[string]float64, error)
 	GetSalesByPaymentMethod(from, to time.Time) (map[string]float64, error)
 	GetMonthlyStatsFromMV(monthYear string) (*MVMonthlyStats, error)

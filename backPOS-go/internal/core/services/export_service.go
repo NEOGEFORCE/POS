@@ -344,6 +344,8 @@ func (s *ExportService) GetRotationReport(from, to time.Time) (*RotationReport, 
 
 type RealCashCutRow struct {
 	Date           time.Time
+	StartDate      time.Time
+	EndDate        time.Time
 	ClosureID      uint
 	ClosedByName   string
 	PhysicalCash   float64 // Efectivo real
@@ -384,6 +386,8 @@ func (s *ExportService) GetRealCashReportByRange(from, to time.Time) (*RealCashR
 
 		rep.Rows = append(rep.Rows, RealCashCutRow{
 			Date:           c.Date,
+			StartDate:      c.StartDate,
+			EndDate:        c.EndDate,
 			ClosureID:      c.ID,
 			ClosedByName:   c.ClosedByName,
 			PhysicalCash:   c.PhysicalCash,

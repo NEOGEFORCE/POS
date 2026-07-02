@@ -169,7 +169,7 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 				return errors.New("insuficiente stock base para cambio: " + product.ProductName)
 			}
 
-			stockAdjustments[targetBarcode] -= baseAdjustQty
+			stockAdjustments[targetBarcode] += baseAdjustQty
 			
 			// Log en el base
 			baseMovement := &models.StockMovement{
@@ -188,7 +188,7 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 			if detail.IsExchange && product.Quantity < detail.Quantity && !product.IsWeighted {
 				return errors.New("insuficiente stock para cambio: " + product.ProductName)
 			}
-			stockAdjustments[detail.Barcode] -= adjustQty
+			stockAdjustments[detail.Barcode] += adjustQty
 		}
 
 		// Log the movement for Kárdex (del producto original)
@@ -219,6 +219,10 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 
 func (s *ReturnService) ListReturns() ([]models.Return, error) {
 	return s.returnRepo.GetAll()
+}
+
+func (s *ReturnService) DeleteReturn(id uint, adminDNI string, adminName string) error {
+	return s.returnRepo.DeleteWithTransaction(id, adminDNI, adminName)
 }
 
 func (s *ReturnService) GetSaleForReturn(refStr string) (*models.Sale, error) {

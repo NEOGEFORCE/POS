@@ -121,12 +121,14 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		}
 	}
 
-	// 2. Actualizar campos bÃ¡sicos
-	existing.Barcode = updatedProduct.Barcode // Permitir cambio de cÃ³digo principal
+	// 2. Actualizar campos básicos
+	if updatedProduct.Barcode != "" {
+		existing.Barcode = updatedProduct.Barcode // Permitir cambio de código principal
+	}
 	existing.ProductName = updatedProduct.ProductName
 	existing.IsWeighted = updatedProduct.IsWeighted
 	existing.CategoryID = updatedProduct.CategoryID
-	existing.AlternateCodes = updatedProduct.AlternateCodes // Nuevos cÃ³digos alternos
+	existing.AlternateCodes = updatedProduct.AlternateCodes // Nuevos códigos alternos
 	// Limpiar asociaciones para que GORM no sobreescriba foreign keys con objetos preloaded
 	existing.Category = models.Category{}
 	existing.Supplier = models.Supplier{}
@@ -155,14 +157,14 @@ func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Pr
 		existing.CategoryID = 0
 	}
 
-	// LÃ³gica de Empaques (SincronizaciÃ³n con Producto Base)
+	// Lógica de Empaques (Sincronización con Producto Base)
 	existing.IsPack = updatedProduct.IsPack
 	existing.PackMultiplier = updatedProduct.PackMultiplier
 	if updatedProduct.BaseProductBarcode != nil && *updatedProduct.BaseProductBarcode != "" {
 		existing.BaseProductBarcode = updatedProduct.BaseProductBarcode
 
 		// BLINDAJE MODO PACK: Solo actualizar el base si hay un cambio real en la cantidad del pack
-		// solicitado por el usuario, evitando sobreescrituras accidentales por re-cÃ¡lculos.
+		// solicitado por el usuario, evitando sobreescrituras accidentales por re-cálculos.
 		if existing.PackMultiplier > 0 {
 			baseProduct, err := s.repo.GetByBarcode(*existing.BaseProductBarcode)
 			if err == nil {
@@ -451,8 +453,8 @@ func (s *ProductService) FixAllProductPrices() error {
 	return nil
 }
 
-func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) error {
-	_, err := s.repo.BulkReceive(entries, orderID, bypassExpense, paymentSource, employeeDNI, supplierID, freightCost, totalWeight, isEgreso, editReceptionID)
+func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID *uint, orderIDs []interface{}, orderRefs []ports.OrderRef, bypassExpense bool, paymentSource string, employeeDNI string, mainSupplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) error {
+	_, err := s.repo.BulkReceive(entries, orderID, orderIDs, orderRefs, bypassExpense, paymentSource, employeeDNI, mainSupplierID, freightCost, totalWeight, isEgreso, editReceptionID)
 	if err == nil {
 		// AutomatizaciÃ³n: Intentar identificar el proveedor principal para marcar preventa como recibida
 		var mainSupplierID uint
@@ -595,6 +597,7 @@ func (s *ProductService) ScanInvoice(imageBase64, mimeType, supplierName string,
 			InvoiceName: extracted.Name,
 			Quantity:    extracted.Quantity,
 			UnitPrice:   extracted.UnitPrice,
+			Suggestions: s.repo.SearchSimilarProducts(extracted.Name, 5),
 		})
 	}
 
@@ -708,8 +711,8 @@ func (s *ProductService) callClaudeVision(imageBase64, mimeType, supplierName st
 
 	// Construir payload multimodal exacto para Claude
 	reqBody := map[string]interface{}{
-		"model":      "claude-3-haiku-20240307",
-		"max_tokens": 2000,
+		"model":      "claude-opus-4-8",
+		"max_tokens": 4000,
 		"messages": []map[string]interface{}{
 			{
 				"role": "user",

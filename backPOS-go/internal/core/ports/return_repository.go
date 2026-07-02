@@ -13,6 +13,7 @@ type ReturnRepository interface {
 	GetByDateRange(from, to time.Time) ([]models.Return, error)
 	GetTotalReturnedByRange(from, to time.Time) (float64, error)
 	ProcessAdvancedReturnTransaction(req ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) (*models.Return, error)
+	DeleteWithTransaction(id uint, adminDNI string, adminName string) error
 }
 
 type ProcessReturnReq struct {

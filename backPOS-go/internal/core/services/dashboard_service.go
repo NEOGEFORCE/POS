@@ -606,7 +606,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			totalProductsSold = 0
 		}
 
-		estimatedNetProfit := (totalSalesAmount - totalCOGS) - monthlyExpenses
+		estimatedNetProfit := totalSalesAmount - totalCOGS - monthlyExpenses
 		todayExpensesByMethod := make(map[string]float64)
 		for _, e := range todayExpensesRaw {
 			status := strings.ToUpper(e.Status)
@@ -922,7 +922,11 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 }
 
 func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}) error {
-	return s.closureRepo.Update(id, updates)
+	err := s.closureRepo.Update(id, updates)
+	if err == nil {
+		cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+	}
+	return err
 }
 
 func (s *DashboardService) getSavingsOpportunitiesCached() ([]ports.SavingsOpportunity, error) {
@@ -997,57 +1001,36 @@ func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []
 }
 
 func (s *DashboardService) AdjustInitialBalance(cash, nequi, daviplata float64, employeeName string, employeeDNI string) error {
-	// 1. Obtener totales actuales por mÃ©todo
-	globalSalesByMethod, _ := s.saleRepo.GetGlobalSalesByMethod()
-	globalCollectedByMethod, _ := s.saleRepo.GetGlobalCollectedDebtsByMethod()
-	globalPaidByMethod, _ := s.expenseRepo.GetGlobalPaidExpensesByMethod()
-	globalReportedByMethod, _ := s.closureRepo.GetGlobalReportedBalanceByMethod()
-
-	adjustMethod := func(method string, target float64) {
-		currentSystem := globalSalesByMethod[method] + globalCollectedByMethod[method] - globalPaidByMethod[method]
-		if currentSystem < 0 { currentSystem = 0 }
-		
-		saleAdjustment := target - currentSystem
-		if saleAdjustment != 0 {
-			adjSale := &models.Sale{
-				TotalAmount:   saleAdjustment,
-				CashAmount:    0,
-				PaymentMethod: method,
-				SaleDate:      time.Now(),
-				EmployeeDNI:   "SYSTEM",
-				ClientDNI:     "S.N.", // Marcar como ajuste de sistema
-			}
-			if method == "EFECTIVO" { adjSale.CashAmount = saleAdjustment }
-			_ = s.saleRepo.Create(adjSale)
+	// Round down to avoid "monedas" (if they input decimals or exact coins, we assume they only care about bills/thousands)
+	// Actually, just save the exact float they pass, the UI can handle rounding, but we will ensure it's clean.
+	
+	activeShift, err := s.shiftRepo.GetActive()
+	if err != nil || activeShift == nil {
+		activeShift = &models.ActiveShift{
+			StartTime:        time.Now(),
+			OpeningCash:      cash,
+			OpeningNequi:     nequi,
+			OpeningDaviplata: daviplata,
+			CashierDNI:       employeeDNI,
+			CashierName:      employeeName,
+			Status:           "OPEN",
 		}
-
-		currentReported := globalReportedByMethod[method]
-		closureAdjustment := target - currentReported
-		if closureAdjustment != 0 {
-			adjClosure := &models.CashierClosure{
-				Date:          time.Now(),
-				StartDate:     time.Now(),
-				EndDate:       time.Now(),
-				ClosedByDNI:   employeeDNI,
-				ClosedByName:  employeeName,
-				AuthorizedBy:  "SYSTEM_RESET",
-				ExpensesDetail: fmt.Sprintf("AJUSTE MANUAL %s", method),
-			}
-			if method == "EFECTIVO" { adjClosure.TotalCashReal = closureAdjustment }
-			if method == "NEQUI" { adjClosure.TotalNequiReal = closureAdjustment }
-			if method == "DAVIPLATA" { adjClosure.TotalDaviplataReal = closureAdjustment }
-			_ = s.closureRepo.Save(adjClosure)
-		}
+	} else {
+		activeShift.OpeningCash = cash
+		activeShift.OpeningNequi = nequi
+		activeShift.OpeningDaviplata = daviplata
 	}
 
-	adjustMethod("EFECTIVO", cash)
-	adjustMethod("NEQUI", nequi)
-	adjustMethod("DAVIPLATA", daviplata)
+	err = s.shiftRepo.Save(activeShift)
+	if err != nil {
+		log.Printf("❌ [AdjustInitialBalance] Error guardando turno activo: %v", err)
+		return err
+	}
 
-	// Invalidar cachÃ©
+	// Invalidar caché
 	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
 
-	log.Printf("ðŸ“Š [AdjustInitialBalance] Reseteo multi-mÃ©todo completado. Cash: %f, Nequi: %f, Davi: %f", cash, nequi, daviplata)
+	log.Printf("📊 [AdjustInitialBalance] Fondo inicial ajustado en Turno Activo. Cash: %f, Nequi: %f, Davi: %f", cash, nequi, daviplata)
 	return nil
 }
 
@@ -1071,6 +1054,8 @@ type CashierClosure struct {
 	TotalCreditCollected float64                `json:"totalCreditCollected"`
 	TotalMixed           float64                `json:"totalMixed"` // NUEVO: Ventas con mÃºltiples medios
 	OpeningCash          float64                `json:"openingCash"`
+	OpeningNequi         float64                `json:"openingNequi"`
+	OpeningDaviplata     float64                `json:"openingDaviplata"`
 	NetBalance           float64                `json:"netBalance"`
 	ExpectedCash         float64                `json:"expectedCash"` // NUEVO: Saldo esperado en caja
 	CashBills            float64                `json:"cashBills"`
@@ -1100,28 +1085,26 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	var startDate time.Time
 	var lastClosure *models.CashierClosure
 
-	// 1. SIEMPRE buscar el Ãºltimo cierre como base de tiempo
 	lastClosure, _ = s.closureRepo.GetLast()
-	
-	if lastClosure != nil {
-		// La continuidad es sagrada: empezamos donde terminÃ³ el anterior
-		startDate = lastClosure.EndDate
-	} else if activeShift != nil {
-		// Si no hay cierres pero hay un turno abierto
-		startDate = activeShift.StartTime
-	} else {
-		// Fallback: 24 horas atrÃ¡s
-		startDate = nowLocal.Add(-24 * time.Hour)
-	}
-
-	// 2. Determinar el Saldo Inicial
 	openingCash := 0.0
+	openingNequi := 0.0
+	openingDaviplata := 0.0
+	
 	if activeShift != nil {
-		// Si el cajero abriÃ³ turno manualmente, respetamos el fondo que declarÃ³
+		// Si hay un turno abierto manualmente, la fecha de inicio y el saldo son los de ese turno
+		startDate = activeShift.StartTime
 		openingCash = activeShift.OpeningCash
+		openingNequi = activeShift.OpeningNequi
+		openingDaviplata = activeShift.OpeningDaviplata
 	} else if lastClosure != nil {
-		// Si no hay turno abierto, asumimos que el fondo es lo que quedÃ³ en el Ãºltimo cierre
+		// Si no hay turno abierto pero hay un cierre anterior, continuamos desde ahí
+		startDate = lastClosure.EndDate
 		openingCash = lastClosure.TotalCashReal
+		openingNequi = lastClosure.TotalNequiReal
+		openingDaviplata = lastClosure.TotalDaviplataReal
+	} else {
+		// Fallback: 24 horas atrás
+		startDate = nowLocal.Add(-24 * time.Hour)
 	}
 
 	// 3. Preparar rangos para la base de datos (Usamos objetos time.Time directamente)
@@ -1166,6 +1149,8 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	closure.StartDate = startDate
 	closure.EndDate = time.Now()
 	closure.OpeningCash = openingCash
+	closure.OpeningNequi = openingNequi
+	closure.OpeningDaviplata = openingDaviplata
 	closure.CreditsIssued = []models.Sale{}
 
 	// Agrupar fiados por cliente para el resumen
@@ -1181,7 +1166,7 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 			cleanCredit := sale.CreditAmount
 			if cleanCredit < 0 { cleanCredit = 0 }
 
-			closure.TotalSales += (netCashInSale + cleanTransfer + cleanCredit)
+			// TotalSales se calculará al final según las reglas del usuario
 			closure.TotalCash += netCashInSale
 			closure.TotalTransfer += cleanTransfer
 			closure.TotalCreditIssued += cleanCredit
@@ -1266,7 +1251,11 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 		closure.Expenses = append(closure.Expenses, expense)
 	}
 
-	closure.NetBalance = (closure.TotalSales - closure.TotalCreditIssued) + closure.TotalCreditCollected - closure.TotalReturns - closure.TotalExpenses
+	// Regla del usuario: Ventas Totales = Efectivo (Caja) + Transferencias (Los abonos ya están sumados en TotalCash y TotalTransfer)
+	closure.TotalSales = closure.TotalCash + closure.TotalTransfer
+
+	closure.NetBalance = closure.TotalSales - closure.TotalReturns - closure.TotalExpenses
+
 	
   	var cashExpenses float64
   	for _, e := range expenses {
@@ -1336,6 +1325,9 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 		return err
 	}
 
+	// INVALIDAR CACHÉ DEL DASHBOARD PARA ACTUALIZAR BOVEDA INMEDIATAMENTE
+	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+
 	// 2. Close the active shift
 	_ = s.shiftRepo.CloseActive()
 
@@ -1365,36 +1357,50 @@ func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error)
 			egresosEfectivoTurno := 0.0
 			for j := range expenses {
 				e := &expenses[j]
-				if e.CashAmount == 0 && e.NequiAmount == 0 && e.DaviplataAmount == 0 && e.FondoAmount == 0 && e.Status != "PENDING" {
-					src := strings.ToUpper(e.PaymentSource)
-					if strings.Contains(src, "/") && strings.Contains(src, "$") {
-						parts := strings.Split(src, "/")
-						for _, p := range parts {
-							p = strings.TrimSpace(p)
-							if strings.Contains(p, ": $") {
-								kv := strings.Split(p, ": $")
-								if len(kv) == 2 {
-									method := strings.TrimSpace(kv[0])
-									valStr := strings.ReplaceAll(kv[1], ".", "")
-									val, _ := strconv.ParseFloat(valStr, 64)
-									if method == "CAJA" || method == "EFECTIVO" {
-										e.CashAmount += val
-									}
-								}
-							}
-						}
-					} else {
-						if src == "" || src == "CAJA" || src == "EFECTIVO" {
-							e.CashAmount = e.Amount
+				if e.Status == "PENDING" {
+					continue
+				}
+				
+				src := strings.ToUpper(e.PaymentSource)
+				if !strings.Contains(src, ": $") && !strings.Contains(src, " / ") {
+					totalExp := e.Amount + e.TaxAmount
+					e.CashAmount = 0
+					e.NequiAmount = 0
+					e.DaviplataAmount = 0
+					e.FondoAmount = 0
+					
+					if src == "" || src == "CAJA" || src == "EFECTIVO" {
+						e.CashAmount = totalExp
+					} else if src == "NEQUI" {
+						e.NequiAmount = totalExp
+					} else if src == "DAVIPLATA" {
+						e.DaviplataAmount = totalExp
+					} else if src == "FONDO" {
+						e.FondoAmount = totalExp
+					} else if src != "PREST." && src != "DEUDA" && src != "PRESTAMO" {
+						e.CashAmount = totalExp
+					}
+				} else {
+					sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+					if sum > 0 && e.TaxAmount > 0 && sum == e.Amount {
+						if e.NequiAmount > 0 {
+							e.NequiAmount += e.TaxAmount
+						} else if e.DaviplataAmount > 0 {
+							e.DaviplataAmount += e.TaxAmount
+						} else if e.FondoAmount > 0 {
+							e.FondoAmount += e.TaxAmount
+						} else {
+							e.CashAmount += e.TaxAmount
 						}
 					}
 				}
+				
 				egresosEfectivoTurno += e.CashAmount
 			}
 
-			ingresosDigitales := c.TotalNequi + c.TotalDaviplata + c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
-			ventaReal := c.PhysicalCash + ingresosDigitales + egresosEfectivoTurno
-			c.TotalSales = ventaReal
+			// ingresosDigitales := c.TotalNequi + c.TotalDaviplata + c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
+			// ventaReal := c.PhysicalCash + ingresosDigitales + egresosEfectivoTurno
+			// c.TotalSales = ventaReal
 		}
 	}
 
@@ -1895,68 +1901,31 @@ func (s *DashboardService) GetCashFlowReport(from, to time.Time) (*CashFlowRepor
 		endDate = to.Add(24*time.Hour - time.Second)
 	}
 
-	g, _ := errgroup.WithContext(context.Background())
-
-	var sales []models.Sale
-	var expenses []models.Expense
-	var payments []models.CreditPayment
-
-	g.Go(func() error {
-		var err error
-		sales, err = s.saleRepo.GetByDateRange(from, endDate)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		expenses, err = s.expenseRepo.GetByDateRange(from, endDate)
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		payments, err = s.creditRepo.GetByDateRange(from, endDate)
-		return err
-	})
-
-	if err := g.Wait(); err != nil {
+	closures, err := s.closureRepo.GetByDateRange(from, endDate)
+	if err != nil {
 		return nil, err
 	}
 
 	dailyMap := make(map[string]*CashFlowDailyDetail)
-
-	getOrCreateDay := func(date string) *CashFlowDailyDetail {
-		if d, exists := dailyMap[date]; exists {
-			return d
-		}
-		d := &CashFlowDailyDetail{Date: date}
-		dailyMap[date] = d
-		return d
-	}
-
 	var totalIncome, totalExpense float64
 
-	for _, sale := range sales {
-		status := strings.ToUpper(sale.Status)
-		if status == "PAID" {
-			dayStr := sale.SaleDate.Format("2006-01-02")
-			d := getOrCreateDay(dayStr)
-			d.Income += sale.TotalAmount
-			totalIncome += sale.TotalAmount
+	for _, c := range closures {
+		dayStr := c.Date.Format("2006-01-02")
+		income := c.TotalCash + c.TotalTransfer
+		expense := c.TotalExpenses
+
+		if d, exists := dailyMap[dayStr]; exists {
+			d.Income += income
+			d.Expense += expense
+		} else {
+			dailyMap[dayStr] = &CashFlowDailyDetail{
+				Date:    dayStr,
+				Income:  income,
+				Expense: expense,
+			}
 		}
-	}
-
-	for _, p := range payments {
-		dayStr := p.PaymentDate.Format("2006-01-02")
-		d := getOrCreateDay(dayStr)
-		d.Income += p.TotalPaid
-		totalIncome += p.TotalPaid
-	}
-
-	for _, e := range expenses {
-		dayStr := e.Date.Format("2006-01-02")
-		d := getOrCreateDay(dayStr)
-		amount := e.Amount + e.TaxAmount
-		d.Expense += amount
-		totalExpense += amount
+		totalIncome += income
+		totalExpense += expense
 	}
 
 	var dailyList []CashFlowDailyDetail
@@ -1965,7 +1934,6 @@ func (s *DashboardService) GetCashFlowReport(from, to time.Time) (*CashFlowRepor
 		dailyList = append(dailyList, *d)
 	}
 
-	// Sort dailyList by date ascending
 	sort.Slice(dailyList, func(i, j int) bool {
 		return dailyList[i].Date < dailyList[j].Date
 	})
@@ -2042,7 +2010,7 @@ func (s *DashboardService) GetCashFlowDetailedRaw(from, to time.Time) ([]models.
 }
 
 func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashFlowDetailedReport, error) {
-	closures, expenses, payments, err := s.GetCashFlowDetailedRaw(from, to)
+	closures, _, _, err := s.GetCashFlowDetailedRaw(from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -2061,85 +2029,24 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 
 	// Turnos (Ingresos principales)
 	for _, c := range closures {
-		dayStr := c.StartDate.Format("2006-01-02")
+		dayStr := c.Date.Format("2006-01-02")
 		d := getOrCreateDay(dayStr)
 
-		// Calcular Egresos en Efectivo del turno
-		egresosTurno := 0.0
-		for _, e := range expenses {
-			if !e.Date.Before(c.StartDate) && (c.EndDate.IsZero() || !e.Date.After(c.EndDate)) {
-				src := strings.ToUpper(e.PaymentSource)
-				if src == "" || src == "EFECTIVO" || src == "CAJA" {
-					egresosTurno += e.Amount
-				}
-			}
-		}
-
-		efectivoReal := c.PhysicalCash + egresosTurno
-		otrosIngresos := c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
-
+		income := c.TotalCash + c.TotalTransfer
 		d.Events = append(d.Events, CashFlowDetailedEvent{
 			Type:        "INGRESO",
-			Concept:     fmt.Sprintf("Ventas Turno (%s)", c.ClosedByName),
-			IncomeCash:  efectivoReal,
-			IncomeNequi: c.TotalNequi,
-			IncomeDavi:  c.TotalDaviplata,
-			IncomeOther: otrosIngresos,
+			Concept:     fmt.Sprintf("Cierre de Turno (ID: %d)", c.ID),
+			IncomeCash:  c.TotalCash,
+			IncomeOther: c.TotalTransfer,
+			ExpenseTotal: c.TotalExpenses,
 		})
 
-		d.TotalIncome += (efectivoReal + c.TotalNequi + c.TotalDaviplata + otrosIngresos)
-		overallIncome += (efectivoReal + c.TotalNequi + c.TotalDaviplata + otrosIngresos)
+		d.TotalIncome += income
+		d.TotalExpense += c.TotalExpenses
+		overallIncome += income
+		overallExpense += c.TotalExpenses
 	}
 
-	// Abonos (Otros Ingresos)
-	for _, p := range payments {
-		dayStr := p.PaymentDate.Format("2006-01-02")
-		d := getOrCreateDay(dayStr)
-
-		ev := CashFlowDetailedEvent{
-			Type:    "INGRESO",
-			Concept: fmt.Sprintf("Abono Fiado"),
-		}
-
-		if p.AmountCash > 0 {
-			ev.IncomeCash = p.AmountCash
-		}
-		if p.AmountTransfer > 0 {
-			src := strings.ToUpper(p.TransferSource)
-			if src == "NEQUI" {
-				ev.IncomeNequi = p.AmountTransfer
-			} else if src == "DAVIPLATA" {
-				ev.IncomeDavi = p.AmountTransfer
-			} else {
-				ev.IncomeOther = p.AmountTransfer
-			}
-		}
-
-		d.Events = append(d.Events, ev)
-		d.TotalIncome += p.TotalPaid
-		overallIncome += p.TotalPaid
-	}
-
-	// Egresos (Detalle de salidas)
-	for _, e := range expenses {
-		dayStr := e.Date.Format("2006-01-02")
-		d := getOrCreateDay(dayStr)
-
-		totalEgreso := e.Amount + e.TaxAmount
-
-		src := strings.ToUpper(e.PaymentSource)
-		if src == "" { src = "EFECTIVO" }
-
-		d.Events = append(d.Events, CashFlowDetailedEvent{
-			Type:          "EGRESO",
-			Concept:       e.Description,
-			ExpenseTotal:  totalEgreso,
-			PaymentMethod: src,
-		})
-
-		d.TotalExpense += totalEgreso
-		overallExpense += totalEgreso
-	}
 
 	var daysList []CashFlowDetailedDay
 	for _, d := range daysMap {

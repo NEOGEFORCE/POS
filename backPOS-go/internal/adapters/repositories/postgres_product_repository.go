@@ -201,10 +201,13 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 
 		// Paso 2: Borrar las asociaciones viejas (esto libera la FK)
 		r.db.Exec(`DELETE FROM product_suppliers WHERE product_barcode = $1`, barcode)
-
-		// Paso 3: Actualizar auto-referencia de packs ANTES de cambiar el barcode
-		r.db.Exec(`UPDATE products SET "baseProductBarcode" = $1 WHERE "baseProductBarcode" = $2 AND barcode != $3`,
-			product.Barcode, barcode, barcode)
+		
+		// Paso 3: Desenlazar temporalmente los hijos para evitar violación de llave foránea
+		var childBarcodes []string
+		r.db.Model(&models.Product{}).Where("\"baseProductBarcode\" = ?", barcode).Pluck("barcode", &childBarcodes)
+		if len(childBarcodes) > 0 {
+			r.db.Exec(`UPDATE products SET "baseProductBarcode" = NULL WHERE "baseProductBarcode" = $1`, barcode)
+		}
 
 		// Paso 4: UPDATE del producto (incluye cambio de barcode)
 		query := `UPDATE products SET 
@@ -228,6 +231,12 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 		if result.Error != nil {
 			return fmt.Errorf("error actualizando producto: %w", result.Error)
 		}
+
+		// Paso 5: Re-enlazar los hijos al nuevo barcode
+		if len(childBarcodes) > 0 {
+			r.db.Exec(`UPDATE products SET "baseProductBarcode" = ? WHERE barcode IN ?`, product.Barcode, childBarcodes)
+		}
+
 		if result.RowsAffected == 0 {
 			fmt.Printf("[WARNING] No rows updated for barcode: %s (Original: %s)\n", product.Barcode, barcode)
 		} else {
@@ -627,8 +636,29 @@ func (r *PostgresProductRepository) FindProductBySimilarName(name string, suppli
 
 func (r *PostgresProductRepository) SearchSimilarProducts(name string, limit int) []models.ProductSearch {
 	var products []models.Product
-	searchTerm := "%" + name + "%"
-	r.db.Where("\"productName\" ILIKE ?", searchTerm).Limit(limit).Find(&products)
+	
+	words := strings.Fields(name)
+	query := r.db
+	
+	if len(words) > 0 {
+		var orConditions []string
+		var args []interface{}
+		for _, w := range words {
+			if len(w) > 3 { // Ignorar conectores cortos o palabras de 1-3 letras
+				orConditions = append(orConditions, "\"productName\" ILIKE ?")
+				args = append(args, "%"+w+"%")
+			}
+		}
+		if len(orConditions) > 0 {
+			query = query.Where(strings.Join(orConditions, " OR "), args...)
+		} else {
+			query = query.Where("\"productName\" ILIKE ?", "%"+name+"%")
+		}
+	} else {
+		query = query.Where("\"productName\" ILIKE ?", "%"+name+"%")
+	}
+
+	query.Limit(limit).Find(&products)
 
 	var suggestions []models.ProductSearch
 	for _, p := range products {

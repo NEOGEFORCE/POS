@@ -59,6 +59,12 @@ type ReceiveEntry struct {
 	ActualPhysicalStock *float64 `json:"actualPhysicalStock"`
 }
 
+type OrderRef struct {
+	ID     interface{} `json:"id"`
+	Source string      `json:"source"`
+}
+
+
 type ProductRepository interface {
 	Save(product *models.Product) error
 	GetByBarcode(barcode string) (*models.Product, error)
@@ -85,7 +91,7 @@ type ProductRepository interface {
 	SyncSuppliers(productBarcode string, supplierIDs []uint) error
 	UnlinkSupplier(productBarcode string, supplierID uint) error
 	LinkSupplier(barcode string, supplierID uint) error
-	BulkReceive(entries []ReceiveEntry, orderID *uint, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error)
+	BulkReceive(entries []ReceiveEntry, orderID *uint, orderIDs []interface{}, orderRefs []OrderRef, bypassExpense bool, paymentSource string, employeeDNI string, supplierID *uint, freightCost float64, totalWeight float64, isEgreso bool, editReceptionID string) ([]string, error)
 	GetSavingsOpportunities() ([]SavingsOpportunity, error)
 	GetAllWithLowStock() ([]models.Product, error)
 	GetProductsWithBestSupplier(supplierID *uint) ([]ProductRestockInfo, error)

@@ -20,13 +20,13 @@ func (r *closureRepository) Save(closure *models.CashierClosure) error {
 
 func (r *closureRepository) GetByDateRange(from, to time.Time) ([]models.CashierClosure, error) {
 	var closures []models.CashierClosure
-	err := r.db.Where("start_date >= ? AND start_date <= ?", from, to).Order("start_date ASC").Find(&closures).Error
+	err := r.db.Where("date >= ? AND date <= ?", from, to).Order("date ASC").Find(&closures).Error
 	return closures, err
 }
 
 func (r *closureRepository) GetAll() ([]models.CashierClosure, error) {
 	var closures []models.CashierClosure
-	err := r.db.Order("id DESC").Find(&closures).Error
+	err := r.db.Order("date DESC, id DESC").Find(&closures).Error
 	return closures, err
 }
 
@@ -41,7 +41,7 @@ func (r *closureRepository) GetByID(id uint) (*models.CashierClosure, error) {
 
 func (r *closureRepository) GetLast() (*models.CashierClosure, error) {
 	var closure models.CashierClosure
-	err := r.db.Order("id DESC").First(&closure).Error
+	err := r.db.Order("date DESC, id DESC").First(&closure).Error
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +121,8 @@ func (r *closureRepository) GetDailyReconstructedSales(from time.Time, to time.T
 	}
 
 	err := r.db.Table("cashier_closures").
-		Select("TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses) as total").
-		Where("end_date >= ? AND end_date <= ?", from, to).
+		Select("TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses) as total").
+		Where("date >= ? AND date <= ?", from, to).
 		Group("day").
 		Scan(&results).Error
 
@@ -146,7 +146,7 @@ func (r *closureRepository) GetMonthlyReconstructedSales() (map[string]float64, 
 	}
 
 	err := r.db.Table("cashier_closures").
-		Select("TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month, SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses) as total").
+		Select("TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month, SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses) as total").
 		Group("month").
 		Scan(&results).Error
 

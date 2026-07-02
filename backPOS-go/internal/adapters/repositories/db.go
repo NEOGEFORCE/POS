@@ -684,7 +684,7 @@ func createMaterializedViews(db *gorm.DB) error {
 			SUM(s."transferAmount") as sales_transfer,
 			SUM(s."creditAmount") as sales_credit
 		FROM sales s
-		WHERE s."deleted_at" IS NULL AND (s.status IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
+		WHERE s."deleted_at" IS NULL AND UPPER(s.status) = 'PAID'
 		GROUP BY 1
 	),
 	sale_cogs AS (
@@ -695,7 +695,7 @@ func createMaterializedViews(db *gorm.DB) error {
 		FROM sales s
 		JOIN sale_details sd ON s."saleId" = sd."saleId"
 		LEFT JOIN products p ON sd.barcode = p.barcode
-		WHERE s."deleted_at" IS NULL AND (s.status IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
+		WHERE s."deleted_at" IS NULL AND (UPPER(s.status) IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
 		GROUP BY 1
 	),
 	expense_stats AS (
@@ -703,7 +703,7 @@ func createMaterializedViews(db *gorm.DB) error {
 			TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
 			SUM(amount + tax_amount) as total_expenses
 		FROM expenses
-		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID' AND UPPER(category) NOT IN ('PROVEEDORES', 'INVENTARIO')
+		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID'
 		GROUP BY 1
 	),
 	return_stats AS (
@@ -718,8 +718,18 @@ func createMaterializedViews(db *gorm.DB) error {
 	payment_stats AS (
 		SELECT 
 			TO_CHAR("paymentDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM("totalPaid") as total_abonos
+			SUM("totalPaid") as total_abonos,
+			SUM("amountCash") as abonos_cash,
+			SUM("amountTransfer") as abonos_transfer
 		FROM credit_payments
+		WHERE "deleted_at" IS NULL
+		GROUP BY 1
+	),
+	closure_stats AS (
+		SELECT 
+			TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
+			SUM(difference) as total_difference
+		FROM cashier_closures
 		WHERE "deleted_at" IS NULL
 		GROUP BY 1
 	),
@@ -731,13 +741,15 @@ func createMaterializedViews(db *gorm.DB) error {
 		SELECT month_year FROM payment_stats
 		UNION
 		SELECT month_year FROM return_stats
+		UNION
+		SELECT month_year FROM closure_stats
 	)
 	SELECT 
 		am.month_year,
-		COALESCE(st.total_sales, 0) - COALESCE(ret.total_returned, 0) as total_sales,
+		COALESCE(st.total_sales, 0) + COALESCE(p.total_abonos, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0) as total_sales,
 		COALESCE(st.transaction_count, 0) as transaction_count,
-		COALESCE(st.sales_cash, 0) - COALESCE(ret.total_returned, 0) as sales_cash,
-		COALESCE(st.sales_transfer, 0) as sales_transfer,
+		COALESCE(st.sales_cash, 0) + COALESCE(p.abonos_cash, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0) as sales_cash,
+		COALESCE(st.sales_transfer, 0) + COALESCE(p.abonos_transfer, 0) as sales_transfer,
 		COALESCE(st.sales_credit, 0) as sales_credit,
 		COALESCE(sc.products_sold, 0) - COALESCE(ret.products_returned, 0) as products_sold,
 		COALESCE(sc.total_cogs, 0) as total_cogs,
@@ -748,7 +760,8 @@ func createMaterializedViews(db *gorm.DB) error {
 	LEFT JOIN sale_cogs sc ON am.month_year = sc.month_year
 	LEFT JOIN expense_stats e ON am.month_year = e.month_year
 	LEFT JOIN payment_stats p ON am.month_year = p.month_year
-	LEFT JOIN return_stats ret ON am.month_year = ret.month_year;
+	LEFT JOIN return_stats ret ON am.month_year = ret.month_year
+	LEFT JOIN closure_stats c ON am.month_year = c.month_year;
 
 	CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_dashboard_month_year ON mv_dashboard_stats_monthly(month_year);
 	`

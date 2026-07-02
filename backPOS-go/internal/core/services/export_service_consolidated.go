@@ -3,6 +3,7 @@ package services
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -88,44 +89,74 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 			expectedCash = data.TotalCash - data.TotalExpenses - data.TotalReturns
 		}
 
+		// Normalize expenses to ensure CashAmount is populated
+		for i := range data.Expenses {
+			e := &data.Expenses[i]
+			if e.CashAmount == 0 && e.NequiAmount == 0 && e.DaviplataAmount == 0 && e.FondoAmount == 0 && e.Status != "PENDING" {
+				src := strings.ToUpper(e.PaymentSource)
+				if src == "" || src == "CAJA" || src == "EFECTIVO" {
+					e.CashAmount = e.Amount
+				} else if src == "NEQUI" {
+					e.NequiAmount = e.Amount
+				} else if src == "DAVIPLATA" {
+					e.DaviplataAmount = e.Amount
+				} else if src == "FONDO" {
+					e.FondoAmount = e.Amount
+				} else if src != "PREST." && src != "DEUDA" && src != "PRESTAMO" {
+					e.CashAmount = e.Amount
+				}
+			}
+		}
+
+		egresosCaja := 0.0
+		egresosGlobales := 0.0
+		for _, e := range data.Expenses {
+			if e.Status != "PENDING" {
+				egresosCaja += e.CashAmount
+				egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+			}
+		}
+		
 		digitalIncome := data.TotalNequi + data.TotalDaviplata + data.TotalCard + data.TotalBancolombia + data.TotalOtherTransfer
-		realBalance := data.PhysicalCash + digitalIncome - data.TotalExpenses
+		ventasCajero := data.PhysicalCash + digitalIncome + egresosCaja
+		ventasSistema := expectedCash + digitalIncome + egresosCaja
+		realBalance := ventasCajero - ventasSistema
 
 		boxY := pdf.GetY()
 		
-		// Efectivo Fisico
+		// Ventas Cajero
 		pdf.SetFillColor(255, 255, 255)
 		pdf.SetDrawColor(0, 0, 0)
 		pdf.SetLineWidth(0.2)
 		pdf.Rect(10, boxY, 60, 18, "D")
 		pdf.SetXY(10, boxY + 2)
 		pdf.SetFont("Arial", "B", 7)
-		pdf.CellFormat(60, 5, tr("EFECTIVO FISICO"), "0", 1, "C", false, 0, "")
+		pdf.CellFormat(60, 5, tr("VENTAS TOTALES (CAJERO)"), "0", 2, "C", false, 0, "")
 		pdf.SetFont("Arial", "B", 12)
-		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(data.PhysicalCash)), "0", 1, "C", false, 0, "")
+		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(ventasCajero)), "0", 0, "C", false, 0, "")
 
-		// Digital - Egresos
+		// Ventas Sistema
 		pdf.Rect(75, boxY, 60, 18, "D")
 		pdf.SetXY(75, boxY + 2)
 		pdf.SetFont("Arial", "B", 7)
-		pdf.CellFormat(60, 5, tr("DIGITAL - EGRESOS"), "0", 1, "C", false, 0, "")
+		pdf.CellFormat(60, 5, tr("VENTAS TOTALES (SIST.)"), "0", 2, "C", false, 0, "")
 		pdf.SetFont("Arial", "B", 12)
-		netDigital := digitalIncome - data.TotalExpenses
-		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(netDigital)), "0", 1, "C", false, 0, "")
+		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(ventasSistema)), "0", 0, "C", false, 0, "")
 
 		// Balance Real
 		pdf.SetFillColor(230, 245, 230)
 		pdf.Rect(140, boxY, 60, 18, "DF")
 		pdf.SetXY(140, boxY + 2)
 		pdf.SetFont("Arial", "B", 7)
-		pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 1, "C", false, 0, "")
+		pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 2, "C", false, 0, "")
 		pdf.SetFont("Arial", "B", 12)
-		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 1, "C", false, 0, "")
+		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 0, "C", false, 0, "")
 		
-		pdf.SetY(boxY + 25)
+		pdf.SetY(boxY + 22)
 
-		pdf.SetFont("Arial", "I", 8)
-		pdf.CellFormat(190, 5, tr(fmt.Sprintf("* Efectivo Esperado por Sistema (Informativo): $%s", formatCOP(expectedCash))), "0", 1, "L", false, 0, "")
+		pdf.SetFont("Arial", "I", 7)
+		pdf.CellFormat(190, 4, tr("* Ventas Cajero = Efectivo Contado + Digital + Egresos Caja"), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 4, tr("* Ventas Sistema = Efectivo Esperado + Digital + Egresos Caja"), "0", 1, "L", false, 0, "")
 		pdf.Ln(2)
 
 		drawTable := func(title string, headers []string, widths []float64, rows [][]string) {
@@ -193,14 +224,24 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 			pdf.Ln(5)
 		}
 
-		drawTable("DETALLE OPERATIVO DE CAJA", 
+		drawTable("RESUMEN FINANCIERO GLOBAL", 
+			[]string{"Concepto", "Monto"}, 
+			[]float64{130, 60}, 
+			[][]string{
+				{"(+) Ingresos Totales (Efectivo + Digital)", fmt.Sprintf("$%s", formatCOP(ventasCajero))},
+				{"(-) Egresos Totales (Todos los canales)", fmt.Sprintf("$%s", formatCOP(egresosGlobales))},
+				{"(-) Devoluciones Totales", fmt.Sprintf("$%s", formatCOP(data.TotalReturns))},
+				{"(=) BALANCE NETO DEL TURNO", fmt.Sprintf("$%s", formatCOP(ventasCajero - egresosGlobales - data.TotalReturns))},
+			})
+
+		drawTable("CUADRE DE CAJA FISICA", 
 			[]string{"Concepto", "Monto"}, 
 			[]float64{130, 60}, 
 			[][]string{
 				{"(+) Ingresos en Efectivo (Ventas + Recaudos)", fmt.Sprintf("$%s", formatCOP(data.TotalCash))},
-				{"(-) Gastos y Egresos Operativos", fmt.Sprintf("$%s", formatCOP(data.TotalExpenses))},
-				{"(-) Devoluciones de Mercancia", fmt.Sprintf("$%s", formatCOP(data.TotalReturns))},
-				{"(=) BALANCE TEORICO EN CAJA", fmt.Sprintf("$%s", formatCOP(expectedCash))},
+				{"(-) Salidas de Efectivo (Egresos de Caja)", fmt.Sprintf("$%s", formatCOP(egresosCaja))},
+				{"(-) Devoluciones de Mercancia en Efectivo", fmt.Sprintf("$%s", formatCOP(data.TotalReturns))},
+				{"(=) EFECTIVO ESPERADO EN CAJA", fmt.Sprintf("$%s", formatCOP(expectedCash))},
 			})
 
 		drawTable("DESGLOSE DE EFECTIVO REPORTADO", 
@@ -214,17 +255,49 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 				{"Monedas 100", fmt.Sprintf("$%s", formatCOP(data.Coins100))},
 			})
 
-		methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
+		methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "PRESTAMO"}
 		for _, m := range methods {
 			var rows [][]string
 			total := 0.0
+			
 			for _, e := range data.Expenses {
-				eMethod := strings.ToUpper(e.PaymentSource)
-				if eMethod == "" || eMethod == "CAJA" { eMethod = "EFECTIVO" }
-				if eMethod == m {
-					desc := fmt.Sprintf("%s - %s", e.Date.In(loc).Format("02/01"), e.Description)
-					rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.Amount))})
-					total += e.Amount
+				desc := fmt.Sprintf("%s - %s", e.Date.In(loc).Format("02/01"), e.Description)
+				isMixedOrNewSchema := e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0
+				
+				if isMixedOrNewSchema {
+					if m == "EFECTIVO" && e.CashAmount > 0 {
+						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.CashAmount))})
+						total += e.CashAmount
+					}
+					if m == "NEQUI" && e.NequiAmount > 0 {
+						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.NequiAmount))})
+						total += e.NequiAmount
+					}
+					if m == "DAVIPLATA" && e.DaviplataAmount > 0 {
+						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.DaviplataAmount))})
+						total += e.DaviplataAmount
+					}
+					if m == "FONDO" && e.FondoAmount > 0 {
+						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.FondoAmount))})
+						total += e.FondoAmount
+					}
+					if m == "PRESTAMO" {
+						sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+						if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
+							diff := e.Amount - sumPaid
+							rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(diff))})
+							total += diff
+						}
+					}
+				} else {
+					eMethod := strings.ToUpper(e.PaymentSource)
+					if eMethod == "" || eMethod == "CAJA" { eMethod = "EFECTIVO" }
+					if eMethod == "PREST." || eMethod == "DEUDA" { eMethod = "PRESTAMO" }
+					
+					if eMethod == m {
+						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.Amount))})
+						total += e.Amount
+					}
 				}
 			}
 			if len(rows) > 0 {
@@ -295,8 +368,8 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 			Title:              "SUPERMERCADO SURTIFAMILIAR",
 			SubTitle:           "AUDITORIA OFICIAL DE CIERRE DE CAJA",
 			Cajero:             c.ClosedByName,
-			RangoFechaStr:      "FECHA:",
-			TurnoStr:           c.StartDate.In(loc).Format("02/01/2006 15:04"),
+			RangoFechaStr:      "TURNO:",
+			TurnoStr:           fmt.Sprintf("%s a %s", c.StartDate.In(loc).Format("02/01/06 15:04"), c.EndDate.In(loc).Format("02/01/06 15:04")),
 			IDStr:              fmt.Sprintf("CC-%d", c.ID),
 			PhysicalCash:       c.PhysicalCash,
 			TotalNequi:         c.TotalNequi,

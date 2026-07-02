@@ -627,6 +627,29 @@ func (s *SaleService) UpdateSalePayment(id uint, paymentUpdate *models.Sale) err
 		paymentUpdate.PaymentMethod = "EFECTIVO"
 	}
 
+	// Ajuste de crédito del cliente
+	// 1. Revertir crédito en el cliente anterior
+	if existing.ClientDNI != "" && existing.ClientDNI != "0" && existing.CreditAmount > 0 {
+		oldClient, err := s.clientRepo.GetByDNI(existing.ClientDNI)
+		if err == nil {
+			newCredit := oldClient.CurrentCredit - existing.CreditAmount
+			if newCredit < 0 { newCredit = 0 }
+			oldClient.CurrentCredit = newCredit
+			s.clientRepo.Update(oldClient.DNI, oldClient)
+		}
+	}
+
+	// 2. Aplicar crédito en el cliente nuevo (o mismo cliente)
+	if paymentUpdate.ClientDNI != "" && paymentUpdate.ClientDNI != "0" && paymentUpdate.CreditAmount > 0 {
+		newClient, err := s.clientRepo.GetByDNI(paymentUpdate.ClientDNI)
+		if err == nil {
+			newClient.CurrentCredit = newClient.CurrentCredit + paymentUpdate.CreditAmount
+			s.clientRepo.Update(newClient.DNI, newClient)
+		}
+	}
+
+	paymentUpdate.DebtPending = paymentUpdate.CreditAmount
+
 	err = s.saleRepo.UpdatePayment(id, paymentUpdate)
 	return err
 }

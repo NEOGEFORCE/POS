@@ -105,7 +105,7 @@ func (r *PostgresExpenseRepository) GetByDateRange(from, to time.Time) ([]models
 	if !to.IsZero() {
 		query = query.Where("date <= ?", to)
 	}
-	err := query.Order("date DESC").Limit(500).Find(&expenses).Error
+	err := query.Order("date DESC").Find(&expenses).Error
 	return expenses, err
 }
 
@@ -205,16 +205,48 @@ func (r *PostgresExpenseRepository) GetGlobalTotalPaidExpenses() (float64, error
 
 func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]float64, error) {
 	results := make(map[string]float64)
+
+	// Primero: Egresos que tienen columnas desglosadas (cash_amount, nequi_amount, etc.)
+	type MethodTotal struct {
+		TotalCash      float64
+		TotalNequi     float64
+		TotalDaviplata float64
+		TotalFondo     float64
+	}
+	var mt MethodTotal
+	err := r.db.Table("expenses").
+		Select(`
+			COALESCE(SUM(cash_amount), 0) as total_cash,
+			COALESCE(SUM(nequi_amount), 0) as total_nequi,
+			COALESCE(SUM(daviplata_amount), 0) as total_daviplata,
+			COALESCE(SUM(fondo_amount), 0) as total_fondo
+		`).
+		Where("deleted_at IS NULL").
+		Where("UPPER(status) = 'PAID'").
+		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0)").
+		Scan(&mt).Error
+	if err != nil {
+		log.Printf("❌ [GetGlobalPaidExpensesByMethod] Error columnas desglosadas: %v", err)
+	} else {
+		results["EFECTIVO"] += mt.TotalCash
+		results["NEQUI"] += mt.TotalNequi
+		results["DAVIPLATA"] += mt.TotalDaviplata
+		results["FONDO"] += mt.TotalFondo
+	}
+
+	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string)
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
-		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
+		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
+		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0").
 		Group("\"paymentSource\"").
 		Rows()
 	if err != nil {
-		log.Printf("❌ [GetGlobalPaidExpensesByMethod] Error: %v", err)
-		return nil, err
+		log.Printf("❌ [GetGlobalPaidExpensesByMethod] Error legacy: %v", err)
+		return results, nil
 	}
 	defer rows.Close()
 
@@ -222,11 +254,22 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		var source string
 		var total float64
 		if err := rows.Scan(&source, &total); err != nil {
-			return nil, err
+			continue
 		}
 		if source == "" { source = "EFECTIVO" }
-		results[strings.ToUpper(source)] = total
+		results[strings.ToUpper(source)] += total
 	}
+
+	// Agregar impuestos de nequi (4x1000) que se guardan en tax_amount
+	var totalNequiTax float64
+	r.db.Table("expenses").
+		Select("COALESCE(SUM(tax_amount), 0)").
+		Where("deleted_at IS NULL").
+		Where("UPPER(status) = 'PAID'").
+		Where("nequi_amount > 0 AND tax_amount > 0").
+		Scan(&totalNequiTax)
+	results["NEQUI"] += totalNequiTax
+
 	return results, nil
 }
 
@@ -236,7 +279,6 @@ func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to time.Time) (fl
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(\"paymentSource\") NOT IN ('PRESTAMO', 'PREST.')").
-		Where("UPPER(category) NOT IN ('PROVEEDORES', 'INVENTARIO')").
 		Where("date >= ? AND date <= ?", from, to).
 		Select("COALESCE(SUM(amount + tax_amount), 0)").Scan(&total).Error
 	if err != nil {

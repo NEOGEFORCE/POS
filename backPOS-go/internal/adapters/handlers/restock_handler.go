@@ -159,6 +159,18 @@ func (h *RestockHandler) GetPendingOrders(c *gin.Context) {
 	c.JSON(http.StatusOK, orders)
 }
 
+func (h *RestockHandler) CancelPendingOrder(c *gin.Context) {
+	id := c.Param("id")
+	userDni, _ := c.Get("dni")
+	
+	err := h.restockService.UpdateOrderStatus(id, "CANCELED", userDni.(string))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al cancelar el pedido"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Pedido cancelado exitosamente"})
+}
+
 func (h *RestockHandler) GetPendingOrder(c *gin.Context) {
 	id := c.Param("id")
 	order, err := h.restockService.GetOrderByID(id)

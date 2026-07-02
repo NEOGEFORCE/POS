@@ -191,10 +191,16 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 				return fmt.Errorf("error registrando egreso de caja: %w", err)
 			}
 		} else if req.Type == "EXCHANGE" && req.ChargeAmount > 0 {
+			clientDni := "0"
+			if originalSale != nil && originalSale.ClientDNI != "" {
+				clientDni = originalSale.ClientDNI
+			}
+
 			// Ingreso de caja (Mini-venta)
 			miniSale := &models.Sale{
 				SaleDate:      time.Now(),
 				EmployeeDNI:   employeeDNI,
+				ClientDNI:     clientDni,
 				TotalAmount:   req.ChargeAmount,
 				PaymentMethod: req.ChargeMethod,
 				Status:        "PAID",
@@ -224,4 +230,9 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 		r.invalidateDashboardCache()
 	}
 	return createdReturn, err
+}
+
+func (r *GormReturnRepository) DeleteWithTransaction(id uint, adminDNI string, adminName string) error {
+	// TODO: implement full deletion logic with transaction
+	return nil
 }

@@ -69,21 +69,35 @@ func normalizeExpensesForFrontend(expenses []models.Expense) {
 		e := &expenses[i]
 		if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 {
 			var parts []string
-			if e.CashAmount > 0 { parts = append(parts, "EFECTIVO") }
+			if e.CashAmount > 0 { parts = append(parts, "CAJA") }
 			if e.NequiAmount > 0 { parts = append(parts, "NEQUI") }
 			if e.DaviplataAmount > 0 { parts = append(parts, "DAVIPLATA") }
 			if e.FondoAmount > 0 { parts = append(parts, "FONDO") }
 			if len(parts) > 1 {
-				e.PaymentSource = "MIXTO"
+				e.PaymentSource = strings.Join(parts, " + ")
 			} else if len(parts) == 1 {
 				e.PaymentSource = parts[0]
 			}
 		} else {
 			src := strings.ToUpper(e.PaymentSource)
 			if strings.Contains(src, "/") && strings.Contains(src, "$") {
-				e.PaymentSource = "MIXTO"
+				// Fallback para strings antiguos de MIXTO (ej: "NEQUI: $1000 / CAJA: $1000")
+				cleanSrc := strings.ReplaceAll(src, "EFECTIVO", "CAJA")
+				cleanSrc = strings.ReplaceAll(cleanSrc, "CASH", "CAJA")
+				// Extraer solo los nombres de los canales
+				var parts []string
+				if strings.Contains(cleanSrc, "NEQUI") { parts = append(parts, "NEQUI") }
+				if strings.Contains(cleanSrc, "DAVIPLATA") { parts = append(parts, "DAVIPLATA") }
+				if strings.Contains(cleanSrc, "CAJA") { parts = append(parts, "CAJA") }
+				if strings.Contains(cleanSrc, "FONDO") { parts = append(parts, "FONDO") }
+				if len(parts) > 1 {
+					e.PaymentSource = strings.Join(parts, " + ")
+				} else {
+					e.PaymentSource = "MIXTO" // Fallback fallback
+				}
 			} else {
-				if src == "CAJA" || src == "" { e.PaymentSource = "EFECTIVO" }
+				if src == "CAJA" || src == "" { e.PaymentSource = "CAJA" }
+				if src == "EFECTIVO" { e.PaymentSource = "CAJA" }
 				if src == "PREST." || src == "DEUDA" { e.PaymentSource = "PRESTAMO" }
 			}
 		}

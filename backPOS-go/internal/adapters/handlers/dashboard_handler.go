@@ -92,7 +92,36 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 
 	// Asegurar que la fecha de fin sea la hora actual del servidor (UTC para consistencia)
 	closure.EndDate = time.Now()
-	closure.Date = time.Now()
+	
+	// Asignar la Fecha del cierre al momento exacto de su cierre (EndDate)
+	// según la solicitud del usuario ("el día que lo finaliza").
+	if closure.ID == 0 {
+		closure.Date = closure.EndDate
+		
+		// Forzar StartDate a las 00:00:01 del día actual para evitar cruce de días
+		loc := time.FixedZone("America/Bogota", -5*60*60)
+		nowLocal := time.Now().In(loc)
+		closure.StartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 1, 0, loc)
+	} else {
+		// En modo edición, respetamos la fecha que envíe el cliente
+		// si viene vacía, retrocedemos al comportamiento por defecto (EndDate)
+		if closure.Date.IsZero() {
+			closure.Date = closure.EndDate
+		}
+	}
+
+	// ---------------------------------------------------------
+	// REGLA DE NEGOCIO: VENTA REAL DEL DÍA (RECONSTRUIDO)
+	// (Efectivo Contado + Digital + Egresos Caja)
+	// ---------------------------------------------------------
+	ingresosDigitales := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
+	egresosEfectivoTurno := 0.0
+	normalizeExpensesForReport(closure.Expenses)
+	for _, e := range closure.Expenses {
+		egresosEfectivoTurno += e.CashAmount
+	}
+	closure.TotalSales = closure.PhysicalCash + ingresosDigitales + egresosEfectivoTurno
+	// ---------------------------------------------------------
 
 	err := h.service.SaveClosure(&closure)
 	if err != nil {
@@ -200,44 +229,43 @@ func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
 func normalizeExpensesForReport(expenses []models.Expense) {
 	for i := range expenses {
 		e := &expenses[i]
-		if e.CashAmount == 0 && e.NequiAmount == 0 && e.DaviplataAmount == 0 && e.FondoAmount == 0 && e.Status != "PENDING" {
-			src := strings.ToUpper(e.PaymentSource)
-			if strings.Contains(src, "/") && strings.Contains(src, "$") {
-				parts := strings.Split(src, "/")
-				for _, p := range parts {
-					p = strings.TrimSpace(p)
-					if strings.Contains(p, ": $") {
-						kv := strings.Split(p, ": $")
-						if len(kv) == 2 {
-							method := strings.TrimSpace(kv[0])
-							valStr := strings.ReplaceAll(kv[1], ".", "")
-							val, _ := strconv.ParseFloat(valStr, 64)
-							switch method {
-							case "CAJA", "EFECTIVO":
-								e.CashAmount += val
-							case "NEQUI":
-								e.NequiAmount += val
-							case "DAVIPLATA":
-								e.DaviplataAmount += val
-							case "FONDO":
-								e.FondoAmount += val
-							}
-						}
-					}
-				}
-			} else {
-				if src == "" || src == "CAJA" || src == "EFECTIVO" {
-					e.CashAmount = e.Amount
-				} else if src == "NEQUI" {
-					e.NequiAmount = e.Amount
-				} else if src == "DAVIPLATA" {
-					e.DaviplataAmount = e.Amount
-				} else if src == "FONDO" {
-					e.FondoAmount = e.Amount
-				} else if src == "PREST." || src == "DEUDA" || src == "PRESTAMO" {
-					e.Status = "PENDING"
+		if e.Status == "PENDING" {
+			continue
+		}
+		
+		// If it's a single-channel payment based on PaymentSource, overwrite the specific amounts
+		src := strings.ToUpper(e.PaymentSource)
+		if !strings.Contains(src, ": $") && !strings.Contains(src, " / ") {
+			totalExp := e.Amount + e.TaxAmount
+			e.CashAmount = 0
+			e.NequiAmount = 0
+			e.DaviplataAmount = 0
+			e.FondoAmount = 0
+			
+			if src == "" || src == "CAJA" || src == "EFECTIVO" {
+				e.CashAmount = totalExp
+			} else if src == "NEQUI" {
+				e.NequiAmount = totalExp
+			} else if src == "DAVIPLATA" {
+				e.DaviplataAmount = totalExp
+			} else if src == "FONDO" {
+				e.FondoAmount = totalExp
+			} else if src != "PREST." && src != "DEUDA" && src != "PRESTAMO" {
+				e.CashAmount = totalExp
+			}
+		} else {
+			// It's a mixed payment. If the sum of specific amounts equals e.Amount (without tax),
+			// we need to add the tax to one of the channels (e.g., the first digital channel) to avoid losing it.
+			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+			if sum > 0 && e.TaxAmount > 0 && sum == e.Amount {
+				if e.NequiAmount > 0 {
+					e.NequiAmount += e.TaxAmount
+				} else if e.DaviplataAmount > 0 {
+					e.DaviplataAmount += e.TaxAmount
+				} else if e.FondoAmount > 0 {
+					e.FondoAmount += e.TaxAmount
 				} else {
-					e.CashAmount = e.Amount
+					e.CashAmount += e.TaxAmount
 				}
 			}
 		}
@@ -266,7 +294,11 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 		egresosEfectivoTurno += e.CashAmount
 	}
 
-	ventaReal := efectivoContado + ingresosDigitales + egresosEfectivoTurno
+	efectivoParaVentaReal := efectivoContado
+	if isPartial {
+		efectivoParaVentaReal = expectedCash
+	}
+	ventaReal := efectivoParaVentaReal + ingresosDigitales + egresosEfectivoTurno
 	diferenciaFisica := efectivoContado - expectedCash
 
 	// Variables auxiliares para la vista
@@ -496,6 +528,61 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		return
 	}
 
+
+	if startDateStr, ok := updates["start_date"].(string); ok && startDateStr != "" {
+		if parsedStart, err := time.ParseInLocation("2006-01-02T15:04", startDateStr, time.Local); err == nil {
+			updates["start_date"] = parsedStart
+		} else {
+			delete(updates, "start_date")
+		}
+	}
+	if endDateStr, ok := updates["end_date"].(string); ok && endDateStr != "" {
+		if parsedEnd, err := time.ParseInLocation("2006-01-02T15:04", endDateStr, time.Local); err == nil {
+			updates["end_date"] = parsedEnd
+		} else {
+			delete(updates, "end_date")
+		}
+	}
+
+	if dateStr, ok := updates["date"].(string); ok && dateStr != "" {
+		if parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, time.Local); err == nil {
+			now := time.Now()
+			newDate := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(),
+				now.Hour(), now.Minute(), now.Second(), 0, time.Local)
+			updates["date"] = newDate
+		} else if parsedDate, err := time.ParseInLocation("2006-01-02T15:04", dateStr, time.Local); err == nil {
+			updates["date"] = parsedDate
+		} else {
+			delete(updates, "date")
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	// Recalcular Venta Real (TotalSales) si cambiaron datos
+	// ----------------------------------------------------------------------
+	if existingClosure, err := h.service.GetClosureByID(uint(id)); err == nil && existingClosure != nil {
+		physCash := existingClosure.PhysicalCash
+		if val, ok := updates["physical_cash"].(float64); ok { physCash = val }
+
+		totExp := existingClosure.TotalExpenses
+		if val, ok := updates["total_expenses"].(float64); ok { totExp = val }
+
+		tNequi := existingClosure.TotalNequiReal
+		if tNequi == 0 { tNequi = existingClosure.TotalNequi }
+		if val, ok := updates["total_nequi_real"].(float64); ok { tNequi = val }
+
+		tDavi := existingClosure.TotalDaviplataReal
+		if tDavi == 0 { tDavi = existingClosure.TotalDaviplata }
+		if val, ok := updates["total_daviplata_real"].(float64); ok { tDavi = val }
+
+		tCard := existingClosure.TotalCard
+		tBanco := existingClosure.TotalBancolombia
+		tOther := existingClosure.TotalOtherTransfer
+
+		updates["total_sales"] = physCash + tNequi + tDavi + tCard + tBanco + tOther + totExp
+	}
+	// ----------------------------------------------------------------------
+
 	err = h.service.UpdateClosure(uint(id), updates)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar cierre", err)
@@ -627,27 +714,27 @@ func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isP
 	pdf.Rect(10, boxY, 60, 18, "D")
 	pdf.SetXY(10, boxY + 2)
 	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("EFECTIVO FÍSICO"), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 5, tr("EFECTIVO FÍSICO"), "0", 2, "C", false, 0, "")
 	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.PhysicalCash)), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.PhysicalCash)), "0", 0, "C", false, 0, "")
 
 	// Digital - Egresos
 	pdf.Rect(75, boxY, 60, 18, "D")
 	pdf.SetXY(75, boxY + 2)
 	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("DIGITAL - EGRESOS"), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 5, tr("DIGITAL - EGRESOS"), "0", 2, "C", false, 0, "")
 	pdf.SetFont("Arial", "B", 12)
 	netDigital := digitalIncome - closure.TotalExpenses
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(netDigital)), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(netDigital)), "0", 0, "C", false, 0, "")
 
 	// Balance Real
 	pdf.SetFillColor(230, 245, 230) // Fondo verde claro
 	pdf.Rect(140, boxY, 60, 18, "DF")
 	pdf.SetXY(140, boxY + 2)
 	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 2, "C", false, 0, "")
 	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 1, "C", false, 0, "")
+	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 0, "C", false, 0, "")
 	
 	pdf.SetY(boxY + 25)
 

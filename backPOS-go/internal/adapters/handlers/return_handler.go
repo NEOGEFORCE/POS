@@ -3,6 +3,7 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
@@ -51,6 +52,38 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 		fmt.Sprintf("Devolución venta #%d: $%.2f", ret.SaleID, ret.TotalReturned),
 		fmt.Sprintf("Se registró una devolución para la venta #%d. Total devuelto: $%s. Motivo: %s", ret.SaleID, fmt.Sprintf("%.2f", ret.TotalReturned), ret.Reason),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go func() {
+		sse.GetSSEService().BroadcastDashboardUpdate()
+		sse.GetSSEService().BroadcastInventoryUpdate(nil)
+		sse.GetSSEService().BroadcastProductUpdate(nil)
+	}()
+}
+
+func (h *ReturnHandler) Delete(c *gin.Context) {
+	idStr := c.Param("id")
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, "ERR_VALIDATION", "ID invalido", err)
+		return
+	}
+
+	roleVal, _ := c.Get("role")
+	roleStr, _ := roleVal.(string)
+	if strings.ToUpper(roleStr) != "ADMIN" && strings.ToUpper(roleStr) != "SUPERADMIN" {
+		SendError(c, http.StatusForbidden, "ERR_FORBIDDEN", "Solo los administradores pueden eliminar devoluciones", nil)
+		return
+	}
+
+	dniStr, _ := c.Get("userDni")
+	nameStr, _ := c.Get("userName")
+
+	if err := h.service.DeleteReturn(uint(id), dniStr.(string), nameStr.(string)); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar devolucion", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Devolucion eliminada exitosamente"})
 
 	go func() {
 		sse.GetSSEService().BroadcastDashboardUpdate()

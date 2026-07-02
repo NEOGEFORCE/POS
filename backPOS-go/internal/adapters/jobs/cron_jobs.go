@@ -225,21 +225,7 @@ func (m *CronManager) handleLogisticReportJob() {
 		return val
 	}
 
-	// 1. Expected Orders
-	var expected []models.ExpectedOrder
-	m.db.Where("DATE(expected_date) <= ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&expected)
-	for _, o := range expected {
-		allOrders = append(allOrders, UnifiedOrder{o.SupplierName, getVal(0, o.TotalEstimated, ""), o.ItemCount})
-	}
-
-	// 2. Purchase Orders
-	var purchase []models.PurchaseOrder
-	m.db.Preload("Supplier").Preload("OrderItems").Where("DATE(\"orderDate\") <= ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&purchase)
-	for _, o := range purchase {
-		allOrders = append(allOrders, UnifiedOrder{o.Supplier.Name, getVal(o.EstimatedCost, 0, ""), len(o.OrderItems)})
-	}
-
-	// 3. Confirmed Orders
+	// 1. Confirmed Orders (Pending for Delivery)
 	var confirmed []models.ConfirmedOrder
 	m.db.Preload("Supplier").Preload("Items").Where("DATE(expected_date) <= ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&confirmed)
 	for _, o := range confirmed {

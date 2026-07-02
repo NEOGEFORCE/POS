@@ -243,7 +243,8 @@ func (r *PostgresSaleRepository) GetDashboardStats(from, to time.Time) (float64,
 		TotalCount   int64
 	}
 
-	query := r.db.Model(&models.Sale{}).Where("status IN ('PAID', 'CREDIT') AND deleted_at IS NULL")
+	// 1. Efectivo Contado + Digitales (Ventas PAGADAS)
+	query := r.db.Model(&models.Sale{}).Where("status = 'PAID' AND deleted_at IS NULL")
 	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
@@ -259,6 +260,20 @@ func (r *PostgresSaleRepository) GetDashboardStats(from, to time.Time) (float64,
 		return 0, 0, 0, nil // Fallback a 0 para no romper dashboard
 	}
 
+	// 2. Sumar Abonos Recibidos (Ingresos Reales por cobro de cartera)
+	var totalPayments float64
+	paymentQuery := r.db.Table("credit_payments").Where("deleted_at IS NULL")
+	if !from.IsZero() {
+		paymentQuery = paymentQuery.Where("\"paymentDate\" >= ?", from)
+	}
+	if !to.IsZero() {
+		paymentQuery = paymentQuery.Where("\"paymentDate\" <= ?", to)
+	}
+	paymentQuery.Select("COALESCE(SUM(\"totalPaid\"), 0)").Scan(&totalPayments)
+
+	stats.TotalAmount += totalPayments
+
+	// 3. Productos Vendidos (Causación de inventario: Incluye Fiados)
 	var productsSold float64
 	err = r.db.Table("sale_details").
 		Joins("JOIN sales ON sales.\"saleId\" = sale_details.\"saleId\"").
@@ -274,6 +289,7 @@ func (r *PostgresSaleRepository) GetDashboardStats(from, to time.Time) (float64,
 	return stats.TotalAmount, stats.TotalCount, productsSold, nil
 }
 
+
 func (r *PostgresSaleRepository) UpdatePayment(id uint, sale *models.Sale) error {
 	err := r.db.Model(&models.Sale{}).Where("\"saleId\" = ?", id).Updates(map[string]interface{}{
 		"clientDni":      sale.ClientDNI,
@@ -284,6 +300,7 @@ func (r *PostgresSaleRepository) UpdatePayment(id uint, sale *models.Sale) error
 		"creditAmount":   sale.CreditAmount,
 		"amountPaid":     sale.AmountPaid,
 		"change":         sale.Change,
+		"debtPending":    sale.DebtPending,
 	}).Error
 	if err == nil {
 		r.invalidateDashboardCache()
@@ -405,10 +422,22 @@ func (r *PostgresSaleRepository) GetTopSellingProducts(from, to time.Time, limit
 	}
 	return ranking, err
 }
+func (r *PostgresSaleRepository) GetMajorityDayForRange(from, to time.Time) (string, error) {
+	var result string
+	err := r.db.Table("sales").
+		Select("TO_CHAR(\"saleDate\" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day").
+		Where("\"saleDate\" >= ? AND \"saleDate\" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL", from, to).
+		Group("day").
+		Order("COUNT(1) DESC").
+		Limit(1).
+		Scan(&result).Error
+	return result, err
+}
+
 func (r *PostgresSaleRepository) GetDailySalesByRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 	rows, err := r.db.Table("sales").
-		Select("TO_CHAR(\"saleDate\" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, COALESCE(SUM(\"cashAmount\" + \"transferAmount\"), 0) as total").
+		Select("TO_CHAR(\"saleDate\" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, COALESCE(SUM(\"totalAmount\"), 0) as total").
 		Where("\"saleDate\" >= ? AND \"saleDate\" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL", from, to).
 		Group("day").
 		Rows()
@@ -427,6 +456,43 @@ func (r *PostgresSaleRepository) GetDailySalesByRange(from, to time.Time) (map[s
 		}
 		results[day] = total
 	}
+
+	// Agregar Diferencia Física (Sobrantes/Faltantes) para igualar a Venta Real Reconstruida
+	diffRows, err := r.db.Table("cashier_closures").
+		Select("TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, COALESCE(SUM(difference), 0) as diff").
+		Where("end_date >= ? AND end_date <= ? AND deleted_at IS NULL", from, to).
+		Group("day").
+		Rows()
+
+	if err == nil {
+		defer diffRows.Close()
+		for diffRows.Next() {
+			var day string
+			var diff float64
+			if err := diffRows.Scan(&day, &diff); err == nil {
+				results[day] += diff
+			}
+		}
+	}
+
+	// Restar devoluciones
+	returnRows, err := r.db.Table("returns").
+		Select("TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') as day, COALESCE(SUM(\"totalReturned\"), 0) as total").
+		Where("date >= ? AND date <= ? AND deleted_at IS NULL", from, to).
+		Group("day").
+		Rows()
+
+	if err == nil {
+		defer returnRows.Close()
+		for returnRows.Next() {
+			var day string
+			var ret float64
+			if err := returnRows.Scan(&day, &ret); err == nil {
+				results[day] -= ret
+			}
+		}
+	}
+
 	return results, nil
 }
 
@@ -506,17 +572,24 @@ func (r *PostgresSaleRepository) GetMonthlyStatsTrendFromMV() ([]ports.MVMonthly
 }
 func (r *PostgresSaleRepository) GetGlobalTotalSales() (float64, error) {
 	var total float64
-	err := r.db.Model(&models.Sale{}).Where("status IN ('PAID', 'CREDIT') AND deleted_at IS NULL").Select("COALESCE(SUM(\"totalAmount\"), 0)").Scan(&total).Error
+	err := r.db.Model(&models.Sale{}).Where("status = 'PAID' AND deleted_at IS NULL").Select("COALESCE(SUM(\"totalAmount\"), 0)").Scan(&total).Error
 	if err != nil {
-		log.Printf("❌ [GetGlobalTotalSales] Error: %v", err)
+		log.Printf("❌ [GetGlobalTotalSales] Error en sales: %v", err)
 		return 0, nil
 	}
-	return total, nil
+	
+	var totalPayments float64
+	err = r.db.Table("credit_payments").Where("deleted_at IS NULL").Select("COALESCE(SUM(\"totalPaid\"), 0)").Scan(&totalPayments).Error
+	if err != nil {
+		log.Printf("❌ [GetGlobalTotalSales] Error en payments: %v", err)
+	}
+
+	return total + totalPayments, nil
 }
 
 func (r *PostgresSaleRepository) GetTotalSalesByRange(from, to time.Time) (float64, error) {
 	var total float64
-	query := r.db.Model(&models.Sale{}).Where("status IN ('PAID', 'CREDIT', 'FIADO') AND deleted_at IS NULL")
+	query := r.db.Model(&models.Sale{}).Where("status = 'PAID' AND deleted_at IS NULL")
 	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
@@ -525,10 +598,24 @@ func (r *PostgresSaleRepository) GetTotalSalesByRange(from, to time.Time) (float
 	}
 	err := query.Select("COALESCE(SUM(\"totalAmount\"), 0)").Scan(&total).Error
 	if err != nil {
-		log.Printf("❌ [GetTotalSalesByRange] Error: %v", err)
+		log.Printf("❌ [GetTotalSalesByRange] Error en sales: %v", err)
 		return 0, nil
 	}
-	return total, nil
+
+	var totalPayments float64
+	paymentQuery := r.db.Table("credit_payments").Where("deleted_at IS NULL")
+	if !from.IsZero() {
+		paymentQuery = paymentQuery.Where("\"paymentDate\" >= ?", from)
+	}
+	if !to.IsZero() {
+		paymentQuery = paymentQuery.Where("\"paymentDate\" < ?", to)
+	}
+	err = paymentQuery.Select("COALESCE(SUM(\"totalPaid\"), 0)").Scan(&totalPayments).Error
+	if err != nil {
+		log.Printf("❌ [GetTotalSalesByRange] Error en payments: %v", err)
+	}
+
+	return total + totalPayments, nil
 }
 
 func (r *PostgresSaleRepository) GetGlobalCOGS() (float64, error) {

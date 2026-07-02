@@ -164,7 +164,7 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 	expense.RemainingAmount -= amountToPay
 
 	if expense.RemainingAmount <= 0 {
-		expense.Status = "PAID"
+		expense.Status = "SETTLED"
 	}
 
 	if err := s.repo.Update(id, expense); err != nil {
@@ -241,7 +241,7 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 
 	// Actualizar stock usando BulkReceive (que también marca la orden como recibida)
 	// BypassExpense = true porque el egreso se acaba de crear arriba manualmente
-	if _, err := s.productRepo.BulkReceive(receiveEntries, &orderID, true, expense.PaymentSource, expense.CreatedByDNI, expense.SupplierID, 0, 0, true, ""); err != nil {
+	if _, err := s.productRepo.BulkReceive(receiveEntries, &orderID, nil, nil, true, expense.PaymentSource, expense.CreatedByDNI, expense.SupplierID, 0, 0, true, ""); err != nil {
 		// Loggear error si falla el stock, pero el egreso ya es exitoso
 	}
 
