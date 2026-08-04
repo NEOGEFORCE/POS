@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
 import { Button, Input, Spinner, Autocomplete, AutocompleteItem } from "@heroui/react";
 import {
-  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles, Truck
+  TrendingDown, Search, PlusCircle, RefreshCw, Sparkles, Truck, Calendar
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Expense, Supplier } from '@/lib/definitions';
@@ -21,8 +21,23 @@ const ExpenseFormModal = dynamic(() => import('./components/ExpenseFormModal'), 
 const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal'), { ssr: false });
 const PendingDebtsModal = dynamic(() => import('./components/PendingDebtsModal'), { ssr: false });
 
-// COMPONENTE HEADER MEMOIZADO PARA RENDIMIENTO (ESTILO USUARIOS)
-const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSelectSupplier, onAdd, onReload, isLoading, onApplyFilters }: {
+const ExpenseHeader = memo(({ 
+  filter, 
+  supplierFilter, 
+  suppliers, 
+  onSearch, 
+  onSelectSupplier, 
+  onAdd, 
+  onReload, 
+  isLoading, 
+  onApplyFilters,
+  datePreset,
+  onDatePresetChange,
+  customFrom,
+  customTo,
+  onCustomFromChange,
+  onCustomToChange,
+}: {
   filter: string,
   supplierFilter: string,
   suppliers: Supplier[],
@@ -31,10 +46,16 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
   onAdd: () => void,
   onReload: () => void,
   isLoading: boolean,
-  onApplyFilters: () => void
+  onApplyFilters: () => void,
+  datePreset: 'all' | 'today' | 'yesterday' | 'this_month' | 'last_month' | 'custom',
+  onDatePresetChange: (preset: 'all' | 'today' | 'yesterday' | 'this_month' | 'last_month' | 'custom') => void,
+  customFrom: string,
+  customTo: string,
+  onCustomFromChange: (v: string) => void,
+  onCustomToChange: (v: string) => void,
 }) => (
   <header className="flex flex-col gap-2.5 transition-all">
-    <div className="flex items-center justify-between px-1">
+    <div className="flex flex-wrap items-center justify-between gap-3 px-1">
       <div className="flex items-center gap-3">
         <div className="h-10 w-10 rounded-2xl bg-rose-500 flex items-center justify-center text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 shrink-0 transition-transform active:scale-95 transform -rotate-3">
           <TrendingDown size={20} />
@@ -46,16 +67,50 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
           <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-600 uppercase tracking-[0.4em] mt-1">Audit Ledger V4.5</p>
         </div>
       </div>
-      <div className="flex items-center gap-2">
+
+      {/* SELECTOR DE FECHA + BOTONES DE ACCION (CARGAR / NUEVA SALIDA) */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-950 p-1 rounded-2xl border border-gray-200 dark:border-white/5">
+          <div className="flex items-center gap-1.5 px-2 text-rose-500">
+            <Calendar size={14} />
+            <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-500 hidden xl:inline">Período:</span>
+          </div>
+          {[
+            { id: 'all', label: 'Todos' },
+            { id: 'today', label: 'Hoy' },
+            { id: 'yesterday', label: 'Ayer' },
+            { id: 'this_month', label: 'Este Mes' },
+            { id: 'last_month', label: 'Mes Pasado' },
+            { id: 'custom', label: 'Personalizado' },
+          ].map(preset => (
+            <Button
+              key={preset.id}
+              size="sm"
+              variant={datePreset === preset.id ? "solid" : "light"}
+              color={datePreset === preset.id ? "danger" : "default"}
+              onPress={() => onDatePresetChange(preset.id as any)}
+              className={`h-7 px-2.5 text-[9px] font-bold uppercase tracking-wider rounded-xl transition-all ${
+                datePreset === preset.id
+                  ? 'shadow-sm bg-rose-500 text-white font-bold'
+                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+              }`}
+            >
+              {preset.label}
+            </Button>
+          ))}
+        </div>
+
         <Button
           isIconOnly
           size="sm"
           onPress={onReload}
           isLoading={isLoading}
-          className="h-10 w-10 card-base border-none dark:bg-[#18181b]/80 text-rose-500 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-95 transition-all"
+          title="Cargar / Sincronizar"
+          className="h-10 w-10 card-base border-none dark:bg-[#18181b]/80 text-rose-500 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-gray-200 dark:border-white/5 active:scale-95 transition-all shrink-0"
         >
           <RefreshCw size={16} className={isLoading ? "animate-spin" : ""} />
         </Button>
+
         <Button
           size="sm"
           onPress={onAdd}
@@ -66,6 +121,33 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
         </Button>
       </div>
     </div>
+
+    {/* Si se selecciona Personalizado, mostrar inputs desde/hasta */}
+    {datePreset === 'custom' && (
+      <div className="flex items-center gap-3 px-3 py-2 bg-gray-100 dark:bg-zinc-950/80 rounded-2xl border border-gray-200 dark:border-white/5 self-end animate-in fade-in duration-200">
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] font-bold uppercase text-zinc-500">Desde:</span>
+          <Input
+            type="date"
+            size="sm"
+            value={customFrom}
+            onChange={(e) => onCustomFromChange(e.target.value)}
+            className="w-36 text-xs font-mono"
+          />
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[9px] font-bold uppercase text-zinc-500">Hasta:</span>
+          <Input
+            type="date"
+            size="sm"
+            value={customTo}
+            onChange={(e) => onCustomToChange(e.target.value)}
+            className="w-36 text-xs font-mono"
+          />
+        </div>
+      </div>
+    )}
+
     <div className="flex flex-col sm:flex-row gap-2">
       <Input
         size="sm"
@@ -105,13 +187,14 @@ const ExpenseHeader = memo(({ filter, supplierFilter, suppliers, onSearch, onSel
       </Autocomplete>
       <Button
         onPress={onApplyFilters}
-        className="h-11 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium uppercase text-[10px] rounded-2xl px-6"
+        className="h-11 bg-gray-50 dark:bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 font-medium uppercase text-[10px] rounded-2xl px-6 shrink-0"
       >
         Buscar (Servidor)
       </Button>
     </div>
   </header>
 ));
+ExpenseHeader.displayName = 'ExpenseHeader';
 ExpenseHeader.displayName = 'ExpenseHeader';
 
 async function fetchExpenses(token: string, concept: string = '', supplier: string = ''): Promise<Expense[]> {
@@ -201,16 +284,55 @@ export default function ExpensesPage() {
     loadSuppliers();
   }, []);
 
-  const stats = useMemo(() => {
+  // Estado para selector de fecha de egresos
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'this_month' | 'last_month' | 'custom'>('this_month');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
+  const dateRangeBounds = useMemo(() => {
     const now = new Date();
-    const currentMonth = expenses.filter(e => {
+    let start = new Date(0);
+    let end = new Date(2099, 11, 31, 23, 59, 59);
+
+    if (datePreset === 'today') {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    } else if (datePreset === 'yesterday') {
+      const y = new Date(now);
+      y.setDate(now.getDate() - 1);
+      start = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 0, 0, 0);
+      end = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59);
+    } else if (datePreset === 'this_month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    } else if (datePreset === 'last_month') {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    } else if (datePreset === 'custom') {
+      if (customFrom) {
+        const [y, m, d] = customFrom.split('-').map(Number);
+        start = new Date(y, m - 1, d, 0, 0, 0);
+      }
+      if (customTo) {
+        const [y, m, d] = customTo.split('-').map(Number);
+        end = new Date(y, m - 1, d, 23, 59, 59);
+      }
+    }
+    return { start, end };
+  }, [datePreset, customFrom, customTo]);
+
+  const stats = useMemo(() => {
+    const periodExpenses = expenses.filter(e => {
+      if (datePreset === 'all') return true;
       const d = new Date(e.date);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+      return d >= dateRangeBounds.start && d <= dateRangeBounds.end;
     });
-    const totalMonth = currentMonth
+
+    const totalMonth = periodExpenses
       .filter(e => (e.status === 'PAID' || !e.status) && e.paymentSource?.toUpperCase() !== 'PRESTAMO' && e.paymentSource?.toUpperCase() !== 'PREST.')
       .reduce((acc, e) => acc + Number(e.amount) + Number(e.taxAmount || 0), 0);
-    const bySource = expenses
+
+    const bySource = periodExpenses
       .filter(e => (e.status === 'PAID' || !e.status) && e.paymentSource?.toUpperCase() !== 'PRESTAMO' && e.paymentSource?.toUpperCase() !== 'PREST.')
       .reduce((acc: any, e) => {
         const source = e.paymentSource || 'EFECTIVO';
@@ -222,30 +344,22 @@ export default function ExpensesPage() {
     const pendingExpenses = expenses.filter(e => e.status === 'PENDING' && (e.remainingAmount > 0 || Number(e.amount) > 0));
     const totalPending = pendingExpenses.reduce((acc, e) => acc + (e.remainingAmount > 0 ? e.remainingAmount : Number(e.amount)), 0);
 
-    return { totalMonth, topSource, count: expenses.length, totalPending, pendingExpenses };
-  }, [expenses]);
+    return { totalMonth, topSource, count: periodExpenses.length, totalPending, pendingExpenses };
+  }, [expenses, datePreset, dateRangeBounds]);
 
   const filteredExpenses = useMemo(() => {
-    const now = new Date();
-    const currentMonth = now.getMonth();
-    const currentYear = now.getFullYear();
-
     return expenses.filter(e => {
       // Ocultar deudas pendientes y saldadas de la tabla principal para evitar duplicidad visual
       if (e.status === 'PENDING' || e.status === 'SETTLED') return false;
 
-      const d = new Date(e.date);
-      const isCurrentMonth = d.getMonth() === currentMonth && d.getFullYear() === currentYear;
-      
-      // Ya filtramos por DB con filter/supplierFilter.
-      // Asi que aqui solo aplicamos la regla de "si no hay filtro, mostrar solo el mes actual"
-      if (filter.trim() !== '' || supplierFilter.trim() !== '') {
-        return true;
+      if (datePreset !== 'all') {
+        const d = new Date(e.date);
+        if (d < dateRangeBounds.start || d > dateRangeBounds.end) return false;
       }
       
-      return isCurrentMonth;
+      return true;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [expenses, filter, supplierFilter]);
+  }, [expenses, datePreset, dateRangeBounds]);
 
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);
@@ -385,21 +499,28 @@ export default function ExpensesPage() {
     }
   };
 
-  const handleSettleDebt = async (id: string, paymentSource: string, amount: number) => {
+  const handleSettleDebt = async (id: string, paymentData: any, amount: number) => {
     const token = Cookies.get('org-pos-token');
     if (!token) return;
 
     try {
       await apiFetch(`/expenses/settle/${id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ paymentSource, amount }),
+        body: JSON.stringify({ 
+          paymentSource: paymentData.paymentSourceString, 
+          amount,
+          cashAmount: paymentData.cash || 0,
+          nequiAmount: paymentData.nequi || 0,
+          daviplataAmount: paymentData.daviplata || 0,
+          fondoAmount: paymentData.fondo || 0
+        }),
         fallbackError: 'FALLO AL SALDAR DEUDA'
       }, token);
 
       toast({
         variant: "success",
         title: "DEUDA SALDADA",
-        description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentSource}`,
+        description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentData.paymentSourceString}`,
       });
       loadExpenses();
       broadcastRevalidate('EXPENSE_UPDATE');
@@ -462,10 +583,17 @@ export default function ExpensesPage() {
           onSearch={(v) => setFilter(v.toUpperCase())}
           onSelectSupplier={(v) => setSupplierFilter(v.toUpperCase())}
           onAdd={() => setAddDialogOpen(true)}
-          onReload={() => { setFilter(''); setSupplierFilter(''); loadExpenses(); }}
+          onReload={() => { setFilter(''); setSupplierFilter(''); setDatePreset('this_month'); loadExpenses(); }}
           onApplyFilters={loadExpenses}
           isLoading={loading}
+          datePreset={datePreset}
+          onDatePresetChange={setDatePreset}
+          customFrom={customFrom}
+          customTo={customTo}
+          onCustomFromChange={setCustomFrom}
+          onCustomToChange={setCustomTo}
         />
+
         <ExpenseStats
           totalMonth={stats.totalMonth}
           topSource={stats.topSource}

@@ -202,8 +202,8 @@ const ExpenseTable = memo(({
                           {(Number(expense.amount) + Number(expense.taxAmount || 0)).toLocaleString()}
                         </span>
                         {Number(expense.taxAmount || 0) > 0 && (
-                          <span className="text-[9px] font-medium text-gray-400 mt-1 uppercase tracking-tight">
-                            Inc. imp. 4x1000
+                          <span className="text-[9px] font-medium text-purple-600 dark:text-purple-400 mt-1 uppercase tracking-tight">
+                            Inc. imp. 4x1000: +${Number(expense.taxAmount).toLocaleString()}
                           </span>
                         )}
                       </div>

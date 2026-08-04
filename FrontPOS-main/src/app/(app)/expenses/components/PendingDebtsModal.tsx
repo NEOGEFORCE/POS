@@ -16,7 +16,7 @@ interface PendingDebtsModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   debts: Expense[];
-  onSettle: (id: string, paymentSource: string, amount: number) => Promise<void>;
+  onSettle: (id: string, paymentData: any, amount: number) => Promise<void>;
   isAdmin?: boolean;
   onForceClose?: (id: string) => Promise<void>;
 }
@@ -34,7 +34,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle, isAdmin, onF
     const totalAmountPaid = paymentData.cash + paymentData.nequi + paymentData.daviplata + paymentData.fondo;
     
     try {
-      await onSettle(currentDebtId, paymentData.paymentSourceString, totalAmountPaid);
+      await onSettle(currentDebtId, paymentData, totalAmountPaid);
       setIsPaymentModalOpen(false);
     } catch (e) {
       console.error(e);

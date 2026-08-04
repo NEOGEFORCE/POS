@@ -4,7 +4,7 @@ import React, { memo } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, Button } from "@heroui/react";
 import { AlertTriangle, Check, Package, X, ArrowRight } from 'lucide-react';
 import { Product } from '@/lib/definitions';
-import { getStockStatus } from '@/lib/utils';
+import { calculateStockHealth } from '@/lib/utils';
 
 interface InventoryAlertsModalProps {
     isOpen: boolean;
@@ -54,7 +54,7 @@ const InventoryAlertsModal = memo(({ isOpen, onOpenChange, products }: Inventory
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     {products.map(p => {
-                                        const status = getStockStatus(p.quantity, p.minStock || 0);
+                                        const status = calculateStockHealth(p.quantity, p.minStock || 0);
                                         const isCritical = status === 'CRITICAL';
                                         
                                         return (

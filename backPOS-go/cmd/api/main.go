@@ -37,6 +37,19 @@ func main() {
 	// Connect to Database
 	repositories.ConnectDB()
 
+	// Init & Refresh Materialized Views for Dashboard
+	if err := repositories.InitMaterializedViews(repositories.DB); err != nil {
+		log.Printf("⚠️ InitMaterializedViews error: %v", err)
+	}
+	repositories.DB.Exec("REFRESH MATERIALIZED VIEW mv_dashboard_stats_monthly;")
+
+	// REVERT CIERRE 73
+	repositories.DB.Exec("UPDATE cashier_closures SET physical_cash = 780000, difference = 100890 WHERE id = 73")
+	// GHOST CLOSURE
+	repositories.DB.Exec("INSERT INTO cashier_closures (start_date, end_date, expected_cash, physical_cash, difference, status, opened_by, closed_by, observations) VALUES ('2000-01-01', '2000-01-01', 0, 63000, 63000, 'CLOSED', 'SISTEMA', 'SISTEMA', 'Ajuste fantasma de boveda')")
+	// FIX CLOSURE 84
+	repositories.DB.Exec("UPDATE cashier_closures SET date = '2026-07-03 12:00:00-05' WHERE id = 84")
+
 	// Initialize Repositories
 	productRepo := repositories.NewPostgresProductRepository(repositories.DB)
 	saleRepo := repositories.NewPostgresSaleRepository(repositories.DB)
@@ -118,7 +131,14 @@ func main() {
 	}()
 
 	r := gin.New()
-	r.Use(gzip.Gzip(gzip.DefaultCompression))
+	// NOTA: Gzip se aplica selectivamente (NO en SSE para evitar buffering)
+	r.Use(func(c *gin.Context) {
+		if c.Request.URL.Path == "/api/sse" {
+			c.Next()
+			return
+		}
+		gzip.Gzip(gzip.BestSpeed)(c)
+	})
 	r.Use(gin.Recovery())
 	r.SetTrustedProxies(nil) // Silence proxy warning
 
@@ -134,9 +154,14 @@ func main() {
 	// Only allow specific origins for security
 	allowedOrigins := map[string]bool{
 		"http://localhost:3000":     true,
+		"http://localhost:9002":     true,
 		"http://127.0.0.1:3000":     true,
+		"http://127.0.0.1:9002":     true,
 		"http://192.168.1.6:3000":   true,
+		"http://192.168.1.6:9002":   true,
+		"https://192.168.1.6:9002":  true,
 		"http://192.168.1.21:3000":  true,
+		"http://192.168.1.21:9002":  true,
 	}
 
 	isLocalIP := func(origin string) bool {
@@ -147,11 +172,14 @@ func main() {
 		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
 			return true
 		}
-		// Permitir rangos de IP privados comunes (192.168.x.x, 10.x.x.x, 172.x.x.x)
+		// Permitir rangos de IP privados comunes (192.168.x.x, 10.x.x.x, 172.x.x.x) en http o https
 		localPatterns := []string{
 			"http://192.168.",
+			"https://192.168.",
 			"http://10.",
+			"https://10.",
 			"http://172.",
+			"https://172.",
 		}
 		for _, pattern := range localPatterns {
 			if strings.HasPrefix(origin, pattern) {
@@ -274,8 +302,8 @@ func main() {
 				productAdmin.POST("/expenses/create-linked", expenseHandler.CreateLinked)
 
 				productAdmin.DELETE("/products/delete-products/:barcode", productHandler.Delete)
-				productAdmin.POST("/products/receive-stock", productHandler.ReceiveStock)
-				productAdmin.POST("/products/bulk-receive", productHandler.BulkReceive)
+				productManage.POST("/products/receive-stock", productHandler.ReceiveStock)
+				productManage.POST("/products/bulk-receive", productHandler.BulkReceive)
 				productAdmin.POST("/products/fix-prices", productHandler.FixPrices)
 				productAdmin.DELETE("/inventory/receive/:ref", productHandler.DeleteReception)
 				productAdmin.PATCH("/inventory/receive/:ref", productHandler.EditReception)
@@ -285,17 +313,20 @@ func main() {
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
 
 				// Smart Restock API
-				productAdmin.GET("/inventory/restock/suggestions", restockHandler.GetSuggestions)
-				productAdmin.GET("/inventory/restock/critical", restockHandler.GetCritical)
-				productAdmin.GET("/inventory/restock/purchase-list", restockHandler.GetPurchaseList)
-				productAdmin.POST("/inventory/restock/purchase-list", restockHandler.AddToPurchaseList)
-				productAdmin.DELETE("/inventory/restock/purchase-list/:id", restockHandler.RemoveFromPurchaseList)
-				productAdmin.POST("/inventory/restock/confirm", restockHandler.ConfirmOrder)
+				productManage.GET("/inventory/restock/suggestions", restockHandler.GetSuggestions)
+				productManage.GET("/inventory/restock/critical", restockHandler.GetCritical)
+				productManage.GET("/inventory/restock/purchase-list", restockHandler.GetPurchaseList)
+				productManage.POST("/inventory/restock/purchase-list", restockHandler.AddToPurchaseList)
+				productManage.DELETE("/inventory/restock/purchase-list/:id", restockHandler.RemoveFromPurchaseList)
+				productManage.POST("/inventory/restock/confirm", restockHandler.ConfirmOrder)
 
 				// Carga Maestra API
-				productAdmin.GET("/inventory/receive/pending", restockHandler.GetPendingOrders)
-				productAdmin.GET("/inventory/receive/pending/:id", restockHandler.GetPendingOrder)
-				productAdmin.GET("/inventory/receive/history", restockHandler.GetOrdersHistory)
+				productManage.GET("/inventory/receive/pending", restockHandler.GetPendingOrders)
+				productManage.DELETE("/inventory/receive/pending/:id", restockHandler.CancelPendingOrder)
+				productManage.PUT("/inventory/receive/pending/:id/mark-received", restockHandler.MarkOrderAsReceived)
+				productManage.POST("/inventory/receive/pending/:id/mark-received", restockHandler.MarkOrderAsReceived)
+				productManage.GET("/inventory/receive/pending/:id", restockHandler.GetPendingOrder)
+				productManage.GET("/inventory/receive/history", restockHandler.GetOrdersHistory)
 
 				// Report History
 				productAdmin.GET("/reports/history", reportHandler.GetHistory)
@@ -353,6 +384,9 @@ func main() {
 				clientGroup.POST("/pay-credit", clientHandler.PayCredit) // Empleados pueden recibir abonos
 				clientGroup.GET("/get-statement/:dni", clientHandler.GetStatement)
 
+				clientGroup.DELETE("/delete-credit-payment/:id", clientHandler.DeleteCreditPayment)
+				clientGroup.PUT("/update-credit-payment/:id", clientHandler.UpdateCreditPaymentMethod)
+
 				// Acciones de Gestión (Solo Admin/Superadmin)
 				clientAdmin := clientGroup.Group("/")
 				clientAdmin.Use(middlewares.RoleMiddleware("admin"))
@@ -368,6 +402,7 @@ func main() {
 			protected.GET("/sales/history", saleHandler.GetAll)
 			protected.GET("/sales/history/:id", saleHandler.GetByID)
 			protected.DELETE("/sales/delete/:id", middlewares.RoleMiddleware("admin"), saleHandler.Delete)
+			protected.PUT("/sales/update/:id", middlewares.RoleMiddleware("admin"), saleHandler.Update)
 			protected.PUT("/sales/update-payment/:id", saleHandler.UpdatePayment)
 			protected.POST("/sales/add-items/:id", saleHandler.AddItems)
 

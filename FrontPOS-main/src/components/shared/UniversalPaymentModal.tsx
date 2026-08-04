@@ -6,7 +6,7 @@ import {
 } from "@heroui/react";
 import { 
   Banknote, Zap, Check, Wallet, ArrowRight, X, 
-  Calculator, ShieldCheck, TrendingUp, Grid3X3, Users 
+  Calculator, ShieldCheck, TrendingUp, Grid3X3, Users, AlertTriangle 
 } from 'lucide-react';
 import { Customer } from '@/lib/definitions';
 import { formatCurrency } from "@/lib/utils";
@@ -36,12 +36,14 @@ interface UniversalPaymentModalProps {
   }) => Promise<void>;
   onCloseComplete?: () => void;
   showCreditTab?: boolean;
+  flowType?: "in" | "out";
   reason?: string;
   onReasonChange?: (reason: string) => void;
   isAbono?: boolean;
   isRefund?: boolean;
   onClientSelectorOpen?: () => void;
   pendingReturnAmount?: number;
+  originalPaymentMethod?: string;
 }
 
 export default function UniversalPaymentModal({
@@ -63,10 +65,17 @@ export default function UniversalPaymentModal({
   isAbono = false,
   isRefund = false,
   onClientSelectorOpen,
-  pendingReturnAmount = 0
+  pendingReturnAmount = 0,
+  originalPaymentMethod = "EFECTIVO"
 }: UniversalPaymentModalProps) {
   
-  const effectiveTotal = Math.max(0, totalToPay - pendingReturnAmount);
+  const netExchangeBalance = totalToPay - (pendingReturnAmount || 0);
+  const isReturnExchange = (pendingReturnAmount || 0) > 0;
+  const isTransferReturn = isReturnExchange && !!originalPaymentMethod && (originalPaymentMethod.toUpperCase() !== 'EFECTIVO' && originalPaymentMethod.toUpperCase() !== 'CAJA');
+  const isBlockedTransferRefund = isTransferReturn && netExchangeBalance < 0;
+  const baseReturnRefund = isReturnExchange && netExchangeBalance < 0 && !isTransferReturn ? Math.abs(netExchangeBalance) : 0;
+  const effectiveTotal = isReturnExchange ? Math.max(0, netExchangeBalance) : totalToPay;
+
   const isProcessingRef = useRef(false);
   const [activePaymentTab, setActivePaymentTab] = useState<'cash' | 'NEQUI' | 'DAVIPLATA' | 'credit'>('cash');
   const [isMobileNumpadOpen, setIsMobileNumpadOpen] = useState(false);
@@ -156,7 +165,7 @@ export default function UniversalPaymentModal({
   const isOverCreditLimit = !!(activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit));
   
   const processPayment = useCallback(async () => {
-        if (isProcessingRef.current || submittingPayment || isCreditInvalid || isOverCreditLimit) return;
+        if (isProcessingRef.current || submittingPayment || isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund) return;
         isProcessingRef.current = true;
         
         let finalCash = cashPaid;
@@ -204,7 +213,8 @@ export default function UniversalPaymentModal({
   
       const totalPaid = finalCash + finalNequi + finalDaviplata + finalCredit;
       const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
-      const change = Math.max(0, effectiveCash - finalCash);
+      const extraCashChange = Math.max(0, effectiveCash - finalCash);
+      const change = baseReturnRefund + extraCashChange;
     
     let mainTransferSource = "MIXTO";
     if (finalNequi > 0 && finalDaviplata === 0) mainTransferSource = "NEQUI";
@@ -222,10 +232,21 @@ export default function UniversalPaymentModal({
     } finally {
       isProcessingRef.current = false;
     }
-  }, [isCreditInvalid, isOverCreditLimit, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, effectiveTotal, onPay, isAbono, actualPayment]);
+  }, [isCreditInvalid, isOverCreditLimit, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, effectiveTotal, baseReturnRefund, onPay, isAbono, actualPayment]);
+
+  const [canPayByEnter, setCanPayByEnter] = useState(false);
+  useEffect(() => {
+    if (isOpen) {
+      setCanPayByEnter(false);
+      const t = setTimeout(() => setCanPayByEnter(true), 400);
+      return () => clearTimeout(t);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isOpen) return;
+
       if (showSuccessScreen) {
         if (e.key === 'Enter' || e.key === 'Escape') {
           onCloseComplete?.();
@@ -237,6 +258,10 @@ export default function UniversalPaymentModal({
       const target = e.target as HTMLElement;
       if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
         return;
+      }
+
+      if (target?.tagName === 'BUTTON') {
+        target.blur();
       }
 
       if (isProcessingRef.current && e.key === 'Enter') {
@@ -252,7 +277,7 @@ export default function UniversalPaymentModal({
         setDialogAmount(prev => prev.slice(0, -1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (isReady) processPayment();
+        if (isReady && canPayByEnter) processPayment();
       } else if (e.key === '+' || e.key === 'Add') {
         e.preventDefault();
         handleAddPayment();
@@ -329,7 +354,15 @@ export default function UniversalPaymentModal({
                  .map(tab => (
                   <button 
                     key={tab.id} 
-                    onClick={() => { setActivePaymentTab(tab.id as any); setDialogAmount(''); setCashTendered(''); }} 
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={(e) => { 
+                      setActivePaymentTab(tab.id as any); 
+                      setDialogAmount(''); 
+                      setCashTendered(''); 
+                      (e.currentTarget as HTMLElement)?.blur();
+                      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                    }} 
                     className={`h-10 md:h-14 px-2 md:px-5 rounded-2xl md:rounded-2xl flex items-center justify-center md:justify-start gap-1.5 md:gap-4 border transition-all group ${
                       activePaymentTab === tab.id 
                         ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white tracking-tight` 
@@ -407,42 +440,73 @@ export default function UniversalPaymentModal({
                 </div>
               </header>
 
-              <div className="grid grid-cols-3 gap-1.5 mb-1.5">
+              {isBlockedTransferRefund && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-3 mb-2 animate-pulse">
+                  <AlertTriangle className="text-amber-500 shrink-0" size={22} />
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-extrabold text-amber-500 uppercase tracking-wide">
+                      ⚠️ DEVOLUCIÓN EN EFECTIVO NO PERMITIDA (VENTA ORIGINAL EN {originalPaymentMethod.toUpperCase()})
+                    </span>
+                    <span className="text-[11px] font-medium text-amber-600 dark:text-amber-300 uppercase tracking-tight leading-snug">
+                      No se puede entregar efectivo por caja para devoluciones de compras pagadas por transferencia. El cliente DEBE llevar más productos por al menos <strong className="text-amber-400 font-extrabold">${formatCurrency(Math.abs(netExchangeBalance))}</strong> para cubrir el saldo a favor.
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className={`grid ${isReturnExchange ? 'grid-cols-4' : 'grid-cols-3'} gap-1.5 mb-1.5`}>
                 <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
                   <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Wallet size={6} className="text-rose-500" /> TOTAL</p>
-                  <p className="text-sm md:text-2xl font-medium text-rose-500 tracking-tight tabular-nums leading-none">${formatCurrency(effectiveTotal)}</p>
+                  <p className="text-sm md:text-2xl font-medium text-rose-500 tracking-tight tabular-nums leading-none">${formatCurrency(totalToPay)}</p>
                 </div>
+                {isReturnExchange && (
+                  <div className="bg-emerald-500/10 px-2 py-1 rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
+                    <p className="text-[6px] md:text-[8px] font-medium text-emerald-500 uppercase mb-0 tracking-widest flex items-center gap-1"><Zap size={6} /> SALDO FAVOR</p>
+                    <p className="text-sm md:text-2xl font-medium text-emerald-500 tracking-tight tabular-nums leading-none">-${formatCurrency(pendingReturnAmount)}</p>
+                  </div>
+                )}
                 <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
                   <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Check size={6} className={theme.text} /> {isRefund ? 'REEMBOLSANDO' : 'ABONANDO'}</p>
                   <p className={`text-sm md:text-2xl font-medium ${theme.text} tracking-tight tabular-nums leading-none`}>${formatCurrency(totalAlreadyPaid + actualPayment)}</p>
                 </div>
-                <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center border-emerald-500/30">
-                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><TrendingUp size={6} className="text-sky-500" /> RESTANTE</p>
-                  <p className="text-sm md:text-2xl font-medium text-sky-500 tracking-tight tabular-nums leading-none">${formatCurrency(Math.max(0, effectiveTotal - (totalAlreadyPaid + actualPayment)))}</p>
+                <div className={`bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center ${baseReturnRefund > 0 ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-emerald-500/30'}`}>
+                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1">
+                    <TrendingUp size={6} className={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'} /> 
+                    {baseReturnRefund > 0 ? 'CAMBIO ENTREGAR' : 'RESTANTE'}
+                  </p>
+                  <p className={`text-sm md:text-2xl font-medium tracking-tight tabular-nums leading-none ${baseReturnRefund > 0 ? 'text-emerald-500 font-bold' : 'text-sky-500'}`}>
+                    ${formatCurrency(baseReturnRefund > 0 ? baseReturnRefund : remainingDebt)}
+                  </p>
                 </div>
               </div>
 
               {activePaymentTab === 'cash' ? (
                 <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                   <div className={`p-2 md:p-4 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden group transition-all duration-500 ${
-                    amountToPayRaw > remainingDebt 
-                      ? `${theme.bgLight} ${theme.border} border-opacity-30` 
+                    baseReturnRefund > 0 || amountToPayRaw > remainingDebt 
+                      ? 'bg-emerald-500/10 border-emerald-500/40' 
                       : 'bg-white dark:bg-[#18181b] border-gray-200 dark:border-white/10'
                   }`}>
-                    <div className={`absolute top-0 right-0 p-2 opacity-5 ${theme.text} group-hover:scale-125 transition-transform`}>
-                      {amountToPayRaw > remainingDebt ? <Zap size={28} /> : <Banknote size={28} />}
+                    <div className={`absolute top-0 right-0 p-2 opacity-10 ${baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500' : theme.text} group-hover:scale-125 transition-transform`}>
+                      {baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? <Zap size={28} /> : <Banknote size={28} />}
                     </div>
                     
                     <p className={`text-[7px] md:text-[8px] font-medium uppercase mb-0 tracking-[0.2em] tracking-tight transition-colors ${
-                      amountToPayRaw > remainingDebt ? theme.text : 'text-gray-400'
+                      baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500 font-bold' : 'text-gray-400'
                     }`}>
-                      {amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO'}
+                      {baseReturnRefund > 0 
+                        ? 'DEVOLUCIÓN A FAVOR DEL CLIENTE (VUELTAS)' 
+                        : (amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO')}
                     </p>
                     
                     <p className={`text-xl md:text-4xl font-medium tabular-nums tracking-tight tracking-tighter transition-all ${
-                      amountToPayRaw > remainingDebt ? theme.text + ' animate-pulse' : 'dark:text-white'
+                      baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500 font-bold animate-pulse' : 'dark:text-white'
                     }`}>
-                      ${formatCurrency(amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : amountToPayRaw)}
+                      ${formatCurrency(
+                        baseReturnRefund > 0 
+                          ? baseReturnRefund + Math.max(0, (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : 0))
+                          : (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : amountToPayRaw)
+                      )}
                     </p>
                   </div>
                   
@@ -456,12 +520,24 @@ export default function UniversalPaymentModal({
                           { v: 10000, img: '10.000.jpg' },
                           { v: 5000, img: '5.000.jpg' },
                           { v: 2000, img: '2.000.png' },
-                          { v: 1000, img: '1.000.jpg' }
+                          { v: 1000, img: '1.000.jpg' },
+                          { v: 500, img: '500.jpg' },
+                          { v: 200, img: '200.jpg' },
+                          { v: 100, img: '100.jpg' }
                         ].map(({ v, img }) => (
                           <Button 
                             key={v} 
+                            tabIndex={-1}
+                            onMouseDown={(e) => e.preventDefault()}
                             className="aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border-[1px] border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-2xl md:rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-auto" 
-                            onPress={() => { setCashTendered(String(v)); setDialogAmount(''); }}
+                            onPress={() => { 
+                              setCashTendered(prev => String(Number(prev || 0) + v)); 
+                              setDialogAmount(''); 
+                              if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); 
+                              setTimeout(() => {
+                                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                              }, 0);
+                            }}
                           >
                             <img 
                               src={`/logos/${img}`} 
@@ -471,7 +547,7 @@ export default function UniversalPaymentModal({
                           </Button>
                         ))}
                         <Button 
-                          className={`aspect-[2.2/1] w-full bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`} 
+                          className={`aspect-[2.2/1] w-full lg:col-span-2 bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`} 
                           onPress={() => setIsMobileNumpadOpen(true)}
                         >
                           <Calculator size={14} />
@@ -488,12 +564,15 @@ export default function UniversalPaymentModal({
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
                           <Button 
                             key={n} 
+                            tabIndex={-1}
+                            onMouseDown={(e) => e.preventDefault()}
                             className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
                               n === 'CE' ? 'text-rose-500 bg-rose-500/10' : 'bg-white dark:bg-zinc-800 dark:text-white'
                             }`} 
                             onPress={() => {
                                 if (n === 'CE') setDialogAmount('');
                                 else setDialogAmount((p: string) => p + String(n));
+                                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                             }}
                           >
                             {n}
@@ -611,12 +690,15 @@ export default function UniversalPaymentModal({
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
                       <Button 
                         key={n} 
+                        tabIndex={-1}
+                        onMouseDown={(e) => e.preventDefault()}
                         className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
                           n === 'CE' ? 'text-rose-500 bg-rose-500/10' : 'bg-white dark:bg-zinc-800 dark:text-white'
                         }`} 
                         onPress={() => {
                             if (n === 'CE') setDialogAmount('');
                             else setDialogAmount((p: string) => p + String(n));
+                            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                         }}
                       >
                         {n}
@@ -642,13 +724,19 @@ export default function UniversalPaymentModal({
 
                   <Button 
                     className={`md:hidden h-14 w-full font-medium uppercase rounded-2xl mt-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-xs tracking-widest active:scale-95 transition-all tracking-tight ${
-                        isCreditInvalid || isOverCreditLimit ? 'bg-gray-300 text-gray-500 cursor-not-allowed opacity-50' : `${theme.bg} text-white`
+                        isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30 cursor-not-allowed' : `${theme.bg} text-white`
                     }`} 
                     onPress={processPayment} 
                     isLoading={submittingPayment}
-                    isDisabled={isCreditInvalid || isOverCreditLimit}
+                    isDisabled={isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund}
                   >
-                    {isCreditInvalid ? "CLIENTE REQUERIDO" : isOverCreditLimit ? "CUPO EXCEDIDO" : (flowType === "out" ? "CONFIRMAR REEMBOLSO" : "SINCRONIZAR PAGO")} <Check size={18} className="ml-2" />
+                    {isCreditInvalid 
+                      ? "CLIENTE REQUERIDO" 
+                      : isOverCreditLimit 
+                      ? "CUPO EXCEDIDO" 
+                      : isBlockedTransferRefund
+                      ? `LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
+                      : (flowType === "out" ? "CONFIRMAR REEMBOLSO" : "COMPLETAR VENTA")} <Check size={18} className="ml-2" />
                   </Button>
                 </div>
               )}
@@ -698,6 +786,8 @@ export default function UniversalPaymentModal({
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
                   <Button 
                     key={n} 
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
                     className={`h-full text-2xl font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
                       n === 'CE' 
                         ? 'text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-50 active:text-white' 
@@ -709,6 +799,7 @@ export default function UniversalPaymentModal({
                         if (n === 'CE') setDialogAmount('');
                         else if (n === '+') handleAddPayment();
                         else setDialogAmount((p: string) => p + String(n));
+                        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                     }}
                   >
                     {n}
@@ -717,15 +808,21 @@ export default function UniversalPaymentModal({
               </div>
               <Button 
                 className={`h-20 font-medium uppercase rounded-2xl tracking-tight tracking-[0.2em] shadow-[0_20px_50px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[11px] border-b-4 ${
-                    isCreditInvalid || isOverCreditLimit 
-                        ? 'bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed opacity-50' 
+                    isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund 
+                        ? 'bg-amber-500/20 text-amber-500 border-amber-500/40 cursor-not-allowed' 
                         : 'bg-gray-900 dark:bg-white text-white dark:text-black border-gray-600 dark:border-gray-300'
                 }`} 
                 onPress={processPayment} 
                 isLoading={submittingPayment}
-                isDisabled={isCreditInvalid || isOverCreditLimit}
+                isDisabled={isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund}
               >
-                {isCreditInvalid ? "⛔ CLIENTE NO SELECCIONADO" : isOverCreditLimit ? "❌ CUPO EXCEDIDO" : (flowType === "out" ? "ENTREGAR EFECTIVO" : "PROCESAR CAPITAL MAESTRO")} <ShieldCheck size={20} className="ml-2" />
+                {isCreditInvalid 
+                  ? "⛔ CLIENTE NO SELECCIONADO" 
+                  : isOverCreditLimit 
+                  ? "❌ CUPO EXCEDIDO" 
+                  : isBlockedTransferRefund
+                  ? `⚠️ LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
+                  : (flowType === "out" ? "ENTREGAR EFECTIVO" : "COMPLETAR VENTA")} <ShieldCheck size={20} className="ml-2" />
               </Button>
             </div>
           </div>
@@ -733,7 +830,7 @@ export default function UniversalPaymentModal({
         </ModalContent>
         
         {/* OVERLAY DE SEGURIDAD ANTIDUPLICADO */}
-        {(submittingPayment || isProcessingRef.current) && (
+        {!showSuccessScreen && (submittingPayment || isProcessingRef.current) && (
           <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-white dark:bg-zinc-950/95 animate-in fade-in duration-300">
             <div className="bg-white dark:bg-[#18181b] p-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center gap-6 border border-black/5 dark:border-white/10 scale-110">
               <div className="relative">

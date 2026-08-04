@@ -8,7 +8,7 @@ import {
 
 import {
     Plus, Trash2, User, Grid, Camera, Search, Scale, Barcode,
-    Wifi, WifiOff, Edit2
+    Wifi, WifiOff, Edit2, Package, Zap
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -39,7 +39,7 @@ export default function NewSalePage() {
         products, customers, categories,
         currentCart, activeCartKey, cartKeys, cartCustomers,
         selectedCustomer, selectedCustomerDni,
-        total, filteredProductsGrid, filteredCustomers,
+        total, extraTotal, isEditMode, filteredProductsGrid, filteredCustomers,
         loading, submitting, searchQuery, setSearchQuery,
         selectedCategory, setSelectedCategory,
         selectedItemId, setSelectedItemId,
@@ -142,8 +142,8 @@ export default function NewSalePage() {
 
     const isModalOpenRef = useRef(false);
     useEffect(() => {
-        isModalOpenRef.current = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isMissingItemOpen || !!editingCartItem;
-    }, [isPaymentDialogOpen, isClientDialogOpen, isScannerOpen, isManualWeightOpen, isSplitDialogOpen, isMissingItemOpen, editingCartItem]);
+        isModalOpenRef.current = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isMissingItemOpen || !!editingCartItem || isProductSearchOpen;
+    }, [isPaymentDialogOpen, isClientDialogOpen, isScannerOpen, isManualWeightOpen, isSplitDialogOpen, isMissingItemOpen, editingCartItem, isProductSearchOpen]);
 
     const selectedItemIdRef = useRef(selectedItemId);
     useEffect(() => { selectedItemIdRef.current = selectedItemId; }, [selectedItemId]);
@@ -154,7 +154,7 @@ export default function NewSalePage() {
         if (cartScrollRef.current) {
             cartScrollRef.current.scrollTop = cartScrollRef.current.scrollHeight;
         }
-    }, [currentCart.length]);
+    }, [currentCart.length, selectedItemId]);
 
     // ATAJOS DE TECLADO ESTABILIZADOS
     useEffect(() => {
@@ -175,13 +175,7 @@ export default function NewSalePage() {
             if (isModalOpen && e.key !== 'Escape') return;
 
             // --- MOTOR DE CAJA ZERO-FRICTION ---
-            if (['-', '+', '*', 'Delete', 'Backspace'].includes(e.key) || e.key === 'NumpadAdd') {
-                if (e.key === 'Backspace' && scannerBufferRef.current.length > 0) {
-                    setScannerBuffer(prev => prev.slice(0, -1));
-                    e.preventDefault();
-                    return;
-                }
-
+            if (['-', '+', '*'].includes(e.key) || e.key === 'NumpadAdd') {
                 e.preventDefault();
 
                 if (e.key === '-') {
@@ -202,10 +196,20 @@ export default function NewSalePage() {
                             setScannerBuffer('');
                         }
                     }
-                } else if (e.key === 'Backspace' || e.key === 'Delete') {
-                    if (scannerBufferRef.current.length === 0 && selectedItemIdRef.current) {
-                        removeFromCart(selectedItemIdRef.current);
-                    }
+                }
+                return;
+            }
+
+            if (e.key === 'Backspace') {
+                const activeElement = document.activeElement;
+                const isInput = activeElement instanceof HTMLInputElement || activeElement instanceof HTMLTextAreaElement;
+
+                if (scannerBufferRef.current.length > 0) {
+                    setScannerBuffer(prev => prev.slice(0, -1));
+                    e.preventDefault();
+                } else if (!isInput) {
+                    // Prevenir que el navegador vaya hacia atras
+                    e.preventDefault();
                 }
                 return;
             }
@@ -240,7 +244,7 @@ export default function NewSalePage() {
                 if (showSuccessScreen) {
                     setShowSuccessScreen(false);
                 } else {
-                    setIsPaymentDialogOpen(false);
+                    if (!submitting) setIsPaymentDialogOpen(false);
                     setIsClientDialogOpen(false);
                     setIsScannerOpen(false);
                     setIsManualWeightOpen(false);
@@ -269,6 +273,7 @@ export default function NewSalePage() {
 
             if (e.key === 'Insert') {
                 e.preventDefault();
+                setScannerBuffer('');
                 setIsProductSearchOpen(true);
                 return;
             }
@@ -359,14 +364,25 @@ export default function NewSalePage() {
                 {/* SECCIÃƒâ€œN SUPERIOR: CARRITO + NUMERIC PAD */}
                 <div className="flex-[1.6] flex flex-col lg:flex-row gap-1 min-h-0 overflow-y-auto md:overflow-hidden custom-scrollbar">
                     {pendingReturn && (
-                        <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-2 flex items-center justify-between text-xs font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-2">
-                            <span>DEVOLUCIÓN EN CURSO - Saldo a favor: ${(pendingReturn.totalDev || 0).toLocaleString('es-CO')}</span>
+                        <div className={`border px-4 py-2 flex items-center justify-between text-xs font-bold uppercase tracking-widest animate-in fade-in slide-in-from-top-2 rounded-xl mb-1 ${
+                            pendingReturn.originalPaymentMethod && pendingReturn.originalPaymentMethod !== 'EFECTIVO' && pendingReturn.originalPaymentMethod !== 'CAJA'
+                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                            : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                        }`}>
+                            <div className="flex flex-col md:flex-row md:items-center gap-1">
+                                <span>DEVOLUCIÓN EN CURSO - Saldo a favor: ${(pendingReturn.totalDev || 0).toLocaleString('es-CO')}</span>
+                                {pendingReturn.originalPaymentMethod && pendingReturn.originalPaymentMethod !== 'EFECTIVO' && pendingReturn.originalPaymentMethod !== 'CAJA' && (
+                                    <span className="text-[10px] text-amber-500 bg-amber-500/20 px-2 py-0.5 rounded-md font-extrabold tracking-tight">
+                                        ⚠️ PAGO EN {pendingReturn.originalPaymentMethod} (DEBE LLEVAR PRODUCTOS, NO HAY CAMBIO EN EFECTIVO)
+                                    </span>
+                                )}
+                            </div>
                             <Button 
                                 size="sm" 
                                 variant="light" 
                                 color="danger" 
                                 onPress={cancelPendingReturn}
-                                className="h-6 min-w-0 px-2 rounded-md"
+                                className="h-6 min-w-0 px-2 rounded-md shrink-0"
                             >
                                 CANCELAR
                             </Button>
@@ -403,6 +419,15 @@ export default function NewSalePage() {
                             </div>
 
                             <div className="flex items-center gap-2">
+                                {/* CANTIDAD DE PRODUCTOS EN MEMORIA / CACHÉ */}
+                                <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-2xl border border-zinc-200 dark:border-white/5 bg-zinc-100 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                    <Package className="h-3 w-3 text-emerald-500" />
+                                    <div className="flex flex-col leading-none text-right">
+                                        <span className="text-[7px] font-bold uppercase tracking-widest leading-none text-zinc-400">Catálogo</span>
+                                        <span className="text-[9px] font-bold font-mono">{products.length} PRODS</span>
+                                    </div>
+                                </div>
+
                                 {/* RESILIENCIA DE RED: INDICADOR HFT */}
                                 <div 
                                     onClick={() => syncOfflineQueue()}
@@ -443,7 +468,7 @@ export default function NewSalePage() {
                                     classNames={{
                                         th: "bg-gray-50 dark:bg-zinc-800/80 text-gray-500 font-bold uppercase text-[8px] sm:text-[9px] tracking-widest sticky top-0 z-10 border-b border-gray-200 h-7 sm:h-8 py-0.5 sm:py-1",
                                         td: "py-0.5 sm:py-1 font-medium border-b border-gray-100 dark:border-white/5",
-                                        tr: "hover:bg-gray-50 dark:hover:bg-zinc-100 dark:bg-zinc-800/50 cursor-pointer transition-colors"
+                                        tr: "hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer transition-colors group"
                                     }}
                                 >
                                     <TableHeader>
@@ -458,7 +483,7 @@ export default function NewSalePage() {
                                             <TableRow 
                                                 key={item.cartItemId} 
                                                 onClick={() => setSelectedItemId(item.cartItemId)}
-                                                className={selectedItemId === item.cartItemId ? 'bg-zinc-100/50 dark:bg-white/5 border-l-4 border-emerald-500' : ''}
+                                                className={selectedItemId === item.cartItemId ? 'bg-zinc-100 dark:bg-zinc-800 border-l-4 border-emerald-500 font-bold' : ''}
                                             >
                                                 <TableCell>
                                                     <div className="text-[10px] sm:text-[11px] font-bold text-zinc-900 dark:text-zinc-50 uppercase leading-tight truncate max-w-[100px] sm:max-w-none">{item.productName}</div>
@@ -501,8 +526,17 @@ export default function NewSalePage() {
                                     <span className="text-xs font-medium text-gray-700 dark:text-zinc-300 tabular-nums">${formatCurrency(iva)}</span>
                                 </div>
                             </div>
-                            <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 border border-emerald-200 dark:border-emerald-500/20 px-4 py-1.5 rounded-2xl flex items-center gap-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-                                <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-widest leading-none">TOTAL</p>
+                            <div className="bg-zinc-100 dark:bg-zinc-800 border border-emerald-200 dark:border-emerald-500/20 px-4 py-1.5 rounded-2xl flex items-center gap-3 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                <div className="flex flex-col text-right">
+                                    <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest leading-none">
+                                        {isEditMode ? "TOTAL FACTURA" : "TOTAL"}
+                                    </p>
+                                    {isEditMode && extraTotal > 0 && (
+                                        <span className="text-[10px] font-bold text-emerald-500 font-mono mt-0.5">
+                                            (+${formatCurrency(extraTotal)} nuevo)
+                                        </span>
+                                    )}
+                                </div>
                                 <div className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 tabular-nums leading-none tracking-tighter flex overflow-hidden h-7 items-center">
                                     <span className="mr-1">$</span>
                                     <AnimatePresence mode="wait">
@@ -531,8 +565,8 @@ export default function NewSalePage() {
                                         {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÁNER...")}
                                     </div>
                                     {!scannerBuffer && feedbackCode && (
-                                        <div className={`absolute left-0 pointer-events-none font-mono font-bold text-xs tracking-tight ${isFeedbackError ? 'text-rose-400' : 'text-zinc-900 dark:text-zinc-100/50'} animate-out fade-out duration-1000 fill-mode-forwards`}>
-                                            {isFeedbackError ? 'ERROR: ' : 'VISTO: '}{feedbackCode}
+                                        <div className={`absolute left-0 pointer-events-none font-mono font-bold text-xs tracking-tight ${isFeedbackError ? 'text-rose-400 font-black' : 'text-zinc-900 dark:text-zinc-100/50'} animate-out fade-out duration-1000 fill-mode-forwards`}>
+                                            {isFeedbackError ? 'NO EXISTE: ' : 'VISTO: '}{feedbackCode}
                                         </div>
                                     )}
                                 </div>
@@ -601,17 +635,17 @@ export default function NewSalePage() {
             {/* MODALES DINÃƒÂ MICOS */}
             <UniversalPaymentModal 
                 isOpen={isPaymentDialogOpen}
-                onOpenChange={setIsPaymentDialogOpen}
+                onOpenChange={(open) => { if (!open && submitting) return; setIsPaymentDialogOpen(open); }}
                 title="Cobrar Venta" 
                 client={selectedCustomer} 
-                totalToPay={total} 
+                totalToPay={isEditMode ? (extraTotal > 0 ? extraTotal : total) : total} 
                 pendingReturnAmount={pendingReturn?.totalDev || 0}
+                originalPaymentMethod={pendingReturn?.originalPaymentMethod || 'EFECTIVO'}
                 showSuccessScreen={showSuccessScreen} 
                 submittingPayment={submitting} 
                 lastChange={lastChange} 
-                onPay={(method, receivedAmount) => {
-                    setIsPaymentDialogOpen(false);
-                    handleConfirmSale(method, receivedAmount, pendingReturn);
+                onPay={async (paymentData) => {
+                    await handleConfirmSale(paymentData, pendingReturn);
                 }} 
                 onCloseComplete={returnFocusToScanner} 
             />

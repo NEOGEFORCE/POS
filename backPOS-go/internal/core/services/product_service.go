@@ -59,8 +59,8 @@ func (s *ProductService) GetAllProducts() ([]models.Product, error) {
 	return s.repo.GetAll()
 }
 
-func (s *ProductService) GetPaginatedProducts(page, pageSize int, search string) ([]models.Product, int64, error) {
-	return s.repo.GetPaginated(page, pageSize, search, 0)
+func (s *ProductService) GetPaginatedProducts(page, pageSize int, search string, supplierID int, stockFilter string) ([]models.Product, int64, error) {
+	return s.repo.GetPaginated(page, pageSize, search, supplierID, stockFilter)
 }
 
 func (s *ProductService) GetProductsBySupplier(supplierID uint) ([]models.Product, error) {

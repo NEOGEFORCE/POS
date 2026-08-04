@@ -23,15 +23,15 @@ export default function ProductSearchModal({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Filtramos por coincidencia en nombre o código
   const filteredProducts = React.useMemo(() => {
-    if (!query.trim()) return [];
+    if (!query.trim() || !Array.isArray(products)) return [];
     const lowerQuery = query.toLowerCase();
     return products
       .filter(
         (p) =>
-          p.productName.toLowerCase().includes(lowerQuery) ||
-          p.barcode.toLowerCase().includes(lowerQuery)
+          (p.productName || '').toLowerCase().includes(lowerQuery) ||
+          (p.barcode || '').toLowerCase().includes(lowerQuery) ||
+          (p.alternateCodes || '').toLowerCase().includes(lowerQuery)
       )
       .slice(0, 10); // Limitamos a 10 resultados para no saturar la vista
   }, [products, query]);
@@ -125,12 +125,24 @@ export default function ProductSearchModal({
                                 <Package className="w-4 h-4" />
                               </div>
                               <div className="flex flex-col">
-                                <span className={`text-sm font-semibold ${isSelected ? "text-emerald-400" : "text-zinc-200"}`}>
-                                  {p.productName}
-                                </span>
-                                <span className="text-[10px] text-zinc-500 font-mono">
-                                  {p.barcode} • Stock: {p.quantity}
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span className={`text-sm font-semibold ${isSelected ? "text-emerald-400" : "text-zinc-200"}`}>
+                                    {p.productName}
+                                  </span>
+                                  {p.isPack && (
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 uppercase">
+                                      PACK x{p.packMultiplier || 1}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+                                  <span>{p.barcode} • Stock: {p.quantity}</span>
+                                  {p.alternateCodes && p.alternateCodes.toLowerCase().includes(query.toLowerCase()) && (
+                                    <span className="text-[9px] text-sky-400 bg-sky-500/10 px-1 py-0.2 rounded font-sans">
+                                      Alt: {p.alternateCodes}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                             <span className="text-base font-bold text-white tabular-nums">

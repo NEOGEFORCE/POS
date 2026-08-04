@@ -13,10 +13,8 @@ func (s *ProductService) GetProductStats() (map[string]interface{}, error) {
 	totalItems := len(products)
 
 	for _, p := range products {
-		if !p.IsWeighted {
-			totalCost += p.Quantity * p.PurchasePrice
-			totalRetail += p.Quantity * p.SalePrice
-		}
+		totalCost += p.Quantity * p.PurchasePrice
+		totalRetail += p.Quantity * p.SalePrice
 
 		effectiveStock := p.Quantity
 		var percentage float64

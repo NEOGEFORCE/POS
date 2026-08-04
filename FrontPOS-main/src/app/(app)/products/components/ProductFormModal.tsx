@@ -1045,8 +1045,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       type="number"
                       step={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "any" : "1"}
                       inputMode={(addDialogOpen ? newProduct.isWeighted : editingProduct?.isWeighted) ? "decimal" : "numeric"}
-                      isDisabled={(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1}
-                      value={(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 ? "∞" : String(addDialogOpen ? (newProduct.quantity ?? '') : (editingProduct?.quantity ?? ''))}
+                      value={String(addDialogOpen ? (newProduct.quantity ?? '') : (editingProduct?.quantity ?? ''))}
                       onValueChange={(v) => {
                         // Allow typing decimals like '1.' or '1.5' by saving the string if it ends in a dot,
                         // otherwise parsing to float. HeroUI's type="number" gives us strings natively.
@@ -1056,7 +1055,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       classNames={{
                         ...itemInputClass,
                         inputWrapper: `${itemInputClass.inputWrapper}`,
-                        input: `${itemInputClass.input} text-left ${(addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 ? 'text-zinc-900 dark:text-zinc-100 text-lg' : ''}`
+                        input: `${itemInputClass.input} text-left`
                       }}
                     />
                   </div>
@@ -1085,6 +1084,36 @@ const ProductFormModal = memo(function ProductFormModal({
                       <span className="text-xs font-medium text-rose-500 tracking-tight">{getFieldError('minStock')}</span>
                     )}
                   </div>
+                  {/* RECOMENDACION DE STOCK */}
+                  {(() => {
+                    const current = Number(addDialogOpen ? newProduct.quantity : editingProduct?.quantity);
+                    const min = Number(addDialogOpen ? newProduct.minStock : editingProduct?.minStock);
+                    
+                    if (isNaN(current) || isNaN(min)) return null;
+                    
+                    const isCritical = current <= min && current > 0;
+                    const isOut = current <= 0;
+                    
+                    return (
+                      <div className={`col-span-2 flex items-center justify-between p-2.5 rounded-xl border ${isOut ? 'bg-rose-500/10 border-rose-500/20' : isCritical ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/10 border-emerald-500/20'} mt-1`}>
+                        <div className="flex items-center gap-2">
+                          <Info size={14} className={isOut ? 'text-rose-500' : isCritical ? 'text-amber-500' : 'text-emerald-500'} />
+                          <span className={`text-[10px] font-medium uppercase tracking-tight ${isOut ? 'text-rose-500' : isCritical ? 'text-amber-500' : 'text-emerald-500'}`}>
+                            {isOut ? 'SIN STOCK (COMPRAR URGENTE)' : isCritical ? 'STOCK BAJO (SE SUGIERE COMPRAR)' : 'STOCK SALUDABLE'}
+                          </span>
+                        </div>
+                        {isOut || isCritical ? (
+                          <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">
+                            Faltan {Math.max(0, min - current + 1)} u. mínimas
+                          </span>
+                        ) : (
+                          <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">
+                            Excedente de {Math.max(0, current - min)} u.
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
               {/* 4. CONFIGURACION ESPECIAL (Compacta) */}
               <div className="flex flex-col sm:flex-row gap-2">
@@ -1100,46 +1129,12 @@ const ProductFormModal = memo(function ProductFormModal({
                       size="sm"
                       isSelected={isProductWeighted(addDialogOpen ? newProduct : editingProduct)}
                       onValueChange={(v) => {
-                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isWeighted: v, quantity: v ? 0 : p.quantity }));
-                        else setEditingProduct((p: any) => p ? { ...p, isWeighted: v, quantity: v ? 0 : p.quantity } : null);
+                        if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isWeighted: v }));
+                        else setEditingProduct((p: any) => p ? { ...p, isWeighted: v } : null);
                       }}
                       classNames={minimalistSwitchClass}
                     />
                   </div>
-
-                  {isProductWeighted(addDialogOpen ? newProduct : editingProduct) && (
-                    <div className="flex items-center justify-between pt-1 border-t border-gray-100 dark:border-white/5 mt-1">
-                      <span className="text-[7px] font-medium text-gray-400 uppercase tracking-tight">Control de Stock</span>
-                      <div className="flex bg-gray-200 dark:bg-zinc-800 p-0.5 rounded-2xl gap-1">
-                        <button
-                          onClick={() => {
-                            if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: 0 }));
-                            else setEditingProduct((p: any) => p ? { ...p, quantity: 0 } : null);
-                          }}
-                          className={`px-2 py-1 rounded-2xl text-[8px] font-medium transition-all ${
-                            (addDialogOpen ? newProduct.quantity : editingProduct?.quantity) !== -1 
-                            ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' 
-                            : 'text-gray-400'
-                          }`}
-                        >
-                          REAL
-                        </button>
-                        <button
-                          onClick={() => {
-                            if (addDialogOpen) setNewProduct((p: any) => ({ ...p, quantity: -1 }));
-                            else setEditingProduct((p: any) => p ? { ...p, quantity: -1 } : null);
-                          }}
-                          className={`px-2 py-1 rounded-2xl text-[8px] font-medium transition-all ${
-                            (addDialogOpen ? newProduct.quantity : editingProduct?.quantity) === -1 
-                            ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' 
-                            : 'text-gray-400'
-                          }`}
-                        >
-                          ∞ INFINITO
-                        </button>
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className="flex-1 flex items-center justify-between px-3 h-10 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl border border-gray-100 dark:border-white/5">

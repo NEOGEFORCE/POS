@@ -27,31 +27,39 @@ import { useApi } from "@/hooks/use-api";
 const DateRangeModal = nextDynamic(() => import("../dashboard/components/DateRangeModal"));
 const GenerateReportModal = nextDynamic(() => import("./components/GenerateReportModal"));
 const ClosuresHistory = nextDynamic(() => import("./components/ClosuresHistory"));
+const ProfitabilityReportView = nextDynamic(() => import("./components/ProfitabilityReportView"));
 
-const MetricCard = memo(({ label, value, subValue, trend }: any) => (
-  <div className="card-base p-6 relative group hover:border-zinc-200 dark:border-white/10 transition-all duration-150">
-    <div className="absolute inset-x-0 bottom-0 h-10 opacity-10 pointer-events-none">
-      <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={[{ val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }]}>
-          <Area type="monotone" dataKey="val" stroke="#3f3f46" fill="#3f3f46" fillOpacity={0.2} strokeWidth={2} />
-        </AreaChart>
-      </ResponsiveContainer>
-    </div>
-    <div className="relative z-10">
-      <span className="text-[11px] font-medium tracking-widest uppercase text-gray-500 dark:text-zinc-500 block mb-2">{label}</span>
-      <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">{value}</span>
-        <span className="text-xs font-medium text-gray-500 dark:text-zinc-500">{trend}</span>
+const MetricCard = memo(({ label, value, subValue, trend }: any) => {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+  return (
+    <div className="card-base p-6 relative group hover:border-zinc-200 dark:border-white/10 transition-all duration-150">
+      {mounted && (
+        <div className="absolute inset-x-0 bottom-0 h-10 opacity-10 pointer-events-none">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={[{ val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }]}>
+              <Area type="monotone" dataKey="val" stroke="#3f3f46" fill="#3f3f46" fillOpacity={0.2} strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      <div className="relative z-10">
+        <span className="text-[11px] font-medium tracking-widest uppercase text-gray-500 dark:text-zinc-500 block mb-2">{label}</span>
+        <div className="flex items-baseline gap-2">
+          <span className="text-3xl font-light tracking-tight text-zinc-900 dark:text-zinc-50 tabular-nums font-['DM_Mono']">{value}</span>
+          <span className="text-xs font-medium text-gray-500 dark:text-zinc-500">{trend}</span>
+        </div>
+        <p className="text-xs text-zinc-600 mt-1">{subValue}</p>
       </div>
-      <p className="text-xs text-zinc-600 mt-1">{subValue}</p>
     </div>
-  </div>
-));
+  );
+});
 
 MetricCard.displayName = "MetricCard";
 
 export default function ReportsPage() {
   const { toast } = useToast();
+  const [mainTab, setMainTab] = useState<'closures' | 'profitability'>('closures');
   const [loadingReport, setLoadingReport] = useState<string | null>(null);
   const [isGenerateModalOpen, setIsGenerateModalOpen] = useState(false);
   const [dateRangeOpen, setDateRangeOpen] = useState(false);
@@ -250,9 +258,42 @@ export default function ReportsPage() {
             />
           </div>
 
+          {/* PESTAÑAS PRINCIPALES DEL MÓDULO DE REPORTES */}
+          <div className="flex items-center gap-2 border-b border-gray-200 dark:border-white/10 pb-3">
+            <Button
+              size="md"
+              variant={mainTab === 'closures' ? "solid" : "flat"}
+              color={mainTab === 'closures' ? "success" : "default"}
+              onPress={() => setMainTab('closures')}
+              className={`font-semibold text-xs uppercase tracking-wider rounded-xl ${
+                mainTab === 'closures' ? 'shadow-sm text-white font-bold' : 'text-zinc-600 dark:text-zinc-400'
+              }`}
+            >
+              <History size={16} />
+              Historial de Cierres de Caja
+            </Button>
+
+            <Button
+              size="md"
+              variant={mainTab === 'profitability' ? "solid" : "flat"}
+              color={mainTab === 'profitability' ? "success" : "default"}
+              onPress={() => setMainTab('profitability')}
+              className={`font-semibold text-xs uppercase tracking-wider rounded-xl ${
+                mainTab === 'profitability' ? 'shadow-sm text-white font-bold' : 'text-zinc-600 dark:text-zinc-400'
+              }`}
+            >
+              <TrendingUp size={16} />
+              Reporte de Rentabilidad
+            </Button>
+          </div>
+
           <div className="grid grid-cols-1 xl:grid-cols-[1fr_384px] gap-8 items-start">
             <div className="flex-1 flex flex-col min-w-0 gap-8">
-               <ClosuresHistory />
+               {mainTab === 'closures' ? (
+                 <ClosuresHistory />
+               ) : (
+                 <ProfitabilityReportView />
+               )}
             </div>
 
             <aside className="sticky top-0 flex flex-col gap-6 pb-10 xl:pb-0">

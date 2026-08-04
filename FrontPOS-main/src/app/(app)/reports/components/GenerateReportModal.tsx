@@ -23,20 +23,20 @@ interface GenerateReportModalProps {
 
 const CATEGORIES = [
     { id: 'box-closure', name: 'CUADRE CAJA', icon: Wallet, color: 'text-zinc-900 dark:text-zinc-100', bg: 'bg-black/5 dark:bg-white/5' },
-    { id: 'cuadre-real', name: 'CUADRE REAL (Fisico)', icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+    { id: 'cuadre-real', name: 'CUADRE REAL', icon: Wallet, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
     { id: 'payments', name: 'VENTAS & PAGOS', icon: ShoppingCart, color: 'text-blue-500', bg: 'bg-blue-500/10' },
     { id: 'inventory', name: 'INVENTARIO', icon: Package, color: 'text-amber-500', bg: 'bg-amber-500/10' },
     { id: 'pnl', name: 'FINANZAS / PNL', icon: TrendingUp, color: 'text-violet-500', bg: 'bg-violet-500/10' },
-    { id: 'profitability', name: 'RENTABILIDAD (17% Target)', icon: Percent, color: 'text-emerald-600', bg: 'bg-emerald-600/10' },
+    { id: 'profitability', name: 'RENTABILIDAD & FINANZAS', icon: Percent, color: 'text-emerald-600', bg: 'bg-emerald-600/10' },
     { id: 'shrinkage', name: 'MERMAS Y AVERIAS', icon: AlertTriangle, color: 'text-rose-500', bg: 'bg-rose-500/10' },
     { id: 'rotation', name: 'ROTACION INVENTARIO', icon: RefreshCw, color: 'text-cyan-500', bg: 'bg-cyan-500/10' },
-    { id: 'cashflow', name: 'FLUJO DE CAJA (RESUMEN)', icon: Database, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-    { id: 'cashflow-detailed', name: 'FLUJO DE CAJA - DESGLOSADO', icon: Wallet, color: 'text-emerald-400', bg: 'bg-emerald-400/10' },
+    { id: 'cashflow', name: 'FLUJO DE CAJA', icon: Database, color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+    { id: 'cashflow-detailed', name: 'FLUJO DESGLOSADO', icon: Wallet, color: 'text-emerald-400', bg: 'bg-emerald-400/10' },
     { id: 'ranking', name: 'RANKING PRODUCTOS', icon: Target, color: 'text-rose-500', bg: 'bg-rose-500/10' },
     { id: 'savings', name: 'AHORROS & COSTOS', icon: Tag, color: 'text-teal-500', bg: 'bg-teal-500/10' },
-    { id: 'vault-audit', name: 'ARQUEO GENERAL BOVEDA', icon: Database, color: 'text-amber-600', bg: 'bg-amber-600/10' },
-    { id: 'global-credit', name: 'CARTERA GLOBAL (FIADOS)', icon: Users, color: 'text-rose-600', bg: 'bg-rose-600/10' },
-    { id: 'voids-audit', name: 'AUDITORIA DE ANULACIONES', icon: ShieldCheck, color: 'text-blue-600', bg: 'bg-blue-600/10' },
+    { id: 'vault-audit', name: 'ARQUEO BOVEDA', icon: Database, color: 'text-amber-600', bg: 'bg-amber-600/10' },
+    { id: 'global-credit', name: 'CARTERA GLOBAL', icon: Users, color: 'text-rose-600', bg: 'bg-rose-600/10' },
+    { id: 'voids-audit', name: 'AUDITORIA ANULACIONES', icon: ShieldCheck, color: 'text-blue-600', bg: 'bg-blue-600/10' },
     { id: 'expenses', name: 'REPORTE DE EGRESOS', icon: Receipt, color: 'text-rose-500', bg: 'bg-rose-500/10' },
 ];
 
@@ -62,7 +62,15 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
         const cat = CATEGORIES.find(c => c.id === category);
         if (cat) {
             const dateStr = new Date().toISOString().split('T')[0];
-            setReportName(`REPORTE_${cat.name.replace(/ /g, '_')}_${dateStr}`);
+            const cleanName = cat.name
+                .replace(/&/g, '')
+                .replace(/\//g, '')
+                .replace(/\(/g, '')
+                .replace(/\)/g, '')
+                .replace(/\s+/g, '_')
+                .replace(/_+/g, '_')
+                .trim();
+            setReportName(`REPORTE_${cleanName}_${dateStr}`);
         }
     }, [category]);
 
@@ -85,46 +93,46 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
         <Modal 
             isOpen={isOpen} 
             onOpenChange={onOpenChange}
-            size="4xl"
+            size="5xl"
             backdrop="blur"
             scrollBehavior="inside"
             classNames={{
-                base: "card-base border-none dark:bg-zinc-950/90  border border-gray-200 dark:border-white/10 rounded-[2.5rem] shadow-[0_8px_30px_rgb(0,0,0,0.12)] max-h-[95vh] sm:max-h-none w-[95vw] sm:w-auto",
-                header: "border-b border-gray-100 dark:border-white/5 p-4 md:p-8",
-                body: "p-4 md:p-8 overflow-y-auto custom-scrollbar",
-                footer: "border-t border-gray-100 dark:border-white/5 p-4 md:p-8"
+                base: "card-base border-none dark:bg-zinc-950/95 border border-gray-200 dark:border-white/10 rounded-[2rem] shadow-2xl max-h-[92vh] w-[95vw] max-w-[1250px] flex flex-col overflow-hidden",
+                header: "border-b border-gray-100 dark:border-white/5 px-6 py-4 shrink-0",
+                body: "px-6 py-5 overflow-y-auto custom-scrollbar flex-1",
+                footer: "border-t border-gray-100 dark:border-white/5 px-6 py-4 shrink-0"
             }}
         >
             <ModalContent>
                 {(onClose) => (
                     <>
                         <ModalHeader className="flex flex-col gap-1">
-                            <h2 className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter uppercase leading-none flex items-center gap-3">
-                                <span className="p-2.5 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 rounded-2xl text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]"><Zap size={20} /></span>
-                                Generador <span className="text-zinc-900 dark:text-zinc-100">Maestro</span>
+                            <h2 className="text-xl sm:text-2xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight uppercase leading-none flex items-center gap-3">
+                                <span className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-500"><Zap size={20} /></span>
+                                Generador <span className="text-emerald-500">Maestro de Reportes</span>
                             </h2>
-                            <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] mt-2 tracking-tight">Configuracion de Salida de Datos V4.0</p>
+                            <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-400 uppercase tracking-widest mt-1">Configuración de Salida de Datos &middot; v4.0</p>
                         </ModalHeader>
 
-                        <ModalBody className="gap-4 md:gap-8">
-                            {/* CATEGORIAS A FILA COMPLETA — 3 columnas en desktop */}
-                            <div className="space-y-3">
-                                <label className="text-[9px] font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Seleccionar Fuente de Datos</label>
-                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                        <ModalBody className="gap-6">
+                            {/* CATEGORIAS A FILA COMPLETA — 4 columnas en pantalla ancha */}
+                            <div className="space-y-2.5">
+                                <label className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-widest ml-1">Seleccionar Fuente de Datos</label>
+                                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2.5">
                                     {CATEGORIES.map((cat) => (
                                         <button
                                             key={cat.id}
                                             onClick={() => setCategory(cat.id)}
-                                            className={`p-3 rounded-2xl border-2 transition-all flex items-start gap-2.5 text-left min-h-[64px] ${
+                                            className={`p-3 rounded-2xl border-2 transition-all flex items-center gap-2.5 text-left h-13 ${
                                                 category === cat.id
-                                                    ? 'bg-emerald-500/[0.06] border-emerald-500/50 shadow-[0_0_15px_rgba(16,185,129,0.15)]'
-                                                    : 'bg-white dark:bg-zinc-950/50 border-zinc-200 dark:border-white/5 hover:border-zinc-300 dark:hover:border-black/5 dark:border-white/10'
+                                                    ? 'bg-emerald-500/[0.08] border-emerald-500/60 shadow-[0_0_15px_rgba(16,185,129,0.15)] scale-[1.01]'
+                                                    : 'bg-white dark:bg-zinc-900/60 border-zinc-200 dark:border-white/5 hover:border-zinc-300 dark:hover:border-white/10'
                                             }`}
                                         >
-                                            <div className={`p-1.5 rounded-lg shrink-0 ${cat.bg} ${cat.color}`}>
-                                                <cat.icon size={14} />
+                                            <div className={`p-1.5 rounded-xl shrink-0 ${cat.bg} ${cat.color}`}>
+                                                <cat.icon size={15} />
                                             </div>
-                                            <span className={`text-[10px] font-medium uppercase tracking-tight leading-tight pt-0.5 ${category === cat.id ? 'text-zinc-900 dark:text-zinc-100' : 'text-zinc-600 dark:text-zinc-400'}`}>
+                                            <span className={`text-[11px] font-semibold uppercase tracking-tight leading-snug ${category === cat.id ? 'text-zinc-900 dark:text-white font-bold' : 'text-zinc-600 dark:text-zinc-400'}`}>
                                                 {cat.name}
                                             </span>
                                         </button>

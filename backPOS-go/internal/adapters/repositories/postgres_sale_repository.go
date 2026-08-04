@@ -8,7 +8,6 @@ import (
 	"log"
 	"strings"
 
-	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
 	"sync"
@@ -43,7 +42,6 @@ func (r *PostgresSaleRepository) invalidateDashboardCache() {
 				log.Printf("⚠️ [invalidateDashboardCache] recovered: %v", rec)
 			}
 		}()
-		refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
 		sse.GetSSEService().BroadcastNewSale(nil)
 	}()
 }
@@ -102,7 +100,7 @@ func (r *PostgresSaleRepository) GetByDateRangeWithoutDetails(from, to time.Time
 
 func (r *PostgresSaleRepository) GetDeletedByDateRange(from, to time.Time) ([]models.Sale, error) {
 	var sales []models.Sale
-	query := r.db.Unscoped().Where("\"deletedAt\" IS NOT NULL").Preload("Client").Preload("SaleDetails.Product.Category")
+	query := r.db.Unscoped().Where("deleted_at IS NOT NULL").Preload("Client").Preload("SaleDetails.Product.Category")
 	if !from.IsZero() {
 		query = query.Where("\"saleDate\" >= ?", from)
 	}
@@ -174,9 +172,27 @@ func (r *PostgresSaleRepository) FindAll(filter ports.SaleFilter) ([]models.Sale
 	}
 	if filter.Search != "" {
 		searchTerm := "%" + strings.ToLower(filter.Search) + "%"
+		sLower := strings.ToLower(strings.TrimSpace(filter.Search))
+
+		subQuery := "(LOWER(COALESCE(clients.name, '')) LIKE ? OR LOWER(COALESCE(sales.\"clientDni\", '')) LIKE ? OR CAST(sales.\"saleId\" AS TEXT) LIKE ? OR LOWER(COALESCE(sales.\"paymentMethod\", '')) LIKE ? OR LOWER(COALESCE(sales.\"transferSource\", '')) LIKE ?"
+		args := []interface{}{searchTerm, searchTerm, searchTerm, searchTerm, searchTerm}
+
+		if strings.Contains(sLower, "nequi") {
+			subQuery += " OR sales.\"transferNequi\" > 0"
+		}
+		if strings.Contains(sLower, "daviplata") {
+			subQuery += " OR sales.\"transferDaviplata\" > 0"
+		}
+		if strings.Contains(sLower, "efectivo") {
+			subQuery += " OR sales.\"cashAmount\" > 0"
+		}
+		if strings.Contains(sLower, "fiado") || strings.Contains(sLower, "credito") {
+			subQuery += " OR sales.\"creditAmount\" > 0"
+		}
+		subQuery += ")"
+
 		query = query.Joins("LEFT JOIN clients ON clients.dni = sales.\"clientDni\"").
-			Where("LOWER(clients.name) LIKE ? OR sales.\"clientDni\" LIKE ? OR CAST(sales.\"saleId\" AS TEXT) LIKE ?", 
-				searchTerm, searchTerm, searchTerm)
+			Where(subQuery, args...)
 	}
 	if filter.MinTotal > 0 {
 		query = query.Where("\"totalAmount\" >= ?", filter.MinTotal)

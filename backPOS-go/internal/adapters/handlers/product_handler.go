@@ -186,6 +186,9 @@ func (h *ProductHandler) GetAllPaginated(c *gin.Context) {
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "100"))
 	search := c.Query("q")
+	supplierIDStr := c.Query("supplierId")
+	supplierID, _ := strconv.Atoi(supplierIDStr)
+	stockFilter := c.Query("stockFilter")
 
 	if page <= 0 {
 		page = 1
@@ -194,7 +197,7 @@ func (h *ProductHandler) GetAllPaginated(c *gin.Context) {
 		pageSize = 100
 	}
 
-	products, total, err := h.service.GetPaginatedProducts(page, pageSize, search)
+	products, total, err := h.service.GetPaginatedProducts(page, pageSize, search, supplierID, stockFilter)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener productos paginados", err)
 		return

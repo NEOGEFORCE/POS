@@ -239,3 +239,54 @@ func containsBusinessError(msg string) bool {
 	}
 	return false
 }
+
+func (h *SaleHandler) Update(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido", err)
+		return
+	}
+
+	var newSale models.Sale
+	if err := c.ShouldBindJSON(&newSale); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		return
+	}
+
+	dniStr, nameStr := GetContextUser(c)
+	isAdmin := false
+	if claims, ok := c.Get("claims"); ok {
+		if cMap, ok2 := claims.(*map[string]interface{}); ok2 {
+			if role, ok3 := (*cMap)["role"].(string); ok3 && role == "ADMIN" {
+				isAdmin = true
+			}
+		} else if cMap, ok2 := claims.(map[string]interface{}); ok2 {
+			if role, ok3 := cMap["role"].(string); ok3 && role == "ADMIN" {
+				isAdmin = true
+			}
+		}
+	}
+
+	if err := h.service.UpdateSale(uint(id), &newSale, dniStr, isAdmin); err != nil {
+		msg := err.Error()
+		if containsBusinessError(msg) || strings.Contains(msg, "administradores") || strings.Contains(msg, "disminuir") {
+			SendError(c, http.StatusBadRequest, ErrBadRequest, msg, nil)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar venta", err)
+		return
+	}
+
+	h.auditService.Log(dniStr, nameStr, "UPDATE_SALE", "SALES", fmt.Sprintf("Venta %d actualizada", id), "Edición de venta", "{}", c.ClientIP(), c.Request.UserAgent(), true)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("⚠️ [SSE-SaleUpdate] Recovery from panic: %v\n", r)
+			}
+		}()
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
+
+	c.JSON(http.StatusOK, gin.H{"message": "Venta actualizada correctamente", "sale_id": id})
+}

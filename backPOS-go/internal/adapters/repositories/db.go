@@ -295,6 +295,22 @@ func ConnectDB() {
 		CREATE INDEX IF NOT EXISTS idx_price_logs_barcode ON price_logs(product_barcode);
 	`)
 
+	// 12. REMOVER LLAVES FORÁNEAS RESTRICTIVAS QUE IMPIDEN ACTUALIZAR O BORRAR PRODUCTOS
+	db.Exec(`
+		DO $$ 
+		BEGIN 
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_confirmed_order_items_product') THEN
+				ALTER TABLE confirmed_order_items DROP CONSTRAINT fk_confirmed_order_items_product;
+			END IF;
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_active_purchase_list_product') THEN
+				ALTER TABLE active_purchase_list DROP CONSTRAINT fk_active_purchase_list_product;
+			END IF;
+			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_price_logs_product') THEN
+				ALTER TABLE price_logs DROP CONSTRAINT fk_price_logs_product;
+			END IF;
+		END $$;
+	`)
+
 	// Migrar tablas una por una
 	models_to_migrate := []interface{}{
 		&models.Employee{},
@@ -347,10 +363,10 @@ func ConnectDB() {
 	// --- OPTIMIZACIÓN TIER 1: CONNECTION POOL ---
 	sqlDB, err := db.DB()
 	if err == nil {
-		sqlDB.SetMaxIdleConns(25)
-		sqlDB.SetMaxOpenConns(200)
-		sqlDB.SetConnMaxLifetime(time.Hour)
-		sqlDB.SetConnMaxIdleTime(15 * time.Minute)
+		sqlDB.SetMaxIdleConns(50)
+		sqlDB.SetMaxOpenConns(50)
+		sqlDB.SetConnMaxLifetime(30 * time.Minute)
+		sqlDB.SetConnMaxIdleTime(10 * time.Minute)
 	}
 
 	// Ejecutar setup avanzado (RLS, roles, migraciones adicionales)
@@ -364,7 +380,7 @@ func ConnectDB() {
 	}
 
 	// 6. Crear Vistas Materializadas para Dashboard HFT
-	if err := createMaterializedViews(db); err != nil {
+	if err := InitMaterializedViews(db); err != nil {
 		log.Printf("⚠️ Warning: Materialized views encountered issues: %v", err)
 	}
 
@@ -652,8 +668,13 @@ func createGlobalIndexes(db *gorm.DB) error {
 		`CREATE INDEX IF NOT EXISTS idx_products_active_deleted ON products("isActive", deleted_at)`,
 		`CREATE INDEX IF NOT EXISTS idx_product_suppliers_supplier_id ON product_suppliers(supplier_id)`,
 
-		// CIERRES DE CAJA
+		// CIERRES DE CAJA Y CRÉDITOS
 		`CREATE INDEX IF NOT EXISTS idx_cashier_closures_date ON cashier_closures("date" DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_sales_pending_debts ON sales("clientDni", status, "debtPending", "saleDate")`,
+		`CREATE INDEX IF NOT EXISTS idx_credit_payments_date ON credit_payments("paymentDate" DESC, deleted_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_products_quantity ON products("isActive", quantity)`,
+		`CREATE INDEX IF NOT EXISTS idx_returns_sale_id ON returns("saleId")`,
+		`CREATE INDEX IF NOT EXISTS idx_returns_date ON returns(date DESC)`,
 	}
 
 	for _, idx := range indexes {
@@ -666,8 +687,8 @@ func createGlobalIndexes(db *gorm.DB) error {
 	return nil
 }
 
-// createMaterializedViews crea las vistas para acelerar el Dashboard 100x
-func createMaterializedViews(db *gorm.DB) error {
+// InitMaterializedViews crea las vistas para acelerar el Dashboard 100x
+func InitMaterializedViews(db *gorm.DB) error {
 	log.Printf("🚀 Creating High-Performance Materialized Views...")
 
 	// FORZAR RECREACIÓN: DROP primero para asegurar que la definición siempre esté actualizada
@@ -708,11 +729,12 @@ func createMaterializedViews(db *gorm.DB) error {
 	),
 	return_stats AS (
 		SELECT 
-			TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM("totalReturned") as total_returned,
-			SUM((SELECT SUM(quantity) FROM return_details rd WHERE rd."returnId" = r.id AND rd."isExchange" = false)) as products_returned
+			TO_CHAR(r.date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
+			SUM(r."totalReturned") as total_returned,
+			COALESCE(SUM(CASE WHEN rd."isExchange" = false THEN rd.quantity ELSE 0 END), 0) as products_returned
 		FROM "returns" r
-		WHERE "deleted_at" IS NULL
+		LEFT JOIN return_details rd ON r.id = rd."returnId"
+		WHERE r."deleted_at" IS NULL
 		GROUP BY 1
 	),
 	payment_stats AS (
@@ -727,8 +749,9 @@ func createMaterializedViews(db *gorm.DB) error {
 	),
 	closure_stats AS (
 		SELECT 
-			TO_CHAR(end_date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM(difference) as total_difference
+			TO_CHAR(start_date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
+			SUM(difference) as total_difference,
+			SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses + total_returns) as closure_cajero_sales
 		FROM cashier_closures
 		WHERE "deleted_at" IS NULL
 		GROUP BY 1
@@ -746,7 +769,7 @@ func createMaterializedViews(db *gorm.DB) error {
 	)
 	SELECT 
 		am.month_year,
-		COALESCE(st.total_sales, 0) + COALESCE(p.total_abonos, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0) as total_sales,
+		COALESCE(NULLIF(c.closure_cajero_sales, 0), COALESCE(st.total_sales, 0) + COALESCE(p.total_abonos, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0)) as total_sales,
 		COALESCE(st.transaction_count, 0) as transaction_count,
 		COALESCE(st.sales_cash, 0) + COALESCE(p.abonos_cash, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0) as sales_cash,
 		COALESCE(st.sales_transfer, 0) + COALESCE(p.abonos_transfer, 0) as sales_transfer,

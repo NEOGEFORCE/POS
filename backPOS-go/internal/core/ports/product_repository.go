@@ -57,6 +57,7 @@ type ReceiveEntry struct {
 	DiscountPct      float64 `json:"discountPct"`
 	Discount         float64 `json:"discount"`
 	ActualPhysicalStock *float64 `json:"actualPhysicalStock"`
+	LineType            string   `json:"lineType"`
 }
 
 type OrderRef struct {
@@ -73,7 +74,7 @@ type ProductRepository interface {
 	GetByBarcodeWithPreloads(barcode string, preloads ...string) (*models.Product, error)
 	GetAll() ([]models.Product, error)
 	GetAllWithLimit(limit int) ([]models.Product, error)
-	GetPaginated(page, pageSize int, search string, supplierID int) ([]models.Product, int64, error)
+	GetPaginated(page, pageSize int, search string, supplierID int, stockFilter string) ([]models.Product, int64, error)
 	Update(barcode string, product *models.Product) error
 	Delete(barcode string) error
 	UpdateQuantity(barcode string, newQuantity float64) error

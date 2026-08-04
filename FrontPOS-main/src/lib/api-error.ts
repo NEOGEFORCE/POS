@@ -2,6 +2,7 @@
  * Error personalizado de API que conserva status HTTP y datos del backend
  */
 import { API_URL } from './constants';
+import Cookies from 'js-cookie';
 export class ApiError extends Error {
   status: number;
   data?: any;
@@ -254,8 +255,9 @@ export async function apiFetch<T = any>(
       ...(fetchOptions.headers as Record<string, string> || {}),
     };
     
-    if (authToken) {
-      headers['Authorization'] = `Bearer ${authToken}`;
+    const activeToken = authToken || token || (typeof window !== 'undefined' ? (Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token')) : null);
+    if (activeToken && !headers['Authorization']) {
+      headers['Authorization'] = `Bearer ${activeToken}`;
     }
     
     if (fetchOptions.body && !headers['Content-Type']) {
@@ -273,19 +275,13 @@ export async function apiFetch<T = any>(
     }
     
     if (!res.ok) {
-      // 401 = Sesión expirada → Intentar recuperación automática
-      if (res.status === 401 && !skipSessionRecovery && typeof window !== 'undefined') {
-        try {
-          // Importar dinámicamente para evitar dependencias circulares
-          const { requestSessionRecovery } = await import('@/lib/session-recovery');
-          const newToken = await requestSessionRecovery();
-          
-          // Re-autenticación exitosa → reintentar la llamada original
-          return makeRequest(newToken);
-        } catch {
-          // El usuario canceló la re-autenticación → lanzar error normal
-          throw new ApiError('Sesión cerrada por el usuario', 401);
-        }
+      if (res.status === 401 && typeof window !== 'undefined') {
+        import('js-cookie').then((Cookies) => {
+          Cookies.default.remove('org-pos-token');
+          Cookies.default.remove('org-pos-user');
+          window.location.href = '/login?expired=true';
+        });
+        throw new ApiError('Sesión expirada', 401);
       }
       
       // Clonar la respuesta antes de consumirla para evitar el error "body is already used"

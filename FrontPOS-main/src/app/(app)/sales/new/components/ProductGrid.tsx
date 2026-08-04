@@ -3,7 +3,7 @@
 import React, { useRef, useMemo, memo } from 'react';
 import { motion } from 'framer-motion';
 import { Scale, Package } from 'lucide-react';
-import { isProductWeighted, getStockStatus } from '@/lib/utils';
+import { isProductWeighted, calculateStockHealth } from '@/lib/utils';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Product } from '@/lib/definitions';
 
@@ -32,8 +32,8 @@ const ProductItem = memo(({ product, onAdd }: { product: Product, onAdd: (p: Pro
                 </div>
                 <div className="flex flex-col items-end leading-none">
                     <span className={`text-[10px] font-medium rounded px-1.5 py-0.5 ${
-                        getStockStatus(product.quantity, product.minStock || 0) === 'CRITICAL' ? 'text-red-500/80 bg-red-500/10' :
-                        getStockStatus(product.quantity, product.minStock || 0) === 'REORDER' ? 'text-amber-500/80 bg-amber-500/10' :
+                        calculateStockHealth(product.quantity, product.minStock || 0) === 'CRITICAL' ? 'text-red-500/80 bg-red-500/10' :
+                        calculateStockHealth(product.quantity, product.minStock || 0) === 'WARNING' ? 'text-amber-500/80 bg-amber-500/10' :
                         'text-gray-500 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800'
                     }`}>
                         STK:{product.quantity}

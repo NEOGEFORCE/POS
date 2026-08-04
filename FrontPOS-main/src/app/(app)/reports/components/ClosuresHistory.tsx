@@ -5,7 +5,7 @@ import {
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Spinner, Button, Chip, Tooltip, Card, CardBody,
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Divider,
+  Divider, Input,
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from "@heroui/react";
 import { 
@@ -20,6 +20,7 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from "@/hooks/use-toast";
 import { useRouter } from 'next/navigation';
 import EditClosureModal from './EditClosureModal';
+import { setupSyncListener } from '@/lib/revalidate';
 
 export interface CashierClosure {
   id: number;
@@ -43,6 +44,7 @@ export interface CashierClosure {
   totalDaviplataReal: number;
   difference: number;
   expectedCash?: number;
+  totalCreditCollected?: number;
   // Desglose dinamico por metodo de pago — contiene cada metodo EXACTO
   // (BANCOLOMBIA, MASTERCARD, etc.) con su total. Reemplaza la tarjeta
   // estatica "Tarjeta/Otros". Puede venir vacio en cierres muy antiguos.
@@ -69,6 +71,46 @@ const getPaymentSourceStyle = (source: string) => {
   if (s === 'PRESTAMO' || s === 'PREST.') return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400';
   if (s.includes('MIXTO') || s.includes('/')) return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400 border border-emerald-500/30';
   return 'bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300';
+};
+
+export const getVentasCajero = (closure: CashierClosure) => {
+  const digitalIncome = (closure.totalNequi || 0) + (closure.totalDaviplata || 0) + (closure.totalCard || 0) + (closure.totalBancolombia || 0) + (closure.totalOtherTransfer || 0);
+  
+  let egresosCaja = 0;
+  let parsedExpenses: any[] = [];
+  try {
+    if (closure.expenses && closure.expenses.length > 0) {
+      parsedExpenses = closure.expenses;
+    } else if (closure.expensesDetail) {
+      parsedExpenses = JSON.parse(closure.expensesDetail);
+    }
+    parsedExpenses.forEach((e: any) => {
+      if (String(e.status).toUpperCase() !== 'PENDING') {
+        const rawCash = Number(e.cashAmount || e.cash_amount || 0);
+        const rawNequi = Number(e.nequiAmount || e.nequi_amount || 0);
+        const rawDavi = Number(e.daviplataAmount || e.daviplata_amount || 0);
+        const rawFondo = Number(e.fondoAmount || e.fondo_amount || 0);
+        const tax = Number(e.taxAmount || 0);
+        const base = Number(e.amount || 0);
+        const total = base + tax;
+
+        const sumChannels = rawCash + rawNequi + rawDavi + rawFondo;
+        if (sumChannels > 0) {
+          egresosCaja += rawCash;
+          if (tax > 0 && sumChannels === base && rawCash > 0 && rawNequi === 0 && rawDavi === 0 && rawFondo === 0) {
+            egresosCaja += tax;
+          }
+        } else {
+          const src = (e.paymentSource || '').toUpperCase();
+          if (src.includes('CAJA') || src.includes('EFECTIVO') || src.includes('CASH') || (!src.includes('NEQUI') && !src.includes('DAVI') && !src.includes('FONDO') && !src.includes('PREST'))) {
+            egresosCaja += (total > 0 ? total : base);
+          }
+        }
+      }
+    });
+  } catch(e) {}
+
+  return (closure.physicalCash || 0) + digitalIncome + egresosCaja + (closure.totalReturns || 0);
 };
 
 export default function ClosuresHistory() {
@@ -120,6 +162,45 @@ export default function ClosuresHistory() {
 
   useEffect(() => {
     fetchData();
+
+    // Refrescar cuando el usuario vuelve a esta tab (ej: despues de editar un cierre)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        // Solo refrescar si habia una edicion pendiente
+        const flag = localStorage.getItem('closure_edited');
+        if (flag) {
+          localStorage.removeItem('closure_edited');
+          fetchData();
+        }
+      }
+    };
+
+    // Tambien escuchar si el usuario navega de vuelta (popstate / Next router)
+    const handleFocus = () => {
+      const flag = localStorage.getItem('closure_edited');
+      if (flag) {
+        localStorage.removeItem('closure_edited');
+        fetchData();
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, []);
+
+  // Escuchar el broadcast CLOSURE_MADE del BroadcastChannel para refrescar en tiempo real
+  useEffect(() => {
+    const unsub = setupSyncListener((event) => {
+      if (event === 'CLOSURE_MADE') {
+        fetchData();
+      }
+    });
+    return unsub;
   }, []);
 
   // Estado para el detalle ampliado del cierre seleccionado
@@ -172,7 +253,9 @@ export default function ClosuresHistory() {
     const toStr = fromStr;
 
     const params = new URLSearchParams({
-      type: 'box-closure',
+      type: 'single-closure',
+      closure_id: String(closure.id),
+      id: String(closure.id),
       from: fromStr,
       to: toStr,
       format: 'PDF',
@@ -244,19 +327,65 @@ export default function ClosuresHistory() {
     }
   };
 
-  // Agrupar cierres por dia
+  // Estado para el selector de rango de fechas de cierres
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'this_month' | 'last_month' | 'custom'>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
+  // Filtrar cierres segun el rango de fechas seleccionado
+  const filteredClosures = useMemo(() => {
+    if (!closures || closures.length === 0) return [];
+    if (datePreset === 'all') return closures;
+
+    const now = new Date();
+    let start = new Date(0);
+    let end = new Date(2099, 11, 31, 23, 59, 59);
+
+    if (datePreset === 'today') {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    } else if (datePreset === 'yesterday') {
+      const y = new Date(now);
+      y.setDate(now.getDate() - 1);
+      start = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 0, 0, 0);
+      end = new Date(y.getFullYear(), y.getMonth(), y.getDate(), 23, 59, 59);
+    } else if (datePreset === 'this_month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+    } else if (datePreset === 'last_month') {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0);
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    } else if (datePreset === 'custom') {
+      if (customFrom) {
+        const [y, m, d] = customFrom.split('-').map(Number);
+        start = new Date(y, m - 1, d, 0, 0, 0);
+      }
+      if (customTo) {
+        const [y, m, d] = customTo.split('-').map(Number);
+        end = new Date(y, m - 1, d, 23, 59, 59);
+      }
+    }
+
+    return closures.filter(c => {
+      const dateStr = c.date || c.startDate;
+      if (!dateStr) return true;
+      const cDate = new Date(dateStr);
+      return cDate >= start && cDate <= end;
+    });
+  }, [closures, datePreset, customFrom, customTo]);
+
+  // Agrupar cierres filtrados por dia
   const groupedClosures = useMemo(() => {
     const groups: Record<string, CashierClosure[]> = {};
-    (closures || []).forEach(c => {
+    (filteredClosures || []).forEach(c => {
       if (!c?.date) return;
-      // Usar componentes locales para agrupar por el dia real del usuario
       const d = new Date(c.date);
       const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
       if (!groups[dateKey]) groups[dateKey] = [];
       groups[dateKey].push(c);
     });
     return groups;
-  }, [closures]);
+  }, [filteredClosures]);
 
   const sortedDates = useMemo(() => {
     return Object.keys(groupedClosures).sort((a, b) => b.localeCompare(a));
@@ -273,6 +402,75 @@ export default function ClosuresHistory() {
 
   return (
     <div className="space-y-6">
+      {/* BARRA DE FILTRO / SELECTOR DE FECHAS DE CIERRES */}
+      <div className="card-base p-4 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/5 rounded-2xl shadow-sm flex flex-col gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Calendar size={18} className="text-emerald-500" />
+            <span className="text-xs font-semibold uppercase tracking-wider text-zinc-900 dark:text-zinc-100">
+              HISTORIAL DE CIERRES ({filteredClosures.length} {filteredClosures.length === 1 ? 'Turno' : 'Turnos'})
+            </span>
+            <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-mono border border-emerald-200 dark:border-emerald-800/40 font-bold flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              Generado: {new Date().toLocaleString('es-CO')}
+            </span>
+          </div>
+
+          {/* BOTONES DE SELECCION DE FECHA DE CIERRES */}
+          <div className="flex flex-wrap items-center gap-1.5 bg-gray-100 dark:bg-zinc-950 p-1 rounded-xl border border-gray-200 dark:border-white/5">
+            {[
+              { id: 'all', label: 'Todos' },
+              { id: 'today', label: 'Hoy' },
+              { id: 'yesterday', label: 'Ayer' },
+              { id: 'this_month', label: 'Este Mes' },
+              { id: 'last_month', label: 'Mes Pasado' },
+              { id: 'custom', label: 'Personalizado' },
+            ].map(preset => (
+              <Button
+                key={preset.id}
+                size="sm"
+                variant={datePreset === preset.id ? "solid" : "light"}
+                color={datePreset === preset.id ? "success" : "default"}
+                onPress={() => setDatePreset(preset.id as any)}
+                className={`h-7 px-3 text-[10px] font-semibold uppercase tracking-wider rounded-lg transition-all ${
+                  datePreset === preset.id
+                    ? 'shadow-sm bg-emerald-500 text-white font-bold'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-100'
+                }`}
+              >
+                {preset.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {/* INPUTS PARA RANGO PERSONALIZADO */}
+        {datePreset === 'custom' && (
+          <div className="flex flex-wrap items-center gap-3 pt-2 border-t border-zinc-200 dark:border-white/5 animate-in fade-in duration-200">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-medium uppercase text-zinc-500">Desde:</span>
+              <Input
+                type="date"
+                size="sm"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="w-36 text-xs font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-medium uppercase text-zinc-500">Hasta:</span>
+              <Input
+                type="date"
+                size="sm"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="w-36 text-xs font-mono"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* SECCION DE RESUMEN EJECUTIVO */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
          {/* CARD 1: ULTIMO CIERRE */}
@@ -360,67 +558,105 @@ export default function ClosuresHistory() {
         </div>
       ) : (
         <div className="space-y-8">
-          {sortedDates.map(date => (
-            <div key={date} className="space-y-3">
-              <div className="flex items-center gap-4 ml-4">
-                <div className="h-2 w-2 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-                <h3 className="text-xs font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight">
-                  {formatLocalDate(date)}
-                </h3>
-                <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
-              </div>
+          {sortedDates.map(date => {
+            const dayClosures = groupedClosures[date] || [];
+            const sortedChronological = [...dayClosures].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+            
+            const dailyTotalSales = dayClosures.reduce((sum, c) => sum + getVentasCajero(c), 0);
+            const dailyPhysicalCash = dayClosures.reduce((sum, c) => sum + (c.physicalCash || 0), 0);
+            const dailyTotalExpenses = dayClosures.reduce((sum, c) => sum + (c.totalExpenses || 0), 0);
+            const dailyDifference = dayClosures.reduce((sum, c) => sum + (c.difference || 0), 0);
 
-              <div className="grid grid-cols-1 gap-3">
-                {groupedClosures[date].length > 1 && (
-                  <div className="flex items-center gap-2 ml-6 animate-pulse">
-                    <ShieldAlert size={14} className="text-amber-500" />
-                    <span className="text-[9px] font-medium text-amber-500 uppercase tracking-widest">
-                      ⚠️ {groupedClosures[date].length} cierres detectados este dia — Verificar posibles duplicados
-                    </span>
-                  </div>
-                )}
-                {groupedClosures[date].map(closure => (
-                  <Card 
-                    key={closure.id} 
-                    className={`bg-white dark:bg-[#18181b] hover:bg-zinc-100 dark:bg-zinc-800 border hover:border-emerald-500/30 transition-all rounded-2xl group overflow-hidden cursor-pointer ${
-                      groupedClosures[date].length > 1 ? 'border-amber-500/30' : 'border-zinc-200 dark:border-white/5'
-                    }`}
-                    onClick={() => handleViewDetail(closure)}
-                  >
-                    <CardBody className="p-4 md:p-6">
+            return (
+              <div key={date} className="space-y-3">
+                <div className="flex items-center gap-4 ml-4">
+                  <div className="h-2 w-2 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
+                  <h3 className="text-xs font-medium text-gray-500 dark:text-zinc-400 uppercase tracking-[0.3em] tracking-tight">
+                    {formatLocalDate(date)}
+                  </h3>
+                  <div className="flex-1 h-px bg-gradient-to-r from-white/10 to-transparent" />
+                </div>
+
+                <div className="grid grid-cols-1 gap-3">
+                  {dayClosures.length > 1 && (
+                    <Card className="bg-emerald-950/20 dark:bg-emerald-950/30 border border-emerald-500/30 rounded-2xl p-4 shadow-sm">
                       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                        {/* Info General */}
-                        <div className="flex items-center gap-4">
-                          <div className={`h-12 w-12 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${closure.difference === 0 ? 'text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 ' : closure.difference < 0 ? 'text-white bg-rose-500 shadow-rose-500/20' : 'text-white bg-emerald-500 shadow-emerald-500/20'}`}>
-                            <FileText size={20} />
+                        <div className="flex items-center gap-3">
+                          <div className="h-10 w-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center border border-emerald-500/30">
+                            <TrendingUp size={20} />
                           </div>
-                          <div className="flex flex-col">
-                            <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mb-1">Cierre #{closure.id}</span>
+                          <div>
                             <div className="flex items-center gap-2">
-                               <span className="text-lg font-medium text-zinc-900 dark:text-zinc-100 tracking-tight tracking-tight">{closure?.date ? formatTime(closure.date) : '---'}</span>
-                               <Chip size="sm" variant="flat" color="default" className="h-5 text-[9px] font-medium uppercase tracking-tight">{closure?.closedByName || '---'}</Chip>
-                               {groupedClosures[date].length > 1 && (
-                                 <Chip size="sm" variant="flat" className="h-5 text-[8px] font-medium uppercase bg-amber-500/10 text-amber-500 border-none">POSIBLE DUPLICADO</Chip>
-                               )}
+                              <span className="text-xs font-bold text-emerald-400 uppercase tracking-wider">
+                                RESUMEN CONSOLIDADO DEL DÍA
+                              </span>
+                              <Chip size="sm" variant="flat" className="h-5 text-[9px] font-bold uppercase bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                                {dayClosures.length} TURNOS COMBINADOS
+                              </Chip>
                             </div>
+                            <p className="text-[9px] font-medium text-zinc-400 uppercase tracking-tight">
+                              Suma total acumulada de todas las ventas y movimientos del día
+                            </p>
                           </div>
                         </div>
 
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 flex-1 md:justify-center px-4">
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-widest mb-1">Ventas Día</span>
+                            <span className="text-sm font-bold text-zinc-900 dark:text-white tabular-nums">${formatCurrency(dailyTotalSales)}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-widest mb-1">Efectivo Real Día</span>
+                            <span className="text-sm font-bold text-emerald-400 tabular-nums">${formatCurrency(dailyPhysicalCash)}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-widest mb-1">Egresos Día</span>
+                            <span className="text-sm font-bold text-rose-400 tabular-nums">${formatCurrency(dailyTotalExpenses)}</span>
+                          </div>
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-medium text-gray-400 uppercase tracking-widest mb-1">Diferencia Día</span>
+                            <span className={`text-sm font-bold tabular-nums ${dailyDifference === 0 ? 'text-zinc-100' : dailyDifference < 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                              {dailyDifference > 0 ? '+' : ''}${formatCurrency(dailyDifference)}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                  )}
+
+                  {dayClosures.map(closure => {
+                    const turnoNum = sortedChronological.findIndex(c => c.id === closure.id) + 1;
+                    return (
+                      <Card 
+                        key={closure.id} 
+                        className="bg-white dark:bg-[#18181b] hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:border-emerald-500/30 transition-all rounded-2xl group overflow-hidden cursor-pointer"
+                        onClick={() => handleViewDetail(closure)}
+                      >
+                        <CardBody className="p-4 md:p-6">
+                          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                            {/* Info General */}
+                            <div className="flex items-center gap-4">
+                              <div className={`h-12 w-12 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${closure.difference === 0 ? 'text-zinc-900 dark:text-zinc-100 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 ' : closure.difference < 0 ? 'text-white bg-rose-500 shadow-rose-500/20' : 'text-white bg-emerald-500 shadow-emerald-500/20'}`}>
+                                <FileText size={20} />
+                              </div>
+                              <div className="flex flex-col">
+                                <span className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest leading-none mb-1">Cierre #{closure.id}</span>
+                                <div className="flex items-center gap-2">
+                                   <span className="text-lg font-medium text-zinc-900 dark:text-zinc-100 tracking-tight">{closure?.date ? formatTime(closure.date) : '---'}</span>
+                                   <Chip size="sm" variant="flat" color="default" className="h-5 text-[9px] font-medium uppercase tracking-tight">{closure?.closedByName || '---'}</Chip>
+                                   {dayClosures.length > 1 && (
+                                     <Chip size="sm" variant="flat" className="h-5 text-[8px] font-bold uppercase bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                       TURNO {turnoNum}
+                                     </Chip>
+                                   )}
+                                </div>
+                              </div>
+                            </div>
+
                         {/* Metricas Rapidas */}
                         {(() => {
-                           let displaySales = closure.totalSales;
+                           let displaySales = getVentasCajero(closure);
                            let displayExpenses = closure.totalExpenses;
-                           if (closure.expensesDetail) {
-                              try {
-                                  const expensesArr = JSON.parse(closure.expensesDetail);
-                                  const totalExp = expensesArr
-                                      .filter((e: any) => String(e.status).toUpperCase() !== 'PENDING')
-                                      .reduce((acc: number, e: any) => acc + (Number(e.amount) || 0) + (Number(e.taxAmount) || 0), 0);
-                                  displayExpenses = totalExp;
-                              } catch (e) {
-                                  // Fallback
-                              }
-                           }
                            return (
                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 md:gap-8 flex-1 md:justify-center px-4">
                               <div className="flex flex-col">
@@ -533,10 +769,12 @@ export default function ClosuresHistory() {
                       </div>
                     </CardBody>
                   </Card>
-                ))}
+                );
+              })}
               </div>
             </div>
-          ))}
+          );
+        })}
         </div>
       )}
 
@@ -583,41 +821,90 @@ export default function ClosuresHistory() {
                     let egresosGlobales = 0;
                     let parsedExpenses: any[] = [];
                     try {
-                        parsedExpenses = JSON.parse(selectedClosure.expensesDetail);
+                        if (selectedClosure.expensesDetail && selectedClosure.expensesDetail.trim() !== '' && selectedClosure.expensesDetail !== '[]') {
+                            parsedExpenses = JSON.parse(selectedClosure.expensesDetail);
+                        } else if (selectedClosure.expenses && selectedClosure.expenses.length > 0) {
+                            parsedExpenses = selectedClosure.expenses;
+                        } else if (fullDetail?.expenses && Array.isArray(fullDetail.expenses) && fullDetail.expenses.length > 0) {
+                            parsedExpenses = fullDetail.expenses;
+                        }
                         parsedExpenses.forEach((e: any) => {
                             if (String(e.status).toUpperCase() !== 'PENDING') {
-                                const rawCash = Number(e.cashAmount || e.cash_amount || 0);
-                                const rawNequi = Number(e.nequiAmount || e.nequi_amount || 0);
-                                const rawDavi = Number(e.daviplataAmount || e.daviplata_amount || 0);
-                                const rawFondo = Number(e.fondoAmount || e.fondo_amount || 0);
                                 const tax = Number(e.taxAmount || 0);
                                 const base = Number(e.amount || 0);
+                                const total = base + tax;
+                                const src = (e.paymentSource || e.payment_source || '').toUpperCase();
                                 
-                                let finalCash = rawCash;
-                                let finalNequi = rawNequi;
-                                let finalDavi = rawDavi;
-                                let finalFondo = rawFondo;
-                                
-                                const sum = rawCash + rawNequi + rawDavi + rawFondo;
-                                if (sum === 0) {
-                                   const src = (e.paymentSource || '').toUpperCase();
-                                   if (src === 'NEQUI') finalNequi = base + tax;
-                                   else if (src === 'DAVIPLATA') finalDavi = base + tax;
-                                   else if (src === 'FONDO') finalFondo = base + tax;
-                                   else if (src !== 'PREST.' && src !== 'DEUDA' && src !== 'PRESTAMO') finalCash = base + tax;
-                                } else if (tax > 0 && sum === base) {
-                                   const isSingle = (rawCash>0?1:0) + (rawNequi>0?1:0) + (rawDavi>0?1:0) + (rawFondo>0?1:0) <= 1;
-                                   if (isSingle) {
-                                      if (rawCash > 0) finalCash += tax;
-                                      if (rawNequi > 0) finalNequi += tax;
-                                      if (rawDavi > 0) finalDavi += tax;
-                                      if (rawFondo > 0) finalFondo += tax;
-                                   } else {
-                                      if (rawNequi > 0) finalNequi += tax;
-                                      else if (rawDavi > 0) finalDavi += tax;
-                                      else if (rawFondo > 0) finalFondo += tax;
-                                      else finalCash += tax;
-                                   }
+                                let finalCash = 0;
+                                let finalNequi = 0;
+                                let finalDavi = 0;
+                                let finalFondo = 0;
+
+                                // Primary: paymentSource is the authority (same as backend normalizeExpensesForReport)
+                                if (src.includes('/')) {
+                                    // Split payment: "CAJA: $50000 / DAVIPLATA: $30000" or "CAJA: $97603.85 / DAVIPLATA: $22000"
+                                    src.split('/').forEach((part: string) => {
+                                        const p = part.trim();
+                                        const match = p.match(/\$?([0-9.,]+)/);
+                                        let val = 0;
+                                        if (match) {
+                                            let s = match[1];
+                                            if (s.includes(',')) {
+                                                s = s.replace(/\./g, '').replace(',', '.');
+                                            } else if (s.includes('.')) {
+                                                if (!/\.\d{1,2}$/.test(s)) {
+                                                    s = s.replace(/\./g, '');
+                                                }
+                                            }
+                                            val = parseFloat(s) || 0;
+                                        }
+                                        if (p.includes('NEQUI') || p.includes('NEQ')) finalNequi += val;
+                                        else if (p.includes('DAVIPLATA') || p.includes('DAVI')) finalDavi += val;
+                                        else if (p.includes('FONDO') || p.includes('BOVEDA') || p.includes('BÓVEDA') || p.includes('FOND')) finalFondo += val;
+                                        else if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH') || p.includes('EFEC')) finalCash += val;
+                                    });
+                                    // If nothing parsed from split, use DB columns as fallback
+                                    if (finalCash + finalNequi + finalDavi + finalFondo === 0) {
+                                        finalCash = total;
+                                    }
+                                } else if (src === 'NEQUI') {
+                                    finalNequi = total;
+                                } else if (src === 'DAVIPLATA' || src === 'DAVI') {
+                                    finalDavi = total;
+                                } else if (src === 'FONDO' || src === 'BOVEDA' || src === 'BÓVEDA' || src.includes('FOND')) {
+                                    finalFondo = total;
+                                } else if (src.includes('PREST') || src === 'DEUDA') {
+                                    // Debt -> 0
+                                } else {
+                                    // Default: use DB channel columns if populated, else full amount to cash
+                                    const rawCash = Number(e.cashAmount || e.cash_amount || 0);
+                                    const rawNequi = Number(e.nequiAmount || e.nequi_amount || 0);
+                                    const rawDavi = Number(e.daviplataAmount || e.daviplata_amount || 0);
+                                    const rawFondo = Number(e.fondoAmount || e.fondo_amount || 0);
+                                    const sumChannels = rawCash + rawNequi + rawDavi + rawFondo;
+
+                                    if (sumChannels > 0) {
+                                        finalCash = rawCash;
+                                        finalNequi = rawNequi;
+                                        finalDavi = rawDavi;
+                                        finalFondo = rawFondo;
+                                        if (tax > 0 && sumChannels === base) {
+                                            const count = (rawCash>0?1:0)+(rawNequi>0?1:0)+(rawDavi>0?1:0)+(rawFondo>0?1:0);
+                                            if (count <= 1) {
+                                                if (rawCash > 0) finalCash += tax;
+                                                if (rawNequi > 0) finalNequi += tax;
+                                                if (rawDavi > 0) finalDavi += tax;
+                                                if (rawFondo > 0) finalFondo += tax;
+                                            } else {
+                                                if (rawNequi > 0) finalNequi += tax;
+                                                else if (rawDavi > 0) finalDavi += tax;
+                                                else if (rawFondo > 0) finalFondo += tax;
+                                                else finalCash += tax;
+                                            }
+                                        }
+                                    } else {
+                                        finalCash = total;
+                                    }
                                 }
                                 
                                 e._finalCash = finalCash;
@@ -631,10 +918,22 @@ export default function ClosuresHistory() {
                         });
                     } catch(e) {}
                     
-                    const expectedCashFinal = selectedClosure.expectedCash || (selectedClosure.totalCash - egresosCaja - (selectedClosure.totalReturns || 0));
-                    const ventasCajero = selectedClosure.physicalCash + digitalIncome + egresosCaja;
-                    const ventasSistema = expectedCashFinal + digitalIncome + egresosCaja;
-                    const balanceReal = ventasCajero - ventasSistema;
+                    const cashIngresos = (selectedClosure.totalCash || 0) + (selectedClosure.totalCreditCollected || 0);
+                    const expectedCashFinal = (selectedClosure.expectedCash && selectedClosure.expectedCash !== 0)
+                        ? selectedClosure.expectedCash
+                        : (cashIngresos - egresosCaja - (selectedClosure.totalReturns || 0));
+                    const physicalCash = selectedClosure.physicalCash || 0;
+                    
+                    const descuadreCaja = (selectedClosure.difference !== undefined && selectedClosure.difference !== 0)
+                        ? selectedClosure.difference
+                        : (physicalCash - expectedCashFinal);
+
+                    const ventasCajero = physicalCash + digitalIncome + egresosCaja + (selectedClosure.totalReturns || 0);
+                    const ventasSistema = expectedCashFinal + digitalIncome + egresosCaja + (selectedClosure.totalReturns || 0);
+
+                    const totalCalculatedSales = cashIngresos + digitalIncome;
+                    const ingresosReales = (selectedClosure.totalSales && selectedClosure.totalSales >= totalCalculatedSales) ? selectedClosure.totalSales : totalCalculatedSales;
+                    const balanceNetoReal = ingresosReales - egresosGlobales - (selectedClosure.totalReturns || 0);
 
                     const summaryTableClasses = {
                         th: "bg-white dark:bg-[#18181b] text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500 border-b-2 border-zinc-200 dark:border-white/10",
@@ -643,7 +942,7 @@ export default function ClosuresHistory() {
 
                     return (
                         <div className="space-y-6">
-                            {/* Cabecera Principal (Ventas Totales y Balance) */}
+                            {/* Cabecera Principal (Ventas Totales y Balance de Auditoría) */}
                             <div className="grid grid-cols-3 gap-4">
                                 <div className="bg-white dark:bg-[#18181b] p-4 rounded-2xl border border-zinc-200 dark:border-white/10 flex flex-col items-center text-center">
                                     <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-2">Ventas Totales (Cajero)</span>
@@ -653,15 +952,17 @@ export default function ClosuresHistory() {
                                     <span className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-widest mb-2">Ventas Totales (Sist.)</span>
                                     <span className="text-xl font-bold text-zinc-900 dark:text-zinc-100 tabular-nums">${formatCurrency(ventasSistema)}</span>
                                 </div>
-                                <div className={`p-4 rounded-2xl border flex flex-col items-center text-center ${balanceReal >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
-                                    <span className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${balanceReal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>Balance Real</span>
-                                    <span className={`text-xl font-bold tabular-nums ${balanceReal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>${formatCurrency(balanceReal)}</span>
+                                <div className={`p-4 rounded-2xl border flex flex-col items-center text-center ${descuadreCaja >= 0 ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-rose-500/10 border-rose-500/30'}`}>
+                                    <span className={`text-[10px] font-bold uppercase tracking-widest mb-2 ${descuadreCaja >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>Descuadre Caja</span>
+                                    <span className={`text-xl font-bold tabular-nums ${descuadreCaja >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'}`}>
+                                        {descuadreCaja > 0 ? `+` : ''}${formatCurrency(descuadreCaja)}
+                                    </span>
                                 </div>
                             </div>
                             
                             <p className="text-[9px] font-medium text-gray-400 dark:text-zinc-600 tracking-wider">
                                 * Ventas Cajero = Efectivo Contado + Digital + Egresos Caja <br/>
-                                * Ventas Sistema = Efectivo Esperado + Digital + Egresos Caja
+                                * Ventas Sistema = Ventas Registradas en Sistema (Efectivo + Digital + Fiados)
                             </p>
 
                             {/* RESUMEN FINANCIERO GLOBAL */}
@@ -675,7 +976,7 @@ export default function ClosuresHistory() {
                                     <TableBody>
                                         <TableRow>
                                             <TableCell>(+) Ingresos Totales (Efectivo + Digital)</TableCell>
-                                            <TableCell className="text-right">${formatCurrency(selectedClosure.totalSales)}</TableCell>
+                                            <TableCell className="text-right">${formatCurrency(ingresosReales)}</TableCell>
                                         </TableRow>
                                         <TableRow>
                                             <TableCell>(-) Egresos Totales (Todos los canales)</TableCell>
@@ -687,7 +988,7 @@ export default function ClosuresHistory() {
                                         </TableRow>
                                         <TableRow className="bg-emerald-500/5">
                                             <TableCell className="font-bold text-emerald-600 dark:text-emerald-400">(=) BALANCE NETO DEL TURNO</TableCell>
-                                            <TableCell className="text-right font-bold text-emerald-600 dark:text-emerald-400">${formatCurrency(selectedClosure.netBalance || (selectedClosure.totalSales - egresosGlobales - (selectedClosure.totalReturns || 0)))}</TableCell>
+                                            <TableCell className={`text-right font-bold ${balanceNetoReal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-500'}`}>${formatCurrency(balanceNetoReal)}</TableCell>
                                         </TableRow>
                                     </TableBody>
                                 </Table>
@@ -704,7 +1005,7 @@ export default function ClosuresHistory() {
                                     <TableBody>
                                         <TableRow>
                                             <TableCell>(+) Ingresos en Efectivo (Ventas + Recaudos)</TableCell>
-                                            <TableCell className="text-right">${formatCurrency(selectedClosure.totalCash)}</TableCell>
+                                            <TableCell className="text-right">${formatCurrency(cashIngresos)}</TableCell>
                                         </TableRow>
                                         <TableRow>
                                             <TableCell>(-) Salidas de Efectivo (Egresos de Caja)</TableCell>
@@ -761,48 +1062,137 @@ export default function ClosuresHistory() {
                                 </Table>
                             </div>
 
-                            {/* EGRESOS POR CANAL DETALLADO */}
-                            {parsedExpenses.length > 0 && (
-                                <div className="space-y-4">
-                                    {[
-                                      { name: 'EFECTIVO', key: '_finalCash', icon: <Banknote size={14}/>, color: 'text-zinc-600 dark:text-zinc-400' },
-                                      { name: 'NEQUI', key: '_finalNequi', icon: <Wallet size={14}/>, color: 'text-purple-500' },
-                                      { name: 'DAVIPLATA', key: '_finalDavi', icon: <Landmark size={14}/>, color: 'text-rose-500' },
-                                      { name: 'FONDO', key: '_finalFondo', icon: <Banknote size={14}/>, color: 'text-cyan-500' }
-                                    ].map(method => {
-                                        const mExps = parsedExpenses.filter(e => e[method.key] > 0);
-                                        if (mExps.length === 0) return null;
-                                        
-                                        const total = mExps.reduce((acc, e) => acc + e[method.key], 0);
+                            {/* EGRESOS POR CANAL DETALLADO - usa datos actuales de BD si disponibles */}
+                            {(() => {
+                                const liveExpenses = (selectedClosure.expensesDetail && selectedClosure.expensesDetail.trim() !== '' && selectedClosure.expensesDetail !== '[]')
+                                    ? JSON.parse(selectedClosure.expensesDetail)
+                                    : ((!loadingDetail && fullDetail?.expenses && Array.isArray(fullDetail.expenses) && fullDetail.expenses.length > 0)
+                                        ? fullDetail.expenses
+                                        : null);
 
-                                        return (
-                                            <div key={method.name} className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
-                                                <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b] flex items-center gap-2">
-                                                    {method.icon} EGRESOS: {method.name}
-                                                </h4>
-                                                <Table aria-label={`Egresos ${method.name}`} removeWrapper classNames={summaryTableClasses}>
-                                                    <TableHeader>
-                                                        <TableColumn>DESCRIPCION</TableColumn>
-                                                        <TableColumn align="end">MONTO</TableColumn>
-                                                    </TableHeader>
-                                                    <TableBody>
-                                                        {mExps.map((e, i) => (
-                                                            <TableRow key={i}>
-                                                                <TableCell className="uppercase">{e.description}</TableCell>
-                                                                <TableCell className="text-right font-bold text-rose-500">-${formatCurrency(e[method.key])}</TableCell>
+                                // Construir montos por canal usando paymentSource como autoridad (idéntico al backend)
+                                const expensesForChannels = liveExpenses
+                                    ? liveExpenses
+                                        .filter((e: any) => String(e.status || '').toUpperCase() !== 'PENDING')
+                                        .map((e: any) => {
+                                            const tax = Number(e.taxAmount || 0);
+                                            const base = Number(e.amount || 0);
+                                            const total = base + tax;
+                                            const src = (e.paymentSource || '').toUpperCase();
+
+                                            let finalCash = 0;
+                                            let finalNequi = 0;
+                                            let finalDavi = 0;
+                                            let finalFondo = 0;
+
+                                            if (src.includes('/')) {
+                                                src.split('/').forEach((part: string) => {
+                                                    const p = part.trim();
+                                                    const match = p.match(/\$?([0-9.,]+)/);
+                                                    let val = 0;
+                                                    if (match) {
+                                                        let s = match[1];
+                                                        if (s.includes(',')) {
+                                                            s = s.replace(/\./g, '').replace(',', '.');
+                                                        } else if (s.includes('.')) {
+                                                            if (!/\.\d{1,2}$/.test(s)) {
+                                                                s = s.replace(/\./g, '');
+                                                            }
+                                                        }
+                                                        val = parseFloat(s) || 0;
+                                                    }
+                                                    if (p.includes('NEQUI') || p.includes('NEQ')) finalNequi += val;
+                                                    else if (p.includes('DAVIPLATA') || p.includes('DAVI')) finalDavi += val;
+                                                    else if (p.includes('FONDO') || p.includes('BOVEDA') || p.includes('BÓVEDA') || p.includes('FOND')) finalFondo += val;
+                                                    else if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH') || p.includes('EFEC')) finalCash += val;
+                                                });
+                                                if (finalCash + finalNequi + finalDavi + finalFondo === 0) {
+                                                    finalCash = total;
+                                                }
+                                            } else if (src === 'NEQUI') {
+                                                finalNequi = total;
+                                            } else if (src === 'DAVIPLATA' || src === 'DAVI') {
+                                                finalDavi = total;
+                                            } else if (src === 'FONDO' || src === 'BOVEDA' || src === 'BÓVEDA' || src.includes('FOND')) {
+                                                finalFondo = total;
+                                            } else if (src.includes('PREST') || src === 'DEUDA') {
+                                                // Debt -> 0
+                                            } else {
+                                                const rawCash = Number(e.cashAmount || 0);
+                                                const rawNequi = Number(e.nequiAmount || 0);
+                                                const rawDavi = Number(e.daviplataAmount || 0);
+                                                const rawFondo = Number(e.fondoAmount || 0);
+                                                const sum = rawCash + rawNequi + rawDavi + rawFondo;
+
+                                                if (sum > 0) {
+                                                    finalCash = rawCash; finalNequi = rawNequi; finalDavi = rawDavi; finalFondo = rawFondo;
+                                                    if (tax > 0 && sum === base) {
+                                                        const count = (rawCash>0?1:0)+(rawNequi>0?1:0)+(rawDavi>0?1:0)+(rawFondo>0?1:0);
+                                                        if (count <= 1) {
+                                                            if (rawCash > 0) finalCash += tax;
+                                                            if (rawNequi > 0) finalNequi += tax;
+                                                            if (rawDavi > 0) finalDavi += tax;
+                                                            if (rawFondo > 0) finalFondo += tax;
+                                                        } else {
+                                                            if (rawNequi > 0) finalNequi += tax;
+                                                            else if (rawDavi > 0) finalDavi += tax;
+                                                            else if (rawFondo > 0) finalFondo += tax;
+                                                            else finalCash += tax;
+                                                        }
+                                                    }
+                                                } else {
+                                                    finalCash = total;
+                                                }
+                                            }
+                                            return { ...e, _finalCash: finalCash, _finalNequi: finalNequi, _finalDavi: finalDavi, _finalFondo: finalFondo };
+                                        })
+                                    : parsedExpenses;
+
+                                if (expensesForChannels.length === 0) return null;
+
+                                return (
+                                    <div className="space-y-4">
+                                        {liveExpenses && (
+                                            <p className="text-[9px] font-medium text-emerald-500 uppercase tracking-widest ml-1">✓ Mostrando datos actualizados desde la base de datos</p>
+                                        )}
+                                        {[
+                                          { name: 'EFECTIVO', key: '_finalCash', icon: <Banknote size={14}/>, color: 'text-zinc-600 dark:text-zinc-400' },
+                                          { name: 'NEQUI', key: '_finalNequi', icon: <Wallet size={14}/>, color: 'text-purple-500' },
+                                          { name: 'DAVIPLATA', key: '_finalDavi', icon: <Landmark size={14}/>, color: 'text-rose-500' },
+                                          { name: 'FONDO', key: '_finalFondo', icon: <Banknote size={14}/>, color: 'text-cyan-500' }
+                                        ].map(method => {
+                                            const mExps = expensesForChannels.filter((e: any) => e[method.key] > 0);
+                                            if (mExps.length === 0) return null;
+                                            const total = mExps.reduce((acc: number, e: any) => acc + e[method.key], 0);
+                                            return (
+                                                <div key={method.name} className="bg-zinc-50 dark:bg-[#18181b]/50 rounded-2xl border border-zinc-200 dark:border-white/5 overflow-hidden">
+                                                    <h4 className="px-4 py-3 text-[11px] font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-[0.2em] border-b border-zinc-200 dark:border-white/5 bg-white dark:bg-[#18181b] flex items-center gap-2">
+                                                        {method.icon} EGRESOS: {method.name}
+                                                    </h4>
+                                                    <Table aria-label={`Egresos ${method.name}`} removeWrapper classNames={summaryTableClasses}>
+                                                        <TableHeader>
+                                                            <TableColumn>DESCRIPCION</TableColumn>
+                                                            <TableColumn align="end">MONTO</TableColumn>
+                                                        </TableHeader>
+                                                        <TableBody>
+                                                            {mExps.map((e: any, i: number) => (
+                                                                <TableRow key={i}>
+                                                                    <TableCell className="uppercase">{e.description}</TableCell>
+                                                                    <TableCell className="text-right font-bold text-rose-500">-${formatCurrency(e[method.key])}</TableCell>
+                                                                </TableRow>
+                                                            ))}
+                                                            <TableRow className="bg-rose-500/5">
+                                                                <TableCell className="font-bold text-rose-600 dark:text-rose-400 uppercase">TOTAL EGRESOS {method.name}</TableCell>
+                                                                <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400">-${formatCurrency(total)}</TableCell>
                                                             </TableRow>
-                                                        ))}
-                                                        <TableRow className="bg-rose-500/5">
-                                                            <TableCell className="font-bold text-rose-600 dark:text-rose-400 uppercase">TOTAL EGRESOS {method.name}</TableCell>
-                                                            <TableCell className="text-right font-bold text-rose-600 dark:text-rose-400">-${formatCurrency(total)}</TableCell>
-                                                        </TableRow>
-                                                    </TableBody>
-                                                </Table>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                                        </TableBody>
+                                                    </Table>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                );
+                            })()}
 
                             <Divider className="bg-white dark:bg-[#18181b]" />
 

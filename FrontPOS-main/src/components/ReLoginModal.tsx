@@ -31,10 +31,10 @@ export default function ReLoginModal() {
 
   // Pre-llenar el usuario si lo conocemos
   useEffect(() => {
-    if (user?.name) {
-      setUsername(user.name);
-    } else if (user?.dni) {
+    if (user?.dni) {
       setUsername(user.dni);
+    } else if (user?.name) {
+      setUsername(user.name);
     }
   }, [user]);
 

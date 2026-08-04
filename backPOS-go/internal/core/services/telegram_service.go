@@ -4,11 +4,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"backPOS-go/internal/core/ports"
@@ -16,10 +17,24 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+type QueuedTelegramMessage struct {
+	ID        string
+	Type      string // "MARKDOWN", "HTML", "TEXT", "DOCUMENT", "PHOTO"
+	Message   string
+	Filename  string
+	Data      []byte
+	Caption   string
+	CreatedAt time.Time
+	Attempts  int
+}
+
 type TelegramService struct {
-	bot    *tgbotapi.BotAPI
-	chatID int64
-	active bool
+	bot        *tgbotapi.BotAPI
+	token      string
+	chatID     int64
+	active     bool
+	queue      []QueuedTelegramMessage
+	queueMutex sync.Mutex
 }
 
 func NewTelegramService() *TelegramService {
@@ -31,34 +46,129 @@ func NewTelegramService() *TelegramService {
 		return &TelegramService{active: false}
 	}
 
-	bot, err := tgbotapi.NewBotAPI(token)
-	if err != nil {
-		log.Printf("❌ Failed to initialize Telegram Bot: %v", err)
-		return &TelegramService{active: false}
-	}
-
-	// Simple check to see if chatID is valid (should be int64)
 	var chatID int64
-	_, err = fmt.Sscanf(chatIDStr, "%d", &chatID)
+	_, err := fmt.Sscanf(chatIDStr, "%d", &chatID)
 	if err != nil {
 		log.Printf("❌ Invalid TELEGRAM_CHAT_ID: %v", err)
 		return &TelegramService{active: false}
 	}
 
-	// Silenciar logs internos de la librería para evitar el spam de "Conflict"
-	// si el bot ya está corriendo en otra instancia.
-	tgbotapi.SetLogger(log.New(io.Discard, "", 0))
-	log.Printf("✅ Telegram Bot Initialized: %s", bot.Self.UserName)
-
-	return &TelegramService{
-		bot:    bot,
+	svc := &TelegramService{
+		token:  token,
 		chatID: chatID,
-		active: true,
+		active: false,
+		queue:  make([]QueuedTelegramMessage, 0),
 	}
+
+	bot, err := tgbotapi.NewBotAPI(token)
+	if err != nil {
+		log.Printf("⚠️ Telegram Bot no pudo conectar al iniciar (¿Sin internet?): %v. Se activó COLA DE TAREAS OFFLINE.", err)
+	} else {
+		tgbotapi.SetLogger(log.New(io.Discard, "", 0))
+		log.Printf("✅ Telegram Bot Initialized: %s", bot.Self.UserName)
+		svc.bot = bot
+		svc.active = true
+	}
+
+	// Iniciar el worker de cola offline para reintentar envíos automáticamente al volver el internet
+	svc.startQueueWorker()
+
+	return svc
+}
+
+func (s *TelegramService) enqueue(item QueuedTelegramMessage) {
+	s.queueMutex.Lock()
+	defer s.queueMutex.Unlock()
+	item.CreatedAt = time.Now()
+	s.queue = append(s.queue, item)
+	log.Printf("📥 [Telegram Queue] Mensaje encolado offline (%s). Total pendientes en cola: %d", item.Type, len(s.queue))
+}
+
+func (s *TelegramService) startQueueWorker() {
+	go func() {
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			// 1. Si el bot no ha sido inicializado por falta de internet al arrancar, reintentar conexión
+			if s.bot == nil && s.token != "" && s.chatID != 0 {
+				bot, err := tgbotapi.NewBotAPI(s.token)
+				if err == nil {
+					tgbotapi.SetLogger(log.New(io.Discard, "", 0))
+					s.bot = bot
+					s.active = true
+					log.Printf("✅ [Telegram Worker] Conexión restablecida con el Bot de Telegram (@%s)!", bot.Self.UserName)
+				} else {
+					continue
+				}
+			}
+
+			// 2. Procesar cola de mensajes pendientes
+			s.queueMutex.Lock()
+			if len(s.queue) == 0 || s.bot == nil {
+				s.queueMutex.Unlock()
+				continue
+			}
+
+			item := s.queue[0]
+			s.queueMutex.Unlock()
+
+			var sendErr error
+			switch item.Type {
+			case "MARKDOWN":
+				msg := tgbotapi.NewMessage(s.chatID, item.Message)
+				msg.ParseMode = "Markdown"
+				_, sendErr = s.bot.Send(msg)
+				if sendErr != nil {
+					msg.ParseMode = ""
+					_, sendErr = s.bot.Send(msg)
+				}
+			case "HTML":
+				msg := tgbotapi.NewMessage(s.chatID, item.Message)
+				msg.ParseMode = "HTML"
+				_, sendErr = s.bot.Send(msg)
+				if sendErr != nil {
+					msg.ParseMode = ""
+					_, sendErr = s.bot.Send(msg)
+				}
+			case "TEXT":
+				msg := tgbotapi.NewMessage(s.chatID, item.Message)
+				_, sendErr = s.bot.Send(msg)
+			case "DOCUMENT":
+				fileObj := tgbotapi.FileBytes{
+					Name:  item.Filename,
+					Bytes: item.Data,
+				}
+				doc := tgbotapi.NewDocument(s.chatID, fileObj)
+				doc.Caption = item.Caption
+				_, sendErr = s.bot.Send(doc)
+			case "PHOTO":
+				photoObj := tgbotapi.FileBytes{
+					Name:  item.Caption,
+					Bytes: item.Data,
+				}
+				photo := tgbotapi.NewPhoto(s.chatID, photoObj)
+				photo.Caption = item.Caption
+				_, sendErr = s.bot.Send(photo)
+			}
+
+			if sendErr == nil {
+				s.queueMutex.Lock()
+				if len(s.queue) > 0 {
+					s.queue = s.queue[1:]
+					log.Printf("✅ [Telegram Queue] Tarea offline enviada exitosamente (Restantes en cola: %d)", len(s.queue))
+				}
+				s.queueMutex.Unlock()
+			} else {
+				log.Printf("⏳ [Telegram Queue] Reintento fallido (%v). Manteniendo %d tareas en cola...", sendErr, len(s.queue))
+			}
+		}
+	}()
 }
 
 func (s *TelegramService) SendMarkdownAlert(message string) {
-	if !s.active {
+	if s.bot == nil || !s.active {
+		s.enqueue(QueuedTelegramMessage{Type: "MARKDOWN", Message: message})
 		return
 	}
 
@@ -68,16 +178,18 @@ func (s *TelegramService) SendMarkdownAlert(message string) {
 
 		_, err := s.bot.Send(msg)
 		if err != nil {
-			log.Printf("❌ Failed to send Telegram alert (Markdown): %v", err)
-			// Reintentar sin formato si falla
+			log.Printf("❌ Failed to send Telegram alert (Markdown): %v. Encolando...", err)
 			msg.ParseMode = ""
-			s.bot.Send(msg)
+			if _, err2 := s.bot.Send(msg); err2 != nil {
+				s.enqueue(QueuedTelegramMessage{Type: "MARKDOWN", Message: message})
+			}
 		}
 	}()
 }
 
 func (s *TelegramService) SendHTMLAlert(message string) {
-	if !s.active {
+	if s.bot == nil || !s.active {
+		s.enqueue(QueuedTelegramMessage{Type: "HTML", Message: message})
 		return
 	}
 
@@ -87,16 +199,18 @@ func (s *TelegramService) SendHTMLAlert(message string) {
 
 		_, err := s.bot.Send(msg)
 		if err != nil {
-			log.Printf("❌ Failed to send Telegram alert (HTML): %v", err)
-			// Reintentar sin formato si falla
+			log.Printf("❌ Failed to send Telegram alert (HTML): %v. Encolando...", err)
 			msg.ParseMode = ""
-			s.bot.Send(msg)
+			if _, err2 := s.bot.Send(msg); err2 != nil {
+				s.enqueue(QueuedTelegramMessage{Type: "HTML", Message: message})
+			}
 		}
 	}()
 }
 
 func (s *TelegramService) SendAlert(message string) {
-	if !s.active {
+	if s.bot == nil || !s.active {
+		s.enqueue(QueuedTelegramMessage{Type: "TEXT", Message: message})
 		return
 	}
 
@@ -104,40 +218,48 @@ func (s *TelegramService) SendAlert(message string) {
 		msg := tgbotapi.NewMessage(s.chatID, message)
 		_, err := s.bot.Send(msg)
 		if err != nil {
-			log.Printf("❌ Failed to send Telegram alert: %v", err)
-			if strings.Contains(err.Error(), "404") || strings.Contains(err.Error(), "Not Found") {
-				log.Printf("⚠️  Asegúrate de haber iniciado el chat con el bot en Telegram enviando /start")
-			}
+			log.Printf("❌ Failed to send Telegram alert: %v. Encolando...", err)
+			s.enqueue(QueuedTelegramMessage{Type: "TEXT", Message: message})
 		}
 	}()
 }
 
-// SendDocument envía un archivo documento al chat configurado
+// SendDocument envía un archivo documento al chat configurado (o lo guarda en cola offline si no hay red)
 func (s *TelegramService) SendDocument(reader io.Reader, filename string, caption string) error {
-	if !s.active {
-		return fmt.Errorf("telegram service not configured")
-	}
-
-	// Crear el documento a partir del reader
 	fileBytes, err := io.ReadAll(reader)
 	if err != nil {
 		return fmt.Errorf("failed to read document: %w", err)
 	}
 
-	// Crear FileBytes para Telegram
+	if s.bot == nil || !s.active {
+		s.enqueue(QueuedTelegramMessage{
+			Type:     "DOCUMENT",
+			Filename: filename,
+			Caption:  caption,
+			Data:     fileBytes,
+		})
+		log.Printf("📥 [Telegram] Guardado reporte '%s' en cola offline.", filename)
+		return nil
+	}
+
 	fileObj := tgbotapi.FileBytes{
 		Name:  filename,
 		Bytes: fileBytes,
 	}
 
-	// Crear mensaje de documento
 	doc := tgbotapi.NewDocument(s.chatID, fileObj)
 	doc.Caption = caption
 
-	// Enviar documento
 	_, err = s.bot.Send(doc)
 	if err != nil {
-		return fmt.Errorf("failed to send document: %w", err)
+		log.Printf("❌ Failed to send document to Telegram: %v. Guardando en cola offline...", err)
+		s.enqueue(QueuedTelegramMessage{
+			Type:     "DOCUMENT",
+			Filename: filename,
+			Caption:  caption,
+			Data:     fileBytes,
+		})
+		return nil
 	}
 
 	log.Printf("✅ Document sent to Telegram: %s", filename)
@@ -145,8 +267,13 @@ func (s *TelegramService) SendDocument(reader io.Reader, filename string, captio
 }
 
 func (s *TelegramService) SendPhoto(imgBytes []byte, caption string) error {
-	if !s.active {
-		return fmt.Errorf("telegram service not configured")
+	if s.bot == nil || !s.active {
+		s.enqueue(QueuedTelegramMessage{
+			Type:    "PHOTO",
+			Caption: caption,
+			Data:    imgBytes,
+		})
+		return nil
 	}
 
 	photoObj := tgbotapi.FileBytes{
@@ -159,7 +286,13 @@ func (s *TelegramService) SendPhoto(imgBytes []byte, caption string) error {
 
 	_, err := s.bot.Send(photo)
 	if err != nil {
-		return fmt.Errorf("failed to send photo: %w", err)
+		log.Printf("❌ Failed to send photo: %v. Guardando en cola offline...", err)
+		s.enqueue(QueuedTelegramMessage{
+			Type:    "PHOTO",
+			Caption: caption,
+			Data:    imgBytes,
+		})
+		return nil
 	}
 
 	log.Printf("✅ Photo sent to Telegram: %s", caption)
@@ -168,7 +301,7 @@ func (s *TelegramService) SendPhoto(imgBytes []byte, caption string) error {
 
 // StartListener inicia el bucle de escucha de comandos de Telegram
 func (s *TelegramService) StartListener(invService *InventoryService, saleRepo ports.SaleRepository, dashService *DashboardService, prodService *ProductService, aiBotService *AIBotService) {
-	if !s.active {
+	if s.bot == nil || !s.active {
 		return
 	}
 

@@ -99,7 +99,7 @@ func (r *PostgresAdminRepository) CountAll() (int64, error) {
 // Faltantes Module Implementation
 
 func (r *PostgresAdminRepository) SaveMissingItem(item *models.MissingItem) error {
-	return r.db.Create(item).Error
+	return r.db.Omit("Reporter").Create(item).Error
 }
 
 func (r *PostgresAdminRepository) GetMissingItems() ([]models.MissingItem, error) {

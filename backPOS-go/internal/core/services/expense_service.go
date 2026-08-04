@@ -3,6 +3,7 @@ package services
 import (
 	"errors"
 	"log"
+	"strings"
 	"time"
 
 	"backPOS-go/internal/adapters/repositories"
@@ -65,21 +66,35 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 		expense.PaidAmount = expense.Amount
 	}
 
+	// Auto-asignar campos de monto por canal si no vinieron del frontend
+	// para que los reportes puedan distinguir el canal correctamente
+	if expense.Status != "PENDING" &&
+		expense.CashAmount == 0 && expense.NequiAmount == 0 &&
+		expense.DaviplataAmount == 0 && expense.FondoAmount == 0 {
+		src := strings.ToUpper(strings.TrimSpace(expense.PaymentSource))
+		switch {
+		case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
+			expense.NequiAmount = expense.Amount
+		case strings.Contains(src, "DAVIPLATA"):
+			expense.DaviplataAmount = expense.Amount
+		case strings.Contains(src, "FONDO") || strings.Contains(src, "BOVEDA") || strings.Contains(src, "BÓVEDA"):
+			expense.FondoAmount = expense.Amount
+			expense.PaymentSource = "FONDO"
+		case strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") || strings.Contains(src, "PENDING"):
+			// Deudas y préstamos no afectan la caja ni cuentas digitales
+		default:
+			expense.CashAmount = expense.Amount
+		}
+	}
+
 	err := s.repo.Save(expense)
 	if err == nil {
-		// Automatización: Si es un pago a proveedor, marcar pedido esperado como recibido
+		// Si es un pago a proveedor, registrar día de entrega para aprendizaje de rutas
 		if expense.SupplierID != nil {
-			_ = s.expected.MarkAsReceivedBySupplier(*expense.SupplierID)
-
-			// Auto-aprendizaje de ruta: el día actual queda registrado como día
-			// de entrega del proveedor (delivery_days, JSONB anti-duplicados).
+			// IMPORTANTE: NO auto-completar ni marcar pedidos como recibidos al crear un egreso.
+			// Los pedidos de recepción deben permanecer PENDIENTES (EN CAMINO) hasta que el usuario
+			// haga la recepción física de mercancía o haga clic en "Ya llegó".
 			_ = s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days")
-
-			// Auto-completar PurchaseOrders pendientes: si el operador registra
-			// un egreso al proveedor, asumimos que la mercancía pendiente llegó.
-			// Solo cerramos pedidos cuya deliveryDate sea hoy o anterior — los
-			// programados para días futuros se respetan.
-			s.autoCompletePendingPurchaseOrders(*expense.SupplierID)
 		}
 
 		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
@@ -125,29 +140,41 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 	return err
 }
 
-// SettleExpense marca un egreso como pagado y define su fuente real de dinero
-func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string, paymentAmount float64) (*models.Expense, error) {
+// SettleExpense registra un abono (parcial o total) a una deuda pendiente
+func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string, paymentAmount, cashAmount, nequiAmount, daviplataAmount, fondoAmount float64) (*models.Expense, error) {
 	expense, err := s.repo.GetByID(id)
 	if err != nil {
 		return nil, errors.New("egreso no encontrado")
 	}
 
-	if expense.Status == "PAID" {
-		return nil, errors.New("este egreso ya está marcado como pagado")
+	if expense.Status == "PAID" || expense.Status == "SETTLED" {
+		return nil, errors.New("este egreso ya está completamente pagado")
 	}
 
 	if expense.RemainingAmount == 0 {
 		expense.RemainingAmount = expense.Amount
 	}
 
+	if paymentAmount <= 0 {
+		return nil, errors.New("debe ingresar un monto de abono mayor a cero")
+	}
+
 	amountToPay := paymentAmount
-	if amountToPay <= 0 || amountToPay > expense.RemainingAmount {
+	if amountToPay > expense.RemainingAmount {
 		amountToPay = expense.RemainingAmount
+	}
+
+	isPartial := amountToPay < expense.RemainingAmount
+
+	// Prefijo de descripcion para identificar abonos
+	abonoDesc := "ABONO A DEUDA: " + expense.Description
+	if !isPartial {
+		abonoDesc = expense.Description
 	}
 
 	// 1. Crear un nuevo egreso para registrar el Abono exacto con el método de pago exacto y fecha de hoy
 	abonoExpense := &models.Expense{
-		Description:     "ABONO A DEUDA: " + expense.Description,
+		Description:     abonoDesc,
 		Amount:          amountToPay,
 		PaidAmount:      amountToPay,
 		RemainingAmount: 0,
@@ -157,6 +184,10 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		Date:            time.Now(),
 		CreatedByDNI:    updaterDNI,
 		SupplierID:      expense.SupplierID,
+		CashAmount:      cashAmount,
+		NequiAmount:     nequiAmount,
+		DaviplataAmount: daviplataAmount,
+		FondoAmount:     fondoAmount,
 	}
 
 	// 2. Descontar la deuda original sin cambiar su PaymentSource ni fecha inicial
@@ -164,6 +195,7 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 	expense.RemainingAmount -= amountToPay
 
 	if expense.RemainingAmount <= 0 {
+		expense.RemainingAmount = 0
 		expense.Status = "SETTLED"
 	}
 

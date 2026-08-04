@@ -27,7 +27,7 @@ export function useNewSale() {
 
     // Core Data (Auto-refreshing via SWR)
     const { data: productsData, mutate: mutateProducts, isLoading: productsLoading, error: productsError } = useApi<Product[]>('/products/all-products', { 
-        refreshInterval: 10000,
+        refreshInterval: 60000, // 60s - SSE handles real-time sync
         revalidateOnFocus: true 
     });
     const { data: customersData, mutate: mutateCustomers, isLoading: customersLoading } = useApi<Customer[]>('/clients/all-clients', { refreshInterval: 60000 });
@@ -247,6 +247,13 @@ export function useNewSale() {
         
         return () => clearTimeout(timer);
     }, [carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId, loading]);
+    // Auto-select last item in cart if nothing is selected
+    useEffect(() => {
+        const currentCart = carts[activeCartKey] || [];
+        if (currentCart.length > 0 && !selectedItemId) {
+            setSelectedItemId(currentCart[currentCart.length - 1].cartItemId);
+        }
+    }, [carts, activeCartKey, selectedItemId]);
 
     // Initializing Web Worker
     useEffect(() => {
@@ -424,7 +431,21 @@ export function useNewSale() {
 
     // Computed Values (Optimized via useMemo)
     const currentCart = useMemo(() => carts[activeCartKey] || [], [carts, activeCartKey]);
-    
+
+    // Auto-seleccionar el ultimo producto registrado al cambiar de factura o modificar el carrito
+    useEffect(() => {
+        const cart = carts[activeCartKey] || [];
+        if (cart.length > 0) {
+            const isSelectedValid = selectedItemId && cart.some(i => i.cartItemId === selectedItemId);
+            if (!isSelectedValid) {
+                const lastItem = cart[cart.length - 1];
+                setSelectedItemId(lastItem.cartItemId);
+            }
+        } else {
+            setSelectedItemId(null);
+        }
+    }, [activeCartKey, carts]);
+
     const sortedCart = useMemo(() => {
         return [...currentCart];
     }, [currentCart]);
@@ -461,8 +482,28 @@ export function useNewSale() {
         } as Customer;
     }, [customers, selectedCustomerDni]);
 
-    // El grid ahora viene del Worker (Resiliencia HFT)
-    const filteredProductsGrid = workerFilteredProducts;
+    // El grid viene del Worker con Fallback al hilo principal para maxima resiliencia
+    const filteredProductsGrid = useMemo(() => {
+        if (workerFilteredProducts.length > 0) {
+            return workerFilteredProducts;
+        }
+        if (!products || !Array.isArray(products) || products.length === 0) return [];
+        
+        const query = searchQuery.toLowerCase().trim();
+        const categoryFilter = selectedCategory;
+
+        return products.filter(p => {
+            const matchesCategory = categoryFilter === 'all' || String(p.categoryId) === categoryFilter;
+            if (!matchesCategory) return false;
+            if (!query) return true;
+
+            const nameMatch = (p.productName || '').toLowerCase().includes(query);
+            const barcodeMatch = (p.barcode || '').toLowerCase().includes(query);
+            const altCodesMatch = (p.alternateCodes || '').toLowerCase().includes(query);
+            
+            return nameMatch || barcodeMatch || altCodesMatch;
+        }).sort((a, b) => (a.productName || '').localeCompare(b.productName || ''));
+    }, [workerFilteredProducts, products, searchQuery, selectedCategory]);
 
     const filteredCustomers = useMemo(() => {
         const query = clientSearch.toLowerCase().trim();
@@ -869,13 +910,15 @@ export function useNewSale() {
 
         // 3. BUSQUEDA DEL PRODUCTO (Codigo Principal + Codigos Alternativos)
         const p = products.find(x => {
-            const isPrimaryMatch = x.barcode.toUpperCase() === finalCode.toUpperCase();
+            const barcodeStr = (x.barcode || '').toString().toUpperCase();
+            const targetCode = finalCode.toUpperCase();
+            const isPrimaryMatch = barcodeStr === targetCode;
             if (isPrimaryMatch) return true;
 
             // Si no coincide el principal, buscamos en la lista de alternativos
             if (x.alternateCodes) {
                 const altCodes = x.alternateCodes.split(',').map(c => c.trim().toUpperCase());
-                return altCodes.includes(finalCode.toUpperCase());
+                return altCodes.includes(targetCode);
             }
 
             return false;
@@ -892,7 +935,12 @@ export function useNewSale() {
         } else {
             setFeedbackCode(finalCode); 
             setIsFeedbackError(true); 
-            toast({ variant: "destructive", title: "SISTEMA", description: `CODIGO ${finalCode} NO ENCONTRADO` });
+            toast({
+                variant: "destructive",
+                title: "PRODUCTO NO EXISTE",
+                description: `El código ${finalCode} no se encuentra registrado en el inventario.`,
+                duration: 3500
+            });
             returnFocusToScanner();
         }
         setScannerBuffer('');
@@ -939,7 +987,13 @@ export function useNewSale() {
         change: number;
     }, pendingReturn?: any) => {
         if (submitting || submittingRef.current) return;
-        if (currentCart.length === 0 && !splitItemsToPay) return;
+        submittingRef.current = true;
+        setSubmitting(true);
+        if (currentCart.length === 0 && !splitItemsToPay) {
+            submittingRef.current = false;
+            setSubmitting(false);
+            return;
+        }
         
         const currentKey = activeCartKeyRef.current;
         const isEditModeLocal = currentKey.startsWith('Factura EDIT-');
@@ -1133,7 +1187,10 @@ export function useNewSale() {
             return;
         }
 
+        const clientTxId = `tx_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
         const saleData = {
+            clientTxId,
             clientDni: selectedCustomerDni,
             employeeDni: "ADMIN",
             paymentMethod: paymentMethod,
@@ -1168,10 +1225,20 @@ export function useNewSale() {
             }
 
             const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 segundos de espera max. (MEGA-SPRINT)
+            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos de espera max.
 
-            const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`, {
-                method: 'POST', 
+            const isEditMode = activeCartKey.startsWith("Factura EDIT-");
+            let endpointUrl = `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`;
+            let reqMethod = 'POST';
+            
+            if (isEditMode) {
+                const saleId = activeCartKey.split('-')[1];
+                endpointUrl = `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/update/${saleId}`;
+                reqMethod = 'PUT';
+            }
+
+            const res = await fetch(endpointUrl, {
+                method: reqMethod, 
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, 
                 body: JSON.stringify(saleData),
                 signal: controller.signal
@@ -1335,10 +1402,26 @@ export function useNewSale() {
         }
     }, [feedbackCode, isFeedbackError, playBeep]);
 
+    // Cargar boveda offline (IndexedDB) inmediatamente al montar para renderizado instantaneo
+    useEffect(() => {
+        const loadInitialCache = async () => {
+            try {
+                const { getCachedProducts } = await import('@/lib/offline-db');
+                const cached = await getCachedProducts();
+                if (Array.isArray(cached) && cached.length > 0) {
+                    setProducts(cached);
+                }
+            } catch (e) {
+                console.error("[useNewSale] Error cargando cache inicial:", e);
+            }
+        };
+        loadInitialCache();
+    }, []);
+
     // Sincronizar datos de SWR a estados locales de forma eficiente (HFT) + OFFLINE MODE
     useEffect(() => {
         const syncOfflineData = async () => {
-            const hasData = Array.isArray(productsData) && productsData.length > 0;
+            const hasData = Array.isArray(productsData);
             const hasApiError = !!productsError;
             const effectivelyOffline = isOffline || hasApiError;
 
@@ -1346,14 +1429,16 @@ export function useNewSale() {
                 // Hay internet y llegaron productos, actualizar estado local
                 setProducts(productsData);
                 
-                // Actualizar boveda local (Offline First) silenciosamente
-                const { saveProductsToCache } = await import('@/lib/offline-db');
-                await saveProductsToCache(productsData);
+                // Actualizar boveda local (Offline First) silenciosamente si trae elementos
+                if (productsData.length > 0) {
+                    const { saveProductsToCache } = await import('@/lib/offline-db');
+                    await saveProductsToCache(productsData);
+                }
             } else if (effectivelyOffline) {
                 // No hay internet O la API fallo (servidor caido), intentar cargar desde la boveda
                 const { getCachedProducts } = await import('@/lib/offline-db');
                 const cached = await getCachedProducts();
-                if (cached.length > 0) {
+                if (Array.isArray(cached) && cached.length > 0) {
                     setProducts(cached);
                 }
             }
@@ -1381,7 +1466,7 @@ export function useNewSale() {
         selectedCustomer, selectedCustomerDni,
         
         // Computed
-        total: isEditMode ? extraTotal : total, filteredProductsGrid, filteredCustomers,
+        total, extraTotal, isEditMode, filteredProductsGrid, filteredCustomers,
         
         // UI State
         loading: loading || ((products.length === 0 || categories.length === 0) && (productsLoading || categoriesLoading)), 

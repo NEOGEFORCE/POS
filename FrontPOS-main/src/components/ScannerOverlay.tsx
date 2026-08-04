@@ -35,11 +35,7 @@ export function ScannerOverlay({
 
     const toggleTorch = useCallback(async () => {
         try {
-            const scanner = scannerRef.current;
-            if (!scanner) return;
-
-            // Access the underlying video element rendered by html5-qrcode
-            const videoEl = document.querySelector('#reader video') as HTMLVideoElement | null;
+            const videoEl = (elementRef.current?.querySelector('video') || document.querySelector(`#${uniqueId} video`)) as HTMLVideoElement | null;
             if (!videoEl?.srcObject) return;
 
             const stream = videoEl.srcObject as MediaStream;
@@ -52,9 +48,21 @@ export function ScannerOverlay({
             });
             setTorchOn(newState);
         } catch (err) {
-            console.warn("Flash/torch not supported on this device:", err);
+            console.warn("Flash/torch toggle via track failed, trying scanner API:", err);
+            try {
+                const scanner = scannerRef.current;
+                if (scanner) {
+                    const newState = !torchOn;
+                    await (scanner as any).applyVideoConstraints({
+                        advanced: [{ torch: newState }]
+                    });
+                    setTorchOn(newState);
+                }
+            } catch (e) {
+                console.warn("Flash not supported on device:", e);
+            }
         }
-    }, [torchOn]);
+    }, [torchOn, uniqueId]);
 
     const isProcessingRef = useRef(false);
 
@@ -125,19 +133,19 @@ export function ScannerOverlay({
         const checkTorch = () => {
             setTimeout(() => {
                 try {
-                    const videoEl = document.querySelector(`#${uniqueId} video`) as HTMLVideoElement | null;
+                    const videoEl = (elementRef.current?.querySelector('video') || document.querySelector(`#${uniqueId} video`)) as HTMLVideoElement | null;
                     if (videoEl?.srcObject) {
                         const stream = videoEl.srcObject as MediaStream;
                         const track = stream.getVideoTracks()[0];
-                        const capabilities = track?.getCapabilities?.() as any;
-                        if (capabilities?.torch) {
+                        if (track) {
                             setTorchSupported(true);
                         }
                     }
                 } catch (e) {
                     console.warn("Could not check torch capabilities:", e);
+                    setTorchSupported(true);
                 }
-            }, 500);
+            }, 300);
         };
 
         const startScanner = async () => {

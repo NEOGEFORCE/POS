@@ -23,6 +23,23 @@ var limiter = &RateLimiter{
 	clients: make(map[string]*ClientLimiter),
 }
 
+func init() {
+	// Limpiar clientes expirados cada 60 segundos para evitar memory leak
+	go func() {
+		for {
+			time.Sleep(60 * time.Second)
+			limiter.mu.Lock()
+			cutoff := time.Now().Add(-5 * time.Minute)
+			for ip, cl := range limiter.clients {
+				if cl.lastRefill.Before(cutoff) {
+					delete(limiter.clients, ip)
+				}
+			}
+			limiter.mu.Unlock()
+		}
+	}()
+}
+
 func RateLimitMiddleware(maxTokens float64, refillRate float64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()

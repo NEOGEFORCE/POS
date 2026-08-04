@@ -198,9 +198,8 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			totalIdeal = pacas * multiplo
 		}
 
-		// IA Ciega: Si no hay deficit y no hay alerta, ignoramos la sugerencia
-		// EXCEPCION: Si hay algo en transito, lo mostramos para que el Frontend ponga la etiqueta "EN CAMINO"
-		if totalIdeal <= 0 && alertType == "" && pendingQty <= 0 {
+		// Si no hay deficit (totalIdeal <= 0) y no hay pedido en transito, se ignora la sugerencia
+		if totalIdeal <= 0 && pendingQty <= 0 {
 			continue
 		}
 		
@@ -209,6 +208,16 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		}
 		
 		isHighRotation := sugeridoPorVentas > sugeridoBase || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
+
+		if alert == "" {
+			if isHighRotation && totalIdeal > 0 {
+				alert = fmt.Sprintf("Aumentado a %.0f: Ventas altas", totalIdeal)
+				alertType = "HIGH_MOVER"
+			} else if totalIdeal > 0 {
+				alert = fmt.Sprintf("Sugerido pedir %.0f unid.", totalIdeal)
+				alertType = "SUGGESTED_ORDER"
+			}
+		}
 
 		requiredMin := math.Max(0, sugeridoBase)
 		projectedSales := math.Max(0, sugeridoPorVentas)
@@ -445,9 +454,8 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 			totalIdeal = pacas * multiplo
 		}
 
-		// IA Ciega: Si no hay deficit y no hay alerta, ignoramos la sugerencia
-		// EXCEPCION: Si hay algo en transito, lo mostramos para que el Frontend ponga la etiqueta "EN CAMINO"
-		if totalIdeal <= 0 && alertType == "" && pendingQty <= 0 {
+		// Si no hay deficit (totalIdeal <= 0) y no hay pedido en transito, se ignora la sugerencia
+		if totalIdeal <= 0 && pendingQty <= 0 {
 			continue
 		}
 		
@@ -456,6 +464,16 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		}
 		
 		isHighRotation := sugeridoPorVentas > sugeridoBase || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
+
+		if alert == "" {
+			if isHighRotation && totalIdeal > 0 {
+				alert = fmt.Sprintf("Aumentado a %.0f: Ventas altas", totalIdeal)
+				alertType = "HIGH_MOVER"
+			} else if totalIdeal > 0 {
+				alert = fmt.Sprintf("Sugerido pedir %.0f unid.", totalIdeal)
+				alertType = "SUGGESTED_ORDER"
+			}
+		}
 
 		requiredMin := math.Max(0, sugeridoBase)
 		projectedSales := math.Max(0, sugeridoPorVentas)

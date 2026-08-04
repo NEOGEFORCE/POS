@@ -3,6 +3,8 @@ package services
 import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/cache"
+	"strings"
 	"time"
 )
 
@@ -29,25 +31,6 @@ func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleReposi
 		return nil, err
 	}
 
-	pending, err := saleRepo.GetPendingByClient(dni)
-	if err != nil {
-		pending = []models.Sale{}
-	}
-
-	// LÓGICA DE CICLO: Si no hay deudas, el estado de cuenta está limpio
-	if len(pending) == 0 {
-		return &ClientStatement{
-			Client:   client,
-			Pending:  []models.Sale{},
-			Payments: []models.CreditPayment{},
-		}, nil
-	}
-
-	// Encontrar la fecha de la venta pendiente más antigua para definir el inicio del ciclo
-	// Como ahora el repo devuelve en ASC, la más antigua es la primera [0]
-	// oldestDate := pending[0].SaleDate
-
-	// Traer todos los abonos realizados desde esa fecha
 	allPayments, err := s.creditRepo.GetByClient(dni)
 	if err != nil {
 		allPayments = []models.CreditPayment{}
@@ -58,6 +41,22 @@ func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleReposi
 		historySales = []models.Sale{}
 	}
 
+	pending, err := saleRepo.GetPendingByClient(dni)
+	if err != nil {
+		pending = []models.Sale{}
+	}
+
+	// Auto-recálculo y auto-sanación del saldo actual del cliente basado en las facturas pendientes
+	currentPendingDebt := 0.0
+	for _, pSale := range pending {
+		currentPendingDebt += pSale.DebtPending
+	}
+
+	if client.CurrentCredit != currentPendingDebt {
+		client.CurrentCredit = currentPendingDebt
+		_ = s.repo.Update(client.DNI, client)
+	}
+
 	var cyclePayments []models.CreditPayment
 	if len(pending) > 0 {
 		oldestDate := pending[0].SaleDate
@@ -66,6 +65,8 @@ func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleReposi
 				cyclePayments = append(cyclePayments, p)
 			}
 		}
+	} else if len(allPayments) > 0 {
+		cyclePayments = allPayments
 	}
 
 	return &ClientStatement{
@@ -77,23 +78,66 @@ func (s *ClientService) GetClientStatement(dni string, saleRepo ports.SaleReposi
 	}, nil
 }
 
+func (s *ClientService) DeleteCreditPayment(paymentID uint, saleRepo ports.SaleRepository) error {
+	payment, err := s.creditRepo.GetByID(paymentID)
+	if err != nil {
+		return err
+	}
+
+	if err := s.creditRepo.Delete(paymentID); err != nil {
+		return err
+	}
+
+	// Lógica LIFO: Restaurar el monto abonado ÚNICAMENTE en las ventas recientemente reducidas
+	amountToRestore := payment.TotalPaid
+	sales, err := saleRepo.GetCreditHistoryByClient(payment.ClientDNI)
+	if err == nil {
+		for i := len(sales) - 1; i >= 0; i-- {
+			if amountToRestore <= 0 {
+				break
+			}
+			sale := &sales[i]
+			paidOnThisSale := sale.CreditAmount - sale.DebtPending
+			if paidOnThisSale <= 0 {
+				continue
+			}
+			restoreForSale := paidOnThisSale
+			if amountToRestore < paidOnThisSale {
+				restoreForSale = amountToRestore
+			}
+			newDebt := sale.DebtPending + restoreForSale
+			amountToRestore -= restoreForSale
+			_ = saleRepo.UpdateDebt(sale.SaleID, newDebt)
+		}
+	}
+
+	// Recalcular saldo total de deuda del cliente con exactitud basada únicamente en deudas pendientes activas
+	client, err := s.repo.GetByDNI(payment.ClientDNI)
+	if err == nil {
+		updatedPending, err := saleRepo.GetPendingByClient(client.DNI)
+		if err == nil {
+			newCreditSum := 0.0
+			for _, ps := range updatedPending {
+				newCreditSum += ps.DebtPending
+			}
+			client.CurrentCredit = newCreditSum
+			_ = s.repo.Update(client.DNI, client)
+		}
+	}
+
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+
+	return nil
+}
+
 func (s *ClientService) PayCredit(payment *models.CreditPayment, saleRepo ports.SaleRepository) (*models.Client, error) {
 	client, err := s.repo.GetByDNI(payment.ClientDNI)
 	if err != nil {
 		return nil, err
 	}
 
-	client.CurrentCredit -= payment.TotalPaid
-	if client.CurrentCredit < 0 {
-		client.CurrentCredit = 0
-	}
-
 	// Actualizar quién hizo el movimiento para evitar errores de FK
 	client.UpdatedByDNI = payment.EmployeeDNI
-
-	if err := s.repo.Update(client.DNI, client); err != nil {
-		return nil, err
-	}
 
 	// Asegurar fecha de pago si no viene definida
 	if payment.PaymentDate.IsZero() {
@@ -115,7 +159,6 @@ func (s *ClientService) PayCredit(payment *models.CreditPayment, saleRepo ports.
 			
 			debt := sale.DebtPending
 			if debt <= 0 {
-				// Fallback si por alguna razón debtPending es 0 pero está marcado como pendiente
 				debt = sale.CreditAmount
 			}
 			if debt <= 0 {
@@ -136,55 +179,23 @@ func (s *ClientService) PayCredit(payment *models.CreditPayment, saleRepo ports.
 		}
 	}
 
+	// Recalcular saldo total de deuda del cliente con exactitud basada en deudas pendientes
+	updatedPending, err := saleRepo.GetPendingByClient(client.DNI)
+	if err == nil {
+		newCreditSum := 0.0
+		for _, ps := range updatedPending {
+			newCreditSum += ps.DebtPending
+		}
+		client.CurrentCredit = newCreditSum
+		_ = s.repo.Update(client.DNI, client)
+	}
+
+	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+
 	return client, nil
 }
 
-func (s *ClientService) DeleteCreditPayment(paymentID uint, saleRepo ports.SaleRepository) error {
-	payment, err := s.creditRepo.GetByID(paymentID)
-	if err != nil {
-		return err
-	}
 
-	if err := s.creditRepo.Delete(paymentID); err != nil {
-		return err
-	}
-
-	client, err := s.repo.GetByDNI(payment.ClientDNI)
-	if err == nil {
-		client.CurrentCredit += payment.TotalPaid
-		s.repo.Update(client.DNI, client)
-	}
-
-	sales, err := saleRepo.GetCreditHistoryByClient(payment.ClientDNI)
-	if err != nil {
-		return err
-	}
-
-	payments, err := s.creditRepo.GetByClient(payment.ClientDNI)
-	if err != nil {
-		return err
-	}
-
-	totalAbonos := 0.0
-	for _, p := range payments {
-		totalAbonos += p.TotalPaid
-	}
-
-	for _, sale := range sales {
-		originalDebt := sale.CreditAmount
-		newDebt := 0.0
-		if totalAbonos >= originalDebt {
-			totalAbonos -= originalDebt
-			newDebt = 0.0
-		} else {
-			newDebt = originalDebt - totalAbonos
-			totalAbonos = 0.0
-		}
-		_ = saleRepo.UpdateDebt(sale.SaleID, newDebt)
-	}
-
-	return nil
-}
 
 func (s *ClientService) CreateClient(client *models.Client) error {
 	return s.repo.Save(client)
@@ -204,4 +215,32 @@ func (s *ClientService) UpdateClient(dni string, client *models.Client) error {
 
 func (s *ClientService) DeleteClient(dni string) error {
 	return s.repo.Delete(dni)
+}
+
+func (s *ClientService) UpdateCreditPaymentMethod(paymentID uint, newMethod string) (*models.CreditPayment, error) {
+	payment, err := s.creditRepo.GetByID(paymentID)
+	if err != nil {
+		return nil, err
+	}
+
+	methodUpper := strings.ToUpper(strings.TrimSpace(newMethod))
+	if methodUpper == "EFECTIVO" {
+		payment.AmountCash = payment.TotalPaid
+		payment.AmountTransfer = 0
+		payment.TransferSource = ""
+	} else {
+		payment.AmountCash = 0
+		payment.AmountTransfer = payment.TotalPaid
+		payment.TransferSource = methodUpper
+	}
+
+	if err := s.creditRepo.Update(payment); err != nil {
+		return nil, err
+	}
+
+	return payment, nil
+}
+
+func (s *ClientService) GetCreditPaymentByID(id uint) (*models.CreditPayment, error) {
+	return s.creditRepo.GetByID(id)
 }

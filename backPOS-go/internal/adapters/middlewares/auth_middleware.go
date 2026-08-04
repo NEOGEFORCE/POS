@@ -49,9 +49,7 @@ func AuthMiddleware() gin.HandlerFunc {
 			return
 		}
 
-		// Log exitoso para trazabilidad
 		claims, _ := token.Claims.(jwt.MapClaims)
-		fmt.Printf("✅ AUTH OK en %s: Usuario %v autenticado\n", endpoint, claims["dni"])
 		c.Set("dni", claims["dni"])
 		c.Set("role", claims["role"])
 		c.Set("userDni", claims["dni"])   // CRITICAL FIX: Alias para compatibilidad con handlers

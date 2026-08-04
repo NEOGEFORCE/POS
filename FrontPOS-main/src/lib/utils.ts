@@ -123,12 +123,20 @@ export const parseCOP = (val: string): number => {
  */
 export const calculateStockHealth = (stock: number, minStock: number): 'CRITICAL' | 'WARNING' | 'OPTIMAL' => {
     const s = Number(stock) || 0;
-    const m = Number(minStock) || 1; // Asumir 1 si es 0 para evitar division por cero
+    const m = Number(minStock) || 0;
+
+    if (s === -1) return 'OPTIMAL';
+    
+    // Si minStock es 0 o no está configurado, stock 0 es la meta/intención del usuario: OPTIMAL.
+    // Solo se marca CRITICAL si el stock es negativo (s < 0).
+    if (m <= 0) {
+        return s < 0 ? 'CRITICAL' : 'OPTIMAL';
+    }
 
     const percentage = (s / m) * 100;
 
-    if (percentage <= 20) return 'CRITICAL';
-    if (percentage <= 50) return 'WARNING';
+    if (s <= 0 || percentage <= 25) return 'CRITICAL';
+    if (percentage <= 60) return 'WARNING';
     return 'OPTIMAL';
 };
 
@@ -249,7 +257,11 @@ export const formatTime = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    return format(d, 'hh:mm:ss aa', { locale: es });
+    try {
+        return format(d, 'hh:mm:ss a', { locale: es });
+    } catch {
+        return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    }
 };
 
 /**
@@ -260,7 +272,11 @@ export const formatDate = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    return format(d, 'dd/MM/yyyy', { locale: es });
+    try {
+        return format(d, 'dd/MM/yyyy', { locale: es });
+    } catch {
+        return d.toLocaleDateString('es-CO');
+    }
 };
 
 /**
@@ -271,7 +287,11 @@ export const formatDateTime = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    return format(d, 'dd/MM/yyyy, hh:mm:ss aa', { locale: es });
+    try {
+        return format(d, 'dd/MM/yyyy, hh:mm:ss a', { locale: es });
+    } catch {
+        return d.toLocaleString('es-CO', { hour12: true });
+    }
 };
 
 /**
@@ -282,7 +302,11 @@ export const formatShortDateTime = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    return format(d, 'dd/MM hh:mm aa', { locale: es });
+    try {
+        return format(d, 'dd/MM hh:mm a', { locale: es });
+    } catch {
+        return d.toLocaleString('es-CO', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
+    }
 };
 
 /**
@@ -293,7 +317,11 @@ export const formatTimeWithSeconds = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    return format(d, 'hh:mm:ss aa', { locale: es });
+    try {
+        return format(d, 'hh:mm:ss a', { locale: es });
+    } catch {
+        return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    }
 };
 
 /**

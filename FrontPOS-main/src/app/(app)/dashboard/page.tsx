@@ -162,27 +162,42 @@ export default function DashboardPage() {
         const token = Cookies.get('org-pos-token');
         if (!token) return;
 
+        // Buscar la deuda para saber el saldo actual antes de pagar
+        const debtItem = data?.pendingDebts?.find((d: any) => String(d.id) === id);
+        const currentRemaining = debtItem ? (debtItem.remainingAmount > 0 ? debtItem.remainingAmount : Number(debtItem.amount)) : amount;
+        const isPartial = amount < currentRemaining;
+
         try {
             await apiFetch(`/expenses/settle/${id}`, {
                 method: 'PATCH',
                 body: JSON.stringify({ paymentSource, amount }),
-                fallbackError: 'FALLO AL SALDAR DEUDA'
+                fallbackError: 'FALLO AL REGISTRAR ABONO'
             }, token);
 
-            toast({
-                variant: "success",
-                title: "DEUDA SALDADA",
-                description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentSource}`,
-            });
+            const newRemaining = Math.max(0, currentRemaining - amount);
+
+            if (isPartial) {
+                toast({
+                    variant: "success",
+                    title: "ABONO REGISTRADO",
+                    description: `SE ABONÓ $${amount.toLocaleString()} CON ${paymentSource}. SALDO PENDIENTE: $${newRemaining.toLocaleString()}`,
+                });
+            } else {
+                toast({
+                    variant: "success",
+                    title: "DEUDA SALDADA",
+                    description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentSource}`,
+                });
+            }
             mutate(); // Actualizar datos del dashboard
             const { broadcastRevalidate } = await import('@/lib/revalidate');
-            broadcastRevalidate('SALE_MADE'); // Disparamos SALE_MADE para refrescar reportes y caja ya que el egreso afecta el flujo
+            broadcastRevalidate('SALE_MADE');
 
         } catch (err: any) {
             toast({
                 variant: "destructive",
-                title: "FALLO AL SALDAR",
-                description: err.message || 'FALLO AL SALDAR DEUDA',
+                title: "FALLO AL ABONAR",
+                description: err.message || 'FALLO AL REGISTRAR EL ABONO',
             });
         }
     };

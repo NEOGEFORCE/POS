@@ -88,15 +88,17 @@ export default function DevolucionesPage() {
       setIsHistoryLoading(false)
     }
   }
-  const [facturaInput, setFacturaInput] = useState("")
+  const [loading, setLoading] = useState(false)
   const [recentSales, setRecentSales] = useState<Sale[]>([])
+  const [saleSearch, setSaleSearch] = useState('')
+  const [facturaInput, setFacturaInput] = useState("")
   const [currentSale, setCurrentSale] = useState<Sale | null>(null)
   const [returnItems, setReturnItems] = useState<ReturnItem[]>([])
   const [dateFrom, setDateFrom] = useState("")
   const [dateTo, setDateTo] = useState("")
   const [ciegoInput, setCiegoInput] = useState("")
   const [ciegoResults, setCiegoResults] = useState<{barcode: string, productName: string, salePrice: number}[]>([])
-  const [loading, setLoading] = useState(false)
+  
   const [confirmData, setConfirmData] = useState<any>(null)
   
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
@@ -106,17 +108,25 @@ export default function DevolucionesPage() {
   const fmt = (n: number) => "$" + Math.round(n).toLocaleString("es-CO")
 
   useEffect(() => {
-    let url = "/sales/list?pageSize=10"
+    let url = "/sales/list?pageSize=15"
+    if (saleSearch.trim()) {
+      url += `&search=${encodeURIComponent(saleSearch)}`
+    }
     if (dateFrom) {
       url += `&from=${encodeURIComponent(dateFrom + ":00")}`
     }
     if (dateTo) {
       url += `&to=${encodeURIComponent(dateTo + ":59")}`
     }
-    apiFetch<{items: Sale[]}>(url, {}, token)
-      .then(data => setRecentSales(data?.items || []))
-      .catch(() => {})
-  }, [dateFrom, dateTo, token])
+    
+    const timeout = setTimeout(() => {
+      apiFetch<{items: Sale[]}>(url, {}, token)
+        .then(data => setRecentSales(data?.items || []))
+        .catch(() => {})
+    }, 300)
+    
+    return () => clearTimeout(timeout)
+  }, [dateFrom, dateTo, token, saleSearch])
 
   useEffect(() => {
     if (ciegoInput.length < 2) {
@@ -146,7 +156,6 @@ export default function DevolucionesPage() {
       )
       setCurrentSale(data.sale)
       setReturnItems(data.items.map(i => ({ ...i, maxQty: i.quantity, qty: 0 })))
-      setReplacements([])
       setScreen("devolucion")
     } catch (e: any) {
       console.error(e);
@@ -185,7 +194,7 @@ export default function DevolucionesPage() {
   const procesarDevolucion = async () => {
     const isTransferencia = currentSale && currentSale.paymentMethod !== "EFECTIVO" && currentSale.paymentMethod !== "CAJA"
     if (isTransferencia && totalDev > 0) {
-      alert("Este pago no fue en efectivo. El cliente no puede recibir dinero de la caja. Utilice 'Ir a Ventas para Cambio'.")
+      alert("La compra fue por transferencia. No se puede devolver dinero, el cliente tiene que llevar más cosas por este valor. Utilice 'Ir a Ventas para Cambio'.")
       return
     }
     confirmarDevolucion()
@@ -197,7 +206,8 @@ export default function DevolucionesPage() {
     localStorage.setItem("pos-pending-return", JSON.stringify({
       saleId: currentSale?.id || 0,
       totalDev: totalDev,
-      items: items
+      items: items,
+      originalPaymentMethod: currentSale?.paymentMethod || "EFECTIVO"
     }))
     router.push("/sales/new")
   }
@@ -346,9 +356,22 @@ export default function DevolucionesPage() {
           <div className="md:col-span-4">
             <Card className="bg-white dark:bg-[#18181b] border border-gray-200 dark:border-white/5 shadow-sm rounded-3xl h-full flex flex-col">
               <CardBody className="p-6 flex flex-col h-[400px]">
-                <div className="flex items-center gap-2 mb-4">
-                  <History className="w-5 h-5 text-gray-400" />
-                  <h3 className="font-semibold text-gray-900 dark:text-white">Ventas Recientes</h3>
+                <div className="flex flex-col gap-2 mb-4">
+                  <div className="flex items-center gap-2">
+                    <History className="w-5 h-5 text-gray-400" />
+                    <h3 className="font-semibold text-gray-900 dark:text-white">Ventas Recientes</h3>
+                  </div>
+                  <Input 
+                    placeholder="Buscar por cliente, documento o ID..."
+                    size="sm"
+                    variant="bordered"
+                    value={saleSearch}
+                    onChange={(e) => setSaleSearch(e.target.value.toUpperCase())}
+                    classNames={{
+                      inputWrapper: "h-10 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-white/10"
+                    }}
+                    startContent={<Search size={16} className="text-gray-400" />}
+                  />
                 </div>
                 <div className="flex-1 overflow-y-auto pr-2 space-y-3">
                   {recentSales.map((sale) => (

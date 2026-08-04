@@ -171,6 +171,22 @@ func (h *RestockHandler) CancelPendingOrder(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Pedido cancelado exitosamente"})
 }
 
+func (h *RestockHandler) MarkOrderAsReceived(c *gin.Context) {
+	id := c.Param("id")
+	userDni, _ := c.Get("dni")
+	dniStr := ""
+	if userDni != nil {
+		dniStr = fmt.Sprintf("%v", userDni)
+	}
+
+	err := h.restockService.UpdateOrderStatus(id, "RECEIVED", dniStr)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al marcar el pedido como recibido"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "Pedido marcado como recibido exitosamente"})
+}
+
 func (h *RestockHandler) GetPendingOrder(c *gin.Context) {
 	id := c.Param("id")
 	order, err := h.restockService.GetOrderByID(id)

@@ -36,7 +36,8 @@ import {
     ModalHeader,
     ModalBody,
     ModalFooter,
-    useDisclosure
+    useDisclosure,
+    Chip
 } from "@heroui/react";
 import { formatCurrency, parseCOP, sanitizeNumber, formatTime, formatShortDateTime, formatDateTime } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-error';
@@ -394,33 +395,60 @@ export default function CashierClosurePage() {
 
     // Calculos dinamicos basados en la base de datos
     const efectivoEnCaja = (currentClosure?.totalCash ?? 0) + 
-                          (currentClosure?.totalCreditCollected ?? 0) + 
                           (currentClosure?.openingCash ?? 0);
 
-    const calculateCashFromExpense = (e: any) => {
-        if (e.cashAmount !== undefined && e.cashAmount !== null && Number(e.cashAmount) > 0) {
-            return Number(e.cashAmount);
-        }
-        const ps = String(e.paymentSource).toUpperCase();
-        if (ps === 'EFECTIVO' || ps === 'CASH' || ps === 'CAJA') {
-            return Number(e.amount) || 0;
-        }
-        if (ps.includes('CAJA:') || ps.includes('EFECTIVO:')) {
-            const match = ps.match(/(?:CAJA|EFECTIVO):\s*\$?([\d,.]+)/);
-            if (match && match[1]) {
-                return Number(match[1].replace(/[^\d]/g, ''));
+    let dbCashExpensesPure = 0;
+    let dbCashExpensesReturns = 0;
+    
+    (currentClosure?.expenses || []).forEach((e: any) => {
+        if (String(e.status).toUpperCase() !== 'PENDING') {
+            const rawCash = Number(e.cashAmount ?? e.cash_amount ?? 0);
+            const rawNequi = Number(e.nequiAmount ?? e.nequi_amount ?? 0);
+            const rawDavi = Number(e.daviplataAmount ?? e.daviplata_amount ?? 0);
+            const rawFondo = Number(e.fondoAmount ?? e.fondo_amount ?? 0);
+            const tax = Number(e.taxAmount ?? e.tax_amount ?? 0);
+            const base = Number(e.amount ?? 0);
+            const total = base + tax;
+            const sumChannels = rawCash + rawNequi + rawDavi + rawFondo;
+            
+            let finalCash = 0;
+
+            if (sumChannels > 0) {
+                finalCash = rawCash;
+                if (rawCash > 0 && tax > 0 && (rawNequi === 0 && rawDavi === 0 && rawFondo === 0)) {
+                    finalCash += tax;
+                }
+            } else {
+                const src = (e.paymentSource || '').toUpperCase();
+                const isDigitalOnly = (
+                    (src.includes('NEQUI') || src.includes('DAVIPLATA') || src.includes('DAVI') || src.includes('FONDO') || src.includes('BOVEDA') || src.includes('BÓVEDA') || src.includes('FOND') || src.includes('PREST') || src.includes('DEUDA') || src.includes('BANCOLOMBIA') || src.includes('TARJETA') || src.includes('TRANSFER')) &&
+                    !src.includes('CAJA') && !src.includes('EFECTIVO')
+                );
+
+                if (!isDigitalOnly) {
+                    if (src.includes('/')) {
+                        src.split('/').forEach((part: string) => {
+                            const p = part.trim();
+                            if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH')) {
+                                const m = p.match(/\$?([\d.,]+)/);
+                                if (m) {
+                                    finalCash += parseFloat(m[1].replace(/\./g, '').replace(/,/g, '.'));
+                                }
+                            }
+                        });
+                    } else if (src === '' || src === 'CAJA' || src === 'EFECTIVO' || src === 'CASH') {
+                        finalCash = total > 0 ? total : base;
+                    }
+                }
+            }
+            
+            if (String(e.category).toUpperCase() === 'DEVOLUCIONES') {
+                dbCashExpensesReturns += finalCash;
+            } else {
+                dbCashExpensesPure += finalCash;
             }
         }
-        return 0;
-    };
-
-    const dbCashExpensesPure = (currentClosure?.expenses || [])
-        .filter((e: any) => String(e.category).toUpperCase() !== 'DEVOLUCIONES')
-        .reduce((sum: number, e: any) => sum + calculateCashFromExpense(e), 0);
-
-    const dbCashExpensesReturns = (currentClosure?.expenses || [])
-        .filter((e: any) => String(e.category).toUpperCase() === 'DEVOLUCIONES')
-        .reduce((sum: number, e: any) => sum + calculateCashFromExpense(e), 0);
+    });
 
     // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja fisica)
     const totalEgresosEfectivo = dbCashExpensesPure;
@@ -431,7 +459,7 @@ export default function CashierClosurePage() {
 
     // 4. EFECTIVO ESPERADO (Entradas - Salidas)
     const theoreticalBalance = efectivoEnCaja - totalEgresosEfectivo - totalDevoluciones;
-    const expectedCash = currentClosure?.expectedCash ?? Math.max(0, theoreticalBalance);
+    const expectedCash = theoreticalBalance;
     
     const actualCash = parseFloat(actualCashInput) || 0;
     
@@ -505,6 +533,20 @@ export default function CashierClosurePage() {
                 //     conversiones automaticas snake_case de TotalExpenses, etc.
                 //   - coins100/200/1000 NO llevan underscore (GORM no separa entre
                 //     letra y numero consecutivos)
+                // Solo enviar fechas si fueron modificadas
+                let originalStart = '';
+                let originalEnd = '';
+                if (currentClosure?.startDate) {
+                    const sd = new Date(currentClosure.startDate);
+                    sd.setMinutes(sd.getMinutes() - sd.getTimezoneOffset());
+                    originalStart = sd.toISOString().slice(0, 16);
+                }
+                if (currentClosure?.endDate) {
+                    const ed = new Date(currentClosure.endDate);
+                    ed.setMinutes(ed.getMinutes() - ed.getTimezoneOffset());
+                    originalEnd = ed.toISOString().slice(0, 16);
+                }
+
                 const updatePayload: any = {
                     physical_cash: actualCash,
                     expected_cash: currentClosure?.expectedCash || 0,
@@ -517,10 +559,15 @@ export default function CashierClosurePage() {
                     coins1000: cCombined,
                     cash_bills: totalBills,
                     authorized_by: closureData.authorizedBy,
-                    start_date: customStartDate ? customStartDate : undefined,
-                    end_date: customEndDate ? customEndDate : undefined,
-                    date: customEndDate ? customEndDate : undefined,
                 };
+                
+                if (customStartDate && customStartDate !== originalStart) {
+                    updatePayload.start_date = customStartDate;
+                }
+                if (customEndDate && customEndDate !== originalEnd) {
+                    updatePayload.end_date = customEndDate;
+                    updatePayload.date = customEndDate;
+                }
 
                 const res = await fetch(
                     `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/cashier-history/${editId}`,
@@ -547,6 +594,8 @@ export default function CashierClosurePage() {
 
                 broadcastRevalidate('CLOSURE_MADE');
 
+                // Marcar que hubo una edicion para que /reports refresque la lista
+                localStorage.setItem('closure_edited', '1');
                 // Volver al historial de cierres en /reports
                 setTimeout(() => router.push('/reports'), 1500);
                 return;
@@ -662,7 +711,12 @@ export default function CashierClosurePage() {
             const payload = {
                 description: data.description.toUpperCase(),
                 amount: Math.abs(parseFloat(String(data.amount)) || 0),
-                date: expenseToEdit ? expenseToEdit.date : new Date().toISOString(),
+                taxAmount: data.taxAmount || 0,
+                cashAmount: data.cashAmount || 0,
+                nequiAmount: data.nequiAmount || 0,
+                daviplataAmount: data.daviplataAmount || 0,
+                fondoAmount: data.fondoAmount || 0,
+                date: expenseToEdit ? expenseToEdit.date : (isEditMode && currentClosure?.date ? currentClosure.date : new Date().toISOString()),
                 paymentSource: data.paymentSource || 'EFECTIVO',
                 category: data.category,
                 status: data.status || 'PAID',
@@ -862,42 +916,52 @@ export default function CashierClosurePage() {
                         {isExpensesOpen && (
                             <div className="space-y-3">
                                 {/* HISTORIAL DE EGRESOS YA GUARDADOS */}
-                                {currentClosure?.expenses?.map((exp, idx) => (
-                                    <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
-                                        <div className="flex flex-col">
-                                            <span className="text-[9px] font-medium text-gray-400 uppercase">{exp.category}</span>
-                                            <span className="text-xs font-bold text-zinc-900 dark:text-zinc-50 uppercase">{exp.description}</span>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <div className="text-right">
-                                                <span className="text-sm font-medium text-rose-700 dark:text-rose-500">-${formatCurrency(exp.amount)}</span>
-                                                <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
+                                {currentClosure?.expenses?.map((exp: any, idx: number) => {
+                                    const tax = Number(exp.taxAmount || exp.tax_amount || 0);
+                                    const base = Number(exp.amount || 0);
+                                    const totalExp = base + tax;
+                                    return (
+                                        <div key={idx} className="flex items-center justify-between p-3 rounded-2xl bg-gray-50 dark:bg-white/[0.02] border border-gray-200 dark:border-white/5">
+                                            <div className="flex flex-col">
+                                                <span className="text-[9px] font-medium text-gray-400 uppercase">{exp.category}</span>
+                                                <span className="text-xs font-bold text-zinc-900 dark:text-zinc-50 uppercase">{exp.description}</span>
+                                                {tax > 0 && (
+                                                    <span className="text-[8px] font-bold text-purple-600 dark:text-purple-400 uppercase tracking-tight mt-0.5">
+                                                        * Incluye +${formatCurrency(tax)} impuesto GMF 4x1000
+                                                    </span>
+                                                )}
                                             </div>
-                                            {isAdmin && (
-                                                <div className="flex items-center gap-1">
-                                                    <Button 
-                                                        isIconOnly 
-                                                        size="sm" 
-                                                        variant="light" 
-                                                        onPress={() => handleEditDBExpense(exp)}
-                                                        className="text-blue-500 hover:bg-blue-500/10 rounded-2xl"
-                                                    >
-                                                        <Pen size={14} />
-                                                    </Button>
-                                                    <Button 
-                                                        isIconOnly 
-                                                        size="sm" 
-                                                        variant="light" 
-                                                        onPress={() => handleDeleteDBExpense(exp.id)}
-                                                        className="text-rose-500 hover:bg-rose-500/10 rounded-2xl"
-                                                    >
-                                                        <Trash2 size={14} />
-                                                    </Button>
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-right">
+                                                    <span className="text-sm font-medium text-rose-700 dark:text-rose-500">-${formatCurrency(totalExp)}</span>
+                                                    <div className="text-[9px] text-gray-500 dark:text-zinc-600 font-bold uppercase">{exp.paymentSource}</div>
                                                 </div>
-                                            )}
+                                                {isAdmin && (
+                                                    <div className="flex items-center gap-1">
+                                                        <Button 
+                                                            isIconOnly 
+                                                            size="sm" 
+                                                            variant="light" 
+                                                            onPress={() => handleEditDBExpense(exp)}
+                                                            className="text-blue-500 hover:bg-blue-500/10 rounded-2xl"
+                                                        >
+                                                            <Pen size={14} />
+                                                        </Button>
+                                                        <Button 
+                                                            isIconOnly 
+                                                            size="sm" 
+                                                            variant="light" 
+                                                            onPress={() => handleDeleteDBExpense(exp.id)}
+                                                            className="text-rose-500 hover:bg-rose-500/10 rounded-2xl"
+                                                        >
+                                                            <Trash2 size={14} />
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    );
+                                })}
                             </div>
                         )}
                     </section>
@@ -955,18 +1019,26 @@ export default function CashierClosurePage() {
                                         <div className="space-y-2">
                                             <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-wider">Abonos Recibidos (${formatCurrency(currentClosure?.totalCreditCollected ?? 0)})</span>
                                             <div className="space-y-1">
-                                                {currentClosure?.creditPayments?.map((p, idx) => (
-                                                    <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
-                                                        <div className="flex flex-col">
-                                                            <span className="text-gray-500 dark:text-zinc-500 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
-                                                            {p.client && <span className="text-gray-400 dark:text-zinc-600 font-medium uppercase tracking-widest text-[8px]">Deuda Actual: ${formatCurrency(p.client.currentCredit)}</span>}
+                                                {currentClosure?.creditPayments?.map((p, idx) => {
+                                                    const channelName = p.amountCash > 0 ? 'EFECTIVO' : (p.transferSource || 'TRANSFERENCIA').toUpperCase();
+                                                    return (
+                                                        <div key={idx} className="flex items-center justify-between text-[10px] py-2 border-b border-gray-200 dark:border-white/5">
+                                                            <div className="flex flex-col">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <span className="text-gray-700 dark:text-zinc-300 font-bold uppercase truncate max-w-[120px]">{p.client?.name || 'Cliente'}</span>
+                                                                    <Chip size="sm" variant="flat" color={p.amountCash > 0 ? 'success' : 'secondary'} className="font-bold text-[8px] uppercase h-4 px-1.5 min-w-0">
+                                                                        {channelName}
+                                                                    </Chip>
+                                                                </div>
+                                                                {p.client && <span className="text-gray-400 dark:text-zinc-600 font-medium uppercase tracking-widest text-[8px] mt-0.5">Deuda Actual: ${formatCurrency(p.client.currentCredit)}</span>}
+                                                            </div>
+                                                            <div className="flex flex-col items-end">
+                                                                <span className="text-[8px] font-bold uppercase text-emerald-600 dark:text-emerald-400 tracking-widest">Abono Hoy</span>
+                                                                <span className="text-zinc-900 dark:text-zinc-100 font-bold font-mono">${formatCurrency(p.totalPaid)}</span>
+                                                            </div>
                                                         </div>
-                                                        <div className="flex flex-col items-end">
-                                                            <span className="text-[8px] font-bold uppercase text-gray-500 dark:text-zinc-500/60 dark:text-zinc-400/60 tracking-widest">Abono Hoy</span>
-                                                            <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 font-medium">${formatCurrency(p.totalPaid)}</span>
-                                                        </div>
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         </div>
                                     </div>

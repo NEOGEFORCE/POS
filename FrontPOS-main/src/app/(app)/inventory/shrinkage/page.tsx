@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect, useRef } from "react";
 import { ScannerOverlay } from "@/components/ScannerOverlay";
@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { AlertTriangle, Trash2, CheckCircle2, Search, Camera } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { apiFetch } from "@/lib/api-error";
 
 type ShrinkageReason = "VENCIMIENTO" | "ROTURA" | "CONSUMO_INTERNO" | "HURTO";
 
@@ -52,11 +53,7 @@ export default function ShrinkagePage() {
     if (!barcode) return;
     setLoading(true);
     try {
-      const res = await fetch(`http://${window.location.hostname}:8080/api/products/get-products/${barcode}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-      });
-      if (!res.ok) throw new Error("Producto no encontrado");
-      const data = await res.json();
+      const data = await apiFetch<Product>(`/products/get-products/${barcode}`);
       setSelectedProduct(data);
       setBarcodeInput("");
     } catch (err) {
@@ -77,19 +74,10 @@ export default function ShrinkagePage() {
         notes,
       };
 
-      const res = await fetch(`http://${window.location.hostname}:8080/api/inventory/shrinkage`, {
+      await apiFetch(`/inventory/shrinkage`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
         body: JSON.stringify(payload),
       });
-
-      if (!res.ok) {
-        const errorData = await res.json();
-        throw new Error(errorData.error?.message || "Fallo al registrar merma");
-      }
 
       toast({ title: "EXITO", description: "Merma registrada correctamente" });
 

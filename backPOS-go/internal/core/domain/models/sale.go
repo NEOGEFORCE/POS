@@ -13,6 +13,7 @@ type PaymentMethodBreakdown struct {
 
 type Sale struct {
 	SaleID         uint           `gorm:"primaryKey;autoIncrement;column:saleId" json:"id"`
+	ClientTxId     string         `gorm:"type:varchar(64);index;column:clientTxId" json:"clientTxId,omitempty"`
 	SaleDate       time.Time      `gorm:"default:now();not null;index;column:saleDate" json:"date"`
 	ClientDNI      string         `gorm:"index;column:clientDni" json:"clientDni"`
 	EmployeeDNI    string         `gorm:"not null;index;column:employeeDni" json:"employeeDni"`

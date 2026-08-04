@@ -148,8 +148,8 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                 const completedIds = groupOrders.map(o => o.id);
                 return currentData.filter(o => !completedIds.includes(o.id));
             }, { revalidate: false });
-        } catch (error) {
-            console.error('Error marking order as arrived:', error);
+        } catch (e) {
+            console.error("Error marking order as arrived in reception:", e);
         }
     };
 

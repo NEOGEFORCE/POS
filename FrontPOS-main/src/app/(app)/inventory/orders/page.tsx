@@ -12,7 +12,7 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import Cookies from 'js-cookie';
 import { Supplier } from '@/lib/definitions';
-import { formatPrice } from "@/lib/utils";
+import { formatPrice, calculateStockHealth } from "@/lib/utils";
 import { API_URL } from '@/lib/constants';
 
 interface SuggestedOrder {
@@ -65,10 +65,10 @@ const getNextDays = (count: number) => {
 };
 
 const getFrontendStatus = (item: SuggestedOrder) => {
-  const ratio = item.minStock > 0 ? (item.stock / item.minStock) : 0;
-  if (item.stock <= 0 || ratio <= 0.25) return 0; // CRITICO
-  if (ratio > 0.25 && ratio <= 0.50) return 1; // ADVERTENCIA
-  return 2; // OPTIMO
+  const health = calculateStockHealth(item.stock, item.minStock || 0);
+  if (health === 'CRITICAL') return 0;
+  if (health === 'WARNING') return 1;
+  return 2;
 };
 
 const sortOrderItems = (a: SuggestedOrder, b: SuggestedOrder) => {
@@ -81,14 +81,11 @@ const sortOrderItems = (a: SuggestedOrder, b: SuggestedOrder) => {
   const statusA = getFrontendStatus(a);
   const statusB = getFrontendStatus(b);
 
-  const priorityA = a.isHighRotation ? 0 : statusA;
-  const priorityB = b.isHighRotation ? 0 : statusB;
-
-  if (priorityA !== priorityB) return priorityA - priorityB;
+  // Strict stock status hierarchy: CRITICO (0) -> ADVERTENCIA (1) -> OPTIMO (2)
+  if (statusA !== statusB) return statusA - statusB;
 
   if (a.isHighRotation && !b.isHighRotation) return -1;
   if (!a.isHighRotation && b.isHighRotation) return 1;
-  if (statusA !== statusB) return statusA - statusB;
   if (b.suggested !== a.suggested) return (b.suggested || 0) - (a.suggested || 0);
   return (b.avgDailySales || 0) - (a.avgDailySales || 0);
 };
@@ -876,8 +873,8 @@ export default function SmartRestockPage() {
                                   group.items.map((item) => {
                                   const ratio = item.minStock > 0 ? (item.stock / item.minStock) : 0;
                                   const isCritical = item.stock <= 0 || ratio <= 0.25;
-                                  const isWarning = ratio > 0.25 && ratio <= 0.50;
-                                  const isOptimal = ratio > 0.50;
+                                  const isWarning = !isCritical && ratio <= 0.60;
+                                  const isOptimal = !isCritical && !isWarning;
                                   const inTransit = (item.pendingOrderQty || 0) > 0;
                                   const effectiveStock = item.stock + (item.pendingOrderQty || 0);
                                   const coveredByTransit = inTransit && effectiveStock >= item.minStock;
@@ -902,13 +899,17 @@ export default function SmartRestockPage() {
                                               {item.pendingOrderQty} EN TRANSITO
                                             </span>
                                           )}
-                                          {item.alert && !coveredByTransit && (
-                                            <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl shadow-sm border ${item.alertType === "SLOW_MOVER" ? "bg-amber-100/80 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/30" : "bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/30"}`}>
-                                              <span className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
-                                                {item.alert}
-                                              </span>
-                                            </div>
-                                          )}
+                                          {(() => {
+                                            const displayAlert = item.alert || (item.suggested > 0 ? `Sugerido pedir ${item.suggested} unid.` : "");
+                                            if (!displayAlert || coveredByTransit) return null;
+                                            return (
+                                              <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl shadow-sm border ${item.alertType === "SLOW_MOVER" ? "bg-amber-100/80 dark:bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-300 dark:border-amber-500/30" : "bg-indigo-100 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-400 border-indigo-300 dark:border-indigo-500/30"}`}>
+                                                <span className="text-[10px] font-bold uppercase tracking-wider whitespace-nowrap">
+                                                  {displayAlert}
+                                                </span>
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-gray-500 dark:text-zinc-500 uppercase font-medium">
                                           <span>REF: {item.barcode}</span>
@@ -968,7 +969,14 @@ export default function SmartRestockPage() {
                                           <div className="flex items-center gap-3 bg-gray-50 dark:bg-zinc-900/50 p-2 rounded-xl">
                                             <div className="text-right flex flex-col justify-center">
                                               <div className="flex flex-col items-end gap-1">
-                                                  <span className="text-[10px] text-indigo-500 dark:text-indigo-400 font-bold ml-1 tracking-wide">IA Sugiere: {item.suggested || 0}</span>
+                                                  <button 
+                                                    type="button"
+                                                    onClick={() => handleQtyChange(item.barcode, item.suggested || 0)}
+                                                    className="text-[10px] bg-indigo-500/10 hover:bg-indigo-500/20 active:bg-indigo-500/30 text-indigo-600 dark:text-indigo-400 font-bold px-2 py-0.5 rounded-lg border border-indigo-500/20 transition-all cursor-pointer hover:scale-105 active:scale-95 flex items-center gap-1 shadow-sm"
+                                                    title="Haz clic para aplicar esta cantidad recomendada"
+                                                  >
+                                                    ✨ IA Sugiere: <span className="underline font-black text-indigo-700 dark:text-indigo-300">{item.suggested || 0}</span>
+                                                  </button>
                                                   <div className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-900 rounded-lg p-1 border border-gray-200 dark:border-white/5 shadow-inner">
                                                   <button 
                                                       onClick={() => handleQtyChange(item.barcode, (quantities[item.barcode] !== undefined ? quantities[item.barcode] : 0) - 1)}

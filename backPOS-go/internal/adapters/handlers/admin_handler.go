@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 	"backPOS-go/internal/infrastructure/dbbackup"
@@ -316,7 +317,15 @@ func (h *AdminHandler) CreateMissingItem(c *gin.Context) {
 	dni, _ := c.Get("dni")
 	authorDNI := ""
 	if s, ok := dni.(string); ok {
-		authorDNI = s
+		authorDNI = strings.ToUpper(strings.TrimSpace(s))
+	}
+	if authorDNI == "" {
+		var firstEmployee models.Employee
+		if err := repositories.DB.Select("dni").First(&firstEmployee).Error; err == nil {
+			authorDNI = firstEmployee.DNI
+		} else {
+			authorDNI = "ADMIN"
+		}
 	}
 
 	item := models.MissingItem{

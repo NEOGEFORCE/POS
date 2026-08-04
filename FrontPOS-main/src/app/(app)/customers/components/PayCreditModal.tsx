@@ -364,7 +364,7 @@ export default function PayCreditModal({
                 onPress={onPay} 
                 isLoading={submittingPayment}
               >
-                PROCESAR CAPITAL MAESTRO <ShieldCheck size={20} className="ml-2" />
+                COMPLETAR VENTA <ShieldCheck size={20} className="ml-2" />
               </Button>
             </div>
           </div>

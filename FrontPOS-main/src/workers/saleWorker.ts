@@ -39,7 +39,9 @@ self.onmessage = (e: MessageEvent) => {
 
     switch (type) {
         case 'SET_PRODUCTS':
-            state.products = payload;
+            state.products = payload || [];
+            const filteredSet = filterProducts();
+            self.postMessage({ type: 'FILTERED_PRODUCTS', payload: filteredSet });
             break;
         case 'UPDATE_SEARCH':
             state.searchQuery = payload.query;

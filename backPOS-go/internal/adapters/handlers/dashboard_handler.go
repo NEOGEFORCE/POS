@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -94,14 +93,20 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	closure.EndDate = time.Now()
 	
 	// Asignar la Fecha del cierre al momento exacto de su cierre (EndDate)
-	// según la solicitud del usuario ("el día que lo finaliza").
 	if closure.ID == 0 {
 		closure.Date = closure.EndDate
 		
-		// Forzar StartDate a las 00:00:01 del día actual para evitar cruce de días
-		loc := time.FixedZone("America/Bogota", -5*60*60)
-		nowLocal := time.Now().In(loc)
-		closure.StartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 1, 0, loc)
+		// Obtener la fecha de inicio correcta (desde el último cierre o inicio de turno)
+		// Llamamos al servicio GetCashierClosure que tiene toda esa lógica.
+		activeData, err := h.service.GetCashierClosure()
+		if err == nil && activeData != nil && !activeData.StartDate.IsZero() {
+			closure.StartDate = activeData.StartDate
+		} else {
+			// Fallback si no hay data
+			loc := time.FixedZone("America/Bogota", -5*60*60)
+			nowLocal := time.Now().In(loc)
+			closure.StartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 1, 0, loc)
+		}
 	} else {
 		// En modo edición, respetamos la fecha que envíe el cliente
 		// si viene vacía, retrocedemos al comportamiento por defecto (EndDate)
@@ -110,17 +115,10 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 		}
 	}
 
-	// ---------------------------------------------------------
-	// REGLA DE NEGOCIO: VENTA REAL DEL DÍA (RECONSTRUIDO)
-	// (Efectivo Contado + Digital + Egresos Caja)
-	// ---------------------------------------------------------
-	ingresosDigitales := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
-	egresosEfectivoTurno := 0.0
-	normalizeExpensesForReport(closure.Expenses)
-	for _, e := range closure.Expenses {
-		egresosEfectivoTurno += e.CashAmount
+	// Keep closure.TotalSales calculated from real sales & credit payments in GetCashierClosure()
+	if closure.TotalSales == 0 {
+		closure.TotalSales = closure.TotalCash + closure.TotalTransfer
 	}
-	closure.TotalSales = closure.PhysicalCash + ingresosDigitales + egresosEfectivoTurno
 	// ---------------------------------------------------------
 
 	err := h.service.SaveClosure(&closure)
@@ -230,49 +228,101 @@ func normalizeExpensesForReport(expenses []models.Expense) {
 	for i := range expenses {
 		e := &expenses[i]
 		if e.Status == "PENDING" {
-			continue
-		}
-		
-		// If it's a single-channel payment based on PaymentSource, overwrite the specific amounts
-		src := strings.ToUpper(e.PaymentSource)
-		if !strings.Contains(src, ": $") && !strings.Contains(src, " / ") {
-			totalExp := e.Amount + e.TaxAmount
 			e.CashAmount = 0
 			e.NequiAmount = 0
 			e.DaviplataAmount = 0
 			e.FondoAmount = 0
-			
-			if src == "" || src == "CAJA" || src == "EFECTIVO" {
-				e.CashAmount = totalExp
-			} else if src == "NEQUI" {
-				e.NequiAmount = totalExp
+			continue
+		}
+		
+		src := strings.ToUpper(e.PaymentSource)
+		total := e.Amount + e.TaxAmount
+
+		if src == "NEQUI" {
+			e.NequiAmount = total
+			e.CashAmount = 0
+			e.DaviplataAmount = 0
+			e.FondoAmount = 0
+			continue
+		} else if src == "DAVIPLATA" || src == "DAVI" {
+			e.DaviplataAmount = total
+			e.CashAmount = 0
+			e.NequiAmount = 0
+			e.FondoAmount = 0
+			continue
+		} else if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
+			e.FondoAmount = total
+			e.CashAmount = 0
+			e.NequiAmount = 0
+			e.DaviplataAmount = 0
+			e.PaymentSource = "FONDO"
+			continue
+		} else if src == "PREST." || src == "DEUDA" || src == "PRESTAMO" {
+			e.CashAmount = 0
+			e.NequiAmount = 0
+			e.DaviplataAmount = 0
+			e.FondoAmount = 0
+			continue
+		}
+
+		rawCash := e.CashAmount
+		rawNequi := e.NequiAmount
+		rawDavi := e.DaviplataAmount
+		rawFondo := e.FondoAmount
+		tax := e.TaxAmount
+		base := e.Amount
+		
+		finalCash := rawCash
+		finalNequi := rawNequi
+		finalDavi := rawDavi
+		finalFondo := rawFondo
+		
+		sum := rawCash + rawNequi + rawDavi + rawFondo
+		if sum == 0 {
+			if src == "NEQUI" {
+				finalNequi = base + tax
 			} else if src == "DAVIPLATA" {
-				e.DaviplataAmount = totalExp
-			} else if src == "FONDO" {
-				e.FondoAmount = totalExp
+				finalDavi = base + tax
 			} else if src != "PREST." && src != "DEUDA" && src != "PRESTAMO" {
-				e.CashAmount = totalExp
+				finalCash = base + tax
 			}
-		} else {
-			// It's a mixed payment. If the sum of specific amounts equals e.Amount (without tax),
-			// we need to add the tax to one of the channels (e.g., the first digital channel) to avoid losing it.
-			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-			if sum > 0 && e.TaxAmount > 0 && sum == e.Amount {
-				if e.NequiAmount > 0 {
-					e.NequiAmount += e.TaxAmount
-				} else if e.DaviplataAmount > 0 {
-					e.DaviplataAmount += e.TaxAmount
-				} else if e.FondoAmount > 0 {
-					e.FondoAmount += e.TaxAmount
+		} else if tax > 0 && sum == base {
+			isSingle := 0
+			if rawCash > 0 { isSingle++ }
+			if rawNequi > 0 { isSingle++ }
+			if rawDavi > 0 { isSingle++ }
+			if rawFondo > 0 { isSingle++ }
+			
+			if isSingle <= 1 {
+				if rawCash > 0 { finalCash += tax }
+				if rawNequi > 0 { finalNequi += tax }
+				if rawDavi > 0 { finalDavi += tax }
+				if rawFondo > 0 { finalFondo += tax }
+			} else {
+				if rawNequi > 0 {
+					finalNequi += tax
+				} else if rawDavi > 0 {
+					finalDavi += tax
+				} else if rawFondo > 0 {
+					finalFondo += tax
 				} else {
-					e.CashAmount += e.TaxAmount
+					finalCash += tax
 				}
 			}
 		}
+		
+		e.CashAmount = finalCash
+		e.NequiAmount = finalNequi
+		e.DaviplataAmount = finalDavi
+		e.FondoAmount = finalFondo
 	}
 }
 
 func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierClosure, isPartial bool) string {
+	return FormatTelegramClosureMessage(closure, isPartial)
+}
+
+func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool) string {
 	title := "🧾 *REPORTE DE CIERRE PROFESIONAL*"
 	if isPartial {
 		title = "⏳ *REPORTE DE AVANCE (PARCIAL)*"
@@ -287,11 +337,17 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	efectivoContado := closure.PhysicalCash
 	ingresosDigitales := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
 
+	if len(closure.Expenses) == 0 && closure.ExpensesDetail != "" {
+		json.Unmarshal([]byte(closure.ExpensesDetail), &closure.Expenses)
+	}
+
 	normalizeExpensesForReport(closure.Expenses)
 
 	egresosEfectivoTurno := 0.0
 	for _, e := range closure.Expenses {
-		egresosEfectivoTurno += e.CashAmount
+		if strings.ToUpper(e.Category) != "DEVOLUCIONES" && e.Status != "PENDING" {
+			egresosEfectivoTurno += e.CashAmount
+		}
 	}
 
 	efectivoParaVentaReal := efectivoContado
@@ -354,7 +410,6 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	
 	totalEfectivo := 0.0
 	totalFondo := 0.0
-	totalPrestamos := 0.0
 	
 	for _, e := range closure.Expenses {
 		if e.CashAmount > 0 {
@@ -371,16 +426,9 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 			egresosAgrupados["FONDO"] = append(egresosAgrupados["FONDO"], splitExpense{Desc: e.Description, Amount: e.FondoAmount})
 			totalFondo += e.FondoAmount
 		}
-		
-		sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-		if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
-			diff := e.Amount - sumPaid
-			egresosAgrupados["PRESTAMO"] = append(egresosAgrupados["PRESTAMO"], splitExpense{Desc: e.Description, Amount: diff})
-			totalPrestamos += diff
-		}
 	}
 
-	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "PRESTAMO"}
+	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
 	for k := range egresosAgrupados {
 		found := false
 		for _, c := range canalesOrder {
@@ -416,7 +464,6 @@ func (h *DashboardHandler) formatTelegramClosureMessage(closure models.CashierCl
 	msg.WriteString("────────────────────\n")
 	msg.WriteString(fmt.Sprintf("▫️ Total gastado de la Venta del día (Efectivo): `$%s`\n", formatCOP(totalEfectivo)))
 	msg.WriteString(fmt.Sprintf("▫️ Total gastado del Fondo (Plata de adentro): `$%s`\n", formatCOP(totalFondo)))
-	msg.WriteString(fmt.Sprintf("▫️ Total gastado de Préstamos (Plata de afuera): `$%s`\n", formatCOP(totalPrestamos)))
 	msg.WriteString("\n")
 
 	msg.WriteString("🤝 *4. CRÉDITOS Y ABONOS*\n")
@@ -558,30 +605,6 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 	}
 
 	// ----------------------------------------------------------------------
-	// Recalcular Venta Real (TotalSales) si cambiaron datos
-	// ----------------------------------------------------------------------
-	if existingClosure, err := h.service.GetClosureByID(uint(id)); err == nil && existingClosure != nil {
-		physCash := existingClosure.PhysicalCash
-		if val, ok := updates["physical_cash"].(float64); ok { physCash = val }
-
-		totExp := existingClosure.TotalExpenses
-		if val, ok := updates["total_expenses"].(float64); ok { totExp = val }
-
-		tNequi := existingClosure.TotalNequiReal
-		if tNequi == 0 { tNequi = existingClosure.TotalNequi }
-		if val, ok := updates["total_nequi_real"].(float64); ok { tNequi = val }
-
-		tDavi := existingClosure.TotalDaviplataReal
-		if tDavi == 0 { tDavi = existingClosure.TotalDaviplata }
-		if val, ok := updates["total_daviplata_real"].(float64); ok { tDavi = val }
-
-		tCard := existingClosure.TotalCard
-		tBanco := existingClosure.TotalBancolombia
-		tOther := existingClosure.TotalOtherTransfer
-
-		updates["total_sales"] = physCash + tNequi + tDavi + tCard + tBanco + tOther + totExp
-	}
-	// ----------------------------------------------------------------------
 
 	err = h.service.UpdateClosure(uint(id), updates)
 	if err != nil {
@@ -644,249 +667,62 @@ func (h *DashboardHandler) GetGlobalDebt(c *gin.Context) {
 
 
 func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isPartial bool) *bytes.Buffer {
+	return GenerateClosurePDF(closure, isPartial)
+}
+
+func GenerateClosurePDF(closure models.CashierClosure, isPartial bool) *bytes.Buffer {
+	if len(closure.Expenses) == 0 && closure.ExpensesDetail != "" {
+		var snapshotExps []models.Expense
+		if err := json.Unmarshal([]byte(closure.ExpensesDetail), &snapshotExps); err == nil && len(snapshotExps) > 0 {
+			closure.Expenses = snapshotExps
+		}
+	}
 	normalizeExpensesForReport(closure.Expenses)
+
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	tr := pdf.UnicodeTranslatorFromDescriptor("")
+	loc := time.FixedZone("America/Bogota", -5*60*60)
 
-	mainTitle := "SUPERMERCADO SURTIFAMILIAR"
 	subTitle := "AUDITORÍA OFICIAL DE CIERRE DE CAJA"
 	if isPartial {
 		subTitle = "REPORTE PARCIAL DE CAJA (CORTE)"
 	}
 
-	pdf.AddPage()
-	
-	// --- CABECERA EMPRESARIAL (B&W) ---
-	pdf.SetFont("Arial", "B", 20)
-	pdf.SetTextColor(0, 0, 0)
-	pdf.CellFormat(190, 15, tr(mainTitle), "0", 1, "L", false, 0, "")
-	
-	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(50, 50, 50)
-	pdf.CellFormat(190, 6, tr(subTitle), "0", 1, "L", false, 0, "")
-
-	// Metadatos en Grid
-	pdf.SetDrawColor(0, 0, 0)
-	pdf.SetLineWidth(0.1)
-	pdf.SetFont("Arial", "B", 8)
-	pdf.SetTextColor(0, 0, 0)
-	
-	currY := pdf.GetY() + 5
-	pdf.SetY(currY)
-	pdf.CellFormat(30, 7, tr(" CAJERO:"), "LT", 0, "L", false, 0, "")
-	pdf.SetFont("Arial", "", 8)
-	pdf.CellFormat(65, 7, tr(" "+closure.ClosedByName), "T", 0, "L", false, 0, "")
-	pdf.SetFont("Arial", "B", 8)
-	pdf.CellFormat(45, 7, tr(" FECHA IMPRESIÓN:"), "T", 0, "L", false, 0, "")
-	pdf.SetFont("Arial", "", 8)
-	loc := time.FixedZone("America/Bogota", -5*60*60)
-	pdf.CellFormat(50, 7, tr(" "+time.Now().In(loc).Format("02/01/2006 15:04")), "RT", 1, "L", false, 0, "")
-	
-	pdf.SetFont("Arial", "B", 8)
-	pdf.CellFormat(30, 7, tr(" TURNO:"), "LB", 0, "L", false, 0, "")
-	pdf.SetFont("Arial", "", 8)
-	pdf.CellFormat(65, 7, tr(fmt.Sprintf(" %s a %s", closure.StartDate.In(loc).Format("15:04"), closure.EndDate.In(loc).Format("15:04"))), "B", 0, "L", false, 0, "")
-	pdf.SetFont("Arial", "B", 8)
-	pdf.CellFormat(45, 7, tr(" ID CIERRE:"), "B", 0, "L", false, 0, "")
-	pdf.SetFont("Arial", "", 8)
-	pdf.CellFormat(50, 7, tr(fmt.Sprintf(" CC-%d", closure.Date.In(loc).Unix()%1000000)), "RB", 1, "L", false, 0, "")
-	
-	// Línea Gruesa de Auditoría
-	pdf.SetLineWidth(0.6)
-	pdf.Line(10, pdf.GetY()+3, 200, pdf.GetY()+3)
-	pdf.Ln(8)
-
-	// --- BLOQUES DE RESUMEN (AUDIT BOXES) ---
-	expectedCash := closure.ExpectedCash
-	if expectedCash == 0 {
-		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
+	printData := services.ClosurePrintData{
+		Title:                "SUPERMERCADO SURTIFAMILIAR",
+		SubTitle:             subTitle,
+		Cajero:               closure.ClosedByName,
+		IDStr:                fmt.Sprintf("CC-%d", closure.ID),
+		RangoFechaStr:        "TURNO:",
+		TurnoStr:             fmt.Sprintf("%s a %s", closure.StartDate.In(loc).Format("02/01/06 15:04"), closure.EndDate.In(loc).Format("02/01/06 15:04")),
+		PhysicalCash:         closure.PhysicalCash,
+		TotalSales:           closure.TotalSales,
+		TotalCreditCollected: closure.TotalCreditCollected,
+		TotalNequi:           closure.TotalNequi,
+		TotalDaviplata:       closure.TotalDaviplata,
+		TotalCard:            closure.TotalCard,
+		TotalBancolombia:     closure.TotalBancolombia,
+		TotalOtherTransfer:   closure.TotalOtherTransfer,
+		TotalCash:            closure.TotalCash,
+		TotalExpenses:        closure.TotalExpenses,
+		TotalReturns:         closure.TotalReturns,
+		ExpectedCash:         closure.ExpectedCash,
+		CashBills:            closure.CashBills,
+		Coins1000:            closure.Coins1000,
+		Coins500:             closure.Coins500,
+		Coins200:             closure.Coins200,
+		Coins100:             closure.Coins100,
+		Expenses:             closure.Expenses,
+		Payments:             closure.CreditPayments,
 	}
 
-	digitalIncome := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
-	realBalance := closure.PhysicalCash + digitalIncome - closure.TotalExpenses
-
-	boxY := pdf.GetY()
-	
-	// Efectivo Físico
-	pdf.SetFillColor(255, 255, 255)
-	pdf.SetDrawColor(0, 0, 0)
-	pdf.SetLineWidth(0.2)
-	pdf.Rect(10, boxY, 60, 18, "D")
-	pdf.SetXY(10, boxY + 2)
-	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("EFECTIVO FÍSICO"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(closure.PhysicalCash)), "0", 0, "C", false, 0, "")
-
-	// Digital - Egresos
-	pdf.Rect(75, boxY, 60, 18, "D")
-	pdf.SetXY(75, boxY + 2)
-	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("DIGITAL - EGRESOS"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	netDigital := digitalIncome - closure.TotalExpenses
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(netDigital)), "0", 0, "C", false, 0, "")
-
-	// Balance Real
-	pdf.SetFillColor(230, 245, 230) // Fondo verde claro
-	pdf.Rect(140, boxY, 60, 18, "DF")
-	pdf.SetXY(140, boxY + 2)
-	pdf.SetFont("Arial", "B", 7)
-	pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 0, "C", false, 0, "")
-	
-	pdf.SetY(boxY + 25)
-
-	// --- NOTA ESPERADO ---
-	pdf.SetFont("Arial", "I", 8)
-	pdf.CellFormat(190, 5, tr(fmt.Sprintf("* Efectivo Esperado por Sistema (Informativo): $%s", formatCOP(expectedCash))), "0", 1, "L", false, 0, "")
-	pdf.Ln(2)
-
-	// --- TABLAS DE AUDITORÍA ---
-	// Estilo de tabla Enterprise
-	drawTable := func(title string, headers []string, widths []float64, rows [][]string) {
-		pdf.SetFont("Arial", "B", 10)
-		pdf.CellFormat(190, 8, tr(title), "0", 1, "L", false, 0, "")
-		
-		pdf.SetFillColor(229, 231, 235) // Gris Enterprise
-		pdf.SetFont("Arial", "B", 8)
-		for i, h := range headers {
-			pdf.CellFormat(widths[i], 7, tr(h), "1", 0, "C", true, 0, "")
-		}
-		pdf.Ln(-1)
-		
-		pdf.SetFont("Arial", "", 8)
-		for _, row := range rows {
-			for i, val := range row {
-				align := "L"
-				if i == len(row)-1 { align = "R" }
-				pdf.CellFormat(widths[i], 7, tr(val), "1", 0, align, false, 0, "")
-			}
-			pdf.Ln(-1)
-		}
-		pdf.Ln(5)
-	}
-
-	// 1. Resumen Operativo
-	drawTable("DETALLE OPERATIVO DE CAJA", 
-		[]string{"Concepto", "Monto"}, 
-		[]float64{130, 60}, 
-		[][]string{
-			{"(+) Ingresos en Efectivo (Ventas + Recaudos)", fmt.Sprintf("$%s", formatCOP(closure.TotalCash))},
-			{"(-) Gastos y Egresos Operativos", fmt.Sprintf("$%s", formatCOP(closure.TotalExpenses))},
-			{"(-) Devoluciones de Mercancía", fmt.Sprintf("$%s", formatCOP(closure.TotalReturns))},
-			{"(=) BALANCE TEÓRICO EN CAJA", fmt.Sprintf("$%s", formatCOP(expectedCash))},
-		})
-
-	// 2. Desglose de Efectivo
-	drawTable("DESGLOSE DE EFECTIVO REPORTADO", 
-		[]string{"Denominación", "Monto"}, 
-		[]float64{130, 60}, 
-		[][]string{
-			{"Billetes", fmt.Sprintf("$%s", formatCOP(closure.CashBills))},
-			{"Monedas 1000", fmt.Sprintf("$%s", formatCOP(closure.Coins1000))},
-			{"Monedas 500", fmt.Sprintf("$%s", formatCOP(closure.Coins500))},
-			{"Monedas 200", fmt.Sprintf("$%s", formatCOP(closure.Coins200))},
-			{"Monedas 100", fmt.Sprintf("$%s", formatCOP(closure.Coins100))},
-		})
-
-	// 3. Egresos por Canal
-	methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "PRESTAMO"}
-	for _, m := range methods {
-		var rows [][]string
-		total := 0.0
-		
-		for _, e := range closure.Expenses {
-			isMixedOrNewSchema := e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0
-			
-			if isMixedOrNewSchema {
-				if m == "EFECTIVO" && e.CashAmount > 0 {
-					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.CashAmount))})
-					total += e.CashAmount
-				}
-				if m == "NEQUI" && e.NequiAmount > 0 {
-					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.NequiAmount))})
-					total += e.NequiAmount
-				}
-				if m == "DAVIPLATA" && e.DaviplataAmount > 0 {
-					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.DaviplataAmount))})
-					total += e.DaviplataAmount
-				}
-				if m == "FONDO" && e.FondoAmount > 0 {
-					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.FondoAmount))})
-					total += e.FondoAmount
-				}
-				if m == "PRESTAMO" {
-					sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-					if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
-						diff := e.Amount - sumPaid
-						rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(diff))})
-						total += diff
-					}
-				}
-			} else {
-				eMethod := strings.ToUpper(e.PaymentSource)
-				if eMethod == "" || eMethod == "CAJA" { eMethod = "EFECTIVO" }
-				if eMethod == "PREST." || eMethod == "DEUDA" { eMethod = "PRESTAMO" }
-				
-				if eMethod == m {
-					rows = append(rows, []string{e.Description, fmt.Sprintf("$%s", formatCOP(e.Amount))})
-					total += e.Amount
-				}
-			}
-		}
-		if len(rows) > 0 {
-			rows = append(rows, []string{fmt.Sprintf("TOTAL EGRESOS %s", m), fmt.Sprintf("$%s", formatCOP(total))})
-			drawTable(fmt.Sprintf("EGRESOS: %s", m), []string{"Descripción", "Monto"}, []float64{140, 50}, rows)
-		}
-	}
-
-	// 4. Canales Digitales
-	drawTable("CANALES DIGITALES (TRANSFERENCIAS)", 
-		[]string{"Nequi", "Daviplata", "Tarjeta", "Otros"}, 
-		[]float64{47.5, 47.5, 47.5, 47.5}, 
-		[][]string{
-			{fmt.Sprintf("$%s", formatCOP(closure.TotalNequi)), fmt.Sprintf("$%s", formatCOP(closure.TotalDaviplata)), fmt.Sprintf("$%s", formatCOP(closure.TotalCard)), fmt.Sprintf("$%s", formatCOP(closure.TotalBancolombia+closure.TotalOtherTransfer))},
-		})
-
-	// 5. Fiados
-	if len(closure.CreditsIssued) > 0 {
-		var rows [][]string
-		for _, s := range closure.CreditsIssued {
-			name := s.Client.Name
-			if name == "" { name = s.ClientDNI }
-			rows = append(rows, []string{name, fmt.Sprintf("$%s", formatCOP(s.CreditAmount)), fmt.Sprintf("$%s", formatCOP(s.Client.CurrentCredit))})
-		}
-		drawTable("DETALLE DE FIADOS EMITIDOS", []string{"Cliente", "Monto Fiado", "Deuda Total"}, []float64{100, 45, 45}, rows)
-	}
-
-	// --- BLOQUE DE FIRMAS ---
-	pdf.Ln(10)
-	if pdf.GetY() > 240 { pdf.AddPage() }
-	
-	sigY := pdf.GetY() + 20
-	pdf.SetDrawColor(0, 0, 0)
-	pdf.SetLineWidth(0.4)
-	pdf.Line(20, sigY, 80, sigY)
-	pdf.SetXY(20, sigY + 2)
-	pdf.SetFont("Arial", "B", 8)
-	pdf.CellFormat(60, 5, tr("FIRMA RESPONSABLE"), "0", 0, "C", false, 0, "")
-	
-	pdf.Line(130, sigY, 190, sigY)
-	pdf.SetXY(130, sigY + 2)
-	pdf.CellFormat(60, 5, tr("FIRMA GERENCIA"), "0", 1, "C", false, 0, "")
-
-	if !isPartial && closure.AuthorizedBy != "" {
-		pdf.Ln(15)
-		pdf.SetFillColor(240, 240, 240)
-		pdf.SetTextColor(0, 0, 0)
-		pdf.SetFont("Arial", "B", 9)
-		pdf.CellFormat(190, 10, tr(fmt.Sprintf("DESCUADRE AUTORIZADO POR: %s", closure.AuthorizedBy)), "1", 1, "C", true, 0, "")
-	}
+	services.RenderClosurePDFData(pdf, tr, loc, printData)
 
 	var buf bytes.Buffer
-	pdf.Output(&buf)
+	if err := pdf.Output(&buf); err != nil {
+		log.Printf("[GenerateClosurePDF] Error generating pdf: %v", err)
+		return nil
+	}
 	return &buf
 }
 

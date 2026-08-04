@@ -97,17 +97,30 @@ export function ExpensePaymentModal({
     let finalDaviplata = daviplataPaid;
     let finalFondo = fondoPaid;
 
+    // 1. Aplicar el monto digitado en el input si el usuario no presiono '+' previamente
     if (currentDialogVal > 0) {
-      if (activePaymentTab === 'cash') finalCash += actualPayment;
-      else if (activePaymentTab === 'NEQUI') finalNequi += actualPayment;
-      else if (activePaymentTab === 'DAVIPLATA') finalDaviplata += actualPayment;
-      else if (activePaymentTab === 'fondo') finalFondo += actualPayment;
-    } else {
-      // Autocompletar el resto con el metodo activo si no digitaron nada
-      if (activePaymentTab === 'cash') finalCash += remainingDebt;
-      else if (activePaymentTab === 'NEQUI') finalNequi += remainingDebt;
-      else if (activePaymentTab === 'DAVIPLATA') finalDaviplata += remainingDebt;
-      else if (activePaymentTab === 'fondo') finalFondo += remainingDebt;
+      const actualPay = Math.min(currentDialogVal, remainingDebt);
+      if (activePaymentTab === 'cash') finalCash += actualPay;
+      else if (activePaymentTab === 'NEQUI') finalNequi += actualPay;
+      else if (activePaymentTab === 'DAVIPLATA') finalDaviplata += actualPay;
+      else if (activePaymentTab === 'fondo') finalFondo += actualPay;
+    }
+
+    // 2. Calcular el remanente real que falta por cubrir para completar el 100% del egreso
+    const totalAllocated = finalCash + finalNequi + finalDaviplata + finalFondo;
+    const leftover = Math.max(0, totalToPay - totalAllocated);
+
+    // 3. Si queda un remanente por pagar, asignarlo al método de pago que esté SELECCIONADO actualmente
+    if (leftover > 0) {
+      if (activePaymentTab === 'cash') {
+        finalCash += leftover;
+      } else if (activePaymentTab === 'NEQUI') {
+        finalNequi += leftover;
+      } else if (activePaymentTab === 'DAVIPLATA') {
+        finalDaviplata += leftover;
+      } else if (activePaymentTab === 'fondo') {
+        finalFondo += leftover;
+      }
     }
 
     // Build the string: NEQUI: $1000 / CAJA: $1000
@@ -148,6 +161,8 @@ export function ExpensePaymentModal({
   // Teclado fisico
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!isOpen) return;
+
       if (showSuccessScreen) {
         if (e.key === 'Enter' || e.key === 'Escape') {
           onCloseComplete?.();

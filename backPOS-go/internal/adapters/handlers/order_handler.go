@@ -429,35 +429,51 @@ func (h *OrderHandler) SendDeliverySummaryToTelegram(c *gin.Context) {
 		return
 	}
 
-	// Calcular total y construir lista de proveedores
-	var totalCash float64
-	var supplierList strings.Builder
+	// Agrupar y consolidar montos por proveedor
+	type SupSummary struct {
+		Name  string
+		Total float64
+	}
+	supMap := make(map[string]*SupSummary)
+	var supOrder []string
 
-	for i, o := range req.Orders {
-		// Determinar valor real (InvoiceRef numérico o EstimatedCost fallback)
+	for _, o := range req.Orders {
+		supName := strings.TrimSpace(o.SupplierName)
+		if supName == "" {
+			supName = "PROVEEDOR VARIADO"
+		}
 		val := o.EstimatedCost
 		if val == 0 {
 			val = o.TotalEstimated
 		}
-		
 		if o.InvoiceRef != "" {
-			// Remover no numéricos (como en frontend)
 			cleanInv := regexp.MustCompile(`[^0-9.]`).ReplaceAllString(o.InvoiceRef, "")
 			if parsedInv, err := strconv.ParseFloat(cleanInv, 64); err == nil && parsedInv > 0 {
 				val = parsedInv
 			}
 		}
 
-		supplierList.WriteString(fmt.Sprintf("• *%s*: $%s COP\n", o.SupplierName, formatMoney(val)))
-		totalCash += val
-		if i >= 9 { // Limitar a 10 proveedores para no exceder límites de Telegram
-			supplierList.WriteString(fmt.Sprintf("\n_Y %d proveedores más..._\n", len(req.Orders)-10))
+		if existing, exists := supMap[supName]; exists {
+			existing.Total += val
+		} else {
+			supMap[supName] = &SupSummary{Name: supName, Total: val}
+			supOrder = append(supOrder, supName)
+		}
+	}
+
+	var totalCash float64
+	var supplierList strings.Builder
+
+	for i, supName := range supOrder {
+		item := supMap[supName]
+		supplierList.WriteString(fmt.Sprintf("🚛 *%s*\n   💰 Valor: `$%s COP`\n\n", item.Name, formatMoney(item.Total)))
+		totalCash += item.Total
+		if i >= 19 {
+			supplierList.WriteString(fmt.Sprintf("\n_Y %d proveedores más..._\n", len(supOrder)-20))
 			break
 		}
 	}
 
-	// Construir mensaje formateado
-	// Obtener la fecha en zona horaria de Bogotá
 	loc, err := time.LoadLocation("America/Bogota")
 	if err != nil {
 		loc = time.UTC
@@ -465,16 +481,18 @@ func (h *OrderHandler) SendDeliverySummaryToTelegram(c *gin.Context) {
 	now := time.Now().In(loc)
 
 	message := fmt.Sprintf(
-		"🚚 *RESUMEN DE ENTREGAS ESPERADAS*\n"+
-			"📅 *Fecha:* %s\n\n"+
-			"💰 *Total a Pagar:* $%s COP\n"+
-			"📦 *Proveedores en fila (%d):*\n\n"+
-			"%s\n"+
-			"─────────────────────────\n"+
-			"_Sistema POS - Logística Automática_",
+		"📦 *PLAN DE ENTREGAS ESPERADAS*\n"+
+			"📅 *Fecha:* `%s` ⏰ *%s*\n"+
+			"➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n"+
+			"💰 *INVERSIÓN TOTAL:* `$%s COP`\n"+
+			"📋 *PROVEEDORES EN CAMINO:* `%d`\n\n"+
+			"%s"+
+			"➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n"+
+			"🤖 _Sistema POS Pro Sincronizado_",
 		now.Format("02/01/2006"),
+		now.Format("03:04 PM"),
 		formatMoney(totalCash),
-		len(req.Orders),
+		len(supOrder),
 		supplierList.String(),
 	)
 

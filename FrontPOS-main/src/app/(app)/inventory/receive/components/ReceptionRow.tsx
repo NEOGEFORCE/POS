@@ -2,8 +2,9 @@
 
 import React, { memo, useState, useEffect, useMemo } from 'react';
 import { Button, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
+import dynamic from 'next/dynamic';
 import { 
-    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles 
+    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles, Camera 
 } from 'lucide-react';
 import { ReceiveItem } from '../page';
 import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText } from "@/lib/utils";
@@ -12,6 +13,8 @@ import { apiFetch } from '@/lib/api-error';
 import { broadcastRevalidate } from '@/lib/revalidate';
 import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
+
+const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 
 interface ReceptionRowProps {
     item: ReceiveItem;
@@ -32,6 +35,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const [editName, setEditName] = useState(item.productName);
     const [editBarcode, setEditBarcode] = useState(item.barcode);
     const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [isScannerOpen, setIsScannerOpen] = useState(false);
 
     const physicalStock = item.actualPhysicalStock;
     const currentStock = item.currentStock;
@@ -76,6 +80,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const [localIbua, setLocalIbua] = useState(formatInitialPercent(item.ibua || 0));
     const [localDiscount, setLocalDiscount] = useState(formatInitialPercent(item.discount || 0));
     const [localMargin, setLocalMargin] = useState(formatInitialPercent(item.marginPercentage || 30));
+    const [suggestionDismissed, setSuggestionDismissed] = useState(false);
 
     useEffect(() => {
         const basePrice = item.newPurchasePrice;
@@ -239,6 +244,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         
         setLocalMargin(String(margin));
         setLocalSalePrice(formatCOP(sale));
+        setSuggestionDismissed(true);
         
         onUpdate(item.lineId, { 
             newSalePrice: sale, 
@@ -418,7 +424,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                             <ModalHeader className="flex flex-col gap-1 text-center mt-2">
                                 <h2 className="font-medium tracking-tight text-xl uppercase tracking-tight text-white">Editar <span className="text-zinc-900 dark:text-zinc-100">Producto</span></h2>
                             </ModalHeader>
-                            <ModalBody>
+                            <ModalBody className="gap-4">
                                 <Input
                                     label="Nombre del Producto"
                                     value={editName}
@@ -429,7 +435,18 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                     label="Codigo de Barras"
                                     value={editBarcode}
                                     onValueChange={setEditBarcode}
-                                    classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
+                                    endContent={
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsScannerOpen(true)}
+                                            className="p-1.5 text-emerald-400 hover:text-emerald-300 transition-all flex items-center gap-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 px-3 py-1.5 rounded-xl text-[11px] font-bold uppercase tracking-tight shadow-sm active:scale-95 shrink-0"
+                                            title="Escanear con Cámara"
+                                        >
+                                            <Camera size={16} />
+                                            <span>Cámara</span>
+                                        </button>
+                                    }
+                                    classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl pr-1.5" }}
                                 />
                             </ModalBody>
                             <ModalFooter>
@@ -444,6 +461,17 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                     )}
                 </ModalContent>
             </Modal>
+
+            <ScannerOverlay 
+                isOpen={isScannerOpen} 
+                onResult={(code) => { 
+                    const scanned = code.toUpperCase().trim(); 
+                    setEditBarcode(scanned); 
+                    setIsScannerOpen(false); 
+                    toast({ variant: 'success', title: 'CÓDIGO ESCANEADO', description: scanned });
+                }} 
+                onClose={() => setIsScannerOpen(false)} 
+            />
 
             {/* Fila 1: Cabecera compacta (Nombre, Codigo y Acciones) */}
             <div className="flex w-full items-center justify-between gap-2 overflow-hidden pb-1 border-b border-gray-50 dark:border-white/5">
@@ -704,13 +732,34 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                     </div>
                 </div>
 
-                {/* Visualizador de Precio Moderado (Si aplica) */}
-                {(oldStock > 0 && addedQuantity > 0 && newPurchasePrice > 0 && projectedWac !== newPurchasePrice) && (
+                {/* Visualizador de Precio Sugerido (Solo si es diferente al PVP actual y no ha sido descartado) */}
+                {(!suggestionDismissed && oldStock > 0 && addedQuantity > 0 && newPurchasePrice > 0 && projectedWac !== newPurchasePrice && projectedSalePrice !== item.newSalePrice) && (
                     <div className="flex items-center gap-2 mt-0.5 p-2 bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/20 rounded-xl animate-in fade-in zoom-in-95 duration-300">
-                        <Sparkles size={14} className="text-emerald-500" />
-                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium">
-                            Costo Promedio Proyectado: {formatCOP(projectedWac)} <span className="opacity-50 mx-1">➡️</span> PVP Moderado: {formatCOP(projectedSalePrice)}
+                        <Sparkles size={14} className="text-emerald-500 shrink-0" />
+                        <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex-1">
+                            Precio anterior: {formatCOP(item.oldSalePrice || item.newSalePrice)} <span className="opacity-50 mx-1">➡️</span> Precio sugerido: {formatCOP(projectedSalePrice)} ¿Desea cambiarlo?
                         </span>
+                        {item.newSalePrice !== projectedSalePrice && (
+                            <button
+                                onClick={() => {
+                                    const sale = applyRounding(projectedSalePrice);
+                                    const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
+                                    const margin = bruto > 0 ? ((sale / bruto) - 1) * 100 : item.marginPercentage;
+                                    
+                                    setLocalMargin(String(margin));
+                                    setLocalSalePrice(formatCOP(sale));
+                                    setSuggestionDismissed(true);
+                                    
+                                    onUpdate(item.lineId, { 
+                                        newSalePrice: sale, 
+                                        marginPercentage: margin 
+                                    });
+                                }}
+                                className="text-[9px] font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-2.5 py-1 rounded-lg transition-colors shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 uppercase"
+                            >
+                                Aplicar
+                            </button>
+                        )}
                     </div>
                 )}
             </div>

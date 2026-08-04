@@ -166,7 +166,7 @@ export default function SalesHistoryPage() {
                 <div className="flex items-center gap-2">
                     <div className="relative flex-1 group/search">
                         <Input
-                            placeholder="BUSCAR VENTA / CLIENTE..."
+                            placeholder="BUSCAR VENTA, CLIENTE O MÉTODO (NEQUI, DAVIPLATA, EFECTIVO)..."
                             value={searchQuery}
                             onValueChange={(v) => setSearchQuery(v.toUpperCase())}
                             startContent={<Search size={18} className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400 group-focus-within/search:text-zinc-900 dark:text-zinc-100" />}
@@ -180,7 +180,7 @@ export default function SalesHistoryPage() {
             </div>
 
             {/* CONTENT SECTION (SCROLLABLE) */}
-            <div className="flex flex-col gap-3 p-3 bg-transparent">
+            <div className="flex flex-col gap-3 p-3 bg-transparent flex-1 overflow-y-auto">
                 <SalesKPIs totalItems={totalItems} />
                 <div className="bg-white/40 dark:bg-[#18181b]/40 border border-gray-200 dark:border-white/5 rounded-2xl flex flex-col shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <SalesTable

@@ -102,10 +102,11 @@ func (r *PostgresProductRepository) GetSavingsOpportunities() ([]ports.SavingsOp
 func (r *PostgresProductRepository) GetAllWithLowStock() ([]models.Product, error) {
 	var products []models.Product
 
-	// Devolver todos los productos activos para que el usuario pueda paginar libremente en el Radar Global
+	// Filtrar solo productos con stock igual o inferior a su mínimo (o stock <= 5 como salvaguarda), limitado a los 100 más críticos
 	err := r.db.
-		Where("\"isActive\" = ?", true).
+		Where("\"isActive\" = true AND (quantity <= \"minStock\" OR quantity <= 5)").
 		Order("\"quantity\" ASC").
+		Limit(100).
 		Find(&products).Error
 
 	if err != nil {

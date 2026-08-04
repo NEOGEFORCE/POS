@@ -52,38 +52,113 @@ type ReportPayload struct {
 // =============================================================
 
 type ProfitabilityRow struct {
-	ProductName  string
-	UnitsSold    float64
-	GrossSales   float64
-	GrossCost    float64
-	GrossProfit  float64
-	MarginPct    float64
-	MeetsTarget  bool // margen >= TargetMargin
+	ProductName string  `json:"productName"`
+	UnitsSold   float64 `json:"unitsSold"`
+	GrossSales  float64 `json:"grossSales"`
+	GrossCost   float64 `json:"grossCost"`
+	GrossProfit float64 `json:"grossProfit"`
+	MarginPct   float64 `json:"marginPct"`
+	MeetsTarget bool    `json:"meetsTarget"` // margen >= TargetMargin
+}
+
+type CreditReceivableRow struct {
+	ClientName string  `json:"clientName"`
+	ClientDNI  string  `json:"clientDni"`
+	Phone      string  `json:"phone"`
+	Balance    float64 `json:"balance"`
+}
+
+type DebtPayableRow struct {
+	Concept      string  `json:"concept"`
+	ProviderName string  `json:"providerName"`
+	Balance      float64 `json:"balance"`
+	Status       string  `json:"status"`
+}
+
+type OpExpenseRow struct {
+	Date          time.Time `json:"date"`
+	Category      string    `json:"category"`
+	Description   string    `json:"description"`
+	PaymentSource string    `json:"paymentSource"`
+	Amount        float64   `json:"amount"`
 }
 
 type ProfitabilityReport struct {
-	From         time.Time
-	To           time.Time
-	TargetMargin float64 // ej. 0.17 = 17%
-	Rows         []ProfitabilityRow
+	From         time.Time `json:"from"`
+	To           time.Time `json:"to"`
+	TargetMargin float64   `json:"targetMargin"` // ej. 0.17 = 17%
 
-	TotalSales     float64
-	TotalCost      float64
-	GrossProfit    float64
-	OpExpenses     float64
-	NetProfit      float64
-	OverallMargin  float64 // bruto sobre ventas
-	NetMargin      float64 // neto sobre ventas
+	// Totales Generales
+	TotalSales    float64 `json:"totalSales"`
+	TotalCost     float64 `json:"totalCost"`
+	GrossProfit   float64 `json:"grossProfit"`
+	OverallMargin float64 `json:"overallMargin"`
+
+	// Desglose de Pagos e Ingresos
+	CashSales          float64 `json:"cashSales"`
+	TransferSales      float64 `json:"transferSales"`
+	CreditSales        float64 `json:"creditSales"`
+	CreditPaymentsCash float64 `json:"creditPaymentsCash"`
+	TotalCashInflows   float64 `json:"totalCashInflows"`
+	CashExpenses       float64 `json:"cashExpenses"`
+
+	// Gastos Operativos (Excluyendo compras a proveedores)
+	PublicServicesExp float64 `json:"publicServicesExp"`
+	RentExp           float64 `json:"rentExp"`
+	MaintenanceExp    float64 `json:"maintenanceExp"`
+	PayrollExp        float64 `json:"payrollExp"`
+	OtherOpExp        float64 `json:"otherOpExp"`
+	TotalOpExpenses   float64 `json:"totalOpExpenses"`
+	OpExpenses        float64 `json:"opExpenses"` // compatibilidad legacy
+
+	// Lista de Gastos Operativos
+	OpExpenseItems []OpExpenseRow `json:"opExpenseItems"`
+
+	// Cartera (Plata prestada a clientes / Fiados activos)
+	TotalCreditReceivable float64               `json:"totalCreditReceivable"`
+	CreditReceivables     []CreditReceivableRow `json:"creditReceivables"`
+
+	// Deudas del negocio
+	TotalDebtsPayable float64          `json:"totalDebtsPayable"`
+	DebtsPayable      []DebtPayableRow `json:"debtsPayable"`
+
+	// Resultados Finales
+	NetProfit      float64 `json:"netProfit"`
+	NetMargin      float64 `json:"netMargin"`
+	NetCashBalance float64 `json:"netCashBalance"`
+
+	// Tabla por producto
+	Rows []ProfitabilityRow `json:"rows"`
 }
 
-// GetProfitabilityReport retorna análisis de rentabilidad en el rango.
-// targetMargin se entrega en fracción (0.17 = 17%).
+// GetProfitabilityReport retorna análisis detallado de rentabilidad, gastos operativos (sin proveedores), dinero prestado y flujo de dinero.
 func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin float64) (*ProfitabilityReport, error) {
 	report := &ProfitabilityReport{
 		From: from, To: to, TargetMargin: targetMargin,
+		CreditReceivables: []CreditReceivableRow{},
+		DebtsPayable:      []DebtPayableRow{},
+		OpExpenseItems:    []OpExpenseRow{},
+		Rows:              []ProfitabilityRow{},
 	}
 
-	// 1. Ventas detalladas (con costo) por producto
+	fromDateStr := from.Format("2006-01-02")
+	toDateStr := to.Format("2006-01-02")
+
+	// 1. Ventas Totales reales directamente de la tabla sales y cierres de caja en horario Colombia
+	var realTotalSales float64
+	s.db.Model(&models.Sale{}).
+		Where(`DATE("saleDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Where(`(status IS NULL OR UPPER(status) <> 'CANCELLED')`).
+		Select(`COALESCE(SUM("totalAmount"), 0)`).
+		Scan(&realTotalSales)
+
+	var closureSales float64
+	s.db.Model(&models.CashierClosure{}).
+		Where(`DATE(end_date AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Select(`COALESCE(SUM(GREATEST("total_sales", "physical_cash" + "total_card" + "total_transfer" + "total_expenses")), 0)`).
+		Scan(&closureSales)
+
+	// Ventas detalladas (con costo) por producto
 	type aggRow struct {
 		Barcode    string
 		Name       string
@@ -101,7 +176,7 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 				COALESCE(SUM(sd.quantity * sd."costPrice"), 0) AS gross_cost`).
 		Joins(`JOIN sales s ON s."saleId" = sd."saleId"`).
 		Joins(`LEFT JOIN products p ON p.barcode = sd.barcode`).
-		Where(`s."saleDate" BETWEEN ? AND ?`, from, to).
+		Where(`DATE(s."saleDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
 		Where(`(s.status IS NULL OR UPPER(s.status) <> 'CANCELLED')`).
 		Group(`sd.barcode, p."productName"`).
 		Order(`gross_sales DESC`).
@@ -110,6 +185,7 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 		return nil, fmt.Errorf("profitability query: %w", err)
 	}
 
+	var detailSalesSum float64
 	for _, r := range rows {
 		gp := r.GrossSales - r.GrossCost
 		var margin float64
@@ -125,26 +201,201 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 			MarginPct:   margin,
 			MeetsTarget: margin >= targetMargin,
 		})
-		report.TotalSales += r.GrossSales
+		detailSalesSum += r.GrossSales
 		report.TotalCost += r.GrossCost
 	}
+
+	maxSales := realTotalSales
+	if closureSales > maxSales {
+		maxSales = closureSales
+	}
+	if detailSalesSum > maxSales {
+		maxSales = detailSalesSum
+	}
+	report.TotalSales = maxSales
 	report.GrossProfit = report.TotalSales - report.TotalCost
 
-	// 2. Egresos operativos (PAID) en el rango
-	var opExp float64
-	s.db.Model(&models.Expense{}).
-		Where(`UPPER(status) = 'PAID'`).
-		Where(`UPPER("paymentSource") NOT IN ('PRESTAMO', 'PREST.')`).
-		Where(`date BETWEEN ? AND ?`, from, to).
-		Select(`COALESCE(SUM(amount + tax_amount), 0)`).
-		Scan(&opExp)
-	report.OpExpenses = opExp
-	report.NetProfit = report.GrossProfit - report.OpExpenses
+	// 2. Desglose de Métodos de Pago e Ingresos de Dinero en el Rango
+	var cashSales, transferSales, creditSales float64
+	s.db.Model(&models.Sale{}).
+		Where(`DATE("saleDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Where(`(status IS NULL OR UPPER(status) <> 'CANCELLED')`).
+		Select(`COALESCE(SUM(GREATEST(0, "cashAmount" - change)), 0)`).
+		Scan(&cashSales)
 
+	s.db.Model(&models.Sale{}).
+		Where(`DATE("saleDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Where(`(status IS NULL OR UPPER(status) <> 'CANCELLED')`).
+		Select(`COALESCE(SUM("transferAmount" + "transferNequi" + "transferDaviplata"), 0)`).
+		Scan(&transferSales)
+
+	s.db.Model(&models.Sale{}).
+		Where(`DATE("saleDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Where(`(status IS NULL OR UPPER(status) <> 'CANCELLED')`).
+		Select(`COALESCE(SUM("creditAmount"), 0)`).
+		Scan(&creditSales)
+
+	var creditPaymentsCash float64
+	s.db.Table("credit_payments").
+		Where(`DATE("paymentDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Where(`deleted_at IS NULL`).
+		Select(`COALESCE(SUM("amountCash"), 0)`).
+		Scan(&creditPaymentsCash)
+
+	report.CashSales = cashSales
+	report.TransferSales = transferSales
+	report.CreditSales = creditSales
+	report.CreditPaymentsCash = creditPaymentsCash
+	report.TotalCashInflows = cashSales + creditPaymentsCash
+
+	// 3. Egresos Operativos del Local (Excluyendo compras a proveedores, recepciones y devoluciones)
+	var expList []models.Expense
+	s.db.Preload("Supplier").
+		Where(`DATE(date AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
+		Where(`(status IS NULL OR UPPER(status) IN ('PAID', 'COMPLETED', 'SETTLED', ''))`).
+		Where(`(reference_id IS NULL OR reference_id NOT LIKE 'RECP-%')`).
+		Order(`date DESC`).
+		Find(&expList)
+
+	var cashExpenses float64
+	for _, e := range expList {
+		descRaw := strings.ToUpper(e.Description)
+		catRaw := strings.ToUpper(e.Category)
+		combinedRaw := catRaw + " " + descRaw
+
+		// Exclusión estricta de pagos a proveedores, mercadería, recepciones, compras y devoluciones
+		isSupplierPayment := e.SupplierID != nil || (e.Supplier != nil && e.Supplier.ID > 0) ||
+			catRaw == "PROVEEDORES" || catRaw == "PROVEEDOR" || catRaw == "COMPRAS" || catRaw == "MERCANCIA" || catRaw == "RECEPCION" || catRaw == "INVENTARIO" ||
+			strings.Contains(combinedRaw, "PROVEEDOR") || strings.Contains(combinedRaw, "PROVEEDORES") ||
+			strings.Contains(combinedRaw, "COMPRA") || strings.Contains(combinedRaw, "MERCANCIA") || strings.Contains(combinedRaw, "RECEPCION") ||
+			strings.Contains(combinedRaw, "DEVOLUCION") || strings.Contains(combinedRaw, "DESCUADRE") ||
+			strings.Contains(combinedRaw, "POSTOBON") || strings.Contains(combinedRaw, "AGUA MIA") || strings.Contains(combinedRaw, "TRONEX") ||
+			strings.Contains(combinedRaw, "SUPER RICAS") || strings.Contains(combinedRaw, "PURO CLOR") || strings.Contains(combinedRaw, "CARNE") ||
+			strings.Contains(combinedRaw, "ZENU") || strings.Contains(combinedRaw, "ALQUERIA") || strings.Contains(combinedRaw, "ALPINA") ||
+			strings.Contains(combinedRaw, "COCACOLA") || strings.Contains(combinedRaw, "HERMARLY") || strings.Contains(combinedRaw, "HUEVOS") ||
+			strings.Contains(combinedRaw, "LA NIEVE") || strings.Contains(combinedRaw, "IDEAL") || strings.Contains(combinedRaw, "DEPOSITO") ||
+			strings.Contains(combinedRaw, "TRILLADORA") || strings.Contains(combinedRaw, "ALTIPAL") || strings.Contains(combinedRaw, "MAXGOL") ||
+			strings.Contains(combinedRaw, "DISTRILLANO") || strings.Contains(combinedRaw, "COUNTRY") || strings.Contains(combinedRaw, "PLASTICOS") ||
+			strings.Contains(combinedRaw, "PULPAS")
+
+		if isSupplierPayment {
+			continue
+		}
+
+		// Clasificar palabras clave de gastos operativos locales
+		isRent := strings.Contains(combinedRaw, "ARRIENDO") || strings.Contains(combinedRaw, "ALQUILER") || strings.Contains(combinedRaw, "RENTA") || strings.Contains(combinedRaw, "LOCAL") || strings.Contains(combinedRaw, "INMUEBLE")
+		isService := strings.Contains(combinedRaw, "SERVICIO") || strings.Contains(combinedRaw, "LUZ") || strings.Contains(combinedRaw, "INTERNET") || strings.Contains(combinedRaw, "TELEFONO") || strings.Contains(combinedRaw, "ENEL") || strings.Contains(combinedRaw, "EPM") || strings.Contains(combinedRaw, "VANTI") || (strings.Contains(combinedRaw, "AGUA") && !strings.Contains(combinedRaw, "AGUA MIA"))
+		isPayroll := strings.Contains(combinedRaw, "SUELDO") || strings.Contains(combinedRaw, "NOMINA") || strings.Contains(combinedRaw, "PERSONAL") || strings.Contains(combinedRaw, "EMPLEADO") || strings.Contains(combinedRaw, "SALARIO") || strings.Contains(combinedRaw, "QUINCENA")
+		isMaintenance := strings.Contains(combinedRaw, "IMPREVISTO") || strings.Contains(combinedRaw, "ARREGLO") || strings.Contains(combinedRaw, "DANO") || strings.Contains(combinedRaw, "DANOS") || strings.Contains(combinedRaw, "MANTENIMIENTO") || strings.Contains(combinedRaw, "REPARAC")
+
+		amt := e.Amount + e.TaxAmount
+		report.TotalOpExpenses += amt
+
+		c, _, _, _ := parseExpenseChannels(&e)
+		cashExpenses += c
+
+		if isRent {
+			report.RentExp += amt
+		} else if isService {
+			report.PublicServicesExp += amt
+		} else if isMaintenance {
+			report.MaintenanceExp += amt
+		} else if isPayroll {
+			report.PayrollExp += amt
+		} else {
+			report.OtherOpExp += amt
+		}
+
+		report.OpExpenseItems = append(report.OpExpenseItems, OpExpenseRow{
+			Date:          e.Date,
+			Category:      e.Category,
+			Description:   e.Description,
+			PaymentSource: e.PaymentSource,
+			Amount:        amt,
+		})
+	}
+	report.OpExpenses = report.TotalOpExpenses
+	report.CashExpenses = cashExpenses
+
+	// 4. Cartera Total Activa (Plata prestada a clientes / Fiados pendientes)
+	var activeClients []models.Client
+	s.db.Where(`deleted_at IS NULL AND "currentCredit" > 0`).
+		Order(`"currentCredit" DESC`).
+		Find(&activeClients)
+
+	for _, c := range activeClients {
+		report.TotalCreditReceivable += c.CurrentCredit
+		phoneStr := c.Phone
+		if phoneStr == "" {
+			phoneStr = "Sin teléfono"
+		}
+		report.CreditReceivables = append(report.CreditReceivables, CreditReceivableRow{
+			ClientName: c.Name,
+			ClientDNI:  c.DNI,
+			Phone:      phoneStr,
+			Balance:    c.CurrentCredit,
+		})
+	}
+
+	// 5. Deudas Pendientes del Negocio
+	var pendingExps []models.Expense
+	s.db.Preload("Supplier").
+		Where(`deleted_at IS NULL`).
+		Where(`UPPER(status) = 'PENDING' OR UPPER("paymentSource") IN ('PRESTAMO', 'PREST.') OR remaining_amount > 0`).
+		Order(`date DESC`).
+		Find(&pendingExps)
+
+	for _, pe := range pendingExps {
+		bal := pe.RemainingAmount
+		if bal <= 0 {
+			bal = pe.Amount + pe.TaxAmount
+		}
+
+		provName := ""
+		if pe.LenderName != "" {
+			provName = pe.LenderName
+		} else if pe.Supplier != nil && pe.Supplier.Name != "" {
+			provName = pe.Supplier.Name
+		}
+
+		concept := strings.TrimSpace(pe.Description)
+		if concept == "" {
+			concept = pe.Category
+		}
+
+		if provName == "" {
+			if strings.Contains(concept, "-") {
+				parts := strings.SplitN(concept, "-", 2)
+				provName = strings.TrimSpace(parts[0])
+			} else if strings.Contains(concept, "(") {
+				idx := strings.Index(concept, "(")
+				provName = strings.TrimSpace(concept[:idx])
+			} else {
+				provName = concept
+			}
+		}
+
+		if provName == "" {
+			provName = "Acreedor Varios"
+		}
+
+		report.TotalDebtsPayable += bal
+		report.DebtsPayable = append(report.DebtsPayable, DebtPayableRow{
+			Concept:      concept,
+			ProviderName: provName,
+			Balance:      bal,
+			Status:       pe.Status,
+		})
+	}
+
+	// 6. Cálculos Finales
+	report.NetProfit = report.GrossProfit - report.TotalOpExpenses
 	if report.TotalSales > 0 {
 		report.OverallMargin = report.GrossProfit / report.TotalSales
 		report.NetMargin = report.NetProfit / report.TotalSales
 	}
+	report.NetCashBalance = report.TotalCashInflows - report.TotalOpExpenses
+
 	return report, nil
 }
 
@@ -415,12 +666,52 @@ func (s *ExportService) GetRealCashReportByDay(day time.Time) (*RealCashReport, 
 	return s.GetRealCashReportByRange(start, end)
 }
 
+func fmtMoney(v float64) string {
+	abs := v
+	neg := ""
+	if v < 0 {
+		abs = -v
+		neg = "-"
+	}
+	intPart := int64(abs)
+	str := fmt.Sprintf("%d", intPart)
+	out := ""
+	for i, c := range reverseStr(str) {
+		if i > 0 && i%3 == 0 {
+			out = "." + out
+		}
+		out = string(c) + out
+	}
+	return fmt.Sprintf("%s$%s", neg, out)
+}
+
+func fmtPct(v float64) string {
+	return fmt.Sprintf("%.2f%%", v)
+}
+
+func reverseStr(s string) string {
+	r := []rune(s)
+	for i, j := 0, len(r)-1; i < j; i, j = i+1, j-1 {
+		r[i], r[j] = r[j], r[i]
+	}
+	return string(r)
+}
+
+// GenerateProfitabilityPDF genera el PDF de rentabilidad usando la plantilla ejecutiva de 5 secciones.
+func (s *ExportService) GenerateProfitabilityPDFBytes(r *ProfitabilityReport) ([]byte, error) {
+	buf, err := s.GenerateProfitabilityPDF(r)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
 // =============================================================
 // Renderizadores PDF / Excel / CSV
 // =============================================================
 
-// RenderPDF dibuja un PDF tabular profesional con título, subtítulo,
-// tabla, totales y footer. Retorna los bytes listos para enviar.
+// RenderPDF dibuja un PDF tabular profesional con estilo Rentabilidad,
+// encabezado corporativo, timestamp exacto de emisin en Colombia y tabla pulida.
 func (s *ExportService) RenderPDF(p ReportPayload) ([]byte, error) {
 	pdf := gofpdf.New("L", "mm", "A4", "")
 	pdf.SetMargins(12, 14, 12)
@@ -430,40 +721,46 @@ func (s *ExportService) RenderPDF(p ReportPayload) ([]byte, error) {
 	tr := pdf.UnicodeTranslatorFromDescriptor("cp1252")
 	prep := func(s string) string { return tr(sanitizePDF(s)) }
 
-	// Configurar footer automtico para evitar pginas en blanco extra
+	loc, _ := time.LoadLocation("America/Bogota")
+	if loc == nil {
+		loc = time.Local
+	}
+	nowStr := time.Now().In(loc).Format("02/01/2006 03:04:05 PM")
+
+	// Configurar footer automtico
 	pdf.SetFooterFunc(func() {
 		pdf.SetY(-12)
-		pdf.SetFont("Arial", "I", 7)
-		pdf.SetTextColor(150, 150, 150)
+		pdf.SetFont("Arial", "I", 8)
+		pdf.SetTextColor(120, 120, 120)
 		pdf.CellFormat(0, 5,
-			prep(fmt.Sprintf("POS PRO - Generado: %s - Página %d",
-				time.Now().Format("02/01/2006 15:04"), pdf.PageNo())),
+			prep(fmt.Sprintf("SUPERMERCADO SURTIFAMILIAR  |  Emisión: %s  |  Página %d",
+				nowStr, pdf.PageNo())),
 			"", 0, "C", false, 0, "")
 	})
 
 	pdf.AddPage()
 
-	// Header
-	pdf.SetFillColor(16, 185, 129) // emerald
-	pdf.Rect(0, 0, 297, 8, "F")
-
-	pdf.SetY(12)
+	// Header Corporativo Estilo Rentabilidad
+	pdf.SetY(10)
 	pdf.SetFont("Arial", "B", 18)
-	pdf.SetTextColor(20, 30, 25)
-	pdf.Cell(0, 8, prep(p.Title))
+	pdf.SetTextColor(44, 44, 42)
+	pdf.Cell(0, 8, prep("SUPERMERCADO SURTIFAMILIAR"))
 	pdf.Ln(8)
 
-	pdf.SetFont("Arial", "", 10)
-	pdf.SetTextColor(100, 100, 100)
-	pdf.Cell(0, 5, prep(p.Subtitle))
+	pdf.SetFont("Arial", "B", 13)
+	pdf.SetTextColor(60, 60, 60)
+	pdf.Cell(0, 6, prep(p.Title))
 	pdf.Ln(6)
 
+	pdf.SetFont("Arial", "", 9)
+	pdf.SetTextColor(100, 100, 100)
 	if !p.From.IsZero() && !p.To.IsZero() {
-		pdf.SetFont("Arial", "I", 9)
-		pdf.Cell(0, 5, prep(fmt.Sprintf("Rango: %s — %s",
-			p.From.Format("02/01/2006"), p.To.Format("02/01/2006"))))
-		pdf.Ln(8)
+		pdf.Cell(0, 5, prep(fmt.Sprintf("Período: %s al %s   |   Fecha y Hora de Emisión: %s",
+			p.From.Format("02/01/2006"), p.To.Format("02/01/2006"), nowStr)))
+	} else {
+		pdf.Cell(0, 5, prep(fmt.Sprintf("Fecha y Hora de Emisión: %s", nowStr)))
 	}
+	pdf.Ln(7)
 
 	// Tabla
 	if len(p.Headers) > 0 {

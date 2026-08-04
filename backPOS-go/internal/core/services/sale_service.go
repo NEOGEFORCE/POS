@@ -1,30 +1,90 @@
 package services
 
 import (
+	"errors"
 	"fmt"
+	"log"
+	"strings"
+	"sync"
+	"time"
+
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
-	"errors"
-	"strings"
-	"time"
-	"gorm.io/gorm"
 	"backPOS-go/internal/infrastructure/cache"
+	"gorm.io/gorm"
 )
 
 type SaleService struct {
-	saleRepo     ports.SaleRepository
-	productRepo  ports.ProductRepository
-	clientRepo   ports.ClientRepository
-	movementRepo ports.StockMovementRepository
-	creditRepo   ports.CreditPaymentRepository
+	saleRepo        ports.SaleRepository
+	productRepo     ports.ProductRepository
+	clientRepo      ports.ClientRepository
+	movementRepo    ports.StockMovementRepository
+	creditRepo      ports.CreditPaymentRepository
 	printService    *PrintService
 	telegramService *TelegramService
+	recentSales     map[string]time.Time
+	recentMu        sync.Mutex
 }
 
 func NewSaleService(sr ports.SaleRepository, pr ports.ProductRepository, cr ports.ClientRepository, mr ports.StockMovementRepository, ps *PrintService, cpr ports.CreditPaymentRepository, ts *TelegramService) *SaleService {
-	return &SaleService{saleRepo: sr, productRepo: pr, clientRepo: cr, movementRepo: mr, printService: ps, creditRepo: cpr, telegramService: ts}
+	return &SaleService{
+		saleRepo:        sr,
+		productRepo:     pr,
+		clientRepo:      cr,
+		movementRepo:    mr,
+		printService:    ps,
+		creditRepo:      cpr,
+		telegramService: ts,
+		recentSales:     make(map[string]time.Time),
+	}
 }
+
 func (s *SaleService) CreateSale(sale *models.Sale) error {
+	// ANTI-DUPLICADOS (BLINDAJE TRIPLE):
+	// 1. Verificación por ClientTxId en BD si viene del frontend
+	if sale.ClientTxId != "" {
+		rawInterface := s.saleRepo.GetDB()
+		if rawDB, ok := rawInterface.(*gorm.DB); ok {
+			var existingCount int64
+			rawDB.Model(&models.Sale{}).Where("clientTxId = ?", sale.ClientTxId).Count(&existingCount)
+			if existingCount > 0 {
+				log.Printf("[ANTI-DUPLICADOS] Venta con ClientTxId=%s ya existe en BD. Omitiendo duplicado.", sale.ClientTxId)
+				return nil
+			}
+		}
+	}
+
+	// 2. Verificación por firma detallada de productos en memoria (ventana de 5 minutos)
+	var sig string
+	if sale.ClientTxId != "" {
+		sig = sale.ClientTxId
+	} else {
+		var detailsSb strings.Builder
+		for _, d := range sale.SaleDetails {
+			detailsSb.WriteString(fmt.Sprintf("%s:%.2f;", d.Barcode, d.Quantity))
+		}
+		sig = fmt.Sprintf("%s_%.2f_%.2f_%s_%s", sale.ClientDNI, sale.AmountPaid, sale.TotalAmount, sale.PaymentMethod, detailsSb.String())
+	}
+
+	s.recentMu.Lock()
+	if s.recentSales == nil {
+		s.recentSales = make(map[string]time.Time)
+	}
+	if lastTime, exists := s.recentSales[sig]; exists {
+		if time.Since(lastTime) < 5*time.Minute {
+			s.recentMu.Unlock()
+			log.Printf("[ANTI-DUPLICADOS] Venta duplicada por firma bloqueada en memoria (%s)", sig)
+			return nil
+		}
+	}
+	s.recentSales[sig] = time.Now()
+	for k, t := range s.recentSales {
+		if time.Since(t) > 10*time.Minute {
+			delete(s.recentSales, k)
+		}
+	}
+	s.recentMu.Unlock()
+
 	var total float64
 	// 1. Obtener todos los barcodes únicos para consulta masiva
 	uniqueBarcodes := make([]string, 0)

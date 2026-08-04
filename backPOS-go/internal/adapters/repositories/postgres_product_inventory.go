@@ -409,35 +409,15 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 
 			// 3. Actualización de Precios de Venta (CON REDONDEO POS Y AUTO-MARGEN)
-			if product.PurchasePrice > 0 {
-				var targetMargin float64
-				if oldSalePrice > 0 && oldPurchasePrice > 0 {
-					targetMargin = (oldSalePrice / oldPurchasePrice) - 1
-				}
+			if entry.NewSalePrice > 0 {
+				product.SalePrice = entry.NewSalePrice
+			} else if oldSalePrice > 0 {
+				product.SalePrice = oldSalePrice
+			} else if product.PurchasePrice > 0 {
+				product.SalePrice = product.PurchasePrice * 1.20
+			}
 
-				// Si el margen anterior era válido y se trata de un ingreso de mercancía,
-				// automatizamos el precio de venta para mantener la misma ganancia y evitar saltos
-				if targetMargin > 0 && entry.AddedQuantity > 0 {
-					suggestedSalePrice := product.PurchasePrice * (1 + targetMargin)
-					
-					base := float64(int64(suggestedSalePrice) / 100 * 100)
-					remainder := float64(int64(suggestedSalePrice) % 100)
-					if remainder >= 25 {
-						product.SalePrice = base + 100
-					} else {
-						product.SalePrice = base
-					}
-				} else if entry.NewSalePrice > 0 {
-					// Fallback: usar el digitado
-					base := float64(int64(entry.NewSalePrice) / 100 * 100)
-					remainder := float64(int64(entry.NewSalePrice) % 100)
-					if remainder >= 25 {
-						product.SalePrice = base + 100
-					} else {
-						product.SalePrice = base
-					}
-				}
-
+			if product.PurchasePrice > 0 && product.SalePrice > 0 {
 				product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
 			}
 
@@ -484,6 +464,9 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			// 4. Registro de Movimiento en Kárdex
 			movementQty := entry.AddedQuantity
 			movementReason := "RECEPTION"
+			if strings.EqualFold(entry.LineType, "BONUS") {
+				movementReason = "RECEPTION_BONUS"
+			}
 			if !isEgreso {
 				movementQty = 0
 				movementReason = "PRICE_UPDATE_NO_STOCK"
@@ -510,7 +493,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			//   - RETURN:  AddedQuantity < 0 con precio > 0          → lineTotal < 0 (resta)
 			// Sin el filtro `> 0` anterior, las devoluciones reducen el monto
 			// real a pagar al proveedor al cerrar el egreso de recepción.
-			lineTotal := (entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount) * entry.AddedQuantity
+			lineTotal := (entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua) * entry.AddedQuantity
 			totalAmount += lineTotal
 			if mainSupplierID == nil && entry.SupplierID != nil {
 				mainSupplierID = entry.SupplierID
@@ -647,15 +630,18 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					ReferenceID:   receptionID,
 				}
 
-				if paymentSource == "NEQUI" {
+				srcUpper := strings.ToUpper(strings.TrimSpace(paymentSource))
+				if strings.Contains(srcUpper, "NEQUI") || strings.Contains(srcUpper, "BANCOLOMBIA") || strings.Contains(srcUpper, "TRANSFERENCIA") || strings.Contains(srcUpper, "BANCO") || strings.Contains(srcUpper, "DIGITAL") {
 					expense.NequiAmount = totalAmount
-					expense.TaxAmount = math.Ceil(totalAmount * 0.004)
-				} else if paymentSource == "DAVIPLATA" {
+					if strings.Contains(srcUpper, "NEQUI") {
+						expense.TaxAmount = math.Ceil(totalAmount * 0.004)
+					}
+				} else if strings.Contains(srcUpper, "DAVIPLATA") {
 					expense.DaviplataAmount = totalAmount
-				} else if paymentSource == "EFECTIVO" || paymentSource == "CAJA" {
-					expense.CashAmount = totalAmount
-				} else if paymentSource == "FONDO" {
+				} else if strings.Contains(srcUpper, "FONDO") || strings.Contains(srcUpper, "BOVEDA") {
 					expense.FondoAmount = totalAmount
+				} else if srcUpper != "PRESTAMO" && srcUpper != "PREST." && srcUpper != "DEUDA" {
+					expense.CashAmount = totalAmount
 				}
 
 				if err := tx.Create(&expense).Error; err != nil {
@@ -760,7 +746,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Product{}).
-		Where("\"isActive\" = ? AND COALESCE(\"isWeighted\", false) = ?", true, false).
+		Where("\"isActive\" = ?", true).
 		Select("COALESCE(SUM(quantity * \"purchasePrice\"), 0)").
 		Scan(&total).Error
 	return total, err
@@ -769,7 +755,7 @@ func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
 func (r *PostgresProductRepository) GetGlobalInventoryRetailValue() (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Product{}).
-		Where("\"isActive\" = ? AND COALESCE(\"isWeighted\", false) = ?", true, false).
+		Where("\"isActive\" = ?", true).
 		Select("COALESCE(SUM(quantity * \"salePrice\"), 0)").
 		Scan(&total).Error
 	return total, err

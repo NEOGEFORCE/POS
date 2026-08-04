@@ -566,7 +566,9 @@ export default function ReceiveInventoryPage() {
                     if (ocr.costUnit && Number(ocr.costUnit) > 0) {
                         newList[existIdx].newPurchasePrice = Number(ocr.costUnit);
                     }
-                    if (ocr.pvpSugerido && Number(ocr.pvpSugerido) > 0) {
+                    // Solo sugerimos el PVP si el producto actual no tenia precio, de lo contrario mantenemos el precio anterior
+                    // para que la interfaz sugiera el cambio y el usuario lo apruebe.
+                    if (ocr.pvpSugerido && Number(ocr.pvpSugerido) > 0 && (!newList[existIdx].newSalePrice || newList[existIdx].newSalePrice === 0)) {
                         newList[existIdx].newSalePrice = Number(ocr.pvpSugerido);
                     }
                     if (ocr.iva !== undefined) newList[existIdx].iva = Number(ocr.iva || 0);
@@ -596,12 +598,14 @@ export default function ReceiveInventoryPage() {
                             newPurchasePrice: isBonus
                                 ? 0
                                 : (Number(ocr.costUnit) > 0 ? Number(ocr.costUnit) : Number(p.purchasePrice)),
-                            newSalePrice: Number(ocr.pvpSugerido) > 0
-                                ? Number(ocr.pvpSugerido)
-                                : Number(p.salePrice),
+                            newSalePrice: Number(p.salePrice) > 0
+                                ? Number(p.salePrice)
+                                : (Number(ocr.pvpSugerido) > 0 ? Number(ocr.pvpSugerido) : 0),
                             oldPurchasePrice: Number(p.purchasePrice || 0),
                             oldSalePrice: Number(p.salePrice || 0),
-                            marginPercentage: ocr.marginUsed ? Number(ocr.marginUsed) : 20,
+                            marginPercentage: (Number(p.purchasePrice) > 0 && Number(p.salePrice) > 0) 
+                                ? (((Number(p.salePrice) / (Number(p.purchasePrice) * (1 + Number(p.iva??0)/100 + Number(p.icui??0)/100 + Number(p.ibua??0)/100))) - 1) * 100)
+                                : (Number(p.marginPercentage) > 0 ? Number(p.marginPercentage) : (ocr.marginUsed ? Number(ocr.marginUsed) : 30)),
                             entryType,
                             iva: Number(ocr.iva ?? p.iva ?? 0),
                             icui: Number(ocr.icui ?? p.icui ?? 0),
@@ -1060,6 +1064,7 @@ export default function ReceiveInventoryPage() {
             const ivaPct = Number(item.iva || 0);
             const icuiPct = Number(item.icui || 0);
             const ibuaPct = Number(item.ibua || 0);
+            const discountPct = Number(item.discount || 0);
 
             const totalUnit = basePrice 
                 * (1 + (ivaPct / 100) + (icuiPct / 100) + (ibuaPct / 100));
@@ -1084,6 +1089,7 @@ export default function ReceiveInventoryPage() {
             const ivaPct = Number(item.iva || 0);
             const icuiPct = Number(item.icui || 0);
             const ibuaPct = Number(item.ibua || 0);
+            const discountPct = Number(item.discount || 0);
 
             const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
             const effectiveQty = item.addedQuantity * quantityModifier;
@@ -1709,20 +1715,10 @@ export default function ReceiveInventoryPage() {
             <ScannerOverlay
                 isOpen={isScannerOpen}
                 onClose={() => { setIsScannerOpen(false); }}
-                errorTitle={scannedNotFoundCode ? "Producto Desconocido" : undefined}
-                errorMessage={scannedNotFoundCode ? `Codigo #${scannedNotFoundCode} no identificado.` : undefined}
-                onIgnoreError={() => {
-                    setScannedNotFoundCode('');
+                onResult={(code) => {
                     setIsScannerOpen(false);
-                    setTimeout(() => setIsScannerOpen(true), 10);
+                    handleScannerResult(code);
                 }}
-                onCreateProduct={() => {
-                    setIsProductModalOpen(true);
-                    setNewProduct(prev => ({ ...prev, barcode: scannedNotFoundCode }));
-                    setScannedNotFoundCode('');
-                    setIsScannerOpen(false);
-                }}
-                onResult={handleScannerResult}
             />
 
             <Modal isOpen={isClearConfirmOpen} onOpenChange={setIsClearConfirmOpen} backdrop="blur">

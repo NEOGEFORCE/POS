@@ -2,7 +2,7 @@
 import React from 'react';
 import { Card, CardHeader, CardBody, Chip } from "@heroui/react";
 import { AlertCircle } from "lucide-react";
-import { getStockStatus } from "@/lib/utils";
+import { calculateStockHealth } from "@/lib/utils";
 
 type StockStatus = 'CRITICAL' | 'REORDER' | 'STABLE';
 
@@ -23,7 +23,7 @@ export default function LowStockPanel({ items }: LowStockPanelProps) {
     const safeItems = (Array.isArray(items) ? items : []).map(item => ({
         ...item,
         // Forzamos el estado real basado en nuestra nueva logica frontend
-        currentStatus: getStockStatus(item.stock, item.minStock)
+        currentStatus: calculateStockHealth(item.stock, item.minStock)
     }));
 
     // Contadores reales para el titulo

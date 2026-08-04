@@ -186,7 +186,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                               ) : (
                                 <Button
                                   className="w-full h-12 bg-[#18181b] dark:bg-white text-white dark:text-black rounded-2xl font-medium uppercase tracking-widest tracking-tight text-[11px] shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all hover:scale-[1.01] active:scale-98 flex items-center justify-center gap-2 group"
-                                  onPress={() => { setSettlingId(String(debt.id)); setPaymentAmount(currentDebtAmount.toString()); }}
+                                  onPress={() => { setSettlingId(String(debt.id)); setPaymentAmount(''); }}
                                 >
                                   <HandCoins size={16} className="group-hover:rotate-12 transition-transform" />
                                   Abonar a Deuda

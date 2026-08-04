@@ -183,10 +183,16 @@ export default function PreviewModal({ isOpen, onOpenChange, title, data }: Prev
                   <FileSearch size={24} />
                 </div>
                 <div>
-                  <h2 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-zinc-50 uppercase tracking-tighter tracking-tight">
-                    Vista <span className="text-zinc-900 dark:text-zinc-100">Previa Ejecutiva</span>
-                  </h2>
-                  <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-500 uppercase tracking-[0.2em]">{title}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-lg sm:text-xl font-bold text-zinc-900 dark:text-zinc-50 tracking-tight uppercase">
+                      Vista Previa Ejecutiva &middot; <span className="text-emerald-600 dark:text-emerald-400">{title}</span>
+                    </h2>
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 font-mono border border-emerald-200 dark:border-emerald-800/40 font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                      Generado: {new Date().toLocaleString('es-CO')}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium mt-0.5">Auditoría clara e intuitiva para dirección sin jerga técnica</p>
                 </div>
               </div>
             </ModalHeader>

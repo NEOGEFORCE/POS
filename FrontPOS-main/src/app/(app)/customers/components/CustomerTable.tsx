@@ -16,7 +16,8 @@ import {
     Info,
     CreditCard,
     PlusCircle,
-    FileText
+    FileText,
+    History
 } from 'lucide-react';
 import { Customer } from '@/lib/definitions';
 
@@ -147,17 +148,14 @@ const CustomerTable = memo(({
                                 </Button>
                             </Tooltip>
                         )}
-                        <Tooltip content="REPORTE DEUDA" delay={0} placement="top-end" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-blue-500 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
-                            <Button
-                                isIconOnly
-                                size="sm"
-                                variant="flat"
-                                className="h-8 w-8 md:h-9 md:w-9 bg-blue-500/5 text-blue-500 hover:text-white hover:bg-blue-500 transition-all rounded-2xl md:rounded-2xl border border-blue-500/10 active:scale-90"
-                                onPress={() => onViewStatement(c)}
-                            >
-                                <FileText size={14} />
-                            </Button>
-                        </Tooltip>
+                        <Button
+                            size="md"
+                            onPress={() => onViewStatement(c)}
+                            className="h-11 px-6 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all flex items-center gap-2.5 border-2 border-black/10 dark:border-white/20"
+                        >
+                            <History size={18} strokeWidth={2.5} />
+                            <span className="text-[12px] tracking-[0.15em] mb-0.5">HISTORIAL</span>
+                        </Button>
                     </div>
                 );
             default:

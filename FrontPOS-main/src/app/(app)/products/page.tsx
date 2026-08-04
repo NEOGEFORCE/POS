@@ -63,14 +63,15 @@ export default function ProductsPage() {
     }, [searchTerm]);
 
     const [selectedSupplierId, setSelectedSupplierId] = useState<string>('');
+    const [stockFilter, setStockFilter] = useState<'all' | 'critical' | 'warning'>('all');
 
-    // Resetear pagina al cambiar proveedor
+    // Resetear pagina al cambiar proveedor o filtro de stock
     useEffect(() => {
         setCurrentPage(1);
-    }, [selectedSupplierId]);
+    }, [selectedSupplierId, stockFilter]);
 
     const { data: productsData, isLoading: productsLoading, mutate: mutateProducts } = useApi<any>(
-        `/products/paginated?page=${currentPage}&pageSize=${pageSize}${filter ? `&q=${filter}` : ''}${selectedSupplierId ? `&supplierId=${selectedSupplierId}` : ''}`
+        `/products/paginated?page=${currentPage}&pageSize=${pageSize}${filter ? `&q=${filter}` : ''}${selectedSupplierId ? `&supplierId=${selectedSupplierId}` : ''}${stockFilter !== 'all' ? `&stockFilter=${stockFilter}` : ''}`
     );
     const { data: categoriesData, mutate: mutateCategories } = useApi<Category[]>('/categories/all-categories');
     const { data: suppliersData, mutate: mutateSuppliers } = useApi<any[]>('/suppliers/all-suppliers');
@@ -87,7 +88,7 @@ export default function ProductsPage() {
     const { data: allProductsData, mutate: mutateAllProducts } = useApi<Product[]>(
         addDialogOpen || editDialogOpen ? '/products/all-products' : null
     );
-    const { data: statsData } = useApi<any>('/products/stats');
+    const { data: statsData, mutate: mutateStats } = useApi<any>('/products/stats');
 
     const [newProduct, setNewProduct] = useState<Omit<Product, 'id'>>({
         barcode: '', productName: '', quantity: '' as any, isWeighted: false,
@@ -126,6 +127,7 @@ export default function ProductsPage() {
                 timeout = setTimeout(() => {
                     mutateProducts();
                     mutateAllProducts();
+                    mutateStats();
                 }, 800);
             }
         });
@@ -133,7 +135,7 @@ export default function ProductsPage() {
             cleanup();
             clearTimeout(timeout);
         };
-    }, [mutateProducts, mutateAllProducts]);
+    }, [mutateProducts, mutateAllProducts, mutateStats]);
 
     useEffect(() => {
         if (addDialogOpen) {
@@ -185,6 +187,7 @@ export default function ProductsPage() {
             setNewProduct({ barcode: '', productName: '', quantity: '' as any, isWeighted: false, purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20, minStock: '' as any, packMultiplier: '' as any });
             mutateProducts();
             mutateAllProducts();
+            mutateStats();
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             if (err instanceof ApiError && err.status === 409) {
@@ -221,6 +224,7 @@ export default function ProductsPage() {
             setEditingProduct(null);
             mutateProducts();
             mutateAllProducts();
+            mutateStats();
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
@@ -243,6 +247,7 @@ export default function ProductsPage() {
             setDeleteDialogOpen(false);
             mutateProducts();
             mutateAllProducts();
+            mutateStats();
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
@@ -260,6 +265,8 @@ export default function ProductsPage() {
                 method: 'PATCH', body: JSON.stringify({ amount }), fallbackError: 'FALLO AL AJUSTAR'
             }, token!);
             mutateProducts();
+            mutateStats();
+            broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
         } finally {
@@ -269,7 +276,7 @@ export default function ProductsPage() {
                 return next;
             });
         }
-    }, [toast, mutateProducts]);
+    }, [toast, mutateProducts, mutateStats]);
 
     const handleOpenBulk = useCallback(async (product: Product) => {
         setBulkProductToOpen(product);
@@ -284,6 +291,8 @@ export default function ProductsPage() {
             toast({ variant: 'success', title: 'PACA ABIERTA', description: 'STOCK AJUSTADO.' });
             mutateProducts();
             mutateAllProducts();
+            mutateStats();
+            broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
             toast({ variant: 'destructive', title: 'ERROR', description: err.message });
         } finally {
@@ -456,8 +465,8 @@ export default function ProductsPage() {
                         <Autocomplete
                             placeholder="FILTRAR POR PROVEEDOR..."
                             aria-label="Filtrar por proveedor"
-                            selectedKey={selectedSupplierId}
-                            onSelectionChange={(key) => setSelectedSupplierId(key as string)}
+                            selectedKey={selectedSupplierId || null}
+                            onSelectionChange={(key) => setSelectedSupplierId(key ? String(key) : '')}
                             startContent={<ShoppingBag size={14} className="text-blue-500" />}
                             isClearable
                             onClear={() => setSelectedSupplierId('')}
@@ -486,8 +495,14 @@ export default function ProductsPage() {
 
                     <Button
                         variant="flat"
-                        onPress={() => setAlertsDialogOpen(true)}
-                        className={`h-11 w-full md:w-auto px-6 rounded-2xl font-medium text-[10px] uppercase tracking-widest tracking-tight border transition-all ${stats.criticalStock > 0 ? 'bg-rose-500/10 text-rose-500 border-rose-500/20' : 'bg-gray-50 dark:bg-[#18181b] text-gray-400 border-gray-200'}`}
+                        onPress={() => setStockFilter(prev => prev === 'critical' ? 'all' : 'critical')}
+                        className={`h-11 w-full md:w-auto px-6 rounded-2xl font-medium text-[10px] uppercase tracking-widest tracking-tight border transition-all ${
+                            stockFilter === 'critical' 
+                              ? 'bg-rose-500 text-white border-rose-600 shadow-lg shadow-rose-500/30' 
+                              : stats.criticalStock > 0 
+                              ? 'bg-rose-500/10 text-rose-500 border-rose-500/30 hover:bg-rose-500/20' 
+                              : 'bg-gray-50 dark:bg-[#18181b] text-gray-400 border-gray-200'
+                        }`}
                     >
                         <AlertTriangle size={16} className="mr-2" />
                         {stats.criticalStock > 0 ? `${stats.criticalStock} critico${stats.criticalStock > 1 ? 's' : ''}` : 'Sin alertas'}
@@ -503,7 +518,34 @@ export default function ProductsPage() {
                     </div>
                 )}
                 <div className="flex flex-col flex-1 min-h-0 overflow-hidden gap-2">
-                    <ProductStats {...stats} />
+                    <ProductStats {...stats} activeFilter={stockFilter} onSelectFilter={setStockFilter} />
+                    
+                    {stockFilter !== 'all' && (
+                        <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900/90 dark:bg-zinc-900 border border-white/10 rounded-xl text-xs shrink-0 animate-in fade-in slide-in-from-top-1 duration-200">
+                            <div className="flex items-center gap-2">
+                                {stockFilter === 'critical' ? (
+                                    <span className="flex items-center gap-1.5 text-rose-400 font-bold uppercase text-[11px] tracking-wider">
+                                        <AlertTriangle size={14} className="animate-bounce" />
+                                        FILTRO ACTIVO: STOCK CRÍTICO ({totalItems} REFERENCIAS)
+                                    </span>
+                                ) : (
+                                    <span className="flex items-center gap-1.5 text-amber-400 font-bold uppercase text-[11px] tracking-wider">
+                                        <AlertTriangle size={14} className="animate-bounce" />
+                                        FILTRO ACTIVO: BAJO STOCK ({totalItems} REFERENCIAS)
+                                    </span>
+                                )}
+                            </div>
+                            <Button
+                                size="sm"
+                                variant="flat"
+                                onPress={() => setStockFilter('all')}
+                                className="h-7 px-3 bg-white/10 hover:bg-white/20 text-white font-semibold text-[10px] uppercase rounded-lg border border-white/10"
+                            >
+                                ✕ VER TODO EL CATÁLOGO
+                            </Button>
+                        </div>
+                    )}
+
                     <ProductTable
                         products={products}
                         currentPage={currentPage}

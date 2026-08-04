@@ -18,6 +18,10 @@ func (r *PostgresCreditPaymentRepository) Save(payment *models.CreditPayment) er
 	return r.db.Omit("Client", "Employee").Create(payment).Error
 }
 
+func (r *PostgresCreditPaymentRepository) Update(payment *models.CreditPayment) error {
+	return r.db.Omit("Client", "Employee").Save(payment).Error
+}
+
 func (r *PostgresCreditPaymentRepository) GetByClient(dni string) ([]models.CreditPayment, error) {
 	var payments []models.CreditPayment
 	err := r.db.Where("\"clientDni\" = ?", dni).Order("\"paymentDate\" desc").Find(&payments).Error

@@ -6,7 +6,7 @@ import { requestSessionRecovery } from '@/lib/session-recovery';
 import { API_URL } from '@/lib/constants';
 
 const fetcher = async (url: string): Promise<any> => {
-  const token = Cookies.get('org-pos-token');
+  const token = Cookies.get('org-pos-token') || (typeof window !== 'undefined' ? localStorage.getItem('org-pos-token') : null);
   const res = await fetch(`${API_URL}${url}`, {
     headers: {
       'Authorization': `Bearer ${token}`,
@@ -16,33 +16,14 @@ const fetcher = async (url: string): Promise<any> => {
   });
 
   if (res.status === 401) {
-    // En lugar de forzar logout, intentar recuperar la sesión
-    try {
-      const newToken = await requestSessionRecovery();
-      // Re-autenticación exitosa → reintentar la llamada
-      const retryRes = await fetch(`${API_URL}${url}`, {
-        headers: {
-          'Authorization': `Bearer ${newToken}`,
-          'Content-Type': 'application/json',
-        },
-        cache: 'no-store',
-      });
-      if (!retryRes.ok) {
-        const errorMsg = await extractApiError(retryRes, 'Error al cargar datos');
-        const error = new Error(errorMsg);
-        (error as any).status = retryRes.status;
-        throw error;
-      }
-      return retryRes.json();
-    } catch (recoveryError: any) {
-      // El usuario canceló la re-autenticación → ir al login
-      if (recoveryError?.message !== 'Error al cargar datos') {
-        Cookies.remove('org-pos-token');
-        Cookies.remove('org-pos-user');
-        window.location.href = '/login?expired=true';
-      }
-      throw recoveryError;
+    if (typeof window !== 'undefined') {
+      Cookies.remove('org-pos-token');
+      Cookies.remove('org-pos-user');
+      window.location.href = '/login?expired=true';
     }
+    const error = new Error('Sesión expirada');
+    (error as any).status = 401;
+    throw error;
   }
 
   if (!res.ok) {

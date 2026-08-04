@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useRef } from 'react';
 import { 
@@ -36,6 +36,7 @@ const SaleRow = React.memo(({
     style, 
     onPreview, 
     onEdit,
+    onAddItems,
     onDelete,
     isAdmin
 }: { 
@@ -102,11 +103,13 @@ const SaleRow = React.memo(({
                         <Eye size={20} strokeWidth={2.5} />
                     </Button>
                 </Tooltip>
-                <Tooltip content="AÃ‘ADIR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
-                    <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-indigo-500 dark:text-zinc-500 dark:hover:text-indigo-400 transition-colors p-2" onPress={() => onAddItems(sale)}>
-                        <PackagePlus size={20} strokeWidth={2.5} />
-                    </Button>
-                </Tooltip>
+                {isAdmin && (
+                    <Tooltip content="AÑADIR/QUITAR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                        <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-indigo-500 dark:text-zinc-500 dark:hover:text-indigo-400 transition-colors p-2" onPress={() => onAddItems(sale)}>
+                            <PackagePlus size={20} strokeWidth={2.5} />
+                        </Button>
+                    </Tooltip>
+                )}
                 <Tooltip content="CORREGIR REGISTRO" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                     <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-amber-500 dark:text-zinc-500 dark:hover:text-amber-400 transition-colors p-2" onPress={() => onEdit(sale)}>
                         <Edit3 size={20} strokeWidth={2.5} />

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 9002",
+    "dev": "next dev --turbopack -p 9002 -H 0.0.0.0",
     "dev:mobile": "next dev --turbopack -p 9002 -H 0.0.0.0",
     "dev:plus": "next dev --turbopack -p 9002 -H 0.0.0.0 --experimental-https",
     "tunnel": "npx localtunnel --port 9002",
@@ -73,6 +73,7 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "postcss": "^8",
+    "puppeteer": "^25.1.0",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }

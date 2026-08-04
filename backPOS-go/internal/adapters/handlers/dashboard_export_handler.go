@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -88,6 +89,40 @@ func (h *DashboardExportHandler) ExportReport(c *gin.Context) {
 		strings.ToLower(format),
 	)
 
+	// INTERCEPT single-closure or box-closure with ID for custom PDF template
+	if (reportType == "single-closure" || reportType == "box-closure") && (c.Query("closure_id") != "" || c.Query("id") != "") && format == "PDF" {
+		closureIDStr := c.Query("closure_id")
+		if closureIDStr == "" {
+			closureIDStr = c.Query("id")
+		}
+		closureID, err := strconv.ParseUint(closureIDStr, 10, 64)
+		if err == nil && closureID > 0 {
+			var closure models.CashierClosure
+			if err := h.db.First(&closure, closureID).Error; err == nil {
+				if closure.ExpensesDetail != "" {
+					var snapshotExps []models.Expense
+					if err := json.Unmarshal([]byte(closure.ExpensesDetail), &snapshotExps); err == nil && len(snapshotExps) > 0 {
+						closure.Expenses = snapshotExps
+					}
+				}
+				pdfBuf := GenerateClosurePDF(closure, false)
+
+				if telegramFlag {
+					tgMsg := FormatTelegramClosureMessage(closure, false)
+					go h.telegramService.SendMarkdownAlert(tgMsg)
+					_ = h.telegramService.SendDocument(pdfBuf, filename, fmt.Sprintf("📄 Reporte Cierre #%d (PDF)", closure.ID))
+				}
+
+				c.Header("Content-Description", "File Transfer")
+				c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+				c.Header("Content-Type", "application/pdf")
+				c.Header("Cache-Control", "no-store")
+				c.Data(http.StatusOK, "application/pdf", pdfBuf.Bytes())
+				return
+			}
+		}
+	}
+
 	// INTERCEPT cashflow-detailed for custom PDF template
 	if reportType == "cashflow-detailed" && format == "PDF" {
 		closures, expenses, payments, err := h.dashService.GetCashFlowDetailedRaw(from, to)
@@ -107,6 +142,37 @@ func (h *DashboardExportHandler) ExportReport(c *gin.Context) {
 			go h.telegramService.SendMarkdownAlert(msgStr)
 
 			_ = h.telegramService.SendDocument(pdfBuf, filename, fmt.Sprintf("📊 Reporte Consolidado\n📅 %s - %s", from.Format("02/01/2006"), to.Format("02/01/2006")))
+		}
+
+		c.Header("Content-Description", "File Transfer")
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		c.Header("Content-Type", "application/pdf")
+		c.Header("Cache-Control", "no-store")
+		c.Data(http.StatusOK, "application/pdf", pdfBuf.Bytes())
+		return
+	}
+
+	// INTERCEPT profitability for custom PDF template
+	if reportType == "profitability" && format == "PDF" {
+		target := 0.17
+		if t := c.Query("target"); t != "" {
+			if v, err := strconv.ParseFloat(t, 64); err == nil {
+				target = v
+			}
+		}
+		rep, err := h.exportService.GetProfitabilityReport(from, to, target)
+		if err != nil {
+			SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error obteniendo datos de rentabilidad", err)
+			return
+		}
+		pdfBuf, err := h.exportService.GenerateProfitabilityPDF(rep)
+		if err != nil {
+			SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error construyendo PDF de rentabilidad", err)
+			return
+		}
+
+		if telegramFlag {
+			_ = h.telegramService.SendDocument(pdfBuf, filename, fmt.Sprintf("📊 Reporte de Rentabilidad\n📅 %s - %s", from.Format("02/01/2006"), to.Format("02/01/2006")))
 		}
 
 		c.Header("Content-Description", "File Transfer")
@@ -585,15 +651,70 @@ func fmtPct(v float64) string {
 
 func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayload {
 	p := services.ReportPayload{
-		Title:    "Rentabilidad y Margen Bruto",
-		Subtitle: fmt.Sprintf("AnÃ¡lisis de margen vs objetivo %.1f%%", r.TargetMargin*100),
+		Title:    "REPORTE GENERAL DE RENTABILIDAD Y FINANZAS",
+		Subtitle: fmt.Sprintf("Análisis Financiero Completo (%s al %s)", r.From.Format("02/01/2006"), r.To.Format("02/01/2006")),
 		From:     r.From, To: r.To,
-		Headers: []string{"Producto", "Unidades", "Ventas", "Costo", "Utilidad", "Margen", "Cumple"},
+		Headers: []string{"Concepto / Producto", "Detalle / Cant.", "Ventas / Ingreso", "Costo", "Ganancia / Saldo", "Margen", "Estado"},
 	}
+
+	// 1. Resumen Financiero Ejecutivo
+	p.Rows = append(p.Rows, []string{"=== RESUMEN EJECUTIVO FINANCIERO ===", "", "", "", "", "", ""})
+	p.Rows = append(p.Rows, []string{"VENTAS TOTALES", "-", fmtMoney(r.TotalSales), "-", "-", "-", "INGRESOS"})
+	p.Rows = append(p.Rows, []string{"COSTO DE MERCANCÍA (COGS)", "-", "-", fmtMoney(r.TotalCost), "-", "-", "COSTOS"})
+	p.Rows = append(p.Rows, []string{"UTILIDAD BRUTA (Ventas - Costo)", "-", "-", "-", fmtMoney(r.GrossProfit), fmtPct(r.OverallMargin), "GANANCIA BRUTA"})
+	p.Rows = append(p.Rows, []string{"GASTOS OPERATIVOS DEL LOCAL", "-", "-", "-", fmtMoney(r.TotalOpExpenses), "-", "GASTOS LOCAL"})
+	p.Rows = append(p.Rows, []string{"GANANCIA LIBRE FINAL (Utilidad Neta)", "-", "-", "-", fmtMoney(r.NetProfit), fmtPct(r.NetMargin), "GANANCIA LIBRE"})
+
+	// 2. Desglose de Gastos Operativos (Sin Proveedores)
+	p.Rows = append(p.Rows, []string{"=== GASTOS DEL LOCAL (SIN PROVEEDORES) ===", "", "", "", "", "", ""})
+	p.Rows = append(p.Rows, []string{"Servicios Públicos (Luz/Agua/Gas/Internet)", "-", "-", "-", fmtMoney(r.PublicServicesExp), "-", "SERVICIOS"})
+	p.Rows = append(p.Rows, []string{"Arriendo de Local", "-", "-", "-", fmtMoney(r.RentExp), "-", "ARRIENDO"})
+	p.Rows = append(p.Rows, []string{"Imprevistos, Arreglos y Daños", "-", "-", "-", fmtMoney(r.MaintenanceExp), "-", "REPARACIONES"})
+	p.Rows = append(p.Rows, []string{"Sueldos y Nómina", "-", "-", "-", fmtMoney(r.PayrollExp), "-", "SUELDOS"})
+	if r.OtherOpExp > 0 {
+		p.Rows = append(p.Rows, []string{"Otros Gastos Varios", "-", "-", "-", fmtMoney(r.OtherOpExp), "-", "OTROS GASTOS"})
+	}
+
+	// 3. Entradas de Dinero y Dinero Prestado (Fiados)
+	p.Rows = append(p.Rows, []string{"=== FLUJO DE CAJA Y DINERO PRESTADO ===", "", "", "", "", "", ""})
+	p.Rows = append(p.Rows, []string{"Ventas en Efectivo", "-", fmtMoney(r.CashSales), "-", "-", "-", "EFECTIVO"})
+	p.Rows = append(p.Rows, []string{"Abonos en Efectivo de Clientes", "-", fmtMoney(r.CreditPaymentsCash), "-", "-", "-", "ABONOS CAJA"})
+	p.Rows = append(p.Rows, []string{"TOTAL EFECTIVO QUE ENTRÓ A CAJA", "-", fmtMoney(r.TotalCashInflows), "-", "-", "-", "EFECTIVO TOTAL"})
+	p.Rows = append(p.Rows, []string{"Nequi / Daviplata / Transferencias", "-", fmtMoney(r.TransferSales), "-", "-", "-", "TRANSFERENCIAS"})
+	p.Rows = append(p.Rows, []string{"Ventas Fiadas a Crédito (En el mes)", "-", fmtMoney(r.CreditSales), "-", "-", "-", "FIADOS MES"})
+	p.Rows = append(p.Rows, []string{"TOTAL CARTERA PENDIENTE POR COBRAR", fmt.Sprintf("%d clientes", len(r.CreditReceivables)), fmtMoney(r.TotalCreditReceivable), "-", "-", "-", "POR COBRAR"})
+	p.Rows = append(p.Rows, []string{"TOTAL DEUDAS DEL NEGOCIO POR PAGAR", fmt.Sprintf("%d deudas", len(r.DebtsPayable)), fmtMoney(r.TotalDebtsPayable), "-", "-", "-", "POR PAGAR"})
+
+	// 4. Detalle de Clientes Deudores (Fiados Pendientes)
+	if len(r.CreditReceivables) > 0 {
+		p.Rows = append(p.Rows, []string{"=== DETALLE DE QUIÉN DEBE (FIADOS PENDIENTES) ===", "", "", "", "", "", ""})
+		for _, cr := range r.CreditReceivables {
+			p.Rows = append(p.Rows, []string{
+				cr.ClientName,
+				fmt.Sprintf("DNI: %s | Tel: %s", cr.ClientDNI, cr.Phone),
+				"-", "-", fmtMoney(cr.Balance), "-", "DEBE FIADO",
+			})
+		}
+	}
+
+	// 5. Detalle de Deudas del Negocio
+	if len(r.DebtsPayable) > 0 {
+		p.Rows = append(p.Rows, []string{"=== DETALLE DE A QUIÉN SE LE DEBE (DEUDAS NEGOCIO) ===", "", "", "", "", "", ""})
+		for _, db := range r.DebtsPayable {
+			p.Rows = append(p.Rows, []string{
+				db.Concept,
+				db.ProviderName,
+				"-", "-", fmtMoney(db.Balance), "-", db.Status,
+			})
+		}
+	}
+
+	// 6. Productos Vendidos
+	p.Rows = append(p.Rows, []string{"=== VENTAS Y GANANCIA POR PRODUCTO ===", "", "", "", "", "", ""})
 	for _, row := range r.Rows {
-		check := "NO"
-		if row.MeetsTarget {
-			check = "OK"
+		check := "OK"
+		if !row.MeetsTarget {
+			check = "BAJO"
 		}
 		p.Rows = append(p.Rows, []string{
 			row.ProductName,
@@ -605,17 +726,20 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 			check,
 		})
 	}
+
 	p.Totals = []string{
-		"TOTAL", "",
+		"TOTALES VENTAS",
+		"",
 		fmtMoney(r.TotalSales),
 		fmtMoney(r.TotalCost),
 		fmtMoney(r.GrossProfit),
 		fmtPct(r.OverallMargin),
 		"",
 	}
+
 	p.Footer = fmt.Sprintf(
-		"Egresos operativos: %s â€¢ Utilidad neta: %s â€¢ Margen neto: %s",
-		fmtMoney(r.OpExpenses), fmtMoney(r.NetProfit), fmtPct(r.NetMargin),
+		"Efectivo Entrado: %s | Gastos Local: %s | Cartera por Cobrar: %s | GANANCIA LIBRE FINAL: %s",
+		fmtMoney(r.TotalCashInflows), fmtMoney(r.TotalOpExpenses), fmtMoney(r.TotalCreditReceivable), fmtMoney(r.NetProfit),
 	)
 	return p
 }

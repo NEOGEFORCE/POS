@@ -210,11 +210,68 @@ func (h *ClientHandler) DeleteCreditPayment(c *gin.Context) {
 		return
 	}
 
+	statementPayment, _ := h.service.GetCreditPaymentByID(uint(id))
+
 	err = h.service.DeleteCreditPayment(uint(id), h.saleRepo)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error al eliminar abono", err)
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Abono eliminado correctamente"})
+	c.JSON(http.StatusOK, gin.H{"message": "Abono eliminado correctamente y saldo recalculado"})
+
+	go func() {
+		if statementPayment != nil {
+			sse.GetSSEService().BroadcastCustomerUpdate(statementPayment.ClientDNI)
+		}
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
+
+	dniEmployee, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), fmt.Sprintf("%v", name), "DELETE_CREDIT_PAYMENT", "FINANCES", 
+		fmt.Sprintf("Anulación de abono #%d", id),
+		fmt.Sprintf("Se anuló el abono #%d", id),
+		"", c.ClientIP(), c.Request.UserAgent(), true)
+}
+
+type UpdatePaymentMethodReq struct {
+	PaymentMethod string `json:"paymentMethod" binding:"required"`
+}
+
+func (h *ClientHandler) UpdateCreditPaymentMethod(c *gin.Context) {
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido", err)
+		return
+	}
+
+	var req UpdatePaymentMethodReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Método de pago inválido", err)
+		return
+	}
+
+	payment, err := h.service.UpdateCreditPaymentMethod(uint(id), req.PaymentMethod)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error al actualizar método de pago del abono", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Canal de pago actualizado correctamente",
+		"payment": payment,
+	})
+
+	go func() {
+		sse.GetSSEService().BroadcastCustomerUpdate(payment.ClientDNI)
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
+
+	dniEmployee, _ := c.Get("dni")
+	name, _ := c.Get("userName")
+	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), fmt.Sprintf("%v", name), "UPDATE_CREDIT_PAYMENT_METHOD", "FINANCES", 
+		fmt.Sprintf("Cambio de canal en abono #%d", id),
+		fmt.Sprintf("Se cambió el canal del abono #%d a %s", id, req.PaymentMethod),
+		"", c.ClientIP(), c.Request.UserAgent(), true)
 }

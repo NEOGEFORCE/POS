@@ -70,7 +70,7 @@ const ProductTable = memo(({
     }, []);
 
     const renderCell = useCallback((product: Product, columnKey: React.Key) => {
-        const minStock = product.minStock || 1;
+        const minStock = product.minStock ?? 0;
         const quantity = product.quantity;
         const health = calculateStockHealth(quantity, minStock);
 
@@ -248,7 +248,7 @@ const ProductTable = memo(({
                     <div className="overflow-y-auto scroll-smooth custom-scrollbar p-2 flex flex-col gap-2 bg-gray-50/50 dark:bg-[#18181b] flex-1 min-h-0 h-full">
                         {products.length > 0 ? (
                             products.map((p) => {
-                                const minStock = p.minStock || 1;
+                                const minStock = p.minStock ?? 0;
                                 const health = calculateStockHealth(p.quantity, minStock);
                                 
                                 const isCritical = health === 'CRITICAL';

@@ -126,7 +126,28 @@ func (r *PostgresExpenseRepository) Count() (int64, error) {
 }
 
 func (r *PostgresExpenseRepository) Update(id uint, expense *models.Expense) error {
-	err := r.db.Model(&models.Expense{}).Where("id = ?", id).Updates(expense).Error
+	// Usamos un mapa explícito para que los campos en cero también se actualicen.
+	// Con Updates(struct) GORM ignora los campos con valor cero, causando que los
+	// canales anteriores (ej. cashAmount) no se limpien al cambiar a otro canal.
+	updates := map[string]interface{}{
+		"description":    expense.Description,
+		"amount":         expense.Amount,
+		"taxAmount":      expense.TaxAmount,
+		"date":           expense.Date,
+		"paymentSource":  expense.PaymentSource,
+		"category":       expense.Category,
+		"status":         expense.Status,
+		"supplierID":     expense.SupplierID,
+		"lenderName":     expense.LenderName,
+		// Montos por canal — se fuerzan a cero si no aplican
+		"cashAmount":     expense.CashAmount,
+		"nequiAmount":    expense.NequiAmount,
+		"daviplataAmount": expense.DaviplataAmount,
+		"fondoAmount":    expense.FondoAmount,
+		"paidAmount":     expense.PaidAmount,
+		"remainingAmount": expense.RemainingAmount,
+	}
+	err := r.db.Model(&models.Expense{}).Where("id = ?", id).Updates(updates).Error
 	if err == nil {
 		r.invalidateDashboardCache()
 	}
@@ -173,7 +194,7 @@ func (r *PostgresExpenseRepository) GetPendingDebtsSummary() (float64, int64, er
 		Count  int64
 	}
 	err := r.db.Model(&models.Expense{}).
-		Where("(UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) != 'PAID'", "PENDING").
+		Where("(UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) NOT IN ('PAID', 'SETTLED')", "PENDING").
 		Select("COALESCE(SUM(CASE WHEN remaining_amount > 0 THEN remaining_amount ELSE amount END + tax_amount), 0) as amount, COUNT(*) as count").
 		Scan(&result).Error
 	return result.Amount, result.Count, err
@@ -181,9 +202,9 @@ func (r *PostgresExpenseRepository) GetPendingDebtsSummary() (float64, int64, er
 
 func (r *PostgresExpenseRepository) GetExpensesByStatus(status string) ([]models.Expense, error) {
 	expenses := []models.Expense{}
-	// If searching for PENDING, also include PRESTAMO/PREST. sources but EXCLUDE already PAID ones
+	// If searching for PENDING, also include PRESTAMO/PREST. sources but EXCLUDE already PAID or SETTLED ones
 	if strings.ToUpper(status) == "PENDING" {
-		err := r.db.Where("(UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) != 'PAID'", "PENDING").
+		err := r.db.Where("(UPPER(status) = ? OR UPPER(\"paymentSource\") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) NOT IN ('PAID', 'SETTLED')", "PENDING").
 			Order("date DESC").Find(&expenses).Error
 		return expenses, err
 	}

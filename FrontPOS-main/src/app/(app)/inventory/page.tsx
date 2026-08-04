@@ -4,18 +4,19 @@ import { Card, CardBody, Button, Badge, Chip, Skeleton, Modal, ModalContent, Mod
 import { 
   Package, Truck, ShoppingBag, ArrowUpCircle, 
   Search, ShieldCheck, Sparkles, BarChart3, ChevronRight,
-  AlertTriangle, TrendingDown, DollarSign, ArrowRight, Send, Plus, Calendar, Building2, X
+  AlertTriangle, TrendingDown, DollarSign, ArrowRight, Send, Plus, Calendar, Building2, X, CheckCircle2
 } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useApi } from "@/hooks/use-api";
 import { Product } from "@/lib/definitions";
-import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime, formatPrice } from "@/lib/utils";
+import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime, formatPrice, sanitizeProductPayload, normalizeText, calculateStockHealth } from "@/lib/utils";
 import Cookies from 'js-cookie';
 import React, { useMemo, useState, useEffect } from "react";
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { useToast } from "@/hooks/use-toast";
 import CreateScheduledDeliveryModal from "./components/CreateScheduledDeliveryModal";
+import InventoryAlertsModal from "@/app/(app)/products/components/InventoryAlertsModal";
 import dynamic from "next/dynamic";
 import { apiFetch, ApiError } from '@/lib/api-error';
 
@@ -61,6 +62,8 @@ export default function InventoryHub() {
 
   const { toast } = useToast();
   const [editingStockProduct, setEditingStockProduct] = useState<Product | null>(null);
+  const [alertsDialogOpen, setAlertsDialogOpen] = useState(false);
+  const [alertsFilter, setAlertsFilter] = useState<'CRITICAL' | 'WARNING'>('CRITICAL');
   const { data: categoriesData, mutate: mutateCategories } = useApi<any[]>('/categories/all');
   const { data: suppliersData, mutate: mutateSuppliers } = useApi<any[]>('/suppliers/all');
   
@@ -68,7 +71,12 @@ export default function InventoryHub() {
     if (!editingStockProduct) return;
     const token = Cookies.get('org-pos-token');
     try {
-        const payload = { ...editingStockProduct };
+        const payloadToSanitize = { 
+            ...editingStockProduct,
+            productName: normalizeText(editingStockProduct.productName),
+            barcode: normalizeText(editingStockProduct.barcode),
+        };
+        const payload = sanitizeProductPayload(payloadToSanitize);
         const urlBarcode = encodeURIComponent(String(editingStockProduct.barcode).trim());
 
         await apiFetch(`/products/update-products/${urlBarcode}`, {
@@ -140,7 +148,17 @@ export default function InventoryHub() {
   // (confirmed_orders + purchase_orders + expected_orders unificados).
   // Filtramos por fecha en el cliente para la vista de calendario.
   const { data: allOrdersData, isLoading: loadingOrders, mutate: mutateOrders } = useApi<ExpectedOrder[]>(`/inventory/orders`);
-  const { data: allExpensesData } = useApi<any[]>("/expenses/list");
+  const { data: allExpensesData, mutate: mutateExpenses } = useApi<any[]>("/expenses/list");
+
+  useEffect(() => {
+    const cleanup = setupSyncListener((event) => {
+      if (event === 'EXPENSE_UPDATE' || event === 'ORDER_UPDATE' || event === 'INVENTORY_UPDATE') {
+        mutateOrders();
+        mutateExpenses();
+      }
+    });
+    return cleanup;
+  }, [mutateOrders, mutateExpenses]);
 
   useEffect(() => {
     console.log("Datos del Fetch Dashboard (unified):", allOrdersData);
@@ -148,56 +166,71 @@ export default function InventoryHub() {
   }, [allOrdersData, bogotaDateStr]);
 
   // Filtro local: mostrar los pedidos cuya expectedDate sea menor o igual al dia
-  // seleccionado y que NO esten ya completados/recibidos/descartados. Esto asegura
-  // que no se pierdan pedidos pendientes/atrasados de días anteriores.
+  // seleccionado y que NO esten ya completados/recibidos/descartados/pagados por egreso.
   const expectedOrders = useMemo(() => {
     const closedStatuses = new Set([
-      'RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED',
+      'RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED', 'PAID',
     ]);
-    
-    // Mapear fechas de egresos por proveedor para saber si ya se pago
-    const supplierExpenseDates = new Map<number, string[]>();
-    if (allExpensesData) {
-      allExpensesData.forEach(e => {
-        if (e.category === 'Proveedores' && e.supplierId) {
-          // Usamos formato local para evitar brincos de fecha por UTC
-          const expenseDate = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
-          const arr = supplierExpenseDates.get(e.supplierId) || [];
-          arr.push(expenseDate);
-          supplierExpenseDates.set(e.supplierId, arr);
-        }
-      });
-    }
 
     return (allOrdersData || []).filter(o => {
       if (!o.expectedDate) return false;
-      // Comparar solo YYYY-MM-DD (ignorar hora y timezone del string ISO)
       const orderDate = o.expectedDate.split('T')[0];
       
       // Mostrar pedidos de la fecha seleccionada y atrasados que no se han cerrado
       if (orderDate > bogotaDateStr) return false;
 
-      // Excluir pedidos ya cerrados (case-insensitive — el backend mezcla
-      // 'PENDING' uppercase de purchase_orders con 'pending' lowercase de
-      // confirmed_orders).
       const status = (o.status || '').toUpperCase();
       if (closedStatuses.has(status)) return false;
       
-      // Excluir si ya se pagó el egreso (fecha de egreso >= fecha esperada del pedido)
-      if (o.supplierId) {
-          const expenseDates = supplierExpenseDates.get(o.supplierId);
-          if (expenseDates) {
-              // Hay un pago el mismo dia del pedido o posterior
-              const hasPaidAfterOrder = expenseDates.some((ed: string) => ed >= orderDate);
-              if (hasPaidAfterOrder) {
-                  return false;
-              }
+      // SI YA SE REGISTRÓ UN EGRESO ESPECÍFICO PARA ESTE PROVEEDOR/PEDIDO EN ESTA FECHA: SE EXCLUYE DE ENTREGAS PROGRAMADAS
+      if (Array.isArray(allExpensesData) && allExpensesData.length > 0) {
+        const orderDateStr = new Date(`${orderDate}T12:00:00`).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+        const oSupplierId = o.supplierId ? Number(o.supplierId) : null;
+        const oSupplierNameNorm = o.supplierName ? normalizeText(o.supplierName) : '';
+
+        const hasMatchingExpense = allExpensesData.some((e: any) => {
+          if (!e.date) return false;
+          const expDateStr = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+
+          // La fecha del egreso debe coincidir con la fecha del pedido o la fecha de hoy
+          if (expDateStr !== orderDateStr && expDateStr !== bogotaDateStr) {
+            return false;
           }
+
+          const catUpper = (e.category || '').toUpperCase();
+          const isSupplierExp = catUpper.includes('PROVEEDOR') || catUpper.includes('COMPRA') || Boolean(e.supplierId) || Boolean(e.supplier_id);
+          if (!isSupplierExp) return false;
+
+          // 1. Coincidencia directa por ID de Proveedor
+          const eSupplierId = e.supplierId ? Number(e.supplierId) : (e.supplier_id ? Number(e.supplier_id) : null);
+          if (oSupplierId && eSupplierId && oSupplierId === eSupplierId) {
+            return true;
+          }
+
+          // 2. Coincidencia por Nombre de Proveedor o Descripción del Egreso
+          if (oSupplierNameNorm.length >= 3) {
+            const eSupplierNameNorm = e.supplierName ? normalizeText(e.supplierName) : (e.Supplier?.name ? normalizeText(e.Supplier.name) : '');
+            if (eSupplierNameNorm && (eSupplierNameNorm === oSupplierNameNorm || eSupplierNameNorm.includes(oSupplierNameNorm) || oSupplierNameNorm.includes(eSupplierNameNorm))) {
+              return true;
+            }
+
+            const eDescNorm = e.description ? normalizeText(e.description) : (e.concept ? normalizeText(e.concept) : '');
+            if (eDescNorm && eDescNorm.includes(oSupplierNameNorm)) {
+              return true;
+            }
+          }
+
+          return false;
+        });
+
+        if (hasMatchingExpense) {
+          return false;
+        }
       }
-      
+
       return true;
     });
-  }, [allOrdersData, bogotaDateStr, allExpensesData]);
+  }, [allOrdersData, allExpensesData, bogotaDateStr]);
 
   // Enviar fila a Telegram
   const sendToTelegram = async () => {
@@ -248,6 +281,25 @@ export default function InventoryHub() {
     }
   };
 
+  const handleMarkOrderAsReceived = async (id: number | string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      const token = Cookies.get('org-pos-token');
+      const baseUrl = process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api';
+      const res = await fetch(`${baseUrl}/inventory/receive/pending/${id}/mark-received`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Error al marcar pedido como recibido');
+      toast({ variant: "success", title: "¡Pedido Recibido!", description: "El pedido ha sido marcado como YA LLEGÓ." });
+      setSelectedOrderDetail(null);
+      mutateOrders();
+      broadcastRevalidate('INVENTORY_UPDATE');
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Error", description: err.message || "Fallo al actualizar pedido" });
+    }
+  };
+
   // Registro de preventa ahora se maneja en el componente modal
   const handleSuccessPreventa = () => {
     mutateOrders();
@@ -279,6 +331,7 @@ export default function InventoryHub() {
     let totalCostValue = 0;
     let totalSaleValue = 0;
     const criticalItems: Product[] = [];
+    const warningItems: Product[] = [];
     let healthyCount = 0;
 
     products.forEach((p) => {
@@ -297,8 +350,11 @@ export default function InventoryHub() {
       totalCostValue += purchasePrice * quantity;
       totalSaleValue += salePrice * quantity;
 
-      if (quantity <= minStock) {
+      const status = calculateStockHealth(quantity, minStock);
+      if (status === 'CRITICAL') {
         criticalItems.push(p);
+      } else if (status === 'WARNING') {
+        warningItems.push(p);
       } else {
         healthyCount++;
       }
@@ -313,6 +369,8 @@ export default function InventoryHub() {
       totalSaleValue: Math.round(totalSaleValue),
       totalItems: products.length,
       criticalItems: criticalItems.slice(0, 8), // Top 8 criticos
+      allCriticalItems: criticalItems,
+      allWarningItems: warningItems,
       healthPercentage
     };
   }, [products]);
@@ -430,7 +488,14 @@ export default function InventoryHub() {
                 </Card>
 
                 {/* Salud del Stock */}
-                <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                <Card 
+                    isPressable 
+                    onPress={() => {
+                        setAlertsFilter('WARNING');
+                        setAlertsDialogOpen(true);
+                    }}
+                    className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-[1.02] transition-transform cursor-pointer"
+                >
                     <CardBody className="p-3 flex flex-row items-center gap-2">
                         <div className={`h-8 w-8 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3 ${stats.healthPercentage >= 80 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' : stats.healthPercentage >= 50 ? 'bg-amber-500' : 'bg-rose-500'} text-white`}>
                             <ShieldCheck size={16} />
@@ -449,7 +514,14 @@ export default function InventoryHub() {
                 </Card>
                 
                 {/* Items Criticos */}
-                <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                <Card 
+                    isPressable
+                    onPress={() => {
+                        setAlertsFilter('CRITICAL');
+                        setAlertsDialogOpen(true);
+                    }}
+                    className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-[1.02] transition-transform cursor-pointer"
+                >
                     <CardBody className="p-3 flex flex-row items-center gap-2">
                         <div className="h-8 w-8 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-rose-500/20 -rotate-3">
                             <AlertTriangle size={16} />
@@ -460,7 +532,7 @@ export default function InventoryHub() {
                                 <Skeleton className="h-5 w-10 rounded" />
                             ) : (
                                 <h3 className="text-base font-medium tracking-tight tracking-tighter text-rose-500">
-                                    {stats.criticalItems.length}
+                                    {stats?.allCriticalItems?.length || 0}
                                 </h3>
                             )}
                         </div>
@@ -665,11 +737,22 @@ export default function InventoryHub() {
                                                     En camino
                                                 </Chip>
                                                 <Button 
+                                                    size="sm"
+                                                    color="success"
+                                                    variant="flat"
+                                                    className="h-7 px-2.5 rounded-xl font-bold text-[9px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all z-10"
+                                                    onClick={(e) => handleMarkOrderAsReceived(order.id, e)}
+                                                    startContent={<CheckCircle2 size={12} />}
+                                                >
+                                                    Ya llegó
+                                                </Button>
+                                                <Button 
                                                     isIconOnly
                                                     size="sm"
                                                     color="danger"
                                                     variant="light"
                                                     className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 z-10"
+                                                    title="Cancelar pedido"
                                                     onClick={(e) => handleCancelOrder(e, order.id, order.supplierName)}
                                                 >
                                                     <X size={14} />
@@ -860,11 +943,18 @@ export default function InventoryHub() {
                         <Button variant="flat" className="rounded-xl font-bold uppercase tracking-wider text-[10px]" onPress={() => setSelectedOrderDetail(null)}>
                             Cerrar
                         </Button>
-                        <Button color="warning" className="rounded-xl font-bold uppercase tracking-wider text-[10px] text-zinc-900 dark:text-zinc-100" onPress={() => {
+                        <Button color="warning" variant="flat" className="rounded-xl font-bold uppercase tracking-wider text-[10px]" onPress={() => {
                             router.push(`/inventory/orders?edit_order=${selectedOrderDetail?.id}`);
                             setSelectedOrderDetail(null);
                         }}>
                             Editar Pedido
+                        </Button>
+                        <Button color="success" className="rounded-xl font-bold uppercase tracking-wider text-[10px] text-white shadow-md shadow-emerald-500/20" onPress={() => {
+                            if (selectedOrderDetail) {
+                                handleMarkOrderAsReceived(selectedOrderDetail.id);
+                            }
+                        }} startContent={<CheckCircle2 size={14} />}>
+                            Marcar como Ya Llegó
                         </Button>
                     </ModalFooter>
                 </ModalContent>
@@ -885,6 +975,7 @@ export default function InventoryHub() {
                 allProducts={products || []}
                 onConfirm={handleEditProduct}
                 onScan={() => {}}
+                onScanAlternate={() => {}}
             />
 
             <Modal isOpen={cancelConfirmId !== null} onClose={() => setCancelConfirmId(null)} placement="center" backdrop="blur" classNames={{base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 shadow-2xl"}}>
@@ -919,6 +1010,11 @@ export default function InventoryHub() {
             </Modal>
 
             </div>
+            <InventoryAlertsModal 
+                isOpen={alertsDialogOpen} 
+                onOpenChange={setAlertsDialogOpen} 
+                products={(alertsFilter === 'CRITICAL' ? stats?.allCriticalItems : stats?.allWarningItems) || []} 
+            />
         </div>
     );
 }

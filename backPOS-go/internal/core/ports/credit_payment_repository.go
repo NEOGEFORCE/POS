@@ -7,6 +7,7 @@ import (
 
 type CreditPaymentRepository interface {
 	Save(payment *models.CreditPayment) error
+	Update(payment *models.CreditPayment) error
 	GetByClient(dni string) ([]models.CreditPayment, error)
 	GetByDateRange(start, end time.Time) ([]models.CreditPayment, error)
 	GetTotalCollectedByDateRange(start, end time.Time) (float64, error)

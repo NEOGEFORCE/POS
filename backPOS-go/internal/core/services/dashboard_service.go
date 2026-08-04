@@ -24,7 +24,7 @@ import (
 // Esta es la ÃšNICA fuente de verdad para el semÃ¡foro de stock en todo el sistema
 func GetCriticalThreshold(minStock int) int {
 	if minStock <= 0 {
-		return 1
+		return 0 // Changed from 1: if minStock is 0, threshold is 0 (so quantity <= 0 is critical)
 	}
 	return int(math.Ceil(float64(minStock) * 0.20))
 }
@@ -484,12 +484,6 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			if err != nil { log.Printf("â Œ [Dashboard] Error GetCashierClosure: %v", err) }
 			return nil
 		})
-		g.Go(func() error {
-			var err error
-			pendingDebtsAmount, pendingDebtsCount, err = s.expenseRepo.GetPendingDebtsSummary()
-			if err != nil { log.Printf("â Œ [Dashboard] Error PendingDebts: %v", err) }
-			return nil
-		})
 		// Global Reconciliation Queries
 		g.Go(func() error {
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetGlobalTotalPaidExpenses")
@@ -545,11 +539,23 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 							subParts := strings.Split(part, ":")
 							if len(subParts) >= 2 {
 								subMethod := strings.TrimSpace(subParts[0])
-								subAmountStr := strings.ReplaceAll(subParts[1], "$", "")
-								subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
-								subAmountStr = strings.ReplaceAll(subAmountStr, ",", "")
-								subAmountStr = strings.TrimSpace(subAmountStr)
-								subAmount, _ := strconv.ParseFloat(subAmountStr, 64)
+								subAmountStr := strings.TrimSpace(strings.ReplaceAll(subParts[1], "$", ""))
+								var subAmount float64
+								if strings.Contains(subAmountStr, ",") {
+									subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
+									subAmountStr = strings.ReplaceAll(subAmountStr, ",", ".")
+									subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+								} else if strings.Contains(subAmountStr, ".") {
+									dotParts := strings.Split(subAmountStr, ".")
+									if len(dotParts) == 2 && len(dotParts[1]) <= 2 {
+										subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+									} else {
+										subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
+										subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+									}
+								} else {
+									subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+								}
 								globalPaidByMethod[subMethod] += subAmount
 							}
 						}
@@ -707,23 +713,47 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		for _, c := range allClosures {
 			if !c.EndDate.IsZero() {
 				monthStr := c.EndDate.In(loc).Format("2006-01")
-				salesByMonth[monthStr] += c.TotalSales
+				cDigital := c.TotalNequi + c.TotalDaviplata + c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
+				cExp := c.Expenses
+				if len(cExp) == 0 && c.ExpensesDetail != "" {
+					_ = json.Unmarshal([]byte(c.ExpensesDetail), &cExp)
+				}
+				cEgCaja := 0.0
+				for _, e := range cExp {
+					cash, _, _, _ := parseExpenseChannels(&e)
+					cEgCaja += cash
+				}
+				cVentasCajero := c.PhysicalCash + cDigital + cEgCaja + c.TotalReturns
+				if cVentasCajero == 0 {
+					cVentasCajero = c.TotalSales
+				}
+				salesByMonth[monthStr] += cVentasCajero
 				
 				dayStr := c.EndDate.In(loc).Format("2006-01-02")
-				dailySalesMap[dayStr] += c.TotalSales
+				dailySalesMap[dayStr] += cVentasCajero
 			}
 		}
 
 		expensesByMonth = make(map[string]float64)
 		profitByMonth = make(map[string]float64)
 
-		// Agregar la venta del turno actual al mes y día actual
+		// Agregar la venta del turno en curso al mes y día actual para ver DATOS EN TIEMPO REAL
 		currentMonthStr := nowLocal.Format("2006-01")
 		todayStr := nowLocal.Format("2006-01-02")
 		if shiftClosure != nil {
 			shiftVentaRealValue := shiftClosure.TotalSales
+			if shiftVentaRealValue == 0 {
+				shiftVentaRealValue = shiftSalesAmount
+			}
 			salesByMonth[currentMonthStr] += shiftVentaRealValue
 			dailySalesMap[todayStr] += shiftVentaRealValue
+		} else if shiftSalesAmount > 0 {
+			salesByMonth[currentMonthStr] += shiftSalesAmount
+			dailySalesMap[todayStr] += shiftSalesAmount
+		}
+
+		if startDateStr == "" && endDateStr == "" && salesByMonth[currentMonthStr] > 0 {
+			totalSalesAmount = salesByMonth[currentMonthStr]
 		}
 
 		for _, trend := range mvTrend {
@@ -751,11 +781,13 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		warningCount := 0
 		lowStockProducts := []LowStockItem{}
 		for _, p := range lowStockRaw {
-			if p.IsWeighted { continue }
 			minStock := int(p.MinStock)
-			if minStock <= 0 { minStock = 5 }
 			threshold := GetCriticalThreshold(minStock)
 			warningThreshold := int(math.Ceil(float64(minStock) * 0.50))
+			
+			if int(p.Quantity) == -1 {
+			    continue
+			}
 			if int(p.Quantity) <= threshold {
 				criticalCount++
 				lowStockProducts = append(lowStockProducts, LowStockItem{
@@ -922,7 +954,123 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 }
 
 func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}) error {
-	err := s.closureRepo.Update(id, updates)
+	closure, err := s.closureRepo.GetByID(id)
+	if err == nil {
+		if forgotten, ok := updates["forgotten_expenses"]; ok {
+			var newExpenses []models.Expense
+			b, _ := json.Marshal(forgotten)
+			json.Unmarshal(b, &newExpenses)
+			
+			// Load existing expenses from the closure
+			var existingExpenses []models.Expense
+			if closure.ExpensesDetail != "" {
+				json.Unmarshal([]byte(closure.ExpensesDetail), &existingExpenses)
+			}
+			
+			for _, exp := range newExpenses {
+				if exp.Amount > 0 {
+					exp.Date = closure.Date
+					exp.CreatedByDNI = closure.ClosedByDNI
+					exp.Status = "PAID"
+					s.expenseRepo.Save(&exp)
+					existingExpenses = append(existingExpenses, exp)
+				}
+			}
+			delete(updates, "forgotten_expenses")
+			
+		}
+
+		// ALWAYS refresh expenses detail to capture any out-of-band expense creations
+		expenses, _ := s.expenseRepo.GetByDateRange(closure.StartDate, closure.EndDate)
+		// Normalizar montos por canal antes de serializar (egresos viejos solo tienen PaymentSource)
+		for i := range expenses {
+			e := &expenses[i]
+			if e.Status == "PENDING" {
+				e.CashAmount = 0; e.NequiAmount = 0; e.DaviplataAmount = 0; e.FondoAmount = 0
+				continue
+			}
+			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+			src := strings.ToUpper(strings.TrimSpace(e.PaymentSource))
+			if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
+				e.FondoAmount = e.Amount + e.TaxAmount
+				e.CashAmount = 0
+				e.NequiAmount = 0
+				e.DaviplataAmount = 0
+				e.PaymentSource = "FONDO"
+			} else if sum == 0 {
+				switch {
+				case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
+					e.NequiAmount = e.Amount + e.TaxAmount
+				case strings.Contains(src, "DAVIPLATA"):
+					e.DaviplataAmount = e.Amount + e.TaxAmount
+				case strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") || strings.Contains(src, "PENDING"):
+					// Deudas no afectan caja
+				default:
+					e.CashAmount = e.Amount + e.TaxAmount
+				}
+			}
+		}
+		if len(expenses) > 0 {
+			eb, _ := json.Marshal(expenses)
+			updates["expenses_detail"] = string(eb)
+		} else {
+			updates["expenses_detail"] = "[]"
+		}
+
+		// Recalcular montos consolidados (total_sales, expected_cash, difference) para mantener consistencia
+		egresosEfectivo := 0.0
+		egresosGlobales := 0.0
+		for _, e := range expenses {
+			if e.Status != "PENDING" && strings.ToUpper(e.Category) != "DEVOLUCIONES" {
+				egresosEfectivo += e.CashAmount
+				egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+			}
+		}
+
+		physicalCash := closure.PhysicalCash
+		if pc, ok := updates["physical_cash"]; ok {
+			switch v := pc.(type) {
+			case float64:
+				physicalCash = v
+			case int:
+				physicalCash = float64(v)
+			}
+		}
+
+		// Recalcular ventas reales del turno desde las ventas grabadas en BD
+		salesInPeriod, _ := s.saleRepo.GetByDateRangeWithoutDetails(closure.StartDate, closure.EndDate)
+		realTotalSales := 0.0
+		for _, sale := range salesInPeriod {
+			status := strings.ToUpper(sale.Status)
+			if status == "PAID" || status == "CREDIT" {
+				netCash := sale.CashAmount - sale.Change
+				if netCash < 0 { netCash = 0 }
+				cleanTransfer := sale.TransferAmount
+				if cleanTransfer < 0 { cleanTransfer = 0 }
+				realTotalSales += (netCash + cleanTransfer)
+			}
+		}
+		paymentsInPeriod, _ := s.creditRepo.GetByDateRange(closure.StartDate, closure.EndDate)
+		for _, p := range paymentsInPeriod {
+			realTotalSales += p.TotalPaid
+		}
+
+		expectedCash := closure.OpeningCash + closure.TotalCash - egresosEfectivo - closure.TotalReturns
+		if expectedCash <= 0 && closure.ExpectedCash > 0 {
+			expectedCash = closure.ExpectedCash
+		}
+		diferencia := physicalCash - expectedCash
+
+		if realTotalSales > 0 {
+			updates["total_sales"] = realTotalSales
+		} else if closure.TotalSales > 0 {
+			updates["total_sales"] = closure.TotalSales
+		}
+		updates["expected_cash"] = expectedCash
+		updates["difference"] = diferencia
+		updates["total_expenses"] = egresosGlobales
+	}
+	err = s.closureRepo.Update(id, updates)
 	if err == nil {
 		cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
 	}
@@ -1145,7 +1293,33 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 	var closure CashierClosure
 	loc = time.FixedZone("America/Bogota", -5*60*60)
-	closure.Date = time.Now().In(loc)
+	
+	// Determinar el día mayoritario de las transacciones (Ventas + Egresos)
+	dateCounts := make(map[string]int)
+	for _, sale := range sales {
+		dStr := sale.SaleDate.In(loc).Format("2006-01-02")
+		dateCounts[dStr]++
+	}
+	for _, exp := range expenses {
+		dStr := exp.Date.In(loc).Format("2006-01-02")
+		dateCounts[dStr]++
+	}
+
+	maxCount := -1
+	bestDateStr := time.Now().In(loc).Format("2006-01-02")
+	for dStr, count := range dateCounts {
+		if count > maxCount {
+			maxCount = count
+			bestDateStr = dStr
+		}
+	}
+
+	if bestDate, err := time.ParseInLocation("2006-01-02", bestDateStr, loc); err == nil {
+		closure.Date = bestDate.Add(12 * time.Hour) // Set to noon to avoid timezone shifts pushing to previous day
+	} else {
+		closure.Date = time.Now().In(loc)
+	}
+
 	closure.StartDate = startDate
 	closure.EndDate = time.Now()
 	closure.OpeningCash = openingCash
@@ -1260,24 +1434,14 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
   	var cashExpenses float64
   	for _, e := range expenses {
   		if strings.ToUpper(e.Status) != "PENDING" {
-			src := strings.ToUpper(e.PaymentSource)
-			if src == "EFECTIVO" || src == "CAJA" {
-  				cashExpenses += (e.Amount + e.TaxAmount)
-			} else if strings.Contains(src, ":") && strings.Contains(src, "$") {
-				parts := strings.Split(src, " / ")
-				for _, part := range parts {
-					subParts := strings.Split(part, ":")
-					if len(subParts) >= 2 {
-						subMethod := strings.TrimSpace(subParts[0])
-						if subMethod == "EFECTIVO" || subMethod == "CAJA" {
-							subAmountStr := strings.ReplaceAll(subParts[1], "$", "")
-							subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
-							subAmountStr = strings.ReplaceAll(subAmountStr, ",", "")
-							subAmountStr = strings.TrimSpace(subAmountStr)
-							subAmount, _ := strconv.ParseFloat(subAmountStr, 64)
-							cashExpenses += subAmount
-						}
-					}
+			// Preferir la columna CashAmount (precisa) sobre el parseo de PaymentSource (propenso a errores)
+			if e.CashAmount > 0 {
+				cashExpenses += e.CashAmount
+			} else if e.CashAmount == 0 && e.NequiAmount == 0 && e.DaviplataAmount == 0 && e.FondoAmount == 0 {
+				// Legacy: no tiene montos por canal, revisar PaymentSource
+				src := strings.ToUpper(e.PaymentSource)
+				if src == "EFECTIVO" || src == "CAJA" || src == "" {
+					cashExpenses += (e.Amount + e.TaxAmount)
 				}
 			}
   		}
@@ -1315,6 +1479,55 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 
 	// 0.1 Serializar gastos detallados si existen
 	if len(closureDTO.Expenses) > 0 {
+		// Normalizar montos por canal antes de serializar
+		for i := range closureDTO.Expenses {
+			e := &closureDTO.Expenses[i]
+			if e.Status == "PENDING" { continue }
+			src := strings.ToUpper(e.PaymentSource)
+			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+			if sum == 0 {
+				tot := e.Amount + e.TaxAmount
+				if strings.Contains(src, "/") || strings.Contains(src, ":") {
+					parts := strings.Split(src, "/")
+					for _, part := range parts {
+						p := strings.TrimSpace(part)
+						var val float64
+						if idx := strings.Index(p, "$"); idx != -1 {
+							cleanStr := strings.ReplaceAll(p[idx+1:], ".", "")
+							cleanStr = strings.ReplaceAll(cleanStr, ",", ".")
+							cleanStr = strings.TrimSpace(cleanStr)
+							var num float64
+							if _, err := fmt.Sscanf(cleanStr, "%f", &num); err == nil {
+								val = num
+							}
+						}
+						if val == 0 {
+							val = tot
+						}
+
+						if strings.Contains(p, "NEQUI") {
+							e.NequiAmount += val
+						} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
+							e.DaviplataAmount += val
+						} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND") {
+							e.FondoAmount += val
+						} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") {
+							e.CashAmount += val
+						}
+					}
+				} else if strings.Contains(src, "NEQUI") {
+					e.NequiAmount = tot
+				} else if strings.Contains(src, "DAVIPLATA") || strings.Contains(src, "DAVI") {
+					e.DaviplataAmount = tot
+				} else if strings.Contains(src, "FONDO") || strings.Contains(src, "BOVEDA") || strings.Contains(src, "BÓVEDA") || strings.Contains(src, "FOND") {
+					e.FondoAmount = tot
+				} else if strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") {
+					// Debt - 0 cash/digital
+				} else {
+					e.CashAmount = tot
+				}
+			}
+		}
 		expensesJSON, _ := json.Marshal(closureDTO.Expenses)
 		closureDTO.ExpensesDetail = string(expensesJSON)
 	}
@@ -1408,7 +1621,29 @@ func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error)
 }
 
 func (s *DashboardService) GetClosureByID(id uint) (*models.CashierClosure, error) {
-	return s.closureRepo.GetByID(id)
+	closure, err := s.closureRepo.GetByID(id)
+	if err != nil {
+		return nil, err
+	}
+	if closure.ExpensesDetail != "" {
+		json.Unmarshal([]byte(closure.ExpensesDetail), &closure.Expenses)
+	}
+
+	// Fetch Credits Issued
+	sales, _ := s.saleRepo.GetByDateRange(closure.StartDate, closure.EndDate)
+	var creditsIssued []models.Sale
+	for _, sale := range sales {
+		if strings.ToUpper(sale.Status) == "CREDIT" {
+			creditsIssued = append(creditsIssued, sale)
+		}
+	}
+	closure.CreditsIssued = creditsIssued
+
+	// Fetch Credit Payments
+	payments, _ := s.creditRepo.GetByDateRange(closure.StartDate, closure.EndDate)
+	closure.CreditPayments = payments
+
+	return closure, nil
 }
 
 func (s *DashboardService) DeleteClosure(id uint) error {
@@ -1816,11 +2051,23 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 						subParts := strings.Split(part, ":")
 						if len(subParts) >= 2 {
 							subMethod := strings.TrimSpace(subParts[0])
-							subAmountStr := strings.ReplaceAll(subParts[1], "$", "")
-							subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
-							subAmountStr = strings.ReplaceAll(subAmountStr, ",", "")
-							subAmountStr = strings.TrimSpace(subAmountStr)
-							subAmount, _ := strconv.ParseFloat(subAmountStr, 64)
+							subAmountStr := strings.TrimSpace(strings.ReplaceAll(subParts[1], "$", ""))
+							var subAmount float64
+							if strings.Contains(subAmountStr, ",") {
+								subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
+								subAmountStr = strings.ReplaceAll(subAmountStr, ",", ".")
+								subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+							} else if strings.Contains(subAmountStr, ".") {
+								dotParts := strings.Split(subAmountStr, ".")
+								if len(dotParts) == 2 && len(dotParts[1]) <= 2 {
+									subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+								} else {
+									subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
+									subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+								}
+							} else {
+								subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
+							}
 							totals[subMethod] -= subAmount
 						}
 					}

@@ -54,10 +54,10 @@ export default function MissingItemModal({ isOpen, onOpenChange, onSuccess }: Mi
             setNote("");
             onOpenChange(false);
             if (onSuccess) onSuccess();
-        } catch (error) {
+        } catch (error: any) {
             toast({
                 title: "ERROR",
-                description: "No se pudo enviar el reporte.",
+                description: error?.message || "No se pudo enviar el reporte.",
                 variant: "destructive",
             });
         } finally {

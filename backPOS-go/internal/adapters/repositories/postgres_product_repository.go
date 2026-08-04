@@ -107,7 +107,7 @@ func (r *PostgresProductRepository) GetAll() ([]models.Product, error) {
 	}
 
 	var products []models.Product
-	err := r.db.Preload("Category").Where("\"isActive\" = ?", true).Order("\"productName\" ASC").Find(&products).Error
+	err := r.db.Preload("Category").Where("COALESCE(\"isActive\", true) = ?", true).Order("\"productName\" ASC").Find(&products).Error
 
 	// PERSISTENCIA EN RAM: Guardar si la consulta fue exitosa
 	if err == nil {
@@ -119,15 +119,15 @@ func (r *PostgresProductRepository) GetAll() ([]models.Product, error) {
 
 func (r *PostgresProductRepository) GetAllWithLimit(limit int) ([]models.Product, error) {
 	var products []models.Product
-	err := r.db.Preload("Category").Where("\"isActive\" = ?", true).Limit(limit).Find(&products).Error
+	err := r.db.Preload("Category").Where("COALESCE(\"isActive\", true) = ?", true).Limit(limit).Find(&products).Error
 	return products, err
 }
 
-func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search string, supplierID int) ([]models.Product, int64, error) {
+func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search string, supplierID int, stockFilter string) ([]models.Product, int64, error) {
 	var products []models.Product
 	var total int64
 
-	query := r.db.Model(&models.Product{}).Where("\"isActive\" = ?", true)
+	query := r.db.Model(&models.Product{}).Where("products.\"isActive\" = ?", true)
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Joins("LEFT JOIN categories ON categories.id = products.\"categoryId\"").
@@ -136,9 +136,23 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	}
 
 	if supplierID > 0 {
-		query = query.Joins("LEFT JOIN product_suppliers ON product_suppliers.product_barcode = products.barcode").
-			Where("products.\"supplierId\" = ? OR product_suppliers.supplier_id = ?", supplierID, supplierID).
-			Distinct("products.barcode")
+		query = query.Where(`products.barcode IN (
+			SELECT product_barcode FROM product_suppliers WHERE supplier_id = ?
+			UNION
+			SELECT barcode FROM products WHERE "supplierId" = ?
+		)`, supplierID, supplierID)
+	}
+
+	if stockFilter == "critical" {
+		query = query.Where(`(
+			(COALESCE(products."minStock", 0) <= 0 AND products.quantity <= 0)
+			OR (COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) * 100 <= 20)
+		)`)
+	} else if stockFilter == "warning" {
+		query = query.Where(`(
+			(COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) * 100 > 20 AND (products.quantity / NULLIF(products."minStock", 0)) * 100 <= 50)
+			OR (COALESCE(products."minStock", 0) <= 0 AND products.quantity > 0 AND products.quantity <= 5)
+		)`)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -149,7 +163,7 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	err := query.Preload("Category").
 		Preload("BaseProduct").
 		Preload("Suppliers").
-		Order("\"productName\" ASC").
+		Order("products.\"productName\" ASC").
 		Limit(pageSize).
 		Offset(offset).
 		Find(&products).Error
@@ -202,7 +216,10 @@ func (r *PostgresProductRepository) Update(barcode string, product *models.Produ
 		// Paso 2: Borrar las asociaciones viejas (esto libera la FK)
 		r.db.Exec(`DELETE FROM product_suppliers WHERE product_barcode = $1`, barcode)
 		
-		// Paso 3: Desenlazar temporalmente los hijos para evitar violación de llave foránea
+		// Paso 3: Desenlazar temporalmente los hijos y actualizar tablas de soporte para evitar violación de FK
+		r.db.Exec(`UPDATE confirmed_order_items SET product_id = $1 WHERE product_id = $2`, product.Barcode, barcode)
+		r.db.Exec(`UPDATE active_purchase_list SET product_id = $1 WHERE product_id = $2`, product.Barcode, barcode)
+		r.db.Exec(`UPDATE price_logs SET product_barcode = $1 WHERE product_barcode = $2`, product.Barcode, barcode)
 		var childBarcodes []string
 		r.db.Model(&models.Product{}).Where("\"baseProductBarcode\" = ?", barcode).Pluck("barcode", &childBarcodes)
 		if len(childBarcodes) > 0 {
