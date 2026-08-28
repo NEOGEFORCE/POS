@@ -7,17 +7,21 @@ import (
 )
 
 type Return struct {
-	ID            uint           `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	SaleID        uint           `gorm:"not null;index;column:saleId" json:"saleId"`
-	Date          time.Time      `gorm:"default:now();not null;column:date" json:"date"`
-	TotalReturned float64        `gorm:"type:decimal(10,2);not null;column:totalReturned" json:"totalReturned"`
-	Reason        string         `gorm:"column:reason" json:"reason"`
-	ReturnType    string         `gorm:"column:returnType" json:"returnType"` // "REFUND" or "EXCHANGE"
-	EmployeeDNI   string         `gorm:"not null;column:employeeDni" json:"employeeDni"`
-	Sale          Sale           `gorm:"foreignKey:SaleID;constraint:false;" json:"sale,omitempty"`
-	Employee      Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`
-	Details       []ReturnDetail `gorm:"foreignKey:ReturnID" json:"details,omitempty"`
-	DeletedAt     gorm.DeletedAt `gorm:"index" json:"-"`
+	ID                  uint           `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
+	SaleID              uint           `gorm:"not null;index;column:saleId" json:"saleId"`
+	Date                time.Time      `gorm:"default:now();not null;column:date" json:"date"`
+	TotalReturned       float64        `gorm:"type:decimal(10,2);not null;column:totalReturned" json:"totalReturned"`
+	Reason              string         `gorm:"column:reason" json:"reason"`
+	ReturnType          string         `gorm:"column:returnType" json:"returnType"` // "REFUND" or "EXCHANGE"
+	FinancialTraceReady bool           `gorm:"default:false;column:financial_trace_ready" json:"financialTraceReady"`
+	EmployeeDNI         string         `gorm:"not null;column:employeeDni" json:"employeeDni"`
+	Sale                Sale           `gorm:"foreignKey:SaleID;constraint:false;" json:"sale,omitempty"`
+	Employee            Employee       `gorm:"foreignKey:EmployeeDNI;references:DNI" json:"employee,omitempty"`
+	Details             []ReturnDetail `gorm:"foreignKey:ReturnID" json:"details,omitempty"`
+	DeletedByDNI        string         `gorm:"column:deletedByDni" json:"deletedByDni,omitempty"`
+	DeletedByName       string         `gorm:"column:deletedByName" json:"deletedByName,omitempty"`
+	DeletedReason       string         `gorm:"column:deletedReason" json:"deletedReason,omitempty"`
+	DeletedAt           gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (Return) TableName() string {
@@ -25,15 +29,15 @@ func (Return) TableName() string {
 }
 
 type ReturnDetail struct {
-	ID        uint           `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
-	ReturnID  uint           `gorm:"not null;index;column:returnId" json:"returnId"`
-	Barcode   string         `gorm:"not null;index;column:barcode" json:"barcode"`
-	Quantity  float64        `gorm:"not null;column:quantity" json:"quantity"`
-	Price     float64        `gorm:"type:decimal(10,2);not null;column:price" json:"price"`
-	Subtotal  float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`
-	IsExchange bool          `gorm:"default:false;column:isExchange" json:"isExchange"`
-	Product   Product        `gorm:"foreignKey:Barcode;references:Barcode;constraint:false;" json:"product,omitempty"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID         uint           `gorm:"primaryKey;autoIncrement;column:id" json:"id"`
+	ReturnID   uint           `gorm:"not null;index;column:returnId" json:"returnId"`
+	Barcode    string         `gorm:"not null;index;column:barcode" json:"barcode"`
+	Quantity   float64        `gorm:"not null;column:quantity" json:"quantity"`
+	Price      float64        `gorm:"type:decimal(10,2);not null;column:price" json:"price"`
+	Subtotal   float64        `gorm:"type:decimal(10,2);not null;column:subtotal" json:"subtotal"`
+	IsExchange bool           `gorm:"default:false;column:isExchange" json:"isExchange"`
+	Product    Product        `gorm:"foreignKey:Barcode;references:Barcode;constraint:false;" json:"product,omitempty"`
+	DeletedAt  gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (ReturnDetail) TableName() string {

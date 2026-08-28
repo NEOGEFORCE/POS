@@ -1,4 +1,4 @@
-package models
+﻿package models
 
 import (
 	"time"
@@ -58,6 +58,19 @@ type CashierClosure struct {
 	// en las ventas (TransferSource): EFECTIVO, NEQUI, DAVIPLATA, BANCOLOMBIA,
 	// MASTERCARD, etc. — sin agruparse en un genérico "OTROS".
 	PaymentMethodsBreakdown []PaymentMethodTotal `gorm:"-" json:"paymentMethodsBreakdown,omitempty"`
+
+	// ---- ARQUEO CALCULADO (fuente única: services.ComputeClosureMetrics) ----
+	// No se persisten. El backend los calcula y el frontend los CONSUME tal
+	// cual: prohibido recalcular la venta del cajero o el desglose de egresos
+	// en TypeScript, porque es lo que causaba que /reports y /dashboard
+	// mostraran cifras distintas para el mismo turno.
+	VentasCajero     float64 `gorm:"-" json:"ventasCajero"`
+	PhysicalCashReal float64 `gorm:"-" json:"physicalCashReal"`
+	DigitalIncome    float64 `gorm:"-" json:"digitalIncome"`
+	EgresosCaja      float64 `gorm:"-" json:"egresosCaja"`
+	EgresosFondo     float64 `gorm:"-" json:"egresosFondo"`
+	EgresosDigital   float64 `gorm:"-" json:"egresosDigital"`
+	EgresosTotales   float64 `gorm:"-" json:"egresosTotales"`
 
 	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
 }

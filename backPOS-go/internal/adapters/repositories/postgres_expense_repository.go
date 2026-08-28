@@ -4,11 +4,11 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/cache"
-	"log"
-	"strings"
 	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
+	"log"
+	"strings"
 	"time"
 )
 
@@ -23,7 +23,7 @@ func NewPostgresExpenseRepository(db *gorm.DB) *PostgresExpenseRepository {
 func (r *PostgresExpenseRepository) invalidateDashboardCache() {
 	// Invalidate RAM cache
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
-	
+
 	// Solicitar refresco asíncrono y debounced
 	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
 
@@ -45,17 +45,25 @@ func (r *PostgresExpenseRepository) GetAll() ([]models.Expense, error) {
 	return expenses, err
 }
 
+func (r *PostgresExpenseRepository) SaveWithTx(tx interface{}, expense *models.Expense) error {
+	gormTx, ok := tx.(*gorm.DB)
+	if !ok {
+		return gorm.ErrInvalidDB
+	}
+	return gormTx.Create(expense).Error
+}
+
 func (r *PostgresExpenseRepository) GetAllFiltered(supplier, concept string) ([]models.Expense, error) {
 	expenses := []models.Expense{}
 	query := r.db.Preload("Creator").Model(&models.Expense{})
 
 	if supplier != "" {
-		// Use a join to filter by supplier name, or filter by exact supplier_id if we had it. 
+		// Use a join to filter by supplier name, or filter by exact supplier_id if we had it.
 		// Since expense has supplier_id, we can join with suppliers table.
 		query = query.Joins("LEFT JOIN suppliers ON suppliers.id = expenses.supplier_id").
 			Where("suppliers.name ILIKE ?", "%"+supplier+"%")
 	}
-	
+
 	if concept != "" {
 		query = query.Where("description ILIKE ?", "%"+concept+"%")
 	}
@@ -130,22 +138,23 @@ func (r *PostgresExpenseRepository) Update(id uint, expense *models.Expense) err
 	// Con Updates(struct) GORM ignora los campos con valor cero, causando que los
 	// canales anteriores (ej. cashAmount) no se limpien al cambiar a otro canal.
 	updates := map[string]interface{}{
-		"description":    expense.Description,
-		"amount":         expense.Amount,
-		"taxAmount":      expense.TaxAmount,
-		"date":           expense.Date,
-		"paymentSource":  expense.PaymentSource,
-		"category":       expense.Category,
-		"status":         expense.Status,
-		"supplierID":     expense.SupplierID,
-		"lenderName":     expense.LenderName,
+		"description":   expense.Description,
+		"amount":        expense.Amount,
+		"tax_amount":    expense.TaxAmount,
+		"date":          expense.Date,
+		"paymentSource": expense.PaymentSource,
+		"category":      expense.Category,
+		"status":        expense.Status,
+		"supplier_id":   expense.SupplierID,
+		"lenderName":    expense.LenderName,
 		// Montos por canal — se fuerzan a cero si no aplican
-		"cashAmount":     expense.CashAmount,
-		"nequiAmount":    expense.NequiAmount,
-		"daviplataAmount": expense.DaviplataAmount,
-		"fondoAmount":    expense.FondoAmount,
-		"paidAmount":     expense.PaidAmount,
-		"remainingAmount": expense.RemainingAmount,
+		"cash_amount":      expense.CashAmount,
+		"nequi_amount":     expense.NequiAmount,
+		"daviplata_amount": expense.DaviplataAmount,
+		"fondo_amount":     expense.FondoAmount,
+		"coins_amount":     expense.CoinsAmount,
+		"paid_amount":      expense.PaidAmount,
+		"remaining_amount": expense.RemainingAmount,
 	}
 	err := r.db.Model(&models.Expense{}).Where("id = ?", id).Updates(updates).Error
 	if err == nil {
@@ -233,6 +242,7 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		TotalNequi     float64
 		TotalDaviplata float64
 		TotalFondo     float64
+		TotalCoins     float64
 	}
 	var mt MethodTotal
 	err := r.db.Table("expenses").
@@ -240,12 +250,13 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 			COALESCE(SUM(cash_amount), 0) as total_cash,
 			COALESCE(SUM(nequi_amount), 0) as total_nequi,
 			COALESCE(SUM(daviplata_amount), 0) as total_daviplata,
-			COALESCE(SUM(fondo_amount), 0) as total_fondo
+			COALESCE(SUM(fondo_amount), 0) as total_fondo,
+			COALESCE(SUM(coins_amount), 0) as total_coins
 		`).
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
-		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0)").
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0)").
 		Scan(&mt).Error
 	if err != nil {
 		log.Printf("❌ [GetGlobalPaidExpensesByMethod] Error columnas desglosadas: %v", err)
@@ -254,6 +265,7 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		results["NEQUI"] += mt.TotalNequi
 		results["DAVIPLATA"] += mt.TotalDaviplata
 		results["FONDO"] += mt.TotalFondo
+		results["MONEDAS"] += mt.TotalCoins
 	}
 
 	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string)
@@ -262,7 +274,7 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
-		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0").
+		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0 AND coins_amount = 0").
 		Group("\"paymentSource\"").
 		Rows()
 	if err != nil {
@@ -277,8 +289,15 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		if err := rows.Scan(&source, &total); err != nil {
 			continue
 		}
-		if source == "" { source = "EFECTIVO" }
-		results[strings.ToUpper(source)] += total
+		if source == "" {
+			source = "EFECTIVO"
+		}
+		srcUpper := strings.ToUpper(strings.TrimSpace(source))
+		if strings.Contains(srcUpper, "MONEDA") || strings.Contains(srcUpper, "ALCANCIA") || strings.Contains(srcUpper, "ALCANCÍA") {
+			results["MONEDAS"] += total
+		} else {
+			results[srcUpper] += total
+		}
 	}
 
 	// Agregar impuestos de nequi (4x1000) que se guardan en tax_amount
@@ -308,25 +327,94 @@ func (r *PostgresExpenseRepository) GetPaidAmountByRange(from, to time.Time) (fl
 	}
 	return total, nil
 }
+func (r *PostgresExpenseRepository) GetTotalAmountByDateRange(from, to time.Time) (float64, error) {
+	var total float64
+	err := r.db.Model(&models.Expense{}).
+		Where("date >= ? AND date <= ?", from, to).
+		Select("COALESCE(SUM(amount + tax_amount), 0)").
+		Scan(&total).Error
+	if err != nil {
+		return 0, err
+	}
+	return total, nil
+}
+
 func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
+
+	// Primero: Egresos con columnas desglosadas (cash_amount, nequi_amount, daviplata_amount, fondo_amount, coins_amount)
+	type MethodTotal struct {
+		TotalCash      float64
+		TotalNequi     float64
+		TotalDaviplata float64
+		TotalFondo     float64
+		TotalCoins     float64
+	}
+	var mt MethodTotal
+	err := r.db.Table("expenses").
+		Select(`
+			COALESCE(SUM(cash_amount), 0) as total_cash,
+			COALESCE(SUM(nequi_amount), 0) as total_nequi,
+			COALESCE(SUM(daviplata_amount), 0) as total_daviplata,
+			COALESCE(SUM(fondo_amount), 0) as total_fondo,
+			COALESCE(SUM(coins_amount), 0) as total_coins
+		`).
+		Where("deleted_at IS NULL").
+		Where("UPPER(status) = 'PAID'").
+		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
+		Where("date >= ? AND date <= ?", from, to).
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0)").
+		Scan(&mt).Error
+	if err == nil {
+		results["EFECTIVO"] += mt.TotalCash
+		results["NEQUI"] += mt.TotalNequi
+		results["DAVIPLATA"] += mt.TotalDaviplata
+		results["FONDO"] += mt.TotalFondo
+		results["MONEDAS"] += mt.TotalCoins
+	}
+
+	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string)
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
+		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
 		Where("date >= ? AND date <= ?", from, to).
+		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0 AND coins_amount = 0").
 		Group("\"paymentSource\"").
 		Rows()
-	if err != nil {
-		return nil, err
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var source string
+			var total float64
+			if err := rows.Scan(&source, &total); err == nil {
+				srcUpper := strings.ToUpper(strings.TrimSpace(source))
+				if strings.Contains(srcUpper, "MONEDA") || strings.Contains(srcUpper, "ALCANCIA") || strings.Contains(srcUpper, "ALCANCÍA") {
+					results["MONEDAS"] += total
+				} else if strings.Contains(srcUpper, "FONDO") || strings.Contains(srcUpper, "BOVEDA") || strings.Contains(srcUpper, "BÓVEDA") {
+					results["FONDO"] += total
+				} else if strings.Contains(srcUpper, "NEQUI") {
+					results["NEQUI"] += total
+				} else if strings.Contains(srcUpper, "DAVIPLATA") {
+					results["DAVIPLATA"] += total
+				} else {
+					results[srcUpper] += total
+				}
+			}
+		}
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var source string
-		var total float64
-		rows.Scan(&source, &total)
-		results[strings.ToUpper(source)] = total
-	}
+	// Agregar impuestos de nequi (4x1000) que se guardan en tax_amount
+	var totalNequiTax float64
+	r.db.Table("expenses").
+		Select("COALESCE(SUM(tax_amount), 0)").
+		Where("deleted_at IS NULL").
+		Where("UPPER(status) = 'PAID'").
+		Where("date >= ? AND date <= ?", from, to).
+		Where("nequi_amount > 0 AND tax_amount > 0").
+		Scan(&totalNequiTax)
+	results["NEQUI"] += totalNequiTax
+
 	return results, nil
 }

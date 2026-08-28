@@ -32,11 +32,18 @@ func (r *PostgresClientRepository) Save(client *models.Client) error {
 func (r *PostgresClientRepository) GetByDNI(dni string) (*models.Client, error) {
 	cacheKey := fmt.Sprintf("client_dni_%s", dni)
 	if cached, found := cache.CacheManager.Get(cacheKey); found {
-		return cached.(*models.Client), nil
+		switch value := cached.(type) {
+		case *models.Client:
+			copy := *value
+			return &copy, nil
+		case models.Client:
+			copy := value
+			return &copy, nil
+		}
 	}
 
 	var client models.Client
-	
+
 	query := `
 		SELECT c.*, 
 		       COALESCE(s_agg.total_spent, 0) as "totalSpent", 
@@ -52,7 +59,7 @@ func (r *PostgresClientRepository) GetByDNI(dni string) (*models.Client, error) 
 		WHERE c.dni = ?
 		LIMIT 1
 	`
-	
+
 	err := r.db.Raw(query, dni).Scan(&client).Error
 	if err != nil {
 		return nil, err
@@ -72,7 +79,7 @@ func (r *PostgresClientRepository) GetAll() ([]models.Client, error) {
 	}
 
 	clients := []models.Client{}
-	
+
 	// ULTRA-OPTIMIZACIÓN: En el punto de venta necesitamos velocidad extrema.
 	// Quitamos joins pesados de estadísticas (totalSpent/lastPurchaseDate) que no se usan en el selector rápido.
 	// También quitamos el LIMIT 100 para permitir buscar en toda la base de datos localmente.

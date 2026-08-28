@@ -38,24 +38,24 @@ type ProductRestockInfo struct {
 	BestSupplierName   string  `json:"bestSupplierName"`
 	LowestPrice        float64 `json:"lowestPrice"`
 	WorstPrice         float64 `json:"worstPrice"`
-	WorstSupplierName   string  `json:"worstSupplierName"`
+	WorstSupplierName  string  `json:"worstSupplierName"`
 	VisitFrequencyDays int     `json:"visitFrequencyDays"`
 }
 
 type ReceiveEntry struct {
-	Barcode          string  `json:"barcode"`
-	AddedQuantity    float64 `json:"addedQuantity"`
-	NewPurchasePrice float64 `json:"newPurchasePrice"`
-	NewSalePrice     float64 `json:"newSalePrice"`
-	SupplierID       *uint   `json:"supplierId"`
-	Iva              float64 `json:"iva"`
-	Icui             float64 `json:"icui"`
-	Ibua             float64 `json:"ibua"`
-	IvaPct           float64 `json:"ivaPct"`
-	IcuiPct          float64 `json:"icuiPct"`
-	IbuaPct          float64 `json:"ibuaPct"`
-	DiscountPct      float64 `json:"discountPct"`
-	Discount         float64 `json:"discount"`
+	Barcode             string   `json:"barcode"`
+	AddedQuantity       float64  `json:"addedQuantity"`
+	NewPurchasePrice    float64  `json:"newPurchasePrice"`
+	NewSalePrice        float64  `json:"newSalePrice"`
+	SupplierID          *uint    `json:"supplierId"`
+	Iva                 float64  `json:"iva"`
+	Icui                float64  `json:"icui"`
+	Ibua                float64  `json:"ibua"`
+	IvaPct              float64  `json:"ivaPct"`
+	IcuiPct             float64  `json:"icuiPct"`
+	IbuaPct             float64  `json:"ibuaPct"`
+	DiscountPct         float64  `json:"discountPct"`
+	Discount            float64  `json:"discount"`
 	ActualPhysicalStock *float64 `json:"actualPhysicalStock"`
 	LineType            string   `json:"lineType"`
 }
@@ -65,8 +65,19 @@ type OrderRef struct {
 	Source string      `json:"source"`
 }
 
+type ProductSupplierPriceUpdate struct {
+	SupplierID uint
+	Price      float64
+}
+
+type ProductUpdateOptions struct {
+	ReplaceSuppliers bool
+	SupplierIDs      []uint
+	SupplierPrice    *ProductSupplierPriceUpdate
+}
 
 type ProductRepository interface {
+	GetDB() interface{}
 	Save(product *models.Product) error
 	GetByBarcode(barcode string) (*models.Product, error)
 	GetByBarcodes(barcodes []string) ([]models.Product, error)
@@ -76,6 +87,8 @@ type ProductRepository interface {
 	GetAllWithLimit(limit int) ([]models.Product, error)
 	GetPaginated(page, pageSize int, search string, supplierID int, stockFilter string) ([]models.Product, int64, error)
 	Update(barcode string, product *models.Product) error
+	UpdateWithTx(tx interface{}, barcode string, product *models.Product, options ProductUpdateOptions) error
+	AfterCommitUpdate(barcodes ...string)
 	Delete(barcode string) error
 	UpdateQuantity(barcode string, newQuantity float64) error
 	BatchUpdateQuantities(updates map[string]float64) error

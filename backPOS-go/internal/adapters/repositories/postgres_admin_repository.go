@@ -38,7 +38,7 @@ func (r *PostgresAdminRepository) FindByDNI(dni string) (*models.Employee, error
 	var employee models.Employee
 	// Usamos Unscoped para poder encontrar usuarios incluso si fueron borrados lógicamente
 	err := r.db.Unscoped().Where("dni = ?", dni).First(&employee).Error
-	
+
 	if err == nil {
 		cache.CacheManager.Set(cacheKey, &employee, 24*time.Hour)
 	}
@@ -120,13 +120,14 @@ func (r *PostgresAdminRepository) PurgeDataBefore(date string) (int64, error) {
 	if tx.Error != nil {
 		return 0, tx.Error
 	}
+	defer tx.Rollback()
 
 	var totalDeleted int64
 
 	// Delete related items before deleting parent records (if no cascade)
 	// Pero GORM a menudo tiene ON DELETE CASCADE si está configurado en la DB.
 	// Por seguridad borramos manualmente.
-	
+
 	// 1. Sale details (vinculados a sales)
 	res := tx.Exec("DELETE FROM sale_details WHERE \"saleId\" IN (SELECT \"saleId\" FROM sales WHERE \"saleDate\" < ?)", date)
 	if res.Error != nil {
@@ -159,7 +160,7 @@ func (r *PostgresAdminRepository) PurgeDataBefore(date string) (int64, error) {
 	totalDeleted += res.RowsAffected
 
 	// 5. Audit Logs
-	res = tx.Exec("DELETE FROM audit_logs WHERE timestamp < ?", date)
+	res = tx.Exec("DELETE FROM audit_logs WHERE created_at < ?", date)
 	if res.Error != nil {
 		tx.Rollback()
 		return 0, res.Error

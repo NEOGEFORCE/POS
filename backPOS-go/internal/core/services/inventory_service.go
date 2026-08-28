@@ -22,34 +22,34 @@ func NewInventoryService(repo ports.ProductRepository, saleRepo ports.SaleReposi
 // Usar StockStatus, StockCritical, StockWarning, StockOptimal desde dashboard_service.go
 
 type SuggestedOrder struct {
-	Barcode          string      `json:"barcode"`
-	ProductName      string      `json:"productName"`
-	Stock            float64     `json:"stock"`
-	MinStock         float64     `json:"minStock"`
-	MinShelfStock    float64     `json:"minShelfStock"`
-	IsPack           bool        `json:"isPack"`         // Modo Pack existente
-	PackMultiplier   int         `json:"packMultiplier"` // Multiplicador del pack
-	OrderMultiple    int         `json:"orderMultiple"`  // Alias para frontend (REQUERIDO)
-	RequiredMin      float64     `json:"requiredMin"`    // Mínimo obligado (MinStock - Stock)
-	ProjectedSales   float64     `json:"projectedSales"` // Proyección por ventas (TotalIdeal - RequiredMin)
-	TotalIdeal       float64     `json:"totalIdeal"`     // Total ideal calculado (redondeado a PackMultiplier)
-	RecentSales      float64     `json:"recentSales"`    // Last 14 days
-	AvgDailySales    float64     `json:"avgDailySales"`  // Promedio venta diaria
-	Suggested        float64     `json:"suggested"`      // Sugerencia final (igual a TotalIdeal)
-	PurchasePrice    float64     `json:"purchasePrice"`
-	SupplierID       uint        `json:"supplierId"` // 0 = sin proveedor asignado
-	Threshold        int         `json:"threshold"`  // Umbral crítico calculado dinámicamente
-	Status           StockStatus `json:"status"`     // CRITICAL, WARNING, OPTIMAL
-	BestSupplierID   uint        `json:"bestSupplierId"`
-	BestSupplierName string      `json:"bestSupplierName"`
-	LowestPrice      float64     `json:"lowestPrice"`
-	IsHighRotation   bool        `json:"isHighRotation"`
-	Alert            string      `json:"alert"`
-	AlertType        string      `json:"alertType"`
-	Sales30d         float64     `json:"sales30d"`
-	SuggestedMinStock float64    `json:"suggestedMinStock"`
-	PendingOrderQty  float64     `json:"pendingOrderQty"`
-	TransitDetail    string      `json:"transitDetail"`
+	Barcode           string      `json:"barcode"`
+	ProductName       string      `json:"productName"`
+	Stock             float64     `json:"stock"`
+	MinStock          float64     `json:"minStock"`
+	MinShelfStock     float64     `json:"minShelfStock"`
+	IsPack            bool        `json:"isPack"`         // Modo Pack existente
+	PackMultiplier    int         `json:"packMultiplier"` // Multiplicador del pack
+	OrderMultiple     int         `json:"orderMultiple"`  // Alias para frontend (REQUERIDO)
+	RequiredMin       float64     `json:"requiredMin"`    // Mínimo obligado (MinStock - Stock)
+	ProjectedSales    float64     `json:"projectedSales"` // Proyección por ventas (TotalIdeal - RequiredMin)
+	TotalIdeal        float64     `json:"totalIdeal"`     // Total ideal calculado (redondeado a PackMultiplier)
+	RecentSales       float64     `json:"recentSales"`    // Last 14 days
+	AvgDailySales     float64     `json:"avgDailySales"`  // Promedio venta diaria
+	Suggested         float64     `json:"suggested"`      // Sugerencia final (igual a TotalIdeal)
+	PurchasePrice     float64     `json:"purchasePrice"`
+	SupplierID        uint        `json:"supplierId"` // 0 = sin proveedor asignado
+	Threshold         int         `json:"threshold"`  // Umbral crítico calculado dinámicamente
+	Status            StockStatus `json:"status"`     // CRITICAL, WARNING, OPTIMAL
+	BestSupplierID    uint        `json:"bestSupplierId"`
+	BestSupplierName  string      `json:"bestSupplierName"`
+	LowestPrice       float64     `json:"lowestPrice"`
+	IsHighRotation    bool        `json:"isHighRotation"`
+	Alert             string      `json:"alert"`
+	AlertType         string      `json:"alertType"`
+	Sales30d          float64     `json:"sales30d"`
+	SuggestedMinStock float64     `json:"suggestedMinStock"`
+	PendingOrderQty   float64     `json:"pendingOrderQty"`
+	TransitDetail     string      `json:"transitDetail"`
 }
 
 type SupplierGroup struct {
@@ -90,8 +90,6 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		return nil, err
 	}
 
-
-
 	if len(products) == 0 {
 		return []SuggestedOrder{}, nil
 	}
@@ -105,12 +103,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 	fourteenDaysAgo := now.AddDate(0, 0, -14)
 	thirtyDaysAgo := now.AddDate(0, 0, -30)
 
-	salesMap, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, fourteenDaysAgo, now)
-	if err != nil {
-		return nil, err
-	}
-
-	salesMap30d, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, thirtyDaysAgo, now)
+	salesMap, salesMap30d, err := s.saleRepo.GetSoldQuantitiesByBarcodesForWindows(barcodes, fourteenDaysAgo, thirtyDaysAgo, now)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +134,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		if multiplo <= 0 {
 			multiplo = 1.0 // Evitar división por cero o anulaciones
 		}
-		
+
 		pendingQty := transitQtyMap[p.Barcode]
 		transitDetail := ""
 		if pendingQty > 0 {
@@ -165,7 +158,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		}
 
 		deficit = math.Max(0.0, sugeridoBase)
-		
+
 		alert := ""
 		alertType := ""
 
@@ -177,7 +170,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 
 		// Slow/High-Mover and Min Stock checks
 		suggestedMinStock := p.MinStock
-		if avgDaily * 14 > p.MinStock + 2 {
+		if avgDaily*14 > p.MinStock+2 {
 			suggestedMinStock = math.Ceil(avgDaily * 14)
 			alert = fmt.Sprintf("Aumentar min. a %.0f: Ventas altas", suggestedMinStock)
 			alertType = "INCREASE_MIN_STOCK"
@@ -202,12 +195,8 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		if totalIdeal <= 0 && pendingQty <= 0 {
 			continue
 		}
-		
-		if alertType == "HIGH_MOVER" && totalIdeal > 0 {
-			alert = fmt.Sprintf("Aumentado a %.0f: Alta rotación", totalIdeal)
-		}
-		
-		isHighRotation := sugeridoPorVentas > sugeridoBase || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
+
+		isHighRotation := (totalIdeal > sugeridoBase && sugeridoPorVentas > sugeridoBase) || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
 
 		if alert == "" {
 			if isHighRotation && totalIdeal > 0 {
@@ -238,7 +227,7 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			}
 		} else {
 			ratio := float64(p.Quantity) / p.MinStock
-			
+
 			if p.Quantity <= 0 || ratio <= 0.25 {
 				status = StockCritical
 			} else if ratio <= 0.50 {
@@ -249,34 +238,34 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		}
 
 		suggested = append(suggested, SuggestedOrder{
-			Barcode:          p.Barcode,
-			ProductName:      p.ProductName,
-			Stock:            p.Quantity,
-			MinStock:         p.MinStock,
-			MinShelfStock:    p.MinShelfStock,
-			IsPack:           p.IsPack,
-			PackMultiplier:   p.PackMultiplier,
-			OrderMultiple:    p.OrderMultiple,
-			RequiredMin:      requiredMin,
-			ProjectedSales:   projectedSales,
-			TotalIdeal:       totalIdeal,
-			RecentSales:      sold,
-			AvgDailySales:    avgDaily,
-			Suggested:        totalIdeal,
-			PurchasePrice:    p.PurchasePrice,
-			SupplierID:       supplierID,
-			Threshold:        GetCriticalThreshold(int(p.MinStock)),
-			Status:           status,
-			BestSupplierID:   p.BestSupplierID,
-			BestSupplierName: p.BestSupplierName,
-			LowestPrice:      p.LowestPrice,
-			IsHighRotation:   isHighRotation,
-			Alert:            alert,
-			AlertType:        alertType,
-			Sales30d:         sold30d,
+			Barcode:           p.Barcode,
+			ProductName:       p.ProductName,
+			Stock:             p.Quantity,
+			MinStock:          p.MinStock,
+			MinShelfStock:     p.MinShelfStock,
+			IsPack:            p.IsPack,
+			PackMultiplier:    p.PackMultiplier,
+			OrderMultiple:     p.OrderMultiple,
+			RequiredMin:       requiredMin,
+			ProjectedSales:    projectedSales,
+			TotalIdeal:        totalIdeal,
+			RecentSales:       sold,
+			AvgDailySales:     avgDaily,
+			Suggested:         totalIdeal,
+			PurchasePrice:     p.PurchasePrice,
+			SupplierID:        supplierID,
+			Threshold:         GetCriticalThreshold(int(p.MinStock)),
+			Status:            status,
+			BestSupplierID:    p.BestSupplierID,
+			BestSupplierName:  p.BestSupplierName,
+			LowestPrice:       p.LowestPrice,
+			IsHighRotation:    isHighRotation,
+			Alert:             alert,
+			AlertType:         alertType,
+			Sales30d:          sold30d,
 			SuggestedMinStock: suggestedMinStock,
-			PendingOrderQty:  pendingQty,
-			TransitDetail:    transitDetail,
+			PendingOrderQty:   pendingQty,
+			TransitDetail:     transitDetail,
 		})
 	}
 
@@ -312,7 +301,7 @@ func (s *InventoryService) GetGlobalRestockSuggestionsGrouped(ignoreStock bool) 
 		if targetID == 0 {
 			targetID = item.SupplierID // Fallback
 		}
-		
+
 		groupsMap[targetID] = append(groupsMap[targetID], item)
 		if targetID != 0 {
 			if item.BestSupplierName != "" {
@@ -367,12 +356,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 	fourteenDaysAgo := now.AddDate(0, 0, -14)
 	thirtyDaysAgo := now.AddDate(0, 0, -30)
 
-	salesMap, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, fourteenDaysAgo, now)
-	if err != nil {
-		return nil, err
-	}
-
-	salesMap30d, err := s.saleRepo.GetSoldQuantitiesByBarcodes(barcodes, thirtyDaysAgo, now)
+	salesMap, salesMap30d, err := s.saleRepo.GetSoldQuantitiesByBarcodesForWindows(barcodes, fourteenDaysAgo, thirtyDaysAgo, now)
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +385,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		if multiplo <= 0 {
 			multiplo = 1.0
 		}
-		
+
 		pendingQty := transitQtyMap[p.Barcode]
 		transitDetail := ""
 		if pendingQty > 0 {
@@ -423,7 +407,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		} else {
 			deficit = math.Max(0.0, sugeridoBase)
 		}
-		
+
 		alert := ""
 		alertType := ""
 
@@ -433,7 +417,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		}
 
 		suggestedMinStock := p.MinStock
-		if avgDaily * 14 > p.MinStock + 2 {
+		if avgDaily*14 > p.MinStock+2 {
 			suggestedMinStock = math.Ceil(avgDaily * 14)
 			alert = fmt.Sprintf("Aumentar min. a %.0f: Ventas altas", suggestedMinStock)
 			alertType = "INCREASE_MIN_STOCK"
@@ -458,12 +442,8 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		if totalIdeal <= 0 && pendingQty <= 0 {
 			continue
 		}
-		
-		if alertType == "HIGH_MOVER" && totalIdeal > 0 {
-			alert = fmt.Sprintf("Aumentado a %.0f: Alta rotación", totalIdeal)
-		}
-		
-		isHighRotation := sugeridoPorVentas > sugeridoBase || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
+
+		isHighRotation := (totalIdeal > sugeridoBase && sugeridoPorVentas > sugeridoBase) || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
 
 		if alert == "" {
 			if isHighRotation && totalIdeal > 0 {
@@ -489,7 +469,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 			}
 		} else {
 			ratio := float64(p.Quantity) / p.MinStock
-			
+
 			if p.Quantity <= 0 || ratio <= 0.25 {
 				status = StockCritical
 			} else if ratio <= 0.50 {
@@ -500,34 +480,34 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		}
 
 		suggested = append(suggested, SuggestedOrder{
-			Barcode:          p.Barcode,
-			ProductName:      p.ProductName,
-			Stock:            p.Quantity,
-			MinStock:         p.MinStock,
-			MinShelfStock:    p.MinShelfStock,
-			IsPack:           p.IsPack,
-			PackMultiplier:   p.PackMultiplier,
-			OrderMultiple:    p.OrderMultiple,
-			RequiredMin:      requiredMin,
-			ProjectedSales:   projectedSales,
-			TotalIdeal:       totalIdeal,
-			RecentSales:      sold,
-			AvgDailySales:    avgDaily,
-			Suggested:        totalIdeal,
-			PurchasePrice:    p.PurchasePrice,
-			SupplierID:       supplierID,
-			Threshold:        GetCriticalThreshold(int(p.MinStock)),
-			Status:           status,
-			BestSupplierID:   p.BestSupplierID,
-			BestSupplierName: p.BestSupplierName,
-			LowestPrice:      p.LowestPrice,
-			IsHighRotation:   isHighRotation,
-			Alert:            alert,
-			AlertType:        alertType,
-			Sales30d:         sold30d,
+			Barcode:           p.Barcode,
+			ProductName:       p.ProductName,
+			Stock:             p.Quantity,
+			MinStock:          p.MinStock,
+			MinShelfStock:     p.MinShelfStock,
+			IsPack:            p.IsPack,
+			PackMultiplier:    p.PackMultiplier,
+			OrderMultiple:     p.OrderMultiple,
+			RequiredMin:       requiredMin,
+			ProjectedSales:    projectedSales,
+			TotalIdeal:        totalIdeal,
+			RecentSales:       sold,
+			AvgDailySales:     avgDaily,
+			Suggested:         totalIdeal,
+			PurchasePrice:     p.PurchasePrice,
+			SupplierID:        supplierID,
+			Threshold:         GetCriticalThreshold(int(p.MinStock)),
+			Status:            status,
+			BestSupplierID:    p.BestSupplierID,
+			BestSupplierName:  p.BestSupplierName,
+			LowestPrice:       p.LowestPrice,
+			IsHighRotation:    isHighRotation,
+			Alert:             alert,
+			AlertType:         alertType,
+			Sales30d:          sold30d,
 			SuggestedMinStock: suggestedMinStock,
-			PendingOrderQty:  pendingQty,
-			TransitDetail:    transitDetail,
+			PendingOrderQty:   pendingQty,
+			TransitDetail:     transitDetail,
 		})
 	}
 

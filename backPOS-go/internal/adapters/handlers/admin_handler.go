@@ -98,13 +98,28 @@ func (h *AdminHandler) CreateEmployee(c *gin.Context) {
 		emp.DNI = strings.ToUpper(emp.DNI)
 	}
 
+	if existing, err := h.service.GetEmployee(emp.DNI); err == nil && existing != nil {
+		if !existing.IsActive {
+			emp.IsActive = true
+			if err := h.service.UpdateEmployee(existing.DNI, &emp); err != nil {
+				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar usuario", err)
+				return
+			}
+			authorDNI, authorName, ip, device := h.getAuditInfo(c)
+			h.auditService.Log(authorDNI, authorName, "REACTIVATE_EMPLOYEE", "ADMIN", fmt.Sprintf("Reactivado usuario %s con rol %s", emp.Name, emp.Role), fmt.Sprintf("Se reactivó el usuario previamente eliminado: %s (%s)", emp.Name, emp.DNI), "{}", ip, device, true)
+			c.JSON(http.StatusOK, gin.H{"message": "Usuario reactivado exitosamente", "reactivated": true, "employee": emp})
+			go sse.GetSSEService().BroadcastDashboardUpdate()
+			return
+		}
+	}
+
 	if err := h.service.CreateEmployee(&emp); err != nil {
 		log.Printf("ERROR: Fallo al crear empleado %s: %v", emp.DNI, err)
 		errStr := strings.ToLower(err.Error())
 		// Detección mejorada de duplicados (PostgreSQL / MySQL)
-		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") || 
-		   strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") || 
-		   strings.Contains(errStr, "ya existe") {
+		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") ||
+			strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") ||
+			strings.Contains(errStr, "ya existe") {
 			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El DNI o el nombre de usuario ya está registrado en el núcleo", err)
 			return
 		}
@@ -143,9 +158,9 @@ func (h *AdminHandler) UpdateEmployee(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
-	
+
 	roleNormalized := strings.ToLower(req.Role)
-	
+
 	// Verificar el rol actual del empleado antes de actualizar
 	currentEmp, err := h.service.GetEmployee(dni)
 	if err != nil {
@@ -213,14 +228,25 @@ func (h *AdminHandler) DeleteEmployee(c *gin.Context) {
 
 	// Protección: No se puede eliminar a un Superadmin
 	emp, err := h.service.GetEmployee(dni)
-	if err == nil && strings.ToLower(emp.Role) == "superadmin" {
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			SendError(c, http.StatusNotFound, ErrNotFound, "Empleado no encontrado", err)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al consultar empleado", err)
+		return
+	}
+	if strings.ToLower(emp.Role) == "superadmin" {
 		SendError(c, http.StatusForbidden, ErrForbidden, "El perfil de Superadmin es inmutable y no puede ser eliminado.", nil)
 		return
 	}
 
-	// Al eliminar (borrado lógico), también marcamos IsActive como false
+	// Al eliminar (borrado lógico), también marcamos IsActive como false.
 	emp.IsActive = false
-	h.service.UpdateEmployee(dni, emp)
+	if err := h.service.UpdateEmployee(dni, emp); err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al desactivar empleado", err)
+		return
+	}
 
 	if err := h.service.DeleteEmployee(dni); err != nil {
 		if strings.Contains(err.Error(), "not found") {
@@ -385,13 +411,21 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	user := os.Getenv("DB_USER")
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
-	
+
 	pgDumpPath, attempted, err := dbbackup.ResolvePgDumpPath()
 
-	if host == "" { host = "localhost" }
-	if port == "" { port = "5432" }
-	if user == "" { user = "postgres" }
-	if dbname == "" { dbname = "sistemapos" }
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if user == "" {
+		user = "postgres"
+	}
+	if dbname == "" {
+		dbname = "sistemapos"
+	}
 
 	if err != nil {
 		pathsList := dbbackup.FormatAttemptedPaths(attempted)
@@ -408,7 +442,7 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	// Comando pg_dump
 	args := []string{"-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", filePath}
 	cmd := exec.Command(pgDumpPath, args...)
-	
+
 	// Setear la contraseña temporalmente en el entorno
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
 
@@ -431,7 +465,7 @@ func (h *AdminHandler) GenerateDatabaseBackup(c *gin.Context) {
 	c.Header("Content-Disposition", "attachment; filename="+fileName)
 	c.Header("Content-Type", "application/octet-stream")
 	c.File(filePath)
-	
+
 	// Eliminar el archivo después de enviarlo
 	go func() {
 		time.Sleep(10 * time.Second)
@@ -446,15 +480,25 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 	user := os.Getenv("DB_USER")
 	dbname := os.Getenv("DB_NAME")
 	pass := os.Getenv("DB_PASSWORD")
-	
+
 	pgDumpRaw := strings.TrimSpace(strings.Trim(os.Getenv("PG_DUMP_PATH"), "\""))
 	pgDumpPath := filepath.Clean(pgDumpRaw)
 
-	if host == "" { host = "localhost" }
-	if port == "" { port = "5432" }
-	if user == "" { user = "postgres" }
-	if dbname == "" { dbname = "sistemapos" }
-	if pgDumpPath == "" || pgDumpPath == "." { pgDumpPath = "pg_dump" }
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if user == "" {
+		user = "postgres"
+	}
+	if dbname == "" {
+		dbname = "sistemapos"
+	}
+	if pgDumpPath == "" || pgDumpPath == "." {
+		pgDumpPath = "pg_dump"
+	}
 
 	// Validar que el binario exista
 	if _, err := os.Stat(pgDumpPath); os.IsNotExist(err) && pgDumpPath != "pg_dump" {
@@ -491,7 +535,7 @@ func (h *AdminHandler) SendBackupToTelegram(c *gin.Context) {
 		defer file.Close()
 		defer os.Remove(filePath)
 
-		caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Sincronizado_", 
+		caption := fmt.Sprintf("💾 *RESPALDO MANUAL SOLICITADO*\n👤 Por: `%s` (%s)\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Sincronizado_",
 			requesterName, requesterDNI, time.Now().Format("02/01/2006 15:04"))
 
 		if err := h.telegram.SendDocument(file, fileName, caption); err != nil {

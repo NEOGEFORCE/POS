@@ -1,885 +1,137 @@
 package repositories
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
-
-	"backPOS-go/internal/core/domain/models"
+	"strconv"
 	"strings"
+	"time"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
-	"time"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var DB *gorm.DB
 
-func ConnectDB() {
-	user := os.Getenv("DB_USER")
+type databasePoolConfig struct {
+	MaxOpenConns    int
+	MaxIdleConns    int
+	ConnMaxLifetime time.Duration
+	ConnMaxIdleTime time.Duration
+	PingTimeout     time.Duration
+}
+
+func boundedEnvInt(name string, fallback, minimum, maximum int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < minimum || value > maximum {
+		log.Printf("⚠️ %s=%q fuera de rango; se usará %d", name, raw, fallback)
+		return fallback
+	}
+	return value
+}
+
+func databasePoolConfigFromEnv() databasePoolConfig {
+	maxOpen := boundedEnvInt("DB_MAX_OPEN_CONNS", 25, 1, 200)
+	maxIdle := boundedEnvInt("DB_MAX_IDLE_CONNS", 5, 0, 200)
+	if maxIdle > maxOpen {
+		log.Printf("⚠️ DB_MAX_IDLE_CONNS=%d excede DB_MAX_OPEN_CONNS=%d; se ajustará al máximo abierto", maxIdle, maxOpen)
+		maxIdle = maxOpen
+	}
+	lifetimeMinutes := boundedEnvInt("DB_CONN_MAX_LIFETIME_MINUTES", 30, 1, 1440)
+	idleMinutes := boundedEnvInt("DB_CONN_MAX_IDLE_MINUTES", 5, 1, 120)
+	pingSeconds := boundedEnvInt("DB_PING_TIMEOUT_SECONDS", 5, 1, 60)
+	return databasePoolConfig{
+		MaxOpenConns:    maxOpen,
+		MaxIdleConns:    maxIdle,
+		ConnMaxLifetime: time.Duration(lifetimeMinutes) * time.Minute,
+		ConnMaxIdleTime: time.Duration(idleMinutes) * time.Minute,
+		PingTimeout:     time.Duration(pingSeconds) * time.Second,
+	}
+}
+
+func configureAndPingDatabase(db *gorm.DB) error {
+	sqlDB, err := db.DB()
+	if err != nil {
+		return fmt.Errorf("obteniendo conexión SQL: %w", err)
+	}
+	config := databasePoolConfigFromEnv()
+	sqlDB.SetMaxOpenConns(config.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(config.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(config.ConnMaxLifetime)
+	sqlDB.SetConnMaxIdleTime(config.ConnMaxIdleTime)
+
+	ctx, cancel := context.WithTimeout(context.Background(), config.PingTimeout)
+	defer cancel()
+	if err := sqlDB.PingContext(ctx); err != nil {
+		return fmt.Errorf("PostgreSQL no respondió en %s: %w", config.PingTimeout, err)
+	}
+	log.Printf("✅ PostgreSQL pool: open=%d idle=%d lifetime=%s idle-time=%s", config.MaxOpenConns, config.MaxIdleConns, config.ConnMaxLifetime, config.ConnMaxIdleTime)
+	return nil
+}
+
+// OpenDatabase abre y verifica la base configurada. No crea bases, tablas,
+// índices, vistas, roles ni datos: esos cambios pertenecen al comando migrate.
+func OpenDatabase() (*gorm.DB, error) {
+	user := strings.TrimSpace(os.Getenv("DB_USER"))
 	password := os.Getenv("DB_PASSWORD")
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	dbname := os.Getenv("DB_NAME")
+	host := strings.TrimSpace(os.Getenv("DB_HOST"))
+	port := strings.TrimSpace(os.Getenv("DB_PORT"))
+	dbname := strings.TrimSpace(os.Getenv("DB_NAME"))
 
-	// 1. Conectar primero a 'postgres' para asegurar que la base de datos destino existe
-	dsn_postgres := fmt.Sprintf("host=%s user=%s password=%s dbname=postgres port=%s sslmode=disable TimeZone=UTC", host, user, password, port)
-	db_init, err := gorm.Open(postgres.Open(dsn_postgres), &gorm.Config{})
-	if err == nil {
-		// Verificar si la base de datos ya existe antes de intentar crearla
-		var exists int
-		db_init.Raw("SELECT 1 FROM pg_database WHERE datname = ?", dbname).Scan(&exists)
-
-		if exists == 0 {
-			// Intentar crear la base de datos solo si no existe
-			if err := db_init.Exec(fmt.Sprintf("CREATE DATABASE %s", dbname)).Error; err != nil {
-				log.Printf("Warning: Could not create database: %v", err)
-			} else {
-				log.Printf("Database %s created successfully.", dbname)
-			}
+	for name, value := range map[string]string{
+		"DB_USER": user,
+		"DB_HOST": host,
+		"DB_PORT": port,
+		"DB_NAME": dbname,
+	} {
+		if value == "" {
+			return nil, fmt.Errorf("la variable %s es obligatoria", name)
 		}
-
-		sqlDB, _ := db_init.DB()
-		sqlDB.Close()
 	}
 
-	// 2. Ahora conectar a la base de datos real del sistema
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC", host, user, password, dbname, port)
-
-	// Configuración de Logger para GORM (Reducción de ruido en consola)
 	newLogger := logger.New(
 		log.New(os.Stdout, "\r\n", log.LstdFlags),
 		logger.Config{
-			SlowThreshold:             time.Second,   // Umbral de SQL lento (1s)
-			LogLevel:                  logger.Warn,   // Solo Warn o Error para evitar ruidos de consultas rápidas
-			IgnoreRecordNotFoundError: true,          // No loguear 404s de registros
+			SlowThreshold:             time.Second,
+			LogLevel:                  logger.Warn,
+			IgnoreRecordNotFoundError: true,
 			Colorful:                  true,
 		},
 	)
 
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: newLogger,
+		Logger:                                   newLogger,
 		DisableForeignKeyConstraintWhenMigrating: true,
 	})
 	if err != nil {
-		log.Fatal("Failed to connect to database. \n", err)
+		return nil, fmt.Errorf("conectando a PostgreSQL: %w", err)
 	}
-
-	// Habilitar extensión unaccent para búsquedas sin tildes
-	db.Exec("CREATE EXTENSION IF NOT EXISTS unaccent;")
-
-	// Limpiar restricciones antiguas que bloquean la migración (Email ya no es unique)
-	// NUCLEAR CLEANUP: Se realiza mediante el bloque DO $$ mÃ¡s adelante
-
-	// LIMPIEZA NUCLEAR: Borrar todas las restricciones e índices redundantes antes de la migración
-	// Esto asegura que 'name', 'email' y 'phoneNumber' (que vamos a borrar) no bloqueen nada.
-	db.Exec(`
-		DO $$ 
-		DECLARE 
-			r RECORD;
-		BEGIN
-			-- 0. Borrar restricciones conflictivas conocidas
-			ALTER TABLE employees DROP CONSTRAINT IF EXISTS uni_employees_dni;
-			ALTER TABLE employees DROP CONSTRAINT IF EXISTS uni_employees_email;
-
-			-- 1. Borrar todas las Restricciones de Unicidad
-			FOR r IN (
-				SELECT conname 
-				FROM pg_constraint 
-				WHERE conrelid = 'employees'::regclass 
-				AND contype = 'u'
-			) LOOP
-				EXECUTE 'ALTER TABLE employees DROP CONSTRAINT IF EXISTS ' || quote_ident(r.conname);
-			END LOOP;
-
-			-- 2. Borrar todos los Índices Únicos (excepto la llave primaria)
-			FOR r IN (
-				SELECT indexname 
-				FROM pg_indexes 
-				WHERE tablename = 'employees' 
-				AND indexname != 'employees_pkey'
-				AND indexdef LIKE '%UNIQUE%'
-			) LOOP
-				EXECUTE 'DROP INDEX IF EXISTS ' || quote_ident(r.indexname);
-			END LOOP;
-
-			-- 3. ELIMINAR LA COLUMNA DE TELÉFONO (Petición del usuario en Employees)
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='employees' AND column_name='phoneNumber') THEN
-				ALTER TABLE employees DROP COLUMN "phoneNumber";
-			END IF;
-
-			-- 4. LIMPIEZA DE DEVOLUCIONES (Borrar columnas obsoletas de versiones JS)
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='returns' AND column_name='quantity') THEN
-				ALTER TABLE "returns" DROP COLUMN "quantity";
-			END IF;
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='returns' AND column_name='barcode') THEN
-				ALTER TABLE "returns" DROP COLUMN "barcode";
-			END IF;
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='returns' AND column_name='createdAt') THEN
-				ALTER TABLE "returns" DROP COLUMN "createdAt";
-			END IF;
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='returns' AND column_name='updatedAt') THEN
-				ALTER TABLE "returns" DROP COLUMN "updatedAt";
-			END IF;
-
-			-- 5. BACKFILL PARA COSTPRICE (Evitar error 23502 en sale_details)
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sale_details' AND column_name='costPrice') THEN
-				UPDATE sale_details SET "costPrice" = 0 WHERE "costPrice" IS NULL;
-			END IF;
-
-			-- 6. MIGRACIÓN DE AUDITORÍA EN EGRESOS (camelCase to snake_case)
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='created_by_dni') THEN
-				-- Primero, si existe la columna vieja, migrar los datos
-				IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='createdByDni') THEN
-					UPDATE expenses SET "created_by_dni" = "createdByDni" WHERE "created_by_dni" IS NULL OR "created_by_dni" = '';
-					ALTER TABLE expenses DROP COLUMN "createdByDni";
-				END IF;
-
-				-- Segundo, asegurar que NO haya nulos (usar el primer empleado como fallback para registros huérfanos)
-				UPDATE expenses 
-				SET "created_by_dni" = COALESCE(
-					(SELECT dni FROM employees ORDER BY role DESC LIMIT 1), 
-					'SISTEMA'
-				) 
-				WHERE "created_by_dni" IS NULL OR "created_by_dni" = '';
-			END IF;
-			-- 7. REFINAMIENTO LOGÍSTICO (Eliminar Dirección física irrelevante)
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='suppliers' AND column_name='address') THEN
-				ALTER TABLE suppliers DROP COLUMN "address";
-			END IF;
-
-			-- 8. MIGRACIÓN DE CIERRE DE CAJA (Asegurar columnas de desglose y auditoría)
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='cash_bills') THEN
-				ALTER TABLE cashier_closures ADD COLUMN cash_bills DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins200') THEN
-				ALTER TABLE cashier_closures ADD COLUMN coins200 DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins100') THEN
-				ALTER TABLE cashier_closures ADD COLUMN coins100 DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			if NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins500') THEN
-				ALTER TABLE cashier_closures ADD COLUMN coins500 DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			if NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins1000') THEN
-				ALTER TABLE cashier_closures ADD COLUMN coins1000 DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			-- Migración de datos si existe la columna vieja
-			IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='coins500_1000') THEN
-				-- No podemos saber exactamente cuánto era de cada uno, así que lo ponemos en 500 como fallback o dejamos ambos en 0
-				-- pero para no perder el dato global, lo movemos a coins500
-				UPDATE cashier_closures SET coins500 = coins500_1000 WHERE coins500 = 0;
-				ALTER TABLE cashier_closures DROP COLUMN coins500_1000;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='closed_by_dni') THEN
-				ALTER TABLE cashier_closures ADD COLUMN closed_by_dni VARCHAR(50) DEFAULT '';
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='closed_by_name') THEN
-				ALTER TABLE cashier_closures ADD COLUMN closed_by_name VARCHAR(255) DEFAULT '';
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='physical_cash') THEN
-				ALTER TABLE cashier_closures ADD COLUMN physical_cash DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='difference') THEN
-				ALTER TABLE cashier_closures ADD COLUMN difference DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='authorized_by') THEN
-				ALTER TABLE cashier_closures ADD COLUMN authorized_by VARCHAR(255) DEFAULT '';
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='cashier_closures' AND column_name='total_card') THEN
-				ALTER TABLE cashier_closures ADD COLUMN total_card DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			-- 9. MIGRACIÓN DE ESTADO EN VENTAS (V8.5)
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='sales' AND column_name='status') THEN
-				ALTER TABLE sales ADD COLUMN status VARCHAR(20) DEFAULT 'PAID';
-				UPDATE sales SET status = 'PAID';
-			END IF;
-
-			-- 9.1 MIGRACIÓN LOGÍSTICA EN PRODUCTOS
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='order_multiple') THEN
-				ALTER TABLE products ADD COLUMN order_multiple INTEGER DEFAULT 1;
-			END IF;
-
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='discount') THEN
-				ALTER TABLE products ADD COLUMN discount DECIMAL(10,2) DEFAULT 0;
-			END IF;
-
-			-- 9.2 MIGRACIÓN EGRESOS MIXTOS
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='cash_amount') THEN
-				ALTER TABLE expenses ADD COLUMN cash_amount DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='nequi_amount') THEN
-				ALTER TABLE expenses ADD COLUMN nequi_amount DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='daviplata_amount') THEN
-				ALTER TABLE expenses ADD COLUMN daviplata_amount DECIMAL(10,2) DEFAULT 0;
-			END IF;
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='expenses' AND column_name='fondo_amount') THEN
-				ALTER TABLE expenses ADD COLUMN fondo_amount DECIMAL(10,2) DEFAULT 0;
-			END IF;
-
-			-- 10. REFORZAR ON UPDATE CASCADE PARA BARCODES (V9.0)
-			-- Esto es CRÍTICO para permitir editar códigos de producto sin romper la base de datos
-			
-			-- Sale Details
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='sale_details' AND constraint_type='FOREIGN KEY') THEN
-				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='sale_details' AND column_name='barcode') LOOP
-					EXECUTE 'ALTER TABLE sale_details DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
-				END LOOP;
-			END IF;
-			ALTER TABLE sale_details ADD CONSTRAINT fk_sale_details_product FOREIGN KEY (barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE RESTRICT;
-
-			-- Return Details
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='return_details' AND constraint_type='FOREIGN KEY') THEN
-				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='return_details' AND column_name='barcode') LOOP
-					EXECUTE 'ALTER TABLE return_details DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
-				END LOOP;
-			END IF;
-			ALTER TABLE return_details ADD CONSTRAINT fk_return_details_product FOREIGN KEY (barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE RESTRICT;
-
-			-- Purchase Order Items
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='purchase_order_items' AND constraint_type='FOREIGN KEY') THEN
-				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='purchase_order_items' AND column_name='productBarcode') LOOP
-					EXECUTE 'ALTER TABLE purchase_order_items DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
-				END LOOP;
-			END IF;
-			ALTER TABLE purchase_order_items ADD CONSTRAINT fk_purchase_order_items_product FOREIGN KEY ("productBarcode") REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE;
-
-			-- Product Suppliers (Many-to-Many)
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='product_suppliers' AND constraint_type='FOREIGN KEY') THEN
-				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='product_suppliers' AND column_name='product_barcode') LOOP
-					EXECUTE 'ALTER TABLE product_suppliers DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
-				END LOOP;
-			END IF;
-			ALTER TABLE product_suppliers ADD CONSTRAINT fk_product_suppliers_product FOREIGN KEY (product_barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE;
-
-			-- Stock Movements
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='stock_movements' AND constraint_type='FOREIGN KEY') THEN
-				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='stock_movements' AND column_name='barcode') LOOP
-					EXECUTE 'ALTER TABLE stock_movements DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
-				END LOOP;
-			END IF;
-			ALTER TABLE stock_movements ADD CONSTRAINT fk_stock_movements_product FOREIGN KEY (barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE;
-
-			-- Products Self-Reference (Packs)
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE table_name='products' AND constraint_type='FOREIGN KEY') THEN
-				FOR r IN (SELECT constraint_name FROM information_schema.key_column_usage WHERE table_name='products' AND column_name='baseProductBarcode') LOOP
-					EXECUTE 'ALTER TABLE products DROP CONSTRAINT IF EXISTS ' || quote_ident(r.constraint_name);
-				END LOOP;
-			END IF;
-			ALTER TABLE products ADD CONSTRAINT fk_products_base_product FOREIGN KEY ("baseProductBarcode") REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE SET NULL;
-			
-			-- NORMALIZACIÓN DE DNI (V9.5): Asegurar que el admin sea ADMIN
-			UPDATE employees SET dni = 'ADMIN' WHERE dni = 'admin';
-			UPDATE products SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
-			UPDATE products SET "updatedByDni" = 'ADMIN' WHERE "updatedByDni" = 'admin';
-			UPDATE clients SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
-			UPDATE categories SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
-			UPDATE expenses SET "createdByDni" = 'ADMIN' WHERE "createdByDni" = 'admin';
-		END $$;
-	`)
-
-	// 11. ASEGURAR TABLA DE LOGS DE PRECIO (V9.6) - Fuera de DO $$ para evitar errores de DDL
-	db.Exec(`
-		CREATE TABLE IF NOT EXISTS price_logs (
-			id SERIAL PRIMARY KEY,
-			product_barcode VARCHAR(50) NOT NULL,
-			product_name VARCHAR(255),
-			old_price DECIMAL(10,2),
-			new_price DECIMAL(10,2),
-			created_at BIGINT,
-			CONSTRAINT fk_price_logs_product FOREIGN KEY (product_barcode) REFERENCES products(barcode) ON UPDATE CASCADE ON DELETE CASCADE
-		);
-		CREATE INDEX IF NOT EXISTS idx_price_logs_barcode ON price_logs(product_barcode);
-	`)
-
-	// 12. REMOVER LLAVES FORÁNEAS RESTRICTIVAS QUE IMPIDEN ACTUALIZAR O BORRAR PRODUCTOS
-	db.Exec(`
-		DO $$ 
-		BEGIN 
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_confirmed_order_items_product') THEN
-				ALTER TABLE confirmed_order_items DROP CONSTRAINT fk_confirmed_order_items_product;
-			END IF;
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_active_purchase_list_product') THEN
-				ALTER TABLE active_purchase_list DROP CONSTRAINT fk_active_purchase_list_product;
-			END IF;
-			IF EXISTS (SELECT 1 FROM information_schema.table_constraints WHERE constraint_name = 'fk_price_logs_product') THEN
-				ALTER TABLE price_logs DROP CONSTRAINT fk_price_logs_product;
-			END IF;
-		END $$;
-	`)
-
-	// Migrar tablas una por una
-	models_to_migrate := []interface{}{
-		&models.Employee{},
-		&models.Client{},
-		&models.Category{},
-		&models.Supplier{},
-		&models.Product{},
-		&models.Sale{},
-		&models.SaleDetail{},
-		&models.Expense{},
-		&models.Return{},
-		&models.ReturnDetail{},
-		&models.CashierClosure{},
-		&models.ActiveShift{},
-		&models.CreditPayment{},
-		&models.ProductSupplier{},
-		&models.StockMovement{},
-		&models.AuditLog{},
-		&models.MissingItem{},
-		&models.ExpectedOrder{}, // CRITICAL FIX: Tabla de pedidos esperados/preventa
-		&models.ExpectedOrderItem{},
-		&models.ReportHistory{},
-		&models.PriceLog{},
-		&models.Shrinkage{},
-		&models.ActivePurchaseList{},
-		&models.ConfirmedOrder{},
-		&models.ConfirmedOrderItem{},
-		&models.SupplierProductAlias{},
-		&models.SupplierInvoiceParams{},
-	}
-
-	// Sesión especial para migraciones: sin transacciones y en modo SILENCIOSO para evitar ruido en el terminal
-	migrationDB := db.Session(&gorm.Session{
-		SkipDefaultTransaction: true,
-		Logger:                 logger.Default.LogMode(logger.Silent),
-	})
-
-	for _, model := range models_to_migrate {
-		if err := migrationDB.AutoMigrate(model); err != nil {
-			// Ignorar el error específico de uni_employees_email que es benigno (ya no se usa)
-			if !strings.Contains(err.Error(), "uni_employees_email") {
-				log.Printf("Warning: Failed to auto-migrate model %T: %v", model, err)
-			}
+	if err := configureAndPingDatabase(db); err != nil {
+		sqlDB, sqlErr := db.DB()
+		if sqlErr == nil {
+			_ = sqlDB.Close()
 		}
+		return nil, err
 	}
 
-	DB = db
 	log.Printf("✅ Database connection established: %s", dbname)
-
-	// --- OPTIMIZACIÓN TIER 1: CONNECTION POOL ---
-	sqlDB, err := db.DB()
-	if err == nil {
-		sqlDB.SetMaxIdleConns(50)
-		sqlDB.SetMaxOpenConns(50)
-		sqlDB.SetConnMaxLifetime(30 * time.Minute)
-		sqlDB.SetConnMaxIdleTime(10 * time.Minute)
-	}
-
-	// Ejecutar setup avanzado (RLS, roles, migraciones adicionales)
-	if err := runDatabaseSetup(db); err != nil {
-		log.Printf("⚠️ Warning: Database setup encountered issues: %v", err)
-	}
-
-	// 5. Crear Índices Globales para escalabilidad masiva
-	if err := createGlobalIndexes(db); err != nil {
-		log.Printf("⚠️ Warning: Index creation encountered issues: %v", err)
-	}
-
-	// 6. Crear Vistas Materializadas para Dashboard HFT
-	if err := InitMaterializedViews(db); err != nil {
-		log.Printf("⚠️ Warning: Materialized views encountered issues: %v", err)
-	}
-
-	// 7. Seed Admin, Client, Categories and Products
-	SeedAdmin(db)
-	SeedClient(db, "ADMIN")
-	SeedCategory(db, "ADMIN")
-	SeedProducts(db, "ADMIN")
+	return db, nil
 }
 
-// runDatabaseSetup ejecuta configuraciones avanzadas de BD (idempotente)
-func runDatabaseSetup(db *gorm.DB) error {
-	log.Printf("🔧 Running advanced database setup...")
-
-	// 1. Crear roles de PostgreSQL si no existen (idempotente)
-	if err := createPostgreSQLRoles(db); err != nil {
-		log.Printf("⚠️ Role creation warning (may already exist): %v", err)
+// ConnectDB mantiene el contrato histórico de la aplicación. Sólo conecta;
+// la compatibilidad del esquema se comprueba de forma separada en cmd/api.
+func ConnectDB() {
+	db, err := OpenDatabase()
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
 	}
-
-	// 2. Agregar columnas nuevas para proveedores (multi-días)
-	if err := addSupplierMultiDayColumns(db); err != nil {
-		log.Printf("⚠️ Supplier columns warning: %v", err)
-	}
-
-	// 3. Habilitar RLS en tablas transaccionales
-	if err := enableRLS(db); err != nil {
-		log.Printf("⚠️ RLS setup warning: %v", err)
-	}
-
-	// 4. Crear políticas RLS
-	if err := createRLSPolicies(db); err != nil {
-		log.Printf("⚠️ RLS policies warning: %v", err)
-	}
-
-	log.Printf("✅ Advanced database setup completed")
-	return nil
-}
-
-// createPostgreSQLRoles crea los roles necesarios (idempotente)
-func createPostgreSQLRoles(db *gorm.DB) error {
-	log.Printf("👤 Creating PostgreSQL roles...")
-
-	// Crear rol 'authenticated' si no existe (idempotente)
-	sql := `
-		DO $$
-		BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
-				CREATE ROLE authenticated NOLOGIN;
-				RAISE NOTICE 'Role authenticated created';
-			ELSE
-				RAISE NOTICE 'Role authenticated already exists';
-			END IF;
-		END $$;
-	`
-	if err := db.Exec(sql).Error; err != nil {
-		return fmt.Errorf("failed to create authenticated role: %w", err)
-	}
-
-	// Crear rol 'employee' si no existe
-	sql = `
-		DO $$
-		BEGIN
-			IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'employee') THEN
-				CREATE ROLE employee NOLOGIN;
-				RAISE NOTICE 'Role employee created';
-			ELSE
-				RAISE NOTICE 'Role employee already exists';
-			END IF;
-		END $$;
-	`
-	if err := db.Exec(sql).Error; err != nil {
-		return fmt.Errorf("failed to create employee role: %w", err)
-	}
-
-	log.Printf("✅ PostgreSQL roles ready")
-	return nil
-}
-
-// addSupplierMultiDayColumns agrega columnas JSONB para multi-días (idempotente)
-func addSupplierMultiDayColumns(db *gorm.DB) error {
-	log.Printf("📦 Adding supplier multi-day columns...")
-
-	sql := `
-		-- Agregar columnas si no existen
-		DO $$
-		BEGIN
-			-- visit_days (JSONB)
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='suppliers' AND column_name='visit_days') THEN
-				ALTER TABLE suppliers ADD COLUMN visit_days JSONB DEFAULT '[]';
-			END IF;
-
-			-- delivery_days (JSONB)
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='suppliers' AND column_name='delivery_days') THEN
-				ALTER TABLE suppliers ADD COLUMN delivery_days JSONB DEFAULT '[]';
-			END IF;
-
-			-- restock_method
-			IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='suppliers' AND column_name='restock_method') THEN
-				ALTER TABLE suppliers ADD COLUMN restock_method VARCHAR(50) DEFAULT '';
-			END IF;
-		END $$;
-
-		-- Migrar datos legacy a nuevo formato (bloques independientes con excepciones)
-		-- Intento 1: Migrar visitDay (variante camelCase)
-		DO $$
-		BEGIN
-			UPDATE suppliers SET visit_days = CASE 
-				WHEN "visitDay" IS NOT NULL AND "visitDay" != '' AND (visit_days IS NULL OR visit_days = '[]'::jsonb)
-				THEN jsonb_build_array("visitDay")
-				ELSE visit_days
-			END
-			WHERE "visitDay" IS NOT NULL;
-		EXCEPTION WHEN undefined_column THEN
-			RAISE NOTICE 'Column visitDay does not exist, skipping migration';
-		END $$;
-
-		-- Intento 2: Migrar visit_day (variante snake_case)
-		DO $$
-		BEGIN
-			UPDATE suppliers SET visit_days = CASE 
-				WHEN "visit_day" IS NOT NULL AND "visit_day" != '' AND (visit_days IS NULL OR visit_days = '[]'::jsonb)
-				THEN jsonb_build_array("visit_day")
-				ELSE visit_days
-			END
-			WHERE "visit_day" IS NOT NULL;
-		EXCEPTION WHEN undefined_column THEN
-			RAISE NOTICE 'Column visit_day does not exist, skipping migration';
-		END $$;
-
-		-- Intento 3: Migrar deliveryDay (variante camelCase)
-		DO $$
-		BEGIN
-			UPDATE suppliers SET delivery_days = CASE 
-				WHEN "deliveryDay" IS NOT NULL AND "deliveryDay" != '' AND (delivery_days IS NULL OR delivery_days = '[]'::jsonb)
-				THEN jsonb_build_array("deliveryDay")
-				ELSE delivery_days
-			END
-			WHERE "deliveryDay" IS NOT NULL;
-		EXCEPTION WHEN undefined_column THEN
-			RAISE NOTICE 'Column deliveryDay does not exist, skipping migration';
-		END $$;
-
-		-- Intento 4: Migrar delivery_day (variante snake_case)
-		DO $$
-		BEGIN
-			UPDATE suppliers SET delivery_days = CASE 
-				WHEN "delivery_day" IS NOT NULL AND "delivery_day" != '' AND (delivery_days IS NULL OR delivery_days = '[]'::jsonb)
-				THEN jsonb_build_array("delivery_day")
-				ELSE delivery_days
-			END
-			WHERE "delivery_day" IS NOT NULL;
-		EXCEPTION WHEN undefined_column THEN
-			RAISE NOTICE 'Column delivery_day does not exist, skipping migration';
-		END $$;
-	`
-	if err := db.Exec(sql).Error; err != nil {
-		return fmt.Errorf("failed to add supplier columns: %w", err)
-	}
-
-	log.Printf("✅ Supplier multi-day columns ready")
-	return nil
-}
-
-// enableRLS habilita Row Level Security en tablas transaccionales
-func enableRLS(db *gorm.DB) error {
-	log.Printf("🔒 Enabling Row Level Security...")
-
-	tables := []string{
-		"sales",
-		"sale_details",
-		"products",
-		"expenses",
-		"clients",
-		"returns",
-		"return_details",
-		"stock_movements",
-		"missing_items",
-		"expected_orders", // CRITICAL FIX: RLS para pedidos esperados/preventa
-	}
-
-	for _, table := range tables {
-		sql := fmt.Sprintf(`
-			DO $$
-			BEGIN
-				-- Habilitar RLS si no está habilitado
-				IF NOT EXISTS (
-					SELECT 1 FROM pg_tables 
-					WHERE tablename = '%s' 
-					AND rowsecurity = true
-				) THEN
-					EXECUTE 'ALTER TABLE %s ENABLE ROW LEVEL SECURITY';
-					EXECUTE 'ALTER TABLE %s FORCE ROW LEVEL SECURITY';
-					RAISE NOTICE 'RLS enabled on %s';
-				END IF;
-			END $$;
-		`, table, table, table, table)
-
-		if err := db.Exec(sql).Error; err != nil {
-			log.Printf("⚠️ Warning: Could not enable RLS on %s: %v", table, err)
-		}
-	}
-
-	log.Printf("✅ RLS enabled on transactional tables")
-	return nil
-}
-
-// createRLSPolicies crea políticas RLS (idempotente)
-func createRLSPolicies(db *gorm.DB) error {
-	log.Printf("📋 Creating RLS policies...")
-
-	tables := []string{
-		"sales",
-		"sale_details",
-		"products",
-		"expenses",
-		"clients",
-		"returns",
-		"return_details",
-		"stock_movements",
-		"missing_items",
-		"expected_orders", // CRITICAL FIX: RLS para pedidos esperados/preventa
-	}
-
-	for _, table := range tables {
-		policyName := fmt.Sprintf("allow_all_authenticated_%s", table)
-
-		sql := fmt.Sprintf(`
-			DO $$
-			BEGIN
-				-- Crear política si no existe
-				IF NOT EXISTS (
-					SELECT 1 FROM pg_policies 
-					WHERE tablename = '%s' 
-					AND policyname = '%s'
-				) THEN
-					EXECUTE 'CREATE POLICY %s ON %s FOR ALL TO authenticated USING (true) WITH CHECK (true)';
-					RAISE NOTICE 'Policy %s created on %s';
-				ELSE
-					RAISE NOTICE 'Policy %s already exists on %s';
-				END IF;
-			END $$;
-		`, table, policyName, policyName, table, policyName, table, policyName, table)
-
-		if err := db.Exec(sql).Error; err != nil {
-			log.Printf("⚠️ Warning: Could not create policy on %s: %v", table, err)
-		}
-	}
-
-	log.Printf("✅ RLS policies created")
-	return nil
-}
-
-// createGlobalIndexes asegura que la BD tenga los índices necesarios para millones de registros
-func createGlobalIndexes(db *gorm.DB) error {
-	log.Printf("🚀 Creating global performance indexes...")
-
-	indexes := []string{
-		// VENTAS: Búsqueda por fecha, cliente y cajero
-		`CREATE INDEX IF NOT EXISTS idx_sales_date ON sales("saleDate" DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_sales_client ON sales("clientDni")`,
-		`CREATE INDEX IF NOT EXISTS idx_sales_employee ON sales("employeeDni")`,
-		`CREATE INDEX IF NOT EXISTS idx_sales_payment_method ON sales("paymentMethod")`,
-		`CREATE INDEX IF NOT EXISTS idx_sales_dashboard ON sales("saleDate" DESC, status, deleted_at)`,
-
-		// DETALLES DE VENTA: Join con ventas y productos
-		`CREATE INDEX IF NOT EXISTS idx_sale_details_id ON sale_details("saleId")`,
-		`CREATE INDEX IF NOT EXISTS idx_sale_details_barcode ON sale_details("barcode")`,
-		`CREATE INDEX IF NOT EXISTS idx_sale_details_sale_deleted ON sale_details("saleId", deleted_at)`,
-
-		// EGRESOS: Dashboard y reportes
-		`CREATE INDEX IF NOT EXISTS idx_expenses_date ON expenses(date DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_expenses_dashboard ON expenses(date DESC, status, deleted_at)`,
-
-		// AUDITORÍA: Búsqueda forense rápida por fecha y criticidad
-		`CREATE INDEX IF NOT EXISTS idx_audit_created_at ON audit_logs("created_at" DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_critical ON audit_logs("is_critical") WHERE is_critical = true`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_employee ON audit_logs("employee_dni")`,
-		`CREATE INDEX IF NOT EXISTS idx_audit_module ON audit_logs("module")`,
-
-		// INVENTARIO Y MOVIMIENTOS
-		`CREATE INDEX IF NOT EXISTS idx_stock_movements_barcode ON stock_movements("barcode")`,
-		`CREATE INDEX IF NOT EXISTS idx_stock_movements_date ON stock_movements("date" DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_products_category ON products("categoryId")`,
-		`CREATE INDEX IF NOT EXISTS idx_products_supplier ON products("supplierId")`,
-		`CREATE INDEX IF NOT EXISTS idx_products_active_deleted ON products("isActive", deleted_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_product_suppliers_supplier_id ON product_suppliers(supplier_id)`,
-
-		// CIERRES DE CAJA Y CRÉDITOS
-		`CREATE INDEX IF NOT EXISTS idx_cashier_closures_date ON cashier_closures("date" DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_sales_pending_debts ON sales("clientDni", status, "debtPending", "saleDate")`,
-		`CREATE INDEX IF NOT EXISTS idx_credit_payments_date ON credit_payments("paymentDate" DESC, deleted_at)`,
-		`CREATE INDEX IF NOT EXISTS idx_products_quantity ON products("isActive", quantity)`,
-		`CREATE INDEX IF NOT EXISTS idx_returns_sale_id ON returns("saleId")`,
-		`CREATE INDEX IF NOT EXISTS idx_returns_date ON returns(date DESC)`,
-	}
-
-	for _, idx := range indexes {
-		if err := db.Exec(idx).Error; err != nil {
-			log.Printf("⚠️ Warning creating index: %v", err)
-		}
-	}
-
-	log.Printf("✅ Global performance indexes ready")
-	return nil
-}
-
-// InitMaterializedViews crea las vistas para acelerar el Dashboard 100x
-func InitMaterializedViews(db *gorm.DB) error {
-	log.Printf("🚀 Creating High-Performance Materialized Views...")
-
-	// FORZAR RECREACIÓN: DROP primero para asegurar que la definición siempre esté actualizada
-	db.Exec(`DROP MATERIALIZED VIEW IF EXISTS mv_dashboard_stats_monthly CASCADE;`)
-
-	sql := `
-	CREATE MATERIALIZED VIEW mv_dashboard_stats_monthly AS
-	WITH sale_totals AS (
-		SELECT 
-			TO_CHAR(s."saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM(s."totalAmount") as total_sales,
-			COUNT(*) as transaction_count,
-			SUM(GREATEST(0, s."cashAmount" - s."change")) as sales_cash,
-			SUM(s."transferAmount") as sales_transfer,
-			SUM(s."creditAmount") as sales_credit
-		FROM sales s
-		WHERE s."deleted_at" IS NULL AND UPPER(s.status) = 'PAID'
-		GROUP BY 1
-	),
-	sale_cogs AS (
-		SELECT 
-			TO_CHAR(s."saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM(sd.quantity * COALESCE(NULLIF(sd."costPrice", 0), p."purchasePrice", 0)) as total_cogs,
-			COALESCE(SUM(sd.quantity), 0) as products_sold
-		FROM sales s
-		JOIN sale_details sd ON s."saleId" = sd."saleId"
-		LEFT JOIN products p ON sd.barcode = p.barcode
-		WHERE s."deleted_at" IS NULL AND (UPPER(s.status) IN ('PAID', 'CREDIT', 'FIADO') OR s.status IS NULL OR s.status = '')
-		GROUP BY 1
-	),
-	expense_stats AS (
-		SELECT 
-			TO_CHAR(date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM(amount + tax_amount) as total_expenses
-		FROM expenses
-		WHERE "deleted_at" IS NULL AND UPPER(status) = 'PAID'
-		GROUP BY 1
-	),
-	return_stats AS (
-		SELECT 
-			TO_CHAR(r.date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM(r."totalReturned") as total_returned,
-			COALESCE(SUM(CASE WHEN rd."isExchange" = false THEN rd.quantity ELSE 0 END), 0) as products_returned
-		FROM "returns" r
-		LEFT JOIN return_details rd ON r.id = rd."returnId"
-		WHERE r."deleted_at" IS NULL
-		GROUP BY 1
-	),
-	payment_stats AS (
-		SELECT 
-			TO_CHAR("paymentDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM("totalPaid") as total_abonos,
-			SUM("amountCash") as abonos_cash,
-			SUM("amountTransfer") as abonos_transfer
-		FROM credit_payments
-		WHERE "deleted_at" IS NULL
-		GROUP BY 1
-	),
-	closure_stats AS (
-		SELECT 
-			TO_CHAR(start_date AT TIME ZONE 'America/Bogota', 'YYYY-MM') as month_year,
-			SUM(difference) as total_difference,
-			SUM(physical_cash + total_nequi + total_daviplata + total_card + total_bancolombia + total_other_transfer + total_expenses + total_returns) as closure_cajero_sales
-		FROM cashier_closures
-		WHERE "deleted_at" IS NULL
-		GROUP BY 1
-	),
-	all_months AS (
-		SELECT month_year FROM sale_totals
-		UNION
-		SELECT month_year FROM expense_stats
-		UNION
-		SELECT month_year FROM payment_stats
-		UNION
-		SELECT month_year FROM return_stats
-		UNION
-		SELECT month_year FROM closure_stats
-	)
-	SELECT 
-		am.month_year,
-		COALESCE(NULLIF(c.closure_cajero_sales, 0), COALESCE(st.total_sales, 0) + COALESCE(p.total_abonos, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0)) as total_sales,
-		COALESCE(st.transaction_count, 0) as transaction_count,
-		COALESCE(st.sales_cash, 0) + COALESCE(p.abonos_cash, 0) - COALESCE(ret.total_returned, 0) + COALESCE(c.total_difference, 0) as sales_cash,
-		COALESCE(st.sales_transfer, 0) + COALESCE(p.abonos_transfer, 0) as sales_transfer,
-		COALESCE(st.sales_credit, 0) as sales_credit,
-		COALESCE(sc.products_sold, 0) - COALESCE(ret.products_returned, 0) as products_sold,
-		COALESCE(sc.total_cogs, 0) as total_cogs,
-		COALESCE(e.total_expenses, 0) as total_expenses,
-		COALESCE(p.total_abonos, 0) as total_abonos
-	FROM all_months am
-	LEFT JOIN sale_totals st ON am.month_year = st.month_year
-	LEFT JOIN sale_cogs sc ON am.month_year = sc.month_year
-	LEFT JOIN expense_stats e ON am.month_year = e.month_year
-	LEFT JOIN payment_stats p ON am.month_year = p.month_year
-	LEFT JOIN return_stats ret ON am.month_year = ret.month_year
-	LEFT JOIN closure_stats c ON am.month_year = c.month_year;
-
-	CREATE UNIQUE INDEX IF NOT EXISTS idx_mv_dashboard_month_year ON mv_dashboard_stats_monthly(month_year);
-	`
-
-	if err := db.Exec(sql).Error; err != nil {
-		return err
-	}
-
-	log.Printf("✅ Materialized Views initialized")
-	return nil
-
-}
-
-func SeedClient(db *gorm.DB, adminDNI string) {
-	var count int64
-	db.Unscoped().Model(&models.Client{}).Where("\"dni\" = ?", "0").Count(&count)
-	if count == 0 {
-		client := models.Client{
-			DNI:          "0",
-			Name:         "CONSUMIDOR FINAL",
-			CreatedByDNI: adminDNI,
-			UpdatedByDNI: adminDNI,
-		}
-		if err := db.Create(&client).Error; err != nil {
-			log.Printf("⚠️ Warning: Failed to seed default client: %v", err)
-		} else {
-			log.Printf("👥 Default Client (CONSUMIDOR FINAL) is ready for user %s.", adminDNI)
-		}
-	}
-}
-
-func SeedAdmin(db *gorm.DB) {
-	var count int64
-	db.Model(&models.Employee{}).Count(&count)
-	if count == 0 {
-		hashedPassword, _ := bcrypt.GenerateFromPassword([]byte("123456"), bcrypt.DefaultCost)
-		admin := models.Employee{
-			DNI:      "ADMIN",
-			Name:     "ADMINISTRADOR",
-			Email:    "admin@pos.com",
-			Password: string(hashedPassword),
-			Role:     "SUPERADMIN",
-		}
-		if err := db.Create(&admin).Error; err != nil {
-			log.Printf("❌ Failed to seed Superadmin: %v", err)
-		} else {
-			// ANSI Color Codes for Green Text in Terminal
-			fmt.Print("\033[32m")
-			log.Println("[PRODUCCIÓN] Base de datos limpia. Superadmin ADMINISTRADOR creado con éxito (Usuario: admin / Clave: 123456).")
-			fmt.Print("\033[0m")
-		}
-	}
-}
-
-func SeedCategory(db *gorm.DB, adminDNI string) {
-	var count int64
-	db.Model(&models.Category{}).Where("id = ?", 1).Count(&count)
-	if count == 0 {
-		category := models.Category{
-			ID:            1,
-			Name:          "GENERAL",
-			CreatedByDNI:  adminDNI,
-			UpdatedByDNI:  adminDNI,
-			IsActive:      true,
-		}
-		if err := db.Create(&category).Error; err != nil {
-			log.Printf("⚠️ Warning: Failed to seed default category: %v", err)
-		} else {
-			log.Println("📁 Default Category (GENERAL) initialized.")
-		}
-	}
-}
-
-func SeedProducts(db *gorm.DB, adminDNI string) {
-	var count int64
-	db.Model(&models.Product{}).Where("barcode = ?", "0000").Count(&count)
-	if count == 0 {
-		product := models.Product{
-			Barcode:          "0000",
-			ProductName:      "VARIOS / VENTA RÁPIDA",
-			Quantity:         999999,
-			PurchasePrice:    0,
-			SalePrice:        0,
-			MarginPercentage: 20,
-			IsActive:         true,
-			CategoryID:       1,
-			CreatedByDNI:     adminDNI,
-			CreatedByName:    "ADMINISTRADOR",
-			UpdatedByDNI:     adminDNI,
-			UpdatedByName:    "ADMINISTRADOR",
-		}
-		if err := db.Create(&product).Error; err != nil {
-			log.Printf("⚠️ Warning: Failed to seed 'Varios' product: %v", err)
-		} else {
-			log.Println("📦 Global product 'VARIOS' (0000) initialized.")
-		}
-	}
+	DB = db
 }

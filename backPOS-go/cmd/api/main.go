@@ -1,19 +1,23 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net/http"
 	"os"
-	"strings"
+	"os/signal"
+	"path/filepath"
 	"runtime/debug"
+	"syscall"
+	"time"
 
 	"backPOS-go/internal/adapters/handlers"
 	"backPOS-go/internal/adapters/jobs"
 	"backPOS-go/internal/adapters/middlewares"
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/services"
-
-	"net/http"
-	"path/filepath"
+	"backPOS-go/migrations"
 
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
@@ -34,21 +38,15 @@ func main() {
 	// Set Gin to release mode to avoid verbose route logging
 	gin.SetMode(gin.ReleaseMode)
 
-	// Connect to Database
+	// Connect to Database. El arranque normal no crea ni modifica el esquema.
 	repositories.ConnectDB()
 
-	// Init & Refresh Materialized Views for Dashboard
-	if err := repositories.InitMaterializedViews(repositories.DB); err != nil {
-		log.Printf("⚠️ InitMaterializedViews error: %v", err)
+	schemaCtx, cancelSchemaCheck := context.WithTimeout(context.Background(), 15*time.Second)
+	if err := migrations.VerifyCurrent(schemaCtx, repositories.DB); err != nil {
+		cancelSchemaCheck()
+		log.Fatalf("Database schema is not ready: %v", err)
 	}
-	repositories.DB.Exec("REFRESH MATERIALIZED VIEW mv_dashboard_stats_monthly;")
-
-	// REVERT CIERRE 73
-	repositories.DB.Exec("UPDATE cashier_closures SET physical_cash = 780000, difference = 100890 WHERE id = 73")
-	// GHOST CLOSURE
-	repositories.DB.Exec("INSERT INTO cashier_closures (start_date, end_date, expected_cash, physical_cash, difference, status, opened_by, closed_by, observations) VALUES ('2000-01-01', '2000-01-01', 0, 63000, 63000, 'CLOSED', 'SISTEMA', 'SISTEMA', 'Ajuste fantasma de boveda')")
-	// FIX CLOSURE 84
-	repositories.DB.Exec("UPDATE cashier_closures SET date = '2026-07-03 12:00:00-05' WHERE id = 84")
+	cancelSchemaCheck()
 
 	// Initialize Repositories
 	productRepo := repositories.NewPostgresProductRepository(repositories.DB)
@@ -68,6 +66,7 @@ func main() {
 	expectedOrderRepo := repositories.NewPostgresExpectedOrderRepository(repositories.DB)
 	reportRepo := repositories.NewPostgresReportRepository(repositories.DB)
 	restockRepo := repositories.NewPostgresRestockRepository(repositories.DB)
+	restockMetricsRepo := repositories.NewRestockMetricsRepository(repositories.DB)
 
 	// Initialize Services
 	emailService := services.NewEmailService()
@@ -77,6 +76,7 @@ func main() {
 	telegramService := services.NewTelegramService()
 	productService := services.NewProductService(productRepo, movementRepo, expectedOrderService, telegramService)
 	restockService := services.NewRestockService(restockRepo, supplierRepo)
+	restockNightlyService := services.NewRestockNightlyService(restockMetricsRepo)
 
 	saleService := services.NewSaleService(saleRepo, productRepo, clientRepo, movementRepo, printService, creditRepo, telegramService)
 	authService := services.NewAuthService(adminRepo, emailService, auditService)
@@ -96,12 +96,13 @@ func main() {
 
 	// Initialize Handlers
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService, authService)
-	restockHandler := handlers.NewRestockHandler(restockService, inventoryService, telegramService)
+	restockHandler := handlers.NewRestockHandler(restockService, inventoryService, telegramService, restockMetricsRepo)
+	restockV2Handler := handlers.NewRestockV2Handler(restockMetricsRepo, restockNightlyService)
 	saleHandler := handlers.NewSaleHandler(saleService, auditService)
 	authHandler := handlers.NewAuthHandler(authService)
 	categoryHandler := handlers.NewCategoryHandler(categoryService, auditService)
 	supplierHandler := handlers.NewSupplierHandler(supplierService, auditService)
-	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService)
+	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService, repositories.DB)
 	dashboardReportHandler := handlers.NewDashboardReportHandler(dashboardService, auditService)
 	dashboardExportHandler := handlers.NewDashboardExportHandler(repositories.DB, exportService, dashboardService, telegramService, auditService)
 	clientHandler := handlers.NewClientHandler(clientService, saleRepo, auditService)
@@ -115,7 +116,7 @@ func main() {
 	sseHandler := handlers.NewSSEHandler()
 
 	// Initialize and Start Cron Jobs
-	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService)
+	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService, restockNightlyService)
 	cronManager.Start()
 
 	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
@@ -146,47 +147,28 @@ func main() {
 	log.Printf("🚀 POS PRO - SERVER STARTUP")
 	log.Printf("-----------------------------------------")
 	log.Printf("📡 RED: IP ESTATICA REQUERIDA (Resiliencia POS)")
-	log.Printf("🔗 ACCESO: http://%s:%s (O su IP Local)", os.Getenv("SERVER_IP"), func() string { p := os.Getenv("PORT"); if p == "" { p = "3000" }; return p }())
+	log.Printf("🔗 ACCESO: http://%s:%s (O su IP Local)", os.Getenv("SERVER_IP"), func() string {
+		p := os.Getenv("PORT")
+		if p == "" {
+			p = "3000"
+		}
+		return p
+	}())
 	log.Printf("🛠️  MODO: RESILIENCIA OFFLINE ACTIVADA")
 	log.Printf("-----------------------------------------")
 
 	// CORS Middleware - Strict Origin Policy
 	// Only allow specific origins for security
 	allowedOrigins := map[string]bool{
-		"http://localhost:3000":     true,
-		"http://localhost:9002":     true,
-		"http://127.0.0.1:3000":     true,
-		"http://127.0.0.1:9002":     true,
-		"http://192.168.1.6:3000":   true,
-		"http://192.168.1.6:9002":   true,
-		"https://192.168.1.6:9002":  true,
-		"http://192.168.1.21:3000":  true,
-		"http://192.168.1.21:9002":  true,
-	}
-
-	isLocalIP := func(origin string) bool {
-		if origin == "" {
-			return true
-		}
-		// Permitir localhost y 127.0.0.1 en cualquier puerto
-		if strings.Contains(origin, "localhost") || strings.Contains(origin, "127.0.0.1") {
-			return true
-		}
-		// Permitir rangos de IP privados comunes (192.168.x.x, 10.x.x.x, 172.x.x.x) en http o https
-		localPatterns := []string{
-			"http://192.168.",
-			"https://192.168.",
-			"http://10.",
-			"https://10.",
-			"http://172.",
-			"https://172.",
-		}
-		for _, pattern := range localPatterns {
-			if strings.HasPrefix(origin, pattern) {
-				return true
-			}
-		}
-		return false
+		"http://localhost:3000":    true,
+		"http://localhost:9002":    true,
+		"http://127.0.0.1:3000":    true,
+		"http://127.0.0.1:9002":    true,
+		"http://192.168.1.6:3000":  true,
+		"http://192.168.1.6:9002":  true,
+		"https://192.168.1.6:9002": true,
+		"http://192.168.1.21:3000": true,
+		"http://192.168.1.21:9002": true,
 	}
 
 	r.Use(func(c *gin.Context) {
@@ -196,7 +178,7 @@ func main() {
 		isAllowed := allowedOrigins[origin]
 
 		// Allow local network IPs for mobile/remote access
-		if !isAllowed && isLocalIP(origin) {
+		if !isAllowed && middlewares.IsPrivateOrigin(origin) {
 			isAllowed = true
 		}
 
@@ -242,9 +224,9 @@ func main() {
 		c.Writer.Header().Set("X-XSS-Protection", "1; mode=block")
 		// Referrer Policy
 		c.Writer.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		// HSTS (HTTPS Strict Transport Security) - only in production
-		if gin.Mode() == gin.ReleaseMode {
-			c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload")
+		// HSTS sólo tiene sentido cuando la solicitud realmente llegó por TLS.
+		if c.Request.TLS != nil {
+			c.Writer.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		// Content Security Policy (relaxed for local network and multiple ports)
 		c.Writer.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src * ws: wss:;")
@@ -268,12 +250,17 @@ func main() {
 	// API Routes
 	api := r.Group("/api")
 	{
-		// Auth
-		api.POST("/auth/login", authHandler.Login)
-		api.POST("/auth/forgot-password", authHandler.ForgotPassword)
-		api.POST("/auth/reset-password", authHandler.ResetPassword)
+		// Check de instalación no valida credenciales y se consulta en cada carga.
 		api.GET("/auth/check-setup", authHandler.CheckSetup)
-		api.POST("/auth/setup", authHandler.Setup)
+
+		// Endpoints que procesan credenciales: bucket aislado por IP
+		// (5 solicitudes iniciales, 5 por minuto).
+		auth := api.Group("/auth")
+		auth.Use(middlewares.RateLimitMiddleware(5, 5.0/60.0))
+		auth.POST("/login", authHandler.Login)
+		auth.POST("/forgot-password", authHandler.ForgotPassword)
+		auth.POST("/reset-password", authHandler.ResetPassword)
+		auth.POST("/setup", authHandler.Setup)
 
 		// Protected Routes
 		protected := api.Group("/")
@@ -312,6 +299,10 @@ func main() {
 				productAdmin.POST("/inventory/save-alias", productHandler.SaveAlias)
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
 
+				// Smart Restock API v2 (Demanda Real y Pre-cálculo)
+				productManage.GET("/restock/suggestions-v2", restockV2Handler.GetSuggestionsV2)
+				productAdmin.POST("/admin/run-nightly-restock", restockV2Handler.TriggerManualCalculation)
+
 				// Smart Restock API
 				productManage.GET("/inventory/restock/suggestions", restockHandler.GetSuggestions)
 				productManage.GET("/inventory/restock/critical", restockHandler.GetCritical)
@@ -336,6 +327,7 @@ func main() {
 			}
 
 			// Products Read-Only (Empleados y Admin)
+			protected.POST("/telegram/ticket", dashboardExportHandler.SendTicketToTelegram)
 			protected.GET("/products/get-products/:barcode", productHandler.GetByBarcode)
 			protected.GET("/products/all-products", productHandler.GetAll)
 			protected.GET("/products/paginated", productHandler.GetAllPaginated)
@@ -404,14 +396,23 @@ func main() {
 			protected.DELETE("/sales/delete/:id", middlewares.RoleMiddleware("admin"), saleHandler.Delete)
 			protected.PUT("/sales/update/:id", middlewares.RoleMiddleware("admin"), saleHandler.Update)
 			protected.PUT("/sales/update-payment/:id", saleHandler.UpdatePayment)
-			protected.POST("/sales/add-items/:id", saleHandler.AddItems)
+			protected.POST("/sales/add-items/:id", middlewares.RoleMiddleware("empleado"), saleHandler.AddItems)
 
-			// Devoluciones
-			protected.POST("/returns/create", returnHandler.Create)
-			protected.GET("/returns/all", returnHandler.GetAll)
-			protected.GET("/sales/returns/invoice/:ref", returnHandler.GetByInvoice)
-			protected.GET("/sales/returns/blind", returnHandler.GetBlind)
-			protected.POST("/sales/returns", returnHandler.ProcessReturn)
+			// Devoluciones: consultas para empleados; mutaciones financieras sólo admin.
+			returnsRead := protected.Group("/")
+			returnsRead.Use(middlewares.RoleMiddleware("empleado"))
+			{
+				returnsRead.GET("/returns/all", returnHandler.GetAll)
+				returnsRead.GET("/sales/returns/invoice/:ref", returnHandler.GetByInvoice)
+				returnsRead.GET("/sales/returns/blind", returnHandler.GetBlind)
+			}
+			returnsAdmin := protected.Group("/")
+			returnsAdmin.Use(middlewares.RoleMiddleware("admin"))
+			{
+				returnsAdmin.POST("/returns/create", returnHandler.Create)
+				returnsAdmin.POST("/sales/returns", returnHandler.ProcessReturn)
+				returnsAdmin.DELETE("/returns/:id", returnHandler.Delete)
+			}
 
 			// Expenses
 			// Egresos Financieros (Gestión de Gastos Operativos)
@@ -444,7 +445,7 @@ func main() {
 				dashboard.DELETE("/cashier-history/:id", middlewares.RoleMiddleware("admin"), dashboardHandler.DeleteClosure)
 				dashboard.PUT("/cashier-history/:id", middlewares.RoleMiddleware("admin"), dashboardHandler.UpdateClosure)
 				dashboard.GET("/detailed-report", middlewares.RoleMiddleware("empleado"), dashboardHandler.GetDetailedReport)
-				
+
 				// Analytical Reports
 				dashboard.GET("/reports/ranking", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetRankingReport)
 				dashboard.GET("/reports/categories", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetCategoryReport)
@@ -458,7 +459,6 @@ func main() {
 
 				// EXPORT UNIFICADO: PDF/Excel/CSV + Telegram opcional
 				dashboard.GET("/reports/export", middlewares.RoleMiddleware("admin"), dashboardExportHandler.ExportReport)
-
 				// Cuadre Real (B\u00e1lance F\u00edsico = Efectivo + Transferencias - Egresos)
 				dashboard.GET("/reports/cuadre-real", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetCuadreRealRange)
 				dashboard.GET("/reports/cuadre-real-day", middlewares.RoleMiddleware("admin"), dashboardExportHandler.GetCuadreRealDay)
@@ -484,7 +484,7 @@ func main() {
 				adminGroup.PATCH("/force-reset-password/:dni", adminHandler.ResetEmployeePassword)
 				adminGroup.GET("/audit-logs", adminHandler.GetAuditLogs)
 				adminGroup.PUT("/missing-items/status", adminHandler.UpdateMissingItemStatus)
-				
+
 				// Mantenimiento de BD (V7.0)
 				adminGroup.GET("/backup", adminHandler.GenerateDatabaseBackup)
 				adminGroup.POST("/backup/telegram", adminHandler.SendBackupToTelegram)
@@ -502,7 +502,7 @@ func main() {
 			protected.GET("/inventory/orders", orderHandler.GetAllOrders)
 			protected.GET("/inventory/orders/:id/items", orderHandler.GetOrderItems)
 			protected.POST("/inventory/orders/dismiss", orderHandler.DismissOrder)
-			protected.POST("/inventory/shrinkage", productHandler.RegisterShrinkage)
+			protected.POST("/inventory/shrinkage", middlewares.RoleMiddleware("admin"), productHandler.RegisterShrinkage)
 			protected.PATCH("/inventory/products/:barcode/unlink-supplier", productHandler.UnlinkSupplier)
 			protected.PATCH("/inventory/products/:barcode/link-supplier", productHandler.LinkSupplier)
 			protected.POST("/telegram/send-delivery-summary", orderHandler.SendDeliverySummaryToTelegram)
@@ -517,8 +517,8 @@ func main() {
 			protected.PUT("/sales/debts/:id/pay", debtHandler.RegisterPayment)
 
 			// Notifications (Telegram Integration)
-			protected.POST("/notifications/telegram", notificationHandler.SendTelegramPDF)
-			protected.POST("/notifications/telegram/text", notificationHandler.SendTelegramMessage)
+			protected.POST("/notifications/telegram", middlewares.RoleMiddleware("admin"), notificationHandler.SendTelegramPDF)
+			protected.POST("/notifications/telegram/text", middlewares.RoleMiddleware("admin"), notificationHandler.SendTelegramMessage)
 			protected.GET("/notifications/health", notificationHandler.HealthCheck)
 
 			// REAL-TIME EVENT STREAM (Ultra-Instinto)
@@ -538,10 +538,53 @@ func main() {
 	log.Printf("📡 Professional Service live on port: %s", port)
 	log.Printf("-----------------------------------------")
 
-	err = r.Run(":" + port)
-	if err != nil {
-		log.Fatalf("🔥 Falla fatal al arrancar el servidor: %v", err)
+	server := &http.Server{
+		Addr:              ":" + port,
+		Handler:           r,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		// WriteTimeout permanece en cero: /api/sse mantiene respuestas abiertas.
+		WriteTimeout:   0,
+		IdleTimeout:    2 * time.Minute,
+		MaxHeaderBytes: 1 << 20,
 	}
+
+	signalContext, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case serveErr := <-serverErrors:
+		if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+			log.Fatalf("🔥 Falla fatal al arrancar el servidor: %v", serveErr)
+		}
+		return
+	case <-signalContext.Done():
+		log.Printf("🛑 Señal de cierre recibida; esperando solicitudes activas...")
+	}
+
+	shutdownContext, cancelShutdown := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancelShutdown()
+	if err := server.Shutdown(shutdownContext); err != nil {
+		log.Printf("⚠️ Cierre HTTP excedió el tiempo límite: %v", err)
+		if closeErr := server.Close(); closeErr != nil {
+			log.Printf("⚠️ Error forzando el cierre HTTP: %v", closeErr)
+		}
+	}
+	if err := cronManager.Stop(shutdownContext); err != nil {
+		log.Printf("⚠️ Cierre de tareas programadas incompleto: %v", err)
+	}
+	telegramService.Stop()
+	if sqlDB, err := repositories.DB.DB(); err == nil {
+		if err := sqlDB.Close(); err != nil {
+			log.Printf("⚠️ Error cerrando PostgreSQL: %v", err)
+		}
+	}
+	log.Printf("✅ Servicio detenido de forma ordenada")
 }
 func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 	return func(c *gin.Context) {

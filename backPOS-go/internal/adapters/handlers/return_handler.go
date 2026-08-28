@@ -33,13 +33,7 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 	// Mayúsculas y Metadatos
 	ret.Reason = strings.ToUpper(ret.Reason)
 	ret.ReturnType = strings.ToUpper(ret.ReturnType)
-	dni, _ := c.Get("dni")
-	name, _ := c.Get("name")
-	dniStr := dni.(string)
-	nameStr := ""
-	if name != nil {
-		nameStr = name.(string)
-	}
+	dniStr, nameStr := GetContextUser(c)
 	ret.EmployeeDNI = dniStr
 
 	if err := h.service.CreateReturn(&ret, dniStr, nameStr); err != nil {
@@ -48,7 +42,7 @@ func (h *ReturnHandler) Create(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, ret)
 
-	h.auditService.Log(dniStr, nameStr, "CREATE_RETURN", "INVENTORY", 
+	h.auditService.Log(dniStr, nameStr, "CREATE_RETURN", "INVENTORY",
 		fmt.Sprintf("Devolución venta #%d: $%.2f", ret.SaleID, ret.TotalReturned),
 		fmt.Sprintf("Se registró una devolución para la venta #%d. Total devuelto: $%s. Motivo: %s", ret.SaleID, fmt.Sprintf("%.2f", ret.TotalReturned), ret.Reason),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -75,10 +69,13 @@ func (h *ReturnHandler) Delete(c *gin.Context) {
 		return
 	}
 
-	dniStr, _ := c.Get("userDni")
-	nameStr, _ := c.Get("userName")
+	dniStr, nameStr := GetContextUser(c)
+	if dniStr == "" {
+		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "Usuario no autenticado", nil)
+		return
+	}
 
-	if err := h.service.DeleteReturn(uint(id), dniStr.(string), nameStr.(string)); err != nil {
+	if err := h.service.DeleteReturn(uint(id), dniStr, nameStr); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar devolucion", err)
 		return
 	}
@@ -108,23 +105,23 @@ func (h *ReturnHandler) GetByInvoice(c *gin.Context) {
 		SendError(c, http.StatusNotFound, ErrNotFound, "Factura no encontrada", err)
 		return
 	}
-	
+
 	// Ensure product names are included for the frontend
 	type itemWithProductName struct {
 		models.SaleDetail
 		ProductName string `json:"productName"`
 	}
-	
+
 	var items []itemWithProductName
 	for _, d := range sale.SaleDetails {
 		items = append(items, itemWithProductName{
-			SaleDetail: d,
+			SaleDetail:  d,
 			ProductName: d.Product.ProductName,
 		})
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"sale": sale,
+		"sale":  sale,
 		"items": items,
 	})
 }
@@ -144,7 +141,7 @@ func (h *ReturnHandler) GetBlind(c *gin.Context) {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error al buscar historial del producto", err)
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"sale": gin.H{
 			"id":            result["lastSaleId"],
@@ -167,13 +164,7 @@ func (h *ReturnHandler) ProcessReturn(c *gin.Context) {
 		return
 	}
 
-	dni, _ := c.Get("dni")
-	name, _ := c.Get("name")
-	dniStr := dni.(string)
-	nameStr := ""
-	if name != nil {
-		nameStr = name.(string)
-	}
+	dniStr, nameStr := GetContextUser(c)
 
 	ret, err := h.service.ProcessAdvancedReturn(req, dniStr, nameStr)
 	if err != nil {
@@ -186,14 +177,14 @@ func (h *ReturnHandler) ProcessReturn(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Devolución procesada correctamente",
-		"id": ret.ID,
-		"type": ret.ReturnType,
-		"totalReturned": ret.TotalReturned,
+		"message":          "Devolución procesada correctamente",
+		"id":               ret.ID,
+		"type":             ret.ReturnType,
+		"totalReturned":    ret.TotalReturned,
 		"totalReplacement": req.ChargeAmount,
 	})
 
-	h.auditService.Log(dniStr, nameStr, "ADVANCED_RETURN", "SALES", 
+	h.auditService.Log(dniStr, nameStr, "ADVANCED_RETURN", "SALES",
 		fmt.Sprintf("Devolución Tipo: %s. Reembolso: %.2f. Cobro: %.2f", req.Type, req.RefundAmount, req.ChargeAmount),
 		fmt.Sprintf("Se registró una devolución avanzada. Tipo: %s", req.Type),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -204,4 +195,3 @@ func (h *ReturnHandler) ProcessReturn(c *gin.Context) {
 		sse.GetSSEService().BroadcastProductUpdate(nil)
 	}()
 }
-

@@ -1,4 +1,4 @@
-package services
+﻿package services
 
 	// no imports needed besides standard ones if any, but since we use nothing external, just the package is fine
 
@@ -10,9 +10,17 @@ func (s *ProductService) GetProductStats() (map[string]interface{}, error) {
 
 	var totalCost, totalRetail float64
 	var criticalStock, warningStock int
-	totalItems := len(products)
+	totalItems := 0
 
 	for _, p := range products {
+		// Solo productos activos. El dashboard filtra por isActive en su
+		// consulta (GetGlobalInventoryValue) y aqui no se filtraba, asi que las
+		// dos vistas daban valores distintos del mismo inventario.
+		if !p.IsActive {
+			continue
+		}
+		totalItems++
+
 		totalCost += p.Quantity * p.PurchasePrice
 		totalRetail += p.Quantity * p.SalePrice
 

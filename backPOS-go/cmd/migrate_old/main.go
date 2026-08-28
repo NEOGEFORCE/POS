@@ -1,4 +1,8 @@
-package main
+//go:build tools_legacy
+// +build tools_legacy
+
+
+﻿package main
 
 import (
 	"fmt"

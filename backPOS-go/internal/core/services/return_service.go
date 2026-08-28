@@ -3,14 +3,13 @@ package services
 import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/infrastructure/cache"
+	"backPOS-go/internal/infrastructure/sse"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
-	"backPOS-go/internal/infrastructure/cache"
-	"backPOS-go/internal/infrastructure/sse"
 )
 
 type ReturnService struct {
@@ -94,6 +93,7 @@ func validateItemsAgainstSale(sale *models.Sale, items []ports.ReturnItemReq) er
 				it.Qty, it.Barcode, avail,
 			)
 		}
+		available[it.Barcode] = avail - it.Qty
 	}
 	return nil
 }
@@ -113,107 +113,120 @@ func returnDetailsToItemReqs(details []models.ReturnDetail) []ports.ReturnItemRe
 	return out
 }
 
+func (s *ReturnService) loadProductsForStockChanges(barcodes []string) (map[string]*models.Product, error) {
+	unique := make([]string, 0, len(barcodes))
+	seen := make(map[string]struct{}, len(barcodes))
+	for _, barcode := range barcodes {
+		if barcode == "" {
+			continue
+		}
+		if _, exists := seen[barcode]; !exists {
+			seen[barcode] = struct{}{}
+			unique = append(unique, barcode)
+		}
+	}
+	if len(unique) == 0 {
+		return map[string]*models.Product{}, nil
+	}
+
+	products, err := s.productRepo.GetByBarcodes(unique)
+	if err != nil {
+		return nil, err
+	}
+	lookup := buildProductLookup(products)
+	for _, barcode := range unique {
+		if lookup[barcode] == nil {
+			return nil, errors.New("producto no encontrado: " + barcode)
+		}
+	}
+	return lookup, nil
+}
+
+func (s *ReturnService) appendReturnStockChange(
+	products map[string]*models.Product,
+	adjustments map[string]float64,
+	movements *[]*models.StockMovement,
+	barcode string,
+	quantity float64,
+	outgoing bool,
+	referenceID string,
+	employeeDNI string,
+	employeeName string,
+) error {
+	if quantity <= 0 {
+		return errors.New("la cantidad de devolución/cambio debe ser mayor que cero")
+	}
+	product := products[barcode]
+	if product == nil {
+		return errors.New("producto no encontrado: " + barcode)
+	}
+	targetBarcode := barcode
+	effectiveQty := quantity
+	available := product.Quantity
+	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" {
+		targetBarcode = *product.BaseProductBarcode
+		effectiveQty = quantity * float64(product.PackMultiplier)
+		if product.BaseProduct != nil {
+			available = product.BaseProduct.Quantity
+		}
+	}
+	if outgoing && available < effectiveQty && !product.IsWeighted {
+		return errors.New("insuficiente stock para cambio: " + product.ProductName)
+	}
+	delta := effectiveQty
+	movementType := models.MovementTypeIn
+	reason := models.MovementReasonReturn
+	if outgoing {
+		delta = -effectiveQty
+		movementType = models.MovementTypeOut
+		reason = models.MovementReasonExchangeOut
+	}
+	adjustments[targetBarcode] += delta
+	*movements = append(*movements, &models.StockMovement{
+		Date: time.Now(), Barcode: targetBarcode, Quantity: effectiveQty,
+		Type: movementType, Reason: reason, ReferenceID: referenceID,
+		EmployeeDNI: employeeDNI, EmployeeName: employeeName,
+	})
+	return nil
+}
+
 func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, employeeName string) error {
-	// 1. Validar que la venta existe y aplicar política de devoluciones
 	originalSale, err := s.saleRepo.GetByID(ret.SaleID)
 	if err != nil {
 		return errors.New("venta no encontrada")
 	}
-
-	// 1a. Si es REFUND, la venta debe haber sido pagada en EFECTIVO.
-	// Para TRANSFERENCIA/CRÉDITO/MIXTO/etc. solo se permite EXCHANGE.
 	if strings.ToUpper(ret.ReturnType) == "REFUND" {
 		if err := validateRefundAllowed(originalSale); err != nil {
 			return err
 		}
 	}
-
-	// 1b. Validar que cada item devuelto esté efectivamente en la venta
-	// original y que la cantidad no exceda lo disponible (vendido menos
-	// previamente devuelto).
 	if err := validateItemsAgainstSale(originalSale, returnDetailsToItemReqs(ret.Details)); err != nil {
 		return err
 	}
 
-	// 2. Procesar detalles y calcular ajustes de stock
-	stockAdjustments := make(map[string]float64)
-	var movements []*models.StockMovement
-
+	barcodes := make([]string, 0, len(ret.Details))
 	for _, detail := range ret.Details {
-		// Preload product with BaseProduct to handle Pack logic
-		product, err := s.productRepo.GetByBarcodeWithPreloads(detail.Barcode, "BaseProduct")
-		if err != nil {
-			return errors.New("producto no encontrado: " + detail.Barcode)
-		}
-
-		movementType := "RETURN_RESTOCK"
-		reason := "RETURN"
-		if detail.IsExchange {
-			movementType = "OUT"
-			reason = "EXCHANGE_OUT"
-		}
-
-		// Cantidad a ajustar (positiva o negativa)
-		adjustQty := detail.Quantity
-		if detail.IsExchange {
-			adjustQty = -detail.Quantity
-		}
-
-		// Lógica de Packs
-		if product.IsPack && product.BaseProduct != nil && product.PackMultiplier > 0 {
-			targetBarcode := *product.BaseProductBarcode
-			baseAdjustQty := adjustQty * float64(product.PackMultiplier)
-			
-			// Validar stock si es salida (aproximado, la DB lo validará mejor si ponemos constraints)
-			if detail.IsExchange && product.BaseProduct.Quantity < -baseAdjustQty && !product.IsWeighted {
-				return errors.New("insuficiente stock base para cambio: " + product.ProductName)
-			}
-
-			stockAdjustments[targetBarcode] += baseAdjustQty
-			
-			// Log en el base
-			baseMovement := &models.StockMovement{
-				Date:         time.Now(),
-				Barcode:      targetBarcode,
-				Quantity:     math.Abs(baseAdjustQty),
-				Type:         movementType,
-				Reason:       "PACK_RETURN_RESTOCK",
-				ReferenceID:  fmt.Sprintf("RET-%d-%s", ret.SaleID, time.Now().Format("20060102")),
-				EmployeeDNI:  employeeDNI,
-				EmployeeName: employeeName,
-			}
-			movements = append(movements, baseMovement)
-		} else {
-			// Comportamiento normal
-			if detail.IsExchange && product.Quantity < detail.Quantity && !product.IsWeighted {
-				return errors.New("insuficiente stock para cambio: " + product.ProductName)
-			}
-			stockAdjustments[detail.Barcode] += adjustQty
-		}
-
-		// Log the movement for Kárdex (del producto original)
-		movement := &models.StockMovement{
-			Date:         time.Now(),
-			Barcode:      detail.Barcode,
-			Quantity:     detail.Quantity,
-			Type:         movementType,
-			Reason:       reason,
-			ReferenceID:  fmt.Sprintf("RET-%d-%s", ret.SaleID, time.Now().Format("20060102")),
-			EmployeeDNI:  employeeDNI,
-			EmployeeName: employeeName,
-		}
-		movements = append(movements, movement)
+		barcodes = append(barcodes, detail.Barcode)
 	}
-
-	// 3. Guardar devolución con transacción ACID síncrona
-	if err := s.returnRepo.CreateWithTransaction(ret, employeeDNI, employeeName, stockAdjustments, movements); err != nil {
+	products, err := s.loadProductsForStockChanges(barcodes)
+	if err != nil {
 		return err
 	}
 
-	// Invalida cache de dashboard e inicia broadcast asíncrono
+	stockAdjustments := make(map[string]float64)
+	movements := make([]*models.StockMovement, 0, len(ret.Details))
+	referenceID := fmt.Sprintf("RET-SALE-%d-%d", ret.SaleID, time.Now().UnixNano())
+	for _, detail := range ret.Details {
+		if err := s.appendReturnStockChange(products, stockAdjustments, &movements, detail.Barcode, detail.Quantity,
+			detail.IsExchange, referenceID, employeeDNI, employeeName); err != nil {
+			return err
+		}
+	}
+	if err := s.returnRepo.CreateWithTransaction(ret, employeeDNI, employeeName, stockAdjustments, movements); err != nil {
+		return err
+	}
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 	sse.GetSSEService().BroadcastDashboardUpdate()
-
 	return nil
 }
 
@@ -279,92 +292,68 @@ func (s *ReturnService) GetBlindReturnData(barcode string) (map[string]interface
 	}
 
 	return map[string]interface{}{
-		"barcode": barcode,
-		"productName": productName,
-		"unitPrice": unitPrice,
-		"validQty": totalValidQty,
-		"lastSaleId": lastSaleId,
+		"barcode":           barcode,
+		"productName":       productName,
+		"unitPrice":         unitPrice,
+		"validQty":          totalValidQty,
+		"lastSaleId":        lastSaleId,
 		"lastPaymentMethod": lastSaleMethod,
-		"cashRefundable": cashRefundable,
+		"cashRefundable":    cashRefundable,
 	}, nil
 }
-
 
 func (s *ReturnService) ProcessAdvancedReturn(req ports.ProcessReturnReq, employeeDNI string, employeeName string) (*models.Return, error) {
 	var originalSale *models.Sale
 	var err error
-
 	if req.InvoiceRef > 0 {
 		originalSale, err = s.saleRepo.GetByID(req.InvoiceRef)
 		if err != nil {
 			return nil, errors.New("venta original no encontrada")
 		}
-
-		// Solo REFUND en efectivo. Cualquier otro método (TRANSFER/CREDIT/MIXTO/...)
-		// obliga a EXCHANGE: el cliente debe llevarse otro producto.
 		if strings.ToUpper(req.Type) == "REFUND" {
 			if err := validateRefundAllowed(originalSale); err != nil {
 				return nil, err
 			}
 		}
-
-		// Validar que los items devueltos pertenecen a la venta original
-		// y que las cantidades no exceden lo disponible. Bloquea:
-		//   - barcode que no fue vendido en esta factura
-		//   - cantidad mayor a lo vendido (descontando devoluciones previas)
 		if err := validateItemsAgainstSale(originalSale, req.ReturnedItems); err != nil {
 			return nil, err
 		}
-	} else {
-		// Modo ciego (sin factura): NO se permite REFUND porque no podemos
-		// auditar el método de pago original con seguridad. El usuario debe
-		// usar el flujo con factura para reembolsar dinero.
-		if strings.ToUpper(req.Type) == "REFUND" {
-			return nil, errors.New("modo ciego sin factura: solo se permite cambio por otro producto (EXCHANGE), no reembolso en efectivo")
-		}
+	} else if strings.ToUpper(req.Type) == "REFUND" {
+		return nil, errors.New("modo ciego sin factura: solo se permite cambio por otro producto (EXCHANGE), no reembolso en efectivo")
 	}
 
-	// Calculate stock adjustments and Kárdex movements
-	stockAdjustments := make(map[string]float64)
-	var movements []*models.StockMovement
-
+	barcodes := make([]string, 0, len(req.ReturnedItems)+len(req.ReplacementItems))
 	for _, item := range req.ReturnedItems {
-		stockAdjustments[item.Barcode] += item.Qty
-		movements = append(movements, &models.StockMovement{
-			Date:         time.Now(),
-			Barcode:      item.Barcode,
-			Quantity:     item.Qty,
-			Type:         "RETURN",
-			Reason:       "RETURN",
-			ReferenceID:  fmt.Sprintf("RET-%d-%s", req.InvoiceRef, time.Now().Format("20060102")),
-			EmployeeDNI:  employeeDNI,
-			EmployeeName: employeeName,
-		})
+		barcodes = append(barcodes, item.Barcode)
 	}
-
 	for _, item := range req.ReplacementItems {
-		stockAdjustments[item.Barcode] -= item.Qty
-		movements = append(movements, &models.StockMovement{
-			Date:         time.Now(),
-			Barcode:      item.Barcode,
-			Quantity:     item.Qty,
-			Type:         "SALE",
-			Reason:       "EXCHANGE",
-			ReferenceID:  fmt.Sprintf("RET-%d-%s", req.InvoiceRef, time.Now().Format("20060102")),
-			EmployeeDNI:  employeeDNI,
-			EmployeeName: employeeName,
-		})
+		barcodes = append(barcodes, item.Barcode)
 	}
-
-	// 3. Guardar devolución con transacción ACID síncrona
-	ret, err := s.returnRepo.ProcessAdvancedReturnTransaction(req, originalSale, employeeDNI, employeeName, stockAdjustments, movements)
+	products, err := s.loadProductsForStockChanges(barcodes)
 	if err != nil {
 		return nil, err
 	}
 
-	// Invalida cache de dashboard e inicia broadcast asíncrono
+	stockAdjustments := make(map[string]float64)
+	movements := make([]*models.StockMovement, 0, len(req.ReturnedItems)+len(req.ReplacementItems))
+	referenceID := fmt.Sprintf("RET-SALE-%d-%d", req.InvoiceRef, time.Now().UnixNano())
+	for _, item := range req.ReturnedItems {
+		if err := s.appendReturnStockChange(products, stockAdjustments, &movements, item.Barcode, item.Qty,
+			false, referenceID, employeeDNI, employeeName); err != nil {
+			return nil, err
+		}
+	}
+	for _, item := range req.ReplacementItems {
+		if err := s.appendReturnStockChange(products, stockAdjustments, &movements, item.Barcode, item.Qty,
+			true, referenceID, employeeDNI, employeeName); err != nil {
+			return nil, err
+		}
+	}
+	ret, err := s.returnRepo.ProcessAdvancedReturnTransaction(req, originalSale, employeeDNI, employeeName, stockAdjustments, movements)
+	if err != nil {
+		return nil, err
+	}
 	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 	sse.GetSSEService().BroadcastDashboardUpdate()
-
 	return ret, nil
 }

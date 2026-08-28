@@ -1,55 +1,51 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"flag"
 	"log"
 	"os"
+	"strings"
+	"time"
 
 	"backPOS-go/internal/adapters/repositories"
+	"backPOS-go/migrations"
 	"github.com/joho/godotenv"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 func main() {
-	// 1. Cargar entorno
-	err := godotenv.Load()
+	_ = godotenv.Load()
+	confirm := flag.Bool("confirm", false, "confirma la creación de registros canónicos faltantes")
+	adminDNI := flag.String("admin-dni", "ADMIN", "DNI del administrador que será autor de los registros")
+	createDefaultAdmin := flag.Bool("create-default-admin", false, "crea ADMIN/123456 sólo si no existe ningún empleado")
+	flag.Parse()
+	if !*confirm {
+		log.Fatal("❌ Operación cancelada: use --confirm después de verificar la base destino")
+	}
+	if *createDefaultAdmin && *adminDNI != "ADMIN" {
+		log.Fatal("❌ --create-default-admin crea el DNI ADMIN; no puede combinarse con otro --admin-dni")
+	}
+	log.Printf("🎯 PostgreSQL destino: host=%s db=%s user=%s", strings.TrimSpace(os.Getenv("DB_HOST")), strings.TrimSpace(os.Getenv("DB_NAME")), strings.TrimSpace(os.Getenv("DB_USER")))
+
+	db, err := repositories.OpenDatabase()
 	if err != nil {
-		log.Println("No .env file found, relying on environment variables")
+		log.Fatalf("❌ %v", err)
+	}
+	sqlDB, err := db.DB()
+	if err == nil {
+		defer sqlDB.Close()
 	}
 
-	user := os.Getenv("DB_USER")
-	password := os.Getenv("DB_PASSWORD")
-	host := os.Getenv("DB_HOST")
-	port := os.Getenv("DB_PORT")
-	dbname := os.Getenv("DB_NAME")
-
-	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC", host, user, password, dbname, port)
-
-	// 2. Conectar manualmente para el WIPE
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
-	if err != nil {
-		log.Fatalf("❌ Error al conectar para limpieza: %v", err)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := migrations.VerifyCurrent(ctx, db); err != nil {
+		log.Fatalf("❌ El esquema no está listo: %v", err)
 	}
-
-	fmt.Println("🚀 INICIANDO RESET TOTAL PARA PRODUCCIÓN...")
-
-	// 3. WIPE TOTAL: Borrar el esquema public y recrearlo
-	// Esto elimina tablas, tipos, vistas y funciones.
-	err = db.Exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public;").Error
-	if err != nil {
-		log.Fatalf("❌ Fallo crítico en limpieza (WIPE): %v", err)
+	if err := repositories.SeedDefaults(db.WithContext(ctx), *adminDNI, *createDefaultAdmin); err != nil {
+		log.Fatalf("❌ No se pudieron crear las semillas: %v", err)
 	}
-
-	fmt.Println("✅ Base de datos vaciada (WIPE) con éxito.")
-
-	// 4. Cerrar conexión temporal
-	sqlDB, _ := db.DB()
-	sqlDB.Close()
-
-	// 5. Inicializar sistema normalmente (AutoMigrate + SeedAdmin)
-	// Esto recreará toda la estructura y el usuario SEBASTIAN
-	repositories.ConnectDB()
-
-	fmt.Println("\n✨ PROCESO DE SEEDING COMPLETADO ✨")
+	if *createDefaultAdmin {
+		log.Println("⚠️ Se solicitó el administrador temporal ADMIN/123456; cambie su contraseña inmediatamente")
+	}
+	log.Println("✅ Registros canónicos verificados/creados sin borrar datos existentes")
 }

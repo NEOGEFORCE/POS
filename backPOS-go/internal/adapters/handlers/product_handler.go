@@ -112,7 +112,25 @@ func (h *ProductHandler) Create(c *gin.Context) {
 
 	// 1. Verificar Duplicados (Barcode)
 	if existing, err := h.service.GetProduct(product.Barcode); err == nil && existing != nil {
-		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El cÃ³digo de barras ya existe en el sistema", gin.H{
+		if !existing.IsActive {
+			// REACTIVAR: El producto fue eliminado previamente, restaurar con nuevos datos
+			product.IsActive = true
+			dniStr, nameStr := GetContextUser(c)
+			product.CreatedByDNI = existing.CreatedByDNI
+			product.UpdatedByDNI = dniStr
+			if err := h.service.UpdateProduct(existing.Barcode, &product); err != nil {
+				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar producto", err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Producto reactivado exitosamente", "reactivated": true, "product": product})
+			go sse.GetSSEService().BroadcastProductUpdate(product)
+			h.auditService.Log(dniStr, nameStr, "REACTIVATE_PRODUCT", "INVENTORY",
+				fmt.Sprintf("Reactivado producto: %s (%s)", product.ProductName, product.Barcode),
+				fmt.Sprintf("Se reactivó un producto previamente eliminado: %s con código %s", product.ProductName, product.Barcode),
+				"", c.ClientIP(), c.Request.UserAgent(), false)
+			return
+		}
+		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El código de barras ya existe en el sistema", gin.H{
 			"barcode": existing.Barcode,
 			"name":    existing.ProductName,
 			"active":  existing.IsActive,
@@ -122,6 +140,25 @@ func (h *ProductHandler) Create(c *gin.Context) {
 
 	// 2. Verificar Duplicados (Nombre)
 	if existing, err := h.service.GetProductByName(product.ProductName); err == nil && existing != nil {
+		if !existing.IsActive {
+			// REACTIVAR por nombre: El producto fue eliminado previamente
+			product.IsActive = true
+			product.Barcode = existing.Barcode // Mantener el barcode original
+			dniStr, nameStr := GetContextUser(c)
+			product.CreatedByDNI = existing.CreatedByDNI
+			product.UpdatedByDNI = dniStr
+			if err := h.service.UpdateProduct(existing.Barcode, &product); err != nil {
+				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar producto", err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Producto reactivado exitosamente", "reactivated": true, "product": product})
+			go sse.GetSSEService().BroadcastProductUpdate(product)
+			h.auditService.Log(dniStr, nameStr, "REACTIVATE_PRODUCT", "INVENTORY",
+				fmt.Sprintf("Reactivado producto: %s (%s)", product.ProductName, product.Barcode),
+				fmt.Sprintf("Se reactivó un producto previamente eliminado: %s con código %s", product.ProductName, product.Barcode),
+				"", c.ClientIP(), c.Request.UserAgent(), false)
+			return
+		}
 		SendError(c, http.StatusConflict, ErrDuplicateEntry, "Ya existe un producto con este nombre", gin.H{
 			"barcode": existing.Barcode,
 			"name":    existing.ProductName,
@@ -137,21 +174,21 @@ func (h *ProductHandler) Create(c *gin.Context) {
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "1062") || strings.Contains(errStr, "unique") ||
 			strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "duplicada") {
-			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El cÃ³digo de barras ya estÃ¡ registrado", err)
+			SendError(c, http.StatusConflict, ErrDuplicateEntry, "El código de barras ya está registrado", err)
 			return
 		}
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al crear producto", err)
 		return
 	}
 	c.JSON(http.StatusCreated, product)
-	
-	// AVISO GLOBAL: Nuevo producto en el catÃ¡logo
+
+	// AVISO GLOBAL: Nuevo producto en el catálogo
 	go sse.GetSSEService().BroadcastProductUpdate(product)
-	
-	// AuditorÃ­a de CreaciÃ³n
-	h.auditService.Log(dniStr, nameStr, "CREATE_PRODUCT", "INVENTORY", 
+
+	// Auditoría de Creación
+	h.auditService.Log(dniStr, nameStr, "CREATE_PRODUCT", "INVENTORY",
 		fmt.Sprintf("Creado producto: %s (%s)", product.ProductName, product.Barcode),
-		fmt.Sprintf("Se registrÃ³ un nuevo producto: %s con cÃ³digo %s", product.ProductName, product.Barcode),
+		fmt.Sprintf("Se registró un nuevo producto: %s con código %s", product.ProductName, product.Barcode),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
 }
 
@@ -264,7 +301,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	// SanitizaciÃ³n
 	product.Barcode = strings.ToUpper(strings.TrimSpace(product.Barcode))
 	product.ProductName = strings.ToUpper(strings.TrimSpace(product.ProductName))
-	
+
 	if product.SupplierID != nil && *product.SupplierID == 0 {
 		product.SupplierID = nil
 	}
@@ -272,7 +309,7 @@ func (h *ProductHandler) Update(c *gin.Context) {
 	if product.BaseProductBarcode != nil && strings.TrimSpace(*product.BaseProductBarcode) == "" {
 		product.BaseProductBarcode = nil
 	}
-	
+
 	// Capturar estado anterior para auditoría forense
 	existing, _ := h.service.GetProduct(barcode)
 
@@ -299,11 +336,6 @@ func (h *ProductHandler) Update(c *gin.Context) {
 			"detail":  fmt.Sprintf("Barcode: %s | Error: %v", barcode, err),
 		})
 		return
-	}
-
-	// Sincronizar proveedores si vienen en el payload (permite unlink)
-	if product.Suppliers != nil {
-		_ = h.service.UpdateProductSuppliers(barcode, product.Suppliers)
 	}
 
 	// AuditorÃ­a de Cambio de Precio (CRÃ TICO)
@@ -346,9 +378,11 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 	// AuditorÃ­a de EliminaciÃ³n (CRÃTICO)
 	dniStr, nameStr := GetContextUser(c)
 	productName := barcode
-	if existing != nil { productName = existing.ProductName }
-	
-	h.auditService.Log(dniStr, nameStr, "DELETE_PRODUCT", "INVENTORY", 
+	if existing != nil {
+		productName = existing.ProductName
+	}
+
+	h.auditService.Log(dniStr, nameStr, "DELETE_PRODUCT", "INVENTORY",
 		fmt.Sprintf("Desactivado producto: %s", barcode),
 		fmt.Sprintf("Se desactivÃ³ el producto: %s (%s)", productName, barcode),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -381,7 +415,17 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 		return
 	}
 
-	product, _ := h.service.GetProduct(body.Barcode)
+	product, err := h.service.GetProduct(body.Barcode)
+	if err != nil {
+		dniStr, nameStr := GetContextUser(c)
+		fmt.Printf("[RECEIVE-STOCK] stock confirmado pero no se pudo recargar %s: %v\n", body.Barcode, err)
+		h.auditService.Log(dniStr, nameStr, "RECEIVE_STOCK", "INVENTORY",
+			fmt.Sprintf("Entrada stock: %s (+%.2f)", body.Barcode, body.AddedQuantity),
+			fmt.Sprintf("Se registró entrada de %.2f unidades para el producto %s", body.AddedQuantity, body.Barcode),
+			"", c.ClientIP(), c.Request.UserAgent(), false)
+		c.JSON(http.StatusOK, gin.H{"message": "Entrada registrada; actualice el inventario para ver el producto", "barcode": body.Barcode})
+		return
+	}
 	c.JSON(http.StatusOK, product)
 
 	// AVISO GLOBAL: Cambio en inventario
@@ -390,7 +434,7 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 
 	// AuditorÃ­a de RecepciÃ³n Individual
 	dniStr, nameStr := GetContextUser(c)
-	h.auditService.Log(dniStr, nameStr, "RECEIVE_STOCK", "INVENTORY", 
+	h.auditService.Log(dniStr, nameStr, "RECEIVE_STOCK", "INVENTORY",
 		fmt.Sprintf("Entrada stock: %s (+%.2f)", body.Barcode, body.AddedQuantity),
 		fmt.Sprintf("Se registrÃ³ entrada de %.2f unidades para el producto %s", body.AddedQuantity, product.ProductName),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -415,7 +459,12 @@ func (h *ProductHandler) AdjustStock(c *gin.Context) {
 		return
 	}
 
-	product, _ := h.service.GetProduct(barcode)
+	product, err := h.service.GetProduct(barcode)
+	if err != nil {
+		fmt.Printf("[ADJUST-STOCK] ajuste confirmado pero no se pudo recargar %s: %v\n", barcode, err)
+		c.JSON(http.StatusOK, gin.H{"message": "Ajuste registrado; actualice el inventario para ver el producto", "barcode": barcode})
+		return
+	}
 	c.JSON(http.StatusOK, product)
 
 	// AVISO GLOBAL: Ajuste de stock manual
@@ -490,7 +539,7 @@ func (h *ProductHandler) BulkReceive(c *gin.Context) {
 
 	// AuditorÃ­a de RecepciÃ³n Masiva
 	dniStr, nameStr := GetContextUser(c)
-	h.auditService.Log(dniStr, nameStr, "BULK_RECEIVE", "INVENTORY", 
+	h.auditService.Log(dniStr, nameStr, "BULK_RECEIVE", "INVENTORY",
 		fmt.Sprintf("RecepciÃ³n masiva: %d Ã­tems (Egreso: %v)", len(body.Entries), !body.BypassExpense),
 		fmt.Sprintf("Se procesÃ³ una recepciÃ³n masiva de %d productos. Origen pago: %s", len(body.Entries), body.PaymentSource),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -596,8 +645,8 @@ func (h *ProductHandler) ImportCSV(c *gin.Context) {
 
 	reader := csv.NewReader(file)
 	// Detectar delimitador (punto y coma o coma)
-	reader.Comma = ';' 
-	
+	reader.Comma = ';'
+
 	// Leer cabecera
 	header, err := reader.Read()
 	if err != nil {
@@ -674,7 +723,7 @@ func (h *ProductHandler) ImportCSV(c *gin.Context) {
 	}
 
 	// AuditorÃ­a
-	h.auditService.Log(dniStr, nameStr, "IMPORT_CSV", "INVENTORY", 
+	h.auditService.Log(dniStr, nameStr, "IMPORT_CSV", "INVENTORY",
 		fmt.Sprintf("ImportaciÃ³n CSV: %d Ã©xitos, %d errores", successCount, len(errors)),
 		fmt.Sprintf("Se procesÃ³ un archivo CSV. Se crearon/actualizaron %d productos.", successCount),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -715,7 +764,38 @@ func (h *ProductHandler) UpdateMinStock(c *gin.Context) {
 }
 
 func (h *ProductHandler) RegisterShrinkage(c *gin.Context) {
-	c.JSON(200, gin.H{})
+	var req struct {
+		ProductID string                 `json:"product_id" binding:"required"`
+		Quantity  float64                `json:"quantity" binding:"required,gt=0"`
+		Reason    models.ShrinkageReason `json:"reason" binding:"required"`
+		Notes     string                 `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Datos de merma inválidos", err)
+		return
+	}
+	dni, name := GetContextUser(c)
+	shrinkage := &models.Shrinkage{
+		ProductID: strings.TrimSpace(req.ProductID),
+		Quantity:  req.Quantity,
+		Reason:    models.ShrinkageReason(strings.ToUpper(strings.TrimSpace(string(req.Reason)))),
+		UserID:    dni,
+		Notes:     strings.TrimSpace(req.Notes),
+		Date:      time.Now(),
+	}
+	if err := h.service.RegisterShrinkage(shrinkage); err != nil {
+		status := http.StatusInternalServerError
+		if strings.Contains(err.Error(), "inválid") || strings.Contains(err.Error(), "positiva") || strings.Contains(err.Error(), "insuficiente") || strings.Contains(err.Error(), "requerido") {
+			status = http.StatusBadRequest
+		}
+		SendError(c, status, ErrBadRequest, err.Error(), err)
+		return
+	}
+	h.auditService.Log(dni, name, "REGISTER_SHRINKAGE", "INVENTORY",
+		fmt.Sprintf("Merma %s: %.3f", shrinkage.ProductID, shrinkage.Quantity),
+		fmt.Sprintf("%s registró merma por %s", name, shrinkage.Reason), "{}",
+		c.ClientIP(), c.Request.UserAgent(), true)
+	c.JSON(http.StatusCreated, shrinkage)
 }
 
 func (h *ProductHandler) SanitizeAllNames(c *gin.Context) {
@@ -906,5 +986,3 @@ func (h *ProductHandler) UnlinkSupplier(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "Proveedor desvinculado con éxito"})
 }
-
-

@@ -13,6 +13,15 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
+
+func jwtSigningSecret() ([]byte, error) {
+	secret := strings.TrimSpace(os.Getenv("SECRET_KEY"))
+	if secret == "" {
+		return nil, errors.New("SECRET_KEY no está configurada")
+	}
+	return []byte(secret), nil
+}
+
 type AuthService struct {
 	repo         ports.AdminRepository
 	emailService *EmailService
@@ -63,7 +72,9 @@ func (s *AuthService) Login(identifier string, password string, ip string, devic
 	// Actualizar fecha de última conexión
 	now := time.Now()
 	user.LastLogin = &now
-	s.repo.Update(user.DNI, user)
+	if err := s.repo.Update(user.DNI, user); err != nil {
+		return "", nil, err
+	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"dni":  user.DNI,
@@ -72,7 +83,11 @@ func (s *AuthService) Login(identifier string, password string, ip string, devic
 		"exp":  time.Now().Add(time.Hour * 12).Unix(),
 	})
 
-	tokenString, err := token.SignedString([]byte(os.Getenv("SECRET_KEY")))
+	secret, err := jwtSigningSecret()
+	if err != nil {
+		return "", nil, err
+	}
+	tokenString, err := token.SignedString(secret)
 	if err != nil {
 		return "", nil, err
 	}
@@ -107,12 +122,16 @@ func (s *AuthService) ForgotPassword(email string) error {
 
 	// 1. Generar token de recuperación (JWT de corta duración)
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"dni":   user.DNI,
+		"dni":    user.DNI,
 		"action": "password_reset",
 		"exp":    time.Now().Add(time.Hour * 1).Unix(),
 	})
 
-	tokenString, err := token.SignedString([]byte(os.Getenv("SECRET_KEY")))
+	secret, err := jwtSigningSecret()
+	if err != nil {
+		return err
+	}
+	tokenString, err := token.SignedString(secret)
 	if err != nil {
 		return err
 	}
@@ -126,28 +145,35 @@ func (s *AuthService) ForgotPassword(email string) error {
 		defer func() { recover() }()
 		_ = s.emailService.SendResetPasswordEmail(user.Email, user.Name, resetLink)
 	}()
-	
+
 	return nil
 }
 
 func (s *AuthService) ResetPassword(tokenString, newPassword string) error {
-	// 1. Validar token
+	secret, err := jwtSigningSecret()
+	if err != nil {
+		return err
+	}
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		return []byte(os.Getenv("SECRET_KEY")), nil
-	})
-
+		if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, fmt.Errorf("algoritmo JWT no permitido: %s", token.Method.Alg())
+		}
+		return secret, nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
 	if err != nil || !token.Valid {
 		return errors.New("token inválido o expirado")
 	}
 
 	claims, ok := token.Claims.(jwt.MapClaims)
-	if !ok || claims["action"] != "password_reset" {
+	if !ok {
+		return errors.New("token inválido")
+	}
+	action, actionOK := claims["action"].(string)
+	dni, dniOK := claims["dni"].(string)
+	if !actionOK || action != "password_reset" || !dniOK || strings.TrimSpace(dni) == "" {
 		return errors.New("token inválido")
 	}
 
-	dni := claims["dni"].(string)
-
-	// 2. Buscar usuario
 	user, err := s.repo.FindByDNI(dni)
 	if err != nil {
 		return err
@@ -200,10 +226,10 @@ func (s *AuthService) Setup(employee *models.Employee) error {
 func (s *AuthService) CheckSetup() (bool, error) {
 	count, err := s.repo.CountAll()
 	if err != nil {
-		// Si hay un error (ej. DB no lista o error de conexión), 
+		// Si hay un error (ej. DB no lista o error de conexión),
 		// devolvemos falso para evitar redirecciones erróneas a /setup.
 		// El frontend caerá por defecto en /login.
-		return false, nil 
+		return false, nil
 	}
 	// Solo necesita setup si confirmamos exitosamente que el conteo es 0
 	return count == 0, nil

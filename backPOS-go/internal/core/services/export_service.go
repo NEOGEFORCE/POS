@@ -1,4 +1,4 @@
-package services
+﻿package services
 
 import (
 	"bytes"
@@ -9,7 +9,6 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 
-	"github.com/jung-kurt/gofpdf"
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
 )
@@ -53,12 +52,14 @@ type ReportPayload struct {
 
 type ProfitabilityRow struct {
 	ProductName string  `json:"productName"`
+	Barcode     string  `json:"barcode"`
 	UnitsSold   float64 `json:"unitsSold"`
 	GrossSales  float64 `json:"grossSales"`
 	GrossCost   float64 `json:"grossCost"`
 	GrossProfit float64 `json:"grossProfit"`
 	MarginPct   float64 `json:"marginPct"`
 	MeetsTarget bool    `json:"meetsTarget"` // margen >= TargetMargin
+	IsQuickSale bool    `json:"isQuickSale"` // costo estimado con el 20% del local
 }
 
 type CreditReceivableRow struct {
@@ -89,10 +90,36 @@ type ProfitabilityReport struct {
 	TargetMargin float64   `json:"targetMargin"` // ej. 0.17 = 17%
 
 	// Totales Generales
+	// TotalSales es el PASO 1: el 100% de los ingresos auditados del
+	// período según los cierres de caja.
 	TotalSales    float64 `json:"totalSales"`
 	TotalCost     float64 `json:"totalCost"`
 	GrossProfit   float64 `json:"grossProfit"`
 	OverallMargin float64 `json:"overallMargin"`
+
+	// Tramo medido con costo real de compra y margen real del negocio.
+	KnownSales  float64 `json:"knownSales"`
+	KnownCost   float64 `json:"knownCost"`
+	KnownProfit float64 `json:"knownProfit"`
+	KnownMargin float64 `json:"knownMargin"`
+
+	// Tramo extrapolado con el margen real medido (ventas rápidas
+	// MISC/0000, flujos de caja y diferencias de registro).
+	UncostedSales  float64 `json:"uncostedSales"`
+	UncostedCost   float64 `json:"uncostedCost"`
+	UncostedProfit float64 `json:"uncostedProfit"`
+	QuickSales     float64 `json:"quickSales"`
+
+	// Trazabilidad de las fuentes de ingresos del período
+	SalesFromRegister float64 `json:"salesFromRegister"` // tabla sales
+	SalesFromClosures float64 `json:"salesFromClosures"` // cierres: total_sales
+	SalesFromDetails  float64 `json:"salesFromDetails"`  // detalle por producto
+
+	// Desglose de los ingresos auditados y saldos al cierre del mes
+	Audited *AuditedIncome `json:"audited,omitempty"`
+
+	// Variación patrimonial: dónde quedó la plata de la ganancia
+	WorkingCapital *WorkingCapital `json:"workingCapital,omitempty"`
 
 	// Desglose de Pagos e Ingresos
 	CashSales          float64 `json:"cashSales"`
@@ -107,6 +134,7 @@ type ProfitabilityReport struct {
 	RentExp           float64 `json:"rentExp"`
 	MaintenanceExp    float64 `json:"maintenanceExp"`
 	PayrollExp        float64 `json:"payrollExp"`
+	FinancialExp      float64 `json:"financialExp"` // cuotas de banco y obligaciones
 	OtherOpExp        float64 `json:"otherOpExp"`
 	TotalOpExpenses   float64 `json:"totalOpExpenses"`
 	OpExpenses        float64 `json:"opExpenses"` // compatibilidad legacy
@@ -152,68 +180,121 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 		Select(`COALESCE(SUM("totalAmount"), 0)`).
 		Scan(&realTotalSales)
 
+	// Cifra informativa de los cierres de caja del período. NO se usa para
+	// calcular las Ventas Totales del reporte (ver ResolveTotalSales): se
+	// muestra solo como referencia de auditoría. Antes se sumaba
+	// GREATEST(total_sales, physical_cash + total_card + total_transfer +
+	// total_expenses), lo que duplicaba montos (total_transfer ya incluye
+	// tarjeta/Nequi/Daviplata) e inflaba la cifra hasta ~$74M.
 	var closureSales float64
 	s.db.Model(&models.CashierClosure{}).
 		Where(`DATE(end_date AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
-		Select(`COALESCE(SUM(GREATEST("total_sales", "physical_cash" + "total_card" + "total_transfer" + "total_expenses")), 0)`).
+		Select(`COALESCE(SUM("total_sales"), 0)`).
 		Scan(&closureSales)
 
-	// Ventas detalladas (con costo) por producto
+	// Ventas detalladas por producto. Se separa, línea por línea, la parte
+	// con costo de compra registrado de la que no lo tiene (ventas rápidas
+	// MISC-/0000 o costPrice = 0).
+	quickExpr := `(sd.barcode IS NULL OR TRIM(sd.barcode) = '' OR TRIM(sd.barcode) = '0000' OR UPPER(TRIM(sd.barcode)) LIKE 'MISC-%')`
+	uncostedExpr := `(` + quickExpr + ` OR COALESCE(sd."costPrice", 0) <= 0)`
+	groupBarcodeExpr := `CASE WHEN ` + quickExpr + ` THEN '` + QuickSaleGroupBarcode + `' ELSE sd.barcode END`
+	groupNameExpr := `CASE WHEN ` + quickExpr + ` THEN '` + QuickSaleGroupName + `' ELSE COALESCE(p."productName", '(producto sin registro)') END`
+
 	type aggRow struct {
-		Barcode    string
-		Name       string
-		UnitsSold  float64
-		GrossSales float64
-		GrossCost  float64
+		Barcode       string
+		Name          string
+		UnitsSold     float64
+		GrossSales    float64
+		CostedSales   float64
+		KnownCost     float64
+		UncostedSales float64
 	}
 	var rows []aggRow
 
 	err := s.db.Table("sale_details AS sd").
-		Select(`sd.barcode AS barcode,
-				p."productName" AS name,
+		Select(groupBarcodeExpr+` AS barcode,
+				`+groupNameExpr+` AS name,
 				COALESCE(SUM(sd.quantity), 0) AS units_sold,
 				COALESCE(SUM(sd.subtotal), 0) AS gross_sales,
-				COALESCE(SUM(sd.quantity * sd."costPrice"), 0) AS gross_cost`).
+				COALESCE(SUM(CASE WHEN `+uncostedExpr+` THEN 0 ELSE sd.subtotal END), 0) AS costed_sales,
+				COALESCE(SUM(CASE WHEN `+uncostedExpr+` THEN 0 ELSE sd.quantity * sd."costPrice" END), 0) AS known_cost,
+				COALESCE(SUM(CASE WHEN `+uncostedExpr+` THEN sd.subtotal ELSE 0 END), 0) AS uncosted_sales`).
 		Joins(`JOIN sales s ON s."saleId" = sd."saleId"`).
 		Joins(`LEFT JOIN products p ON p.barcode = sd.barcode`).
 		Where(`DATE(s."saleDate" AT TIME ZONE 'America/Bogota') BETWEEN ? AND ?`, fromDateStr, toDateStr).
 		Where(`(s.status IS NULL OR UPPER(s.status) <> 'CANCELLED')`).
-		Group(`sd.barcode, p."productName"`).
+		Group(groupBarcodeExpr + `, ` + groupNameExpr).
 		Order(`gross_sales DESC`).
 		Scan(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("profitability query: %w", err)
 	}
 
-	var detailSalesSum float64
+	lines := make([]ProfitLine, 0, len(rows))
 	for _, r := range rows {
-		gp := r.GrossSales - r.GrossCost
+		lines = append(lines, ProfitLine{
+			Barcode:       r.Barcode,
+			Name:          r.Name,
+			Units:         r.UnitsSold,
+			Sales:         r.GrossSales,
+			CostedSales:   r.CostedSales,
+			KnownCost:     r.KnownCost,
+			UncostedSales: r.UncostedSales,
+		})
+	}
+
+	// PASO 1: ingresos auditados del período (100% de los cierres de caja),
+	// con la misma fórmula que el PDF consolidado de cierres.
+	audited, err := s.GetAuditedIncome(from, to)
+	if err != nil {
+		return nil, err
+	}
+	report.Audited = audited
+
+	auditedIncome := audited.Total
+	if auditedIncome <= 0 {
+		// Sin cierres en el período: se audita lo registrado en ventas.
+		auditedIncome = realTotalSales
+	}
+
+	// El costo se mide con el margen real del negocio y se extrapola al
+	// resto de los ingresos auditados.
+	agg := AggregateProfitAudited(lines, auditedIncome)
+
+	for _, l := range lines {
+		cost := l.CostAt(agg.KnownMargin)
+		gp := l.Sales - cost
 		var margin float64
-		if r.GrossSales > 0 {
-			margin = gp / r.GrossSales
+		if l.Sales > 0 {
+			margin = gp / l.Sales
 		}
 		report.Rows = append(report.Rows, ProfitabilityRow{
-			ProductName: r.Name,
-			UnitsSold:   r.UnitsSold,
-			GrossSales:  r.GrossSales,
-			GrossCost:   r.GrossCost,
+			ProductName: l.Name,
+			Barcode:     l.Barcode,
+			UnitsSold:   l.Units,
+			GrossSales:  l.Sales,
+			GrossCost:   cost,
 			GrossProfit: gp,
 			MarginPct:   margin,
 			MeetsTarget: margin >= targetMargin,
+			IsQuickSale: l.IsQuickSale(),
 		})
-		detailSalesSum += r.GrossSales
-		report.TotalCost += r.GrossCost
 	}
 
-	maxSales := realTotalSales
-	if closureSales > maxSales {
-		maxSales = closureSales
-	}
-	if detailSalesSum > maxSales {
-		maxSales = detailSalesSum
-	}
-	report.TotalSales = maxSales
-	report.GrossProfit = report.TotalSales - report.TotalCost
+	report.SalesFromRegister = realTotalSales
+	report.SalesFromClosures = closureSales
+	report.SalesFromDetails = agg.DetailSales
+	report.TotalSales = agg.AuditedIncome
+	report.TotalCost = agg.TotalCost
+	report.GrossProfit = agg.GrossProfit
+	report.KnownSales = agg.KnownSales
+	report.KnownCost = agg.KnownCost
+	report.KnownProfit = agg.KnownProfit
+	report.KnownMargin = agg.KnownMargin
+	report.UncostedSales = agg.UncostedSales
+	report.UncostedCost = agg.UncostedCost
+	report.UncostedProfit = agg.UncostedProfit
+	report.QuickSales = agg.QuickSales
 
 	// 2. Desglose de Métodos de Pago e Ingresos de Dinero en el Rango
 	var cashSales, transferSales, creditSales float64
@@ -259,34 +340,14 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 
 	var cashExpenses float64
 	for _, e := range expList {
-		descRaw := strings.ToUpper(e.Description)
-		catRaw := strings.ToUpper(e.Category)
-		combinedRaw := catRaw + " " + descRaw
+		hasSupplier := e.SupplierID != nil || (e.Supplier != nil && e.Supplier.ID > 0)
 
-		// Exclusión estricta de pagos a proveedores, mercadería, recepciones, compras y devoluciones
-		isSupplierPayment := e.SupplierID != nil || (e.Supplier != nil && e.Supplier.ID > 0) ||
-			catRaw == "PROVEEDORES" || catRaw == "PROVEEDOR" || catRaw == "COMPRAS" || catRaw == "MERCANCIA" || catRaw == "RECEPCION" || catRaw == "INVENTARIO" ||
-			strings.Contains(combinedRaw, "PROVEEDOR") || strings.Contains(combinedRaw, "PROVEEDORES") ||
-			strings.Contains(combinedRaw, "COMPRA") || strings.Contains(combinedRaw, "MERCANCIA") || strings.Contains(combinedRaw, "RECEPCION") ||
-			strings.Contains(combinedRaw, "DEVOLUCION") || strings.Contains(combinedRaw, "DESCUADRE") ||
-			strings.Contains(combinedRaw, "POSTOBON") || strings.Contains(combinedRaw, "AGUA MIA") || strings.Contains(combinedRaw, "TRONEX") ||
-			strings.Contains(combinedRaw, "SUPER RICAS") || strings.Contains(combinedRaw, "PURO CLOR") || strings.Contains(combinedRaw, "CARNE") ||
-			strings.Contains(combinedRaw, "ZENU") || strings.Contains(combinedRaw, "ALQUERIA") || strings.Contains(combinedRaw, "ALPINA") ||
-			strings.Contains(combinedRaw, "COCACOLA") || strings.Contains(combinedRaw, "HERMARLY") || strings.Contains(combinedRaw, "HUEVOS") ||
-			strings.Contains(combinedRaw, "LA NIEVE") || strings.Contains(combinedRaw, "IDEAL") || strings.Contains(combinedRaw, "DEPOSITO") ||
-			strings.Contains(combinedRaw, "TRILLADORA") || strings.Contains(combinedRaw, "ALTIPAL") || strings.Contains(combinedRaw, "MAXGOL") ||
-			strings.Contains(combinedRaw, "DISTRILLANO") || strings.Contains(combinedRaw, "COUNTRY") || strings.Contains(combinedRaw, "PLASTICOS") ||
-			strings.Contains(combinedRaw, "PULPAS")
-
-		if isSupplierPayment {
+		// Exclusión estricta: mercancía, pagos a proveedores, recepciones,
+		// devoluciones y abonos a préstamos de inventario. Ese costo ya se
+		// descontó al calcular el costo de lo vendido.
+		if IsMerchandiseExpense(e.Category, e.Description, hasSupplier) {
 			continue
 		}
-
-		// Clasificar palabras clave de gastos operativos locales
-		isRent := strings.Contains(combinedRaw, "ARRIENDO") || strings.Contains(combinedRaw, "ALQUILER") || strings.Contains(combinedRaw, "RENTA") || strings.Contains(combinedRaw, "LOCAL") || strings.Contains(combinedRaw, "INMUEBLE")
-		isService := strings.Contains(combinedRaw, "SERVICIO") || strings.Contains(combinedRaw, "LUZ") || strings.Contains(combinedRaw, "INTERNET") || strings.Contains(combinedRaw, "TELEFONO") || strings.Contains(combinedRaw, "ENEL") || strings.Contains(combinedRaw, "EPM") || strings.Contains(combinedRaw, "VANTI") || (strings.Contains(combinedRaw, "AGUA") && !strings.Contains(combinedRaw, "AGUA MIA"))
-		isPayroll := strings.Contains(combinedRaw, "SUELDO") || strings.Contains(combinedRaw, "NOMINA") || strings.Contains(combinedRaw, "PERSONAL") || strings.Contains(combinedRaw, "EMPLEADO") || strings.Contains(combinedRaw, "SALARIO") || strings.Contains(combinedRaw, "QUINCENA")
-		isMaintenance := strings.Contains(combinedRaw, "IMPREVISTO") || strings.Contains(combinedRaw, "ARREGLO") || strings.Contains(combinedRaw, "DANO") || strings.Contains(combinedRaw, "DANOS") || strings.Contains(combinedRaw, "MANTENIMIENTO") || strings.Contains(combinedRaw, "REPARAC")
 
 		amt := e.Amount + e.TaxAmount
 		report.TotalOpExpenses += amt
@@ -294,15 +355,18 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 		c, _, _, _ := parseExpenseChannels(&e)
 		cashExpenses += c
 
-		if isRent {
+		switch ClassifyOpExpense(e.Category, e.Description) {
+		case OpExpenseRent:
 			report.RentExp += amt
-		} else if isService {
+		case OpExpenseServices:
 			report.PublicServicesExp += amt
-		} else if isMaintenance {
+		case OpExpenseMaintenance:
 			report.MaintenanceExp += amt
-		} else if isPayroll {
+		case OpExpensePayroll:
 			report.PayrollExp += amt
-		} else {
+		case OpExpenseFinancial:
+			report.FinancialExp += amt
+		default:
 			report.OtherOpExp += amt
 		}
 
@@ -337,19 +401,26 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 		})
 	}
 
-	// 5. Deudas Pendientes del Negocio
+	// 5. Deudas Activas del Negocio (Centro de Pagos)
+	// Se replica EXACTAMENTE la consulta autoritativa del Centro de Pagos
+	// (PostgresExpenseRepository.GetPendingDebtsSummary) para que el total
+	// del reporte coincida con el que ve el usuario en pantalla:
+	//   filtro : (status = PENDING OR paymentSource IN (PRESTAMO, PREST.))
+	//            AND status NOT IN (PAID, SETTLED)
+	//   saldo  : CASE WHEN remaining_amount > 0 THEN remaining_amount
+	//                 ELSE amount END + tax_amount
 	var pendingExps []models.Expense
 	s.db.Preload("Supplier").
-		Where(`deleted_at IS NULL`).
-		Where(`UPPER(status) = 'PENDING' OR UPPER("paymentSource") IN ('PRESTAMO', 'PREST.') OR remaining_amount > 0`).
+		Where(`(UPPER(status) = ? OR UPPER("paymentSource") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) NOT IN ('PAID', 'SETTLED')`, "PENDING").
 		Order(`date DESC`).
 		Find(&pendingExps)
 
 	for _, pe := range pendingExps {
 		bal := pe.RemainingAmount
 		if bal <= 0 {
-			bal = pe.Amount + pe.TaxAmount
+			bal = pe.Amount
 		}
+		bal += pe.TaxAmount
 
 		provName := ""
 		if pe.LenderName != "" {
@@ -389,12 +460,23 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 	}
 
 	// 6. Cálculos Finales
-	report.NetProfit = report.GrossProfit - report.TotalOpExpenses
+	// Ganancia Libre = Ganancia Bruta - SOLO gastos operativos del local.
+	report.NetProfit = FreeProfit(report.GrossProfit, report.TotalOpExpenses)
 	if report.TotalSales > 0 {
 		report.OverallMargin = report.GrossProfit / report.TotalSales
 		report.NetMargin = report.NetProfit / report.TotalSales
 	}
 	report.NetCashBalance = report.TotalCashInflows - report.TotalOpExpenses
+
+	// 7. Variación Patrimonial: ¿dónde quedó la plata de la ganancia?
+	// Compara la fotografía del inicio del período contra la del cierre.
+	var closingBalances ClosingBalances
+	if report.Audited != nil {
+		closingBalances = report.Audited.Closing
+	}
+	if wc, err := s.GetWorkingCapital(from, to, report.TotalDebtsPayable, report.NetProfit, closingBalances); err == nil {
+		report.WorkingCapital = wc
+	}
 
 	return report, nil
 }
@@ -631,9 +713,17 @@ func (s *ExportService) GetRealCashReportByRange(from, to time.Time) (*RealCashR
 		return nil, fmt.Errorf("closures query: %w", err)
 	}
 
-	for _, c := range closures {
+	for i := range closures {
+		c := &closures[i]
+
+		// FUENTE ÚNICA: mismo efectivo contado y mismos egresos de caja que el
+		// historial en pantalla. Antes usaba la columna cruda PhysicalCash y
+		// TotalExpenses, que en los cierres editados incluye los egresos de
+		// fondo y por eso el balance salía más bajo de lo real.
+		m := ComputeClosureMetrics(c)
+
 		transfer := c.TotalNequiReal + c.TotalDaviplataReal
-		balance := c.PhysicalCash + transfer - c.TotalExpenses
+		balance := m.PhysicalCash + transfer - m.EgresosCaja
 
 		rep.Rows = append(rep.Rows, RealCashCutRow{
 			Date:           c.Date,
@@ -641,17 +731,17 @@ func (s *ExportService) GetRealCashReportByRange(from, to time.Time) (*RealCashR
 			EndDate:        c.EndDate,
 			ClosureID:      c.ID,
 			ClosedByName:   c.ClosedByName,
-			PhysicalCash:   c.PhysicalCash,
+			PhysicalCash:   m.PhysicalCash,
 			NequiReal:      c.TotalNequiReal,
 			DaviplataReal:  c.TotalDaviplataReal,
 			TotalTransfer:  transfer,
-			Expenses:       c.TotalExpenses,
+			Expenses:       m.EgresosCaja,
 			BalanceReal:    balance,
 			Difference:     c.Difference,
 		})
-		rep.TotalPhysical += c.PhysicalCash
+		rep.TotalPhysical += m.PhysicalCash
 		rep.TotalTransfer += transfer
-		rep.TotalExpenses += c.TotalExpenses
+		rep.TotalExpenses += m.EgresosCaja
 		rep.TotalBalanceReal += balance
 	}
 	return rep, nil
@@ -666,27 +756,13 @@ func (s *ExportService) GetRealCashReportByDay(day time.Time) (*RealCashReport, 
 	return s.GetRealCashReportByRange(start, end)
 }
 
+// fmtMoney formatea un valor en moneda bogotana: "$ 1.234.567".
 func fmtMoney(v float64) string {
-	abs := v
-	neg := ""
-	if v < 0 {
-		abs = -v
-		neg = "-"
-	}
-	intPart := int64(abs)
-	str := fmt.Sprintf("%d", intPart)
-	out := ""
-	for i, c := range reverseStr(str) {
-		if i > 0 && i%3 == 0 {
-			out = "." + out
-		}
-		out = string(c) + out
-	}
-	return fmt.Sprintf("%s$%s", neg, out)
+	return fmtCOP(v)
 }
 
 func fmtPct(v float64) string {
-	return fmt.Sprintf("%.2f%%", v)
+	return fmtPercent(v)
 }
 
 func reverseStr(s string) string {
@@ -710,182 +786,151 @@ func (s *ExportService) GenerateProfitabilityPDFBytes(r *ProfitabilityReport) ([
 // Renderizadores PDF / Excel / CSV
 // =============================================================
 
-// RenderPDF dibuja un PDF tabular profesional con estilo Rentabilidad,
-// encabezado corporativo, timestamp exacto de emisin en Colombia y tabla pulida.
+// RenderPDF dibuja cualquier reporte tabular con el mismo estilo
+// ejecutivo del reporte de Rentabilidad: encabezado corporativo,
+// títulos en azul oscuro, filas alternadas y dinero a la derecha.
 func (s *ExportService) RenderPDF(p ReportPayload) ([]byte, error) {
-	pdf := gofpdf.New("L", "mm", "A4", "")
-	pdf.SetMargins(12, 14, 12)
-	pdf.SetAutoPageBreak(true, 16)
+	d := newExecPDF("L", p.Title)
+	d.addPage()
+	d.hero(p.Title, p.Subtitle, p.From, p.To)
 
-	// Translator UTF-8 a cp1252 (latin-1).
-	tr := pdf.UnicodeTranslatorFromDescriptor("cp1252")
-	prep := func(s string) string { return tr(sanitizePDF(s)) }
-
-	loc, _ := time.LoadLocation("America/Bogota")
-	if loc == nil {
-		loc = time.Local
-	}
-	nowStr := time.Now().In(loc).Format("02/01/2006 03:04:05 PM")
-
-	// Configurar footer automtico
-	pdf.SetFooterFunc(func() {
-		pdf.SetY(-12)
-		pdf.SetFont("Arial", "I", 8)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.CellFormat(0, 5,
-			prep(fmt.Sprintf("SUPERMERCADO SURTIFAMILIAR  |  Emisión: %s  |  Página %d",
-				nowStr, pdf.PageNo())),
-			"", 0, "C", false, 0, "")
-	})
-
-	pdf.AddPage()
-
-	// Header Corporativo Estilo Rentabilidad
-	pdf.SetY(10)
-	pdf.SetFont("Arial", "B", 18)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.Cell(0, 8, prep("SUPERMERCADO SURTIFAMILIAR"))
-	pdf.Ln(8)
-
-	pdf.SetFont("Arial", "B", 13)
-	pdf.SetTextColor(60, 60, 60)
-	pdf.Cell(0, 6, prep(p.Title))
-	pdf.Ln(6)
-
-	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(100, 100, 100)
-	if !p.From.IsZero() && !p.To.IsZero() {
-		pdf.Cell(0, 5, prep(fmt.Sprintf("Período: %s al %s   |   Fecha y Hora de Emisión: %s",
-			p.From.Format("02/01/2006"), p.To.Format("02/01/2006"), nowStr)))
-	} else {
-		pdf.Cell(0, 5, prep(fmt.Sprintf("Fecha y Hora de Emisión: %s", nowStr)))
-	}
-	pdf.Ln(7)
-
-	// Tabla
 	if len(p.Headers) > 0 {
-		colCount := len(p.Headers)
-		availableWidth := 273.0 // A4 horizontal con márgenes
-		colWidth := availableWidth / float64(colCount)
-
-		// Header de tabla
-		pdf.SetFillColor(28, 46, 41)
-		pdf.SetTextColor(255, 255, 255)
-		pdf.SetFont("Arial", "B", 9)
-		for _, h := range p.Headers {
-			pdf.CellFormat(colWidth, 8, prep(h), "1", 0, "C", true, 0, "")
+		n := len(p.Headers)
+		bands := map[int]bool{}
+		rows := make([][]string, len(p.Rows))
+		for i, row := range p.Rows {
+			clean := make([]string, len(row))
+			copy(clean, row)
+			if isBandRow(row) {
+				bands[i] = true
+				for j := range clean {
+					clean[j] = strings.TrimSpace(strings.Trim(clean[j], "= "))
+				}
+			}
+			rows[i] = clean
 		}
-		pdf.Ln(-1)
 
-		// Filas
-		pdf.SetFont("Arial", "", 8)
-		pdf.SetTextColor(40, 40, 40)
-		fill := false
-		for _, row := range p.Rows {
-			if fill {
-				pdf.SetFillColor(245, 250, 248)
-			} else {
-				pdf.SetFillColor(255, 255, 255)
-			}
-			
-			// Calcular altura maxima de la fila
-			maxLines := 1
-			for i, cell := range row {
-				if i >= colCount {
-					break
-				}
-				lines := pdf.SplitLines([]byte(prep(cell)), colWidth-2)
-				if len(lines) > maxLines {
-					maxLines = len(lines)
-				}
-			}
-			
-			lineHeight := 4.5
-			rowHeight := float64(maxLines) * lineHeight
-			if rowHeight < 7.0 {
-				rowHeight = 7.0
-			}
+		d.table(execTable{
+			Headers:  p.Headers,
+			Weights:  columnWeights(p.Headers, p.Rows),
+			Aligns:   columnAligns(p.Headers, p.Rows),
+			Rows:     rows,
+			Total:    p.Totals,
+			FontSize: tableFontSize(n),
+			BandRows: bands,
+		})
+	}
 
-			// Salto de pagina
-			if pdf.GetY()+rowHeight > 190.0 {
-				pdf.AddPage()
-				// Redibujar cabeceras
-				pdf.SetFillColor(28, 46, 41)
-				pdf.SetTextColor(255, 255, 255)
-				pdf.SetFont("Arial", "B", 9)
-				for _, h := range p.Headers {
-					pdf.CellFormat(colWidth, 8, prep(h), "1", 0, "C", true, 0, "")
-				}
-				pdf.Ln(-1)
-				
-				// Restaurar fuente de fila
-				pdf.SetFont("Arial", "", 8)
-				pdf.SetTextColor(40, 40, 40)
-				if fill {
-					pdf.SetFillColor(245, 250, 248)
-				} else {
-					pdf.SetFillColor(255, 255, 255)
-				}
-			}
-
-			x := pdf.GetX()
-			y := pdf.GetY()
-
-			for i, cell := range row {
-				if i >= colCount {
-					break
-				}
-				
-				// Fondo
-				pdf.Rect(x, y, colWidth, rowHeight, "F")
-				
-				// Bordes "LR"
-				pdf.Line(x, y, x, y+rowHeight)
-				pdf.Line(x+colWidth, y, x+colWidth, y+rowHeight)
-				
-				// Centrado vertical
-				lines := pdf.SplitLines([]byte(prep(cell)), colWidth-2)
-				textY := y + (rowHeight - (float64(len(lines)) * lineHeight)) / 2.0
-				
-				pdf.SetXY(x+1, textY)
-				pdf.MultiCell(colWidth-2, lineHeight, prep(cell), "", "L", false)
-				
-				x += colWidth
-			}
-			pdf.SetXY(12, y+rowHeight)
-			fill = !fill
-		}
-		// Bottom border
-		pdf.CellFormat(availableWidth, 0, "", "T", 0, "", false, 0, "")
-		pdf.Ln(-1)
-
-		// Totales
-		if len(p.Totals) > 0 {
-			pdf.SetFont("Arial", "B", 9)
-			pdf.SetFillColor(16, 185, 129)
-			pdf.SetTextColor(255, 255, 255)
-			for i, t := range p.Totals {
-				if i >= colCount {
-					break
-				}
-				pdf.CellFormat(colWidth, 8, prep(t), "1", 0, "L", true, 0, "")
-			}
-			pdf.Ln(-1)
-		}
+	if len(p.Rows) == 0 {
+		d.hint("No hay movimientos registrados en el período seleccionado.")
 	}
 
 	if p.Footer != "" {
-		pdf.Ln(4)
-		pdf.SetFont("Arial", "I", 8)
-		pdf.SetTextColor(120, 120, 120)
-		pdf.MultiCell(0, 4, prep(p.Footer), "", "L", false)
+		d.hint(p.Footer)
 	}
 
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, fmt.Errorf("pdf output: %w", err)
+	buf, err := d.buffer()
+	if err != nil {
+		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// isBandRow detecta las filas separadoras "=== TÍTULO ===".
+func isBandRow(row []string) bool {
+	nonEmpty := 0
+	hasMarker := false
+	for _, c := range row {
+		t := strings.TrimSpace(c)
+		if t == "" {
+			continue
+		}
+		nonEmpty++
+		if strings.HasPrefix(t, "===") {
+			hasMarker = true
+		}
+	}
+	return hasMarker && nonEmpty == 1
+}
+
+// isMoneyCell indica si el contenido de una celda es un monto.
+func isMoneyCell(v string) bool {
+	t := strings.TrimSpace(v)
+	return strings.HasPrefix(t, "$") || strings.HasPrefix(t, "-$") ||
+		strings.HasSuffix(t, "%")
+}
+
+// columnAligns alinea a la derecha las columnas de dinero/porcentaje.
+func columnAligns(headers []string, rows [][]string) []string {
+	aligns := make([]string, len(headers))
+	for i := range headers {
+		money, total := 0, 0
+		for _, row := range rows {
+			if i >= len(row) {
+				continue
+			}
+			t := strings.TrimSpace(row[i])
+			if t == "" || t == "-" {
+				continue
+			}
+			total++
+			if isMoneyCell(t) {
+				money++
+			}
+		}
+		if total > 0 && float64(money)/float64(total) >= 0.5 {
+			aligns[i] = "R"
+		} else {
+			aligns[i] = "L"
+		}
+	}
+	return aligns
+}
+
+// columnWeights reparte el ancho según el largo típico del contenido.
+func columnWeights(headers []string, rows [][]string) []float64 {
+	weights := make([]float64, len(headers))
+	for i, h := range headers {
+		maxLen := float64(len(h))
+		var sum, count float64
+		for _, row := range rows {
+			if i >= len(row) {
+				continue
+			}
+			l := float64(len(strings.TrimSpace(row[i])))
+			sum += l
+			count++
+			if l > maxLen {
+				maxLen = l
+			}
+		}
+		avg := maxLen
+		if count > 0 {
+			avg = (sum/count)*0.65 + maxLen*0.35
+		}
+		if avg < 8 {
+			avg = 8
+		}
+		if avg > 34 {
+			avg = 34
+		}
+		weights[i] = avg
+	}
+	return weights
+}
+
+// tableFontSize ajusta el tamaño de letra al número de columnas.
+func tableFontSize(cols int) float64 {
+	switch {
+	case cols >= 9:
+		return 7.2
+	case cols >= 7:
+		return 7.8
+	case cols >= 5:
+		return 8.2
+	default:
+		return 9
+	}
 }
 
 // RenderExcel genera un .xlsx con header + filas + fila de totales.

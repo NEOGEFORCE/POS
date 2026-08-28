@@ -57,10 +57,11 @@ type Supplier struct {
 	DeliveryDay string `gorm:"column:deliveryDay" json:"deliveryDay,omitempty"`
 
 	// Nuevos campos multi-días (formato JSONB en BD)
-	VisitDays     StringArray `gorm:"type:jsonb;column:visit_days" json:"visitDays"`
-	DeliveryDays  StringArray `gorm:"type:jsonb;column:delivery_days" json:"deliveryDays"`
+	VisitDays          StringArray `gorm:"type:jsonb;column:visit_days" json:"visitDays"`
+	DeliveryDays       StringArray `gorm:"type:jsonb;column:delivery_days" json:"deliveryDays"`
 	RestockMethod      string      `gorm:"column:restock_method" json:"restockMethod"`
 	VisitFrequencyDays int         `gorm:"default:7;column:visit_frequency_days" json:"visitFrequencyDays"`
+	LeadTimeDays       *int        `gorm:"column:lead_time_days" json:"leadTimeDays,omitempty"`
 	IsActive           bool        `gorm:"default:true;column:is_active" json:"isActive"`
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`

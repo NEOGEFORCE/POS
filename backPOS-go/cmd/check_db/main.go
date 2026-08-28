@@ -1,13 +1,15 @@
+//go:build tools_legacy
+// +build tools_legacy
+
 package main
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"backPOS-go/internal/core/domain/models"
+	"log"
+	"os"
 )
 
 func main() {
@@ -24,16 +26,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	var employees []models.Employee
-	db.Find(&employees)
-
-	if len(employees) == 0 {
-		fmt.Println("\n⚠️ ¡LA BASE DE DATOS ESTÁ VACÍA!")
-	} else {
-		fmt.Println("\n--- EMPLEADOS ENCONTRADOS ---")
-		for _, emp := range employees {
-			fmt.Printf("DNI: %v | Nombre: '%s' | Email: '%s' | Rol: '%s'\n", emp.DNI, emp.Name, emp.Email, emp.Role)
-		}
-		fmt.Println("----------------------------\n")
+	var closure map[string]interface{}
+	db.Table("cashier_closures").Where("id = ?", 145).Take(&closure)
+	fmt.Printf("\n=== CIERRE 145 ===\n")
+	for k, v := range closure {
+		fmt.Printf(" %s: %v\n", k, v)
 	}
+	fmt.Printf("==================\n\n")
 }

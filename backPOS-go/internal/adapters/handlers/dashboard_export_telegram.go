@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"fmt"
@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/services"
 )
 
 func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models.CashierClosure, expenses []models.Expense, payments []models.CreditPayment, from, to time.Time) string {
@@ -14,9 +15,10 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 
 	var totalExpectedCash, totalPhysicalCash, totalNequi, totalDaviplata, totalCard, totalBancolombia, totalOtherTransfer float64
 	var totalCash, totalExpenses, totalReturns float64
+	var egresosCajaTotal, ventaReal float64
 
-	for _, c := range closures {
-		totalPhysicalCash += c.PhysicalCash
+	for i := range closures {
+		c := &closures[i]
 		totalNequi += c.TotalNequi
 		totalDaviplata += c.TotalDaviplata
 		totalCard += c.TotalCard
@@ -25,23 +27,24 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 		totalCash += c.TotalCash
 		totalExpenses += c.TotalExpenses
 		totalReturns += c.TotalReturns
-		
+
 		expectedCash := c.ExpectedCash
 		if expectedCash == 0 {
 			expectedCash = c.TotalCash - c.TotalExpenses - c.TotalReturns
 		}
 		totalExpectedCash += expectedCash
+
+		// FUENTE ÚNICA: el mismo arqueo que el detalle del cierre en pantalla,
+		// que el PDF desglosado y que las tablas del dashboard.
+		m := services.ComputeClosureMetrics(c)
+		totalPhysicalCash += m.PhysicalCash
+		egresosCajaTotal += m.EgresosCaja
+		ventaReal += m.VentasCajero
 	}
 
 	normalizeExpensesForReport(expenses)
 
-	egresosEfectivoTotal := 0.0
-	for _, e := range expenses {
-		egresosEfectivoTotal += e.CashAmount
-	}
-
 	ingresosDigitales := totalNequi + totalDaviplata + totalCard + totalBancolombia + totalOtherTransfer
-	ventaReal := totalExpectedCash + ingresosDigitales + egresosEfectivoTotal
 	diferenciaFisica := totalPhysicalCash - totalExpectedCash
 
 	// Variables auxiliares para la vista
@@ -65,11 +68,12 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 
 	msg.WriteString("🧮 *VENTA REAL DEL PERIODO*\n")
 	msg.WriteString(fmt.Sprintf("💰 *TOTAL VENTAS:* `$%s`\n", formatCOP(ventaReal)))
-	msg.WriteString("📋 _(Efectivo Esperado + Digital + Egresos Caja)_\n\n")
+	msg.WriteString("📋 _(Efectivo Contado + Digital + Egresos Caja + Devoluciones)_\n\n")
 
 	msg.WriteString("💵 *1. RESUMEN DE CAJA (ARQUEO FÍSICO)*\n")
 	msg.WriteString(fmt.Sprintf("▫️ Efectivo Esperado:  `$%s`\n", formatCOP(totalExpectedCash)))
 	msg.WriteString(fmt.Sprintf("▫️ Efectivo Contado:   `$%s`\n", formatCOP(totalPhysicalCash)))
+	msg.WriteString(fmt.Sprintf("▫️ Egresos en Caja:    `$%s`\n", formatCOP(egresosCajaTotal)))
 	msg.WriteString("────────────────────\n")
 	msg.WriteString(fmt.Sprintf("🚨 *DIFERENCIA FÍSICA:* %s `$%s`\n\n", diferenciaIcon, formatCOP(diferenciaFisicaAbs)))
 

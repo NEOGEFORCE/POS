@@ -30,7 +30,7 @@ func (s *ExpectedOrderService) CreateExpectedOrder(order *models.ExpectedOrder) 
 		// Actualizar el nombre del proveedor con el nombre exacto de la BD
 		order.SupplierName = supplier.Name
 	}
-	
+
 	return s.repo.Save(order)
 }
 
@@ -41,14 +41,14 @@ func (s *ExpectedOrderService) getOrCreateSupplier(name string) (*models.Supplie
 	if name == "" {
 		return nil, fmt.Errorf("el nombre del proveedor no puede estar vacío")
 	}
-	
+
 	// Intentar encontrar el proveedor existente (case insensitive)
 	supplier, err := s.repo.GetSupplierByName(name)
 	if err == nil && supplier != nil {
 		log.Printf("[ExpectedOrderService] Proveedor existente encontrado: %s (ID: %d)", supplier.Name, supplier.ID)
 		return supplier, nil
 	}
-	
+
 	// Si no existe, crear nuevo proveedor
 	newSupplier := &models.Supplier{
 		Name: name,
@@ -59,11 +59,11 @@ func (s *ExpectedOrderService) getOrCreateSupplier(name string) (*models.Supplie
 		VisitDay:    "",
 		DeliveryDay: "",
 	}
-	
+
 	if err := s.repo.CreateSupplier(newSupplier); err != nil {
 		return nil, fmt.Errorf("error creando proveedor: %w", err)
 	}
-	
+
 	log.Printf("[ExpectedOrderService] Nuevo proveedor creado: %s (ID: %d)", newSupplier.Name, newSupplier.ID)
 	return newSupplier, nil
 }
@@ -104,7 +104,7 @@ func (s *ExpectedOrderService) UpdateExpectedOrderStatus(id uint, status string)
 	if !validStatuses[status] {
 		return fmt.Errorf("estado inválido: %s", status)
 	}
-	
+
 	return s.repo.UpdateStatus(id, status)
 }
 
@@ -123,22 +123,24 @@ func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
 	if supplierID == 0 {
 		return nil
 	}
-	
+
 	bogotaLoc, _ := time.LoadLocation("America/Bogota")
 	if bogotaLoc == nil {
 		bogotaLoc = time.FixedZone("COT", -5*3600)
 	}
 	today := time.Now().In(bogotaLoc).Format("2006-01-02")
-	
+
 	orders, err := s.repo.GetBySupplier(supplierID)
 	if err != nil {
 		return err
 	}
-	
+
 	for _, o := range orders {
 		if o.Status == "PENDING" && o.ExpectedDate.Format("2006-01-02") <= today {
 			log.Printf("[ExpectedOrderService] Marcando pedido #%d como recibido para proveedor %d", o.ID, supplierID)
-			_ = s.repo.UpdateStatus(o.ID, "RECEIVED")
+			if err := s.repo.UpdateStatus(o.ID, "RECEIVED"); err != nil {
+				log.Printf("[EXPECTED-ORDER] no se pudo marcar %d como recibido: %v", o.ID, err)
+			}
 		}
 	}
 
@@ -147,7 +149,7 @@ func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
 	currentDayName := time.Now().Weekday().String() // Ej: "Monday", "Tuesday"
 	// Mapeo simple a español para consistencia
 	dayMap := map[string]string{
-		"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles", 
+		"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
 		"Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo",
 	}
 	if translated, ok := dayMap[currentDayName]; ok {
@@ -156,17 +158,24 @@ func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
 
 	supplier, err := s.repo.GetSupplierByID(supplierID)
 	if err == nil && supplier != nil {
-		// Actualizar el campo DeliveryDay del proveedor con el día actual
-		if !strings.Contains(supplier.DeliveryDay, currentDayName) {
-			newDeliveryDay := currentDayName
-			if supplier.DeliveryDay != "" {
-				newDeliveryDay = supplier.DeliveryDay + ", " + currentDayName
+		alreadyKnown := false
+		for _, day := range supplier.DeliveryDays {
+			if strings.EqualFold(day, currentDayName) {
+				alreadyKnown = true
+				break
 			}
-			_ = s.repo.UpdateSupplierDeliveryDays(supplierID, newDeliveryDay)
-			log.Printf("[ExpectedOrderService] Auto-aprendizaje: Proveedor %d ahora entrega en: %s", supplierID, newDeliveryDay)
+		}
+		if !alreadyKnown {
+			newDeliveryDays := append(models.StringArray{}, supplier.DeliveryDays...)
+			newDeliveryDays = append(newDeliveryDays, currentDayName)
+			if err := s.repo.UpdateSupplierDeliveryDays(supplierID, newDeliveryDays); err != nil {
+				log.Printf("[ExpectedOrderService] No se pudo aprender día de entrega para proveedor %d: %v", supplierID, err)
+			} else {
+				log.Printf("[ExpectedOrderService] Auto-aprendizaje: Proveedor %d ahora entrega en: %v", supplierID, newDeliveryDays)
+			}
 		}
 	}
-	
+
 	return nil
 }
 
@@ -193,10 +202,10 @@ func (s *ExpectedOrderService) CreateExpectedOrderFromRequest(supplierId uint, s
 		CreatedByDNI:   dni,
 		CreatedByName:  name,
 	}
-	
+
 	if err := s.CreateExpectedOrder(order); err != nil {
 		return nil, err
 	}
-	
+
 	return order, nil
 }

@@ -3,11 +3,14 @@ package services
 import (
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/infrastructure/cache"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI string, isAdmin bool) error {
@@ -20,218 +23,258 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 		return errors.New("venta original no encontrada")
 	}
 
-	if oldSale.CashAmount > 0 || oldSale.TransferAmount > 0 {
-		var newTotal float64
-		for _, d := range newSale.SaleDetails {
-			if strings.HasPrefix(d.Barcode, "MISC-") || d.Barcode == "0000" {
-				newTotal += d.Subtotal
-			} else {
-				prod, _ := s.productRepo.GetByBarcode(d.Barcode)
-				if prod != nil {
-					newTotal += applyRounding(prod.SalePrice * d.Quantity)
-				}
-			}
-		}
-		if newTotal < oldSale.TotalAmount {
-			return errors.New("no se puede disminuir el total de una venta cobrada en Efectivo o Transferencia. Por favor añada productos para compensar la diferencia.")
-		}
-	}
-
 	revertAdjustments := make(map[string]float64)
-	for _, oldDetail := range oldSale.SaleDetails {
-		if strings.HasPrefix(oldDetail.Barcode, "MISC-") || oldDetail.Barcode == "0000" {
+	for _, detail := range oldSale.SaleDetails {
+		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
 			continue
 		}
-		targetBarcode := oldDetail.Barcode
-		effectiveQty := oldDetail.Quantity
-		if oldDetail.Product.IsPack && oldDetail.Product.BaseProductBarcode != nil && *oldDetail.Product.BaseProductBarcode != "" {
-			targetBarcode = *oldDetail.Product.BaseProductBarcode
-			effectiveQty = oldDetail.Quantity * float64(oldDetail.Product.PackMultiplier)
+		targetBarcode := detail.Barcode
+		effectiveQty := detail.Quantity
+		if detail.Product.IsPack && detail.Product.BaseProductBarcode != nil && *detail.Product.BaseProductBarcode != "" {
+			targetBarcode = *detail.Product.BaseProductBarcode
+			effectiveQty = detail.Quantity * float64(detail.Product.PackMultiplier)
 		}
 		revertAdjustments[targetBarcode] -= effectiveQty
-	}
-
-	rawInterface := s.saleRepo.GetDB()
-	rawDB, ok := rawInterface.(*gorm.DB)
-	if !ok {
-		return errors.New("error de sistema: db inválida")
-	}
-
-	tx := rawDB.Begin()
-	if tx.Error != nil {
-		return tx.Error
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		}
-	}()
-
-	if err := s.productRepo.BatchAdjustQuantitiesWithTx(tx, revertAdjustments); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error restituyendo stock: %v", err)
-	}
-
-	for _, oldDetail := range oldSale.SaleDetails {
-		if strings.HasPrefix(oldDetail.Barcode, "MISC-") || oldDetail.Barcode == "0000" {
-			continue
-		}
-		targetBarcode := oldDetail.Barcode
-		effectiveQty := oldDetail.Quantity
-		if oldDetail.Product.IsPack && oldDetail.Product.BaseProductBarcode != nil && *oldDetail.Product.BaseProductBarcode != "" {
-			targetBarcode = *oldDetail.Product.BaseProductBarcode
-			effectiveQty = oldDetail.Quantity * float64(oldDetail.Product.PackMultiplier)
-		}
-		tx.Create(&models.StockMovement{
-			Date:         time.Now(),
-			Barcode:      targetBarcode,
-			Quantity:     effectiveQty,
-			Type:         "IN",
-			Reason:       "EDIT_REVERT",
-			ReferenceID:  fmt.Sprintf("SALE-%d", oldSale.SaleID),
-			EmployeeDNI:  employeeDNI,
-			EmployeeName: "Admin",
-		})
-	}
-
-	if err := tx.Where("sale_id = ?", id).Delete(&models.SaleDetail{}).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error borrando detalles antiguos: %v", err)
-	}
-
-	if oldSale.CreditAmount > 0 && oldSale.ClientDNI != "0" && oldSale.ClientDNI != "" {
-		client, err := s.clientRepo.GetByDNI(oldSale.ClientDNI)
-		if err == nil {
-			client.CurrentCredit -= oldSale.CreditAmount
-			if client.CurrentCredit < 0 {
-				client.CurrentCredit = 0
-			}
-			s.clientRepo.Update(client.DNI, client)
-		}
 	}
 
 	var newTotal float64
 	applyAdjustments := make(map[string]float64)
 	for i := range newSale.SaleDetails {
-		d := &newSale.SaleDetails[i]
-		if strings.HasPrefix(d.Barcode, "MISC-") || d.Barcode == "0000" {
-			newTotal += d.Subtotal
-			d.SaleID = id
+		detail := &newSale.SaleDetails[i]
+		detail.SaleID = id
+		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
+			newTotal += detail.Subtotal
 			continue
 		}
-		prod, err := s.productRepo.GetByBarcode(d.Barcode)
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("producto no encontrado: %s", d.Barcode)
+		product, productErr := s.productRepo.GetByBarcode(detail.Barcode)
+		if productErr != nil || product == nil {
+			return fmt.Errorf("producto no encontrado: %s", detail.Barcode)
 		}
-		d.UnitPrice = prod.SalePrice
-		d.CostPrice = prod.PurchasePrice
-		d.Subtotal = applyRounding(prod.SalePrice * d.Quantity)
-		newTotal += d.Subtotal
-		d.SaleID = id
+		detail.UnitPrice = product.SalePrice
+		detail.CostPrice = product.PurchasePrice
+		detail.Subtotal = roundSaleLineSubtotal(product.SalePrice, detail.Quantity)
+		newTotal += detail.Subtotal
 
-		targetBarcode := d.Barcode
-		effectiveQty := d.Quantity
-		if prod.IsPack && prod.BaseProductBarcode != nil && *prod.BaseProductBarcode != "" {
-			targetBarcode = *prod.BaseProductBarcode
-			effectiveQty = d.Quantity * float64(prod.PackMultiplier)
+		targetBarcode := detail.Barcode
+		effectiveQty := detail.Quantity
+		if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" {
+			targetBarcode = *product.BaseProductBarcode
+			effectiveQty = detail.Quantity * float64(product.PackMultiplier)
 		}
 		applyAdjustments[targetBarcode] += effectiveQty
 	}
 
+	if (oldSale.CashAmount > 0 || oldSale.TransferAmount > 0) && newTotal < oldSale.TotalAmount {
+		return errors.New("no se puede disminuir el total de una venta cobrada en efectivo o transferencia; use una devolución")
+	}
+
 	newSale.TotalAmount = newTotal
 	paidTotal := newSale.CashAmount + newSale.TransferAmount + newSale.CreditAmount
-	if paidTotal < (newTotal - 5.0) {
-		tx.Rollback()
+	if paidTotal < newTotal-5.0 {
 		return fmt.Errorf("pago insuficiente: calculado %.2f, pagado %.2f", newTotal, paidTotal)
 	}
+	newSale.AmountPaid = paidTotal
+	newSale.PaymentMethod = deriveSalePaymentMethod(newSale)
 
-	typeCount := 0
-	if newSale.CashAmount > 0 { typeCount++ }
-	if newSale.TransferAmount > 0 { typeCount++ }
-	if newSale.CreditAmount > 0 { typeCount++ }
-
-	if typeCount > 1 {
-		newSale.PaymentMethod = "MIXTO"
-	} else if newSale.CreditAmount > 0 {
-		newSale.PaymentMethod = "FIADO"
-	} else if newSale.TransferAmount > 0 {
-		source := strings.ToUpper(newSale.TransferSource)
-		if source == "" { source = "TRANSFERENCIA" }
-		newSale.PaymentMethod = source
-	} else {
-		newSale.PaymentMethod = "EFECTIVO"
+	alreadyPaidCredit := oldSale.CreditAmount - oldSale.DebtPending
+	if alreadyPaidCredit < 0 {
+		alreadyPaidCredit = 0
 	}
-
+	if newSale.CreditAmount+0.001 < alreadyPaidCredit {
+		return fmt.Errorf("el nuevo crédito %.2f no puede ser menor que los abonos ya registrados %.2f", newSale.CreditAmount, alreadyPaidCredit)
+	}
+	newSale.DebtPending = newSale.CreditAmount - alreadyPaidCredit
+	if newSale.DebtPending < 0.001 {
+		newSale.DebtPending = 0
+	}
 	if newSale.CreditAmount > 0 {
-		newSale.DebtPending = newSale.CreditAmount
-		if newSale.ClientDNI == "0" || newSale.ClientDNI == "" {
-			tx.Rollback()
+		if newSale.ClientDNI == "" || newSale.ClientDNI == "0" {
 			return errors.New("debe seleccionar un cliente real para crédito")
 		}
-		client, err := s.clientRepo.GetByDNI(newSale.ClientDNI)
-		if err != nil {
-			tx.Rollback()
-			return errors.New("cliente no encontrado")
+		if alreadyPaidCredit > 0 && newSale.ClientDNI != oldSale.ClientDNI {
+			return errors.New("no se puede cambiar el cliente de una venta que ya tiene abonos")
 		}
-		if client.CurrentCredit+newSale.CreditAmount > client.CreditLimit {
-			tx.Rollback()
-			return errors.New("límite de crédito superado")
-		}
-		client.CurrentCredit += newSale.CreditAmount
-		_ = s.clientRepo.Update(client.DNI, client)
 		newSale.Status = "CREDIT"
 	} else {
 		newSale.Status = "PAID"
+		newSale.DebtPending = 0
 	}
 
-	newSale.AmountPaid = paidTotal
 	cashNeeded := newTotal - newSale.TransferAmount - newSale.CreditAmount
-	if cashNeeded < 0 { cashNeeded = 0 }
+	if cashNeeded < 0 {
+		cashNeeded = 0
+	}
 	newSale.Change = newSale.CashAmount - cashNeeded
-	if newSale.Change < 0 { newSale.Change = 0 }
-
-	if err := s.productRepo.BatchAdjustQuantitiesWithTx(tx, applyAdjustments); err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error aplicando nuevo stock: %v", err)
+	if newSale.Change < 0 {
+		newSale.Change = 0
 	}
 
-	for targetBarcode, effectiveQty := range applyAdjustments {
-		tx.Create(&models.StockMovement{
-			Date:         time.Now(),
-			Barcode:      targetBarcode,
-			Quantity:     effectiveQty,
-			Type:         "OUT",
-			Reason:       "EDIT_APPLY",
-			ReferenceID:  fmt.Sprintf("SALE-%d", id),
-			EmployeeDNI:  employeeDNI,
-			EmployeeName: "Admin",
-		})
+	rawDB, ok := s.saleRepo.GetDB().(*gorm.DB)
+	if !ok {
+		return errors.New("error de sistema: base de datos inválida")
 	}
 
-	if err := tx.Create(&newSale.SaleDetails).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error guardando nuevos detalles: %v", err)
+	err = rawDB.Transaction(func(tx *gorm.DB) error {
+		var lockedSale models.Sale
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("SaleDetails.Product.BaseProduct").Where("\"saleId\" = ?", id).First(&lockedSale).Error; err != nil {
+			return fmt.Errorf("error bloqueando venta: %w", err)
+		}
+		if lockedSale.CreditAmount != oldSale.CreditAmount || lockedSale.DebtPending != oldSale.DebtPending || lockedSale.TotalAmount != oldSale.TotalAmount {
+			return errors.New("la venta cambió mientras se editaba; recargue e intente nuevamente")
+		}
+		revertAdjustments = make(map[string]float64)
+		for _, detail := range lockedSale.SaleDetails {
+			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
+				continue
+			}
+			targetBarcode := detail.Barcode
+			effectiveQty := detail.Quantity
+			if detail.Product.IsPack && detail.Product.BaseProductBarcode != nil && *detail.Product.BaseProductBarcode != "" {
+				targetBarcode = *detail.Product.BaseProductBarcode
+				effectiveQty = detail.Quantity * float64(detail.Product.PackMultiplier)
+			}
+			revertAdjustments[targetBarcode] -= effectiveQty
+		}
+
+		if len(revertAdjustments) > 0 {
+			if err := s.productRepo.BatchAdjustQuantitiesWithTx(tx, revertAdjustments); err != nil {
+				return fmt.Errorf("error restituyendo stock anterior: %w", err)
+			}
+		}
+		revertMovements := make([]models.StockMovement, 0, len(revertAdjustments))
+		for barcode, delta := range revertAdjustments {
+			revertMovements = append(revertMovements, models.StockMovement{
+				Date: time.Now(), Barcode: barcode, Quantity: -delta,
+				Type: models.MovementTypeIn, Reason: models.MovementReasonEditRevert,
+				ReferenceID: fmt.Sprintf("SALE-%d", id), EmployeeDNI: employeeDNI, EmployeeName: "ADMIN",
+			})
+		}
+		if len(revertMovements) > 0 {
+			if err := s.movementRepo.BatchSaveWithTx(tx, revertMovements); err != nil {
+				return fmt.Errorf("error guardando reverso de edición: %w", err)
+			}
+		}
+
+		if err := tx.Where("\"saleId\" = ?", id).Delete(&models.SaleDetail{}).Error; err != nil {
+			return fmt.Errorf("error borrando detalles anteriores: %w", err)
+		}
+		if len(applyAdjustments) > 0 {
+			if err := s.productRepo.BatchAdjustQuantitiesWithTx(tx, applyAdjustments); err != nil {
+				return fmt.Errorf("error aplicando nuevo stock: %w", err)
+			}
+		}
+		applyMovements := make([]models.StockMovement, 0, len(applyAdjustments))
+		for barcode, quantity := range applyAdjustments {
+			applyMovements = append(applyMovements, models.StockMovement{
+				Date: time.Now(), Barcode: barcode, Quantity: quantity,
+				Type: models.MovementTypeOut, Reason: models.MovementReasonEditApply,
+				ReferenceID: fmt.Sprintf("SALE-%d", id), EmployeeDNI: employeeDNI, EmployeeName: "ADMIN",
+			})
+		}
+		if len(applyMovements) > 0 {
+			if err := s.movementRepo.BatchSaveWithTx(tx, applyMovements); err != nil {
+				return fmt.Errorf("error guardando nuevo kárdex: %w", err)
+			}
+		}
+
+		clientIDs := make([]string, 0, 2)
+		seen := map[string]bool{}
+		for _, dni := range []string{oldSale.ClientDNI, newSale.ClientDNI} {
+			if dni != "" && dni != "0" && !seen[dni] {
+				seen[dni] = true
+				clientIDs = append(clientIDs, dni)
+			}
+		}
+		sort.Strings(clientIDs)
+		clients := make(map[string]*models.Client, len(clientIDs))
+		for _, dni := range clientIDs {
+			var client models.Client
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("dni = ?", dni).First(&client).Error; err != nil {
+				return fmt.Errorf("cliente %s no encontrado: %w", dni, err)
+			}
+			clients[dni] = &client
+		}
+		if oldSale.DebtPending > 0 && clients[oldSale.ClientDNI] != nil {
+			clients[oldSale.ClientDNI].CurrentCredit -= oldSale.DebtPending
+			if clients[oldSale.ClientDNI].CurrentCredit < 0 {
+				clients[oldSale.ClientDNI].CurrentCredit = 0
+			}
+		}
+		if newSale.DebtPending > 0 {
+			client := clients[newSale.ClientDNI]
+			client.CurrentCredit += newSale.DebtPending
+			if client.CurrentCredit > client.CreditLimit {
+				return errors.New("límite de crédito superado")
+			}
+		}
+		for dni, client := range clients {
+			if err := tx.Model(&models.Client{}).Where("dni = ?", dni).Updates(map[string]interface{}{
+				"currentCredit": client.CurrentCredit,
+				"updatedByDni":  employeeDNI,
+			}).Error; err != nil {
+				return fmt.Errorf("error actualizando crédito de %s: %w", dni, err)
+			}
+		}
+
+		if len(newSale.SaleDetails) > 0 {
+			if err := tx.Create(&newSale.SaleDetails).Error; err != nil {
+				return fmt.Errorf("error guardando nuevos detalles: %w", err)
+			}
+		}
+		if err := tx.Model(&models.Sale{}).Where("\"saleId\" = ?", id).Updates(map[string]interface{}{
+			"totalAmount": newSale.TotalAmount, "cashAmount": newSale.CashAmount,
+			"transferAmount": newSale.TransferAmount, "transferNequi": newSale.TransferNequi,
+			"transferDaviplata": newSale.TransferDaviplata, "creditAmount": newSale.CreditAmount,
+			"transferSource": newSale.TransferSource, "paymentMethod": newSale.PaymentMethod,
+			"amountPaid": newSale.AmountPaid, "change": newSale.Change,
+			"debtPending": newSale.DebtPending, "status": newSale.Status, "clientDni": newSale.ClientDNI,
+		}).Error; err != nil {
+			return fmt.Errorf("error actualizando venta: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 
-	if err := tx.Model(&models.Sale{}).Where("sale_id = ?", id).Updates(map[string]interface{}{
-		"totalAmount":    newSale.TotalAmount,
-		"cashAmount":     newSale.CashAmount,
-		"transferAmount": newSale.TransferAmount,
-		"creditAmount":   newSale.CreditAmount,
-		"transferSource": newSale.TransferSource,
-		"paymentMethod":  newSale.PaymentMethod,
-		"amountPaid":     newSale.AmountPaid,
-		"change":         newSale.Change,
-		"debtPending":    newSale.DebtPending,
-		"status":         newSale.Status,
-		"clientDni":      newSale.ClientDNI,
-	}).Error; err != nil {
-		tx.Rollback()
-		return fmt.Errorf("error actualizando venta: %v", err)
+	cache.InvalidateCache(cache.CacheKeyProducts)
+	cache.InvalidateCache(cache.CacheKeyClients)
+	if oldSale.ClientDNI != "" {
+		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", oldSale.ClientDNI))
 	}
-
-	tx.Commit()
-
+	if newSale.ClientDNI != "" {
+		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", newSale.ClientDNI))
+	}
+	s.saleRepo.AfterCommit()
 	return nil
+}
+
+func deriveSalePaymentMethod(sale *models.Sale) string {
+	methods := make([]string, 0, 4)
+	if sale.CashAmount > 0 {
+		methods = append(methods, "EFECTIVO")
+	}
+	if sale.TransferNequi > 0 {
+		methods = append(methods, "NEQUI")
+	}
+	if sale.TransferDaviplata > 0 {
+		methods = append(methods, "DAVIPLATA")
+	}
+	if sale.TransferAmount > 0 && sale.TransferNequi == 0 && sale.TransferDaviplata == 0 {
+		source := strings.ToUpper(strings.TrimSpace(sale.TransferSource))
+		if source == "" {
+			source = "TRANSFERENCIA"
+		}
+		methods = append(methods, source)
+	}
+	if sale.CreditAmount > 0 {
+		methods = append(methods, "FIADO")
+	}
+	if len(methods) == 0 {
+		return "EFECTIVO"
+	}
+	if len(methods) == 1 {
+		return methods[0]
+	}
+	return "MIXTO"
 }

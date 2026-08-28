@@ -1,7 +1,9 @@
-package cache
+﻿package cache
 
 import (
+	"strings"
 	"time"
+
 	"github.com/patrickmn/go-cache"
 )
 
@@ -29,6 +31,20 @@ const (
 // InvalidateCache elimina una entrada de la caché por su clave
 func InvalidateCache(key string) {
 	CacheManager.Delete(key)
+}
+
+// InvalidateDashboard purga TODAS las variantes del overview.
+//
+// El dashboard se cachea con una entrada por rango de fechas
+// ("dashboard_overview_2026-08-01_2026-08-26", etc.), así que un Delete sobre la
+// clave base dejaría vivas las demás y el usuario seguiría viendo cifras viejas
+// después de registrar una venta o guardar un cierre.
+func InvalidateDashboard() {
+	for key := range CacheManager.Items() {
+		if strings.HasPrefix(key, CacheKeyDashboardOverview) {
+			CacheManager.Delete(key)
+		}
+	}
 }
 
 // InvalidateAllMasterData purga todos los catálogos maestros y sus conteos

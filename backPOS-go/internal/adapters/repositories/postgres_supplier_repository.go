@@ -1,4 +1,4 @@
-package repositories
+﻿package repositories
 
 import (
 	"backPOS-go/internal/core/domain/models"
@@ -70,7 +70,10 @@ func (r *PostgresSupplierRepository) GetAll() ([]models.Supplier, error) {
 }
 
 func (r *PostgresSupplierRepository) Update(id uint, supplier *models.Supplier) error {
-	err := r.db.Model(&models.Supplier{}).Where("id = ?", id).Updates(supplier).Error
+	err := r.db.Model(&models.Supplier{}).Where("id = ?", id).Select(
+		"name", "phone", "vendorName", "visit_days", "delivery_days",
+		"visitDay", "deliveryDay", "restock_method", "updatedByDni", "is_active",
+	).Updates(supplier).Error
 	if err == nil {
 		cache.InvalidateCache(cache.CacheKeySuppliers)
 		sse.GetSSEService().Broadcast("SUPPLIER_UPDATE", nil)

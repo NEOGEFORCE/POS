@@ -19,15 +19,15 @@ type ClientLimiter struct {
 	lastRefill time.Time
 }
 
-var limiter = &RateLimiter{
-	clients: make(map[string]*ClientLimiter),
-}
+func RateLimitMiddleware(maxTokens float64, refillRate float64) gin.HandlerFunc {
+	limiter := &RateLimiter{clients: make(map[string]*ClientLimiter)}
 
-func init() {
-	// Limpiar clientes expirados cada 60 segundos para evitar memory leak
+	// Cada invocación tiene buckets independientes (auth y API protegida no
+	// comparten cuota). La limpieza evita retener IPs inactivas indefinidamente.
 	go func() {
-		for {
-			time.Sleep(60 * time.Second)
+		ticker := time.NewTicker(60 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
 			limiter.mu.Lock()
 			cutoff := time.Now().Add(-5 * time.Minute)
 			for ip, cl := range limiter.clients {
@@ -38,9 +38,7 @@ func init() {
 			limiter.mu.Unlock()
 		}
 	}()
-}
 
-func RateLimitMiddleware(maxTokens float64, refillRate float64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 

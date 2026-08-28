@@ -14,11 +14,13 @@ type ExpenseFilter struct {
 
 type ExpenseRepository interface {
 	Save(expense *models.Expense) error
+	SaveWithTx(tx interface{}, expense *models.Expense) error
 	GetAll() ([]models.Expense, error)
 	GetAllFiltered(supplier, concept string) ([]models.Expense, error)
 	GetExpensesPaginated(filter ExpenseFilter) ([]models.Expense, int64, error)
 	GetByID(id uint) (*models.Expense, error)
 	GetByDateRange(from, to time.Time) ([]models.Expense, error)
+	GetTotalAmountByDateRange(from, to time.Time) (float64, error)
 	GetPendingRestockExpensesBySupplier(supplierID uint) ([]models.Expense, error)
 	Delete(id uint) error
 	Count() (int64, error)

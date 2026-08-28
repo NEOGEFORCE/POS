@@ -4,6 +4,7 @@ import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"bytes"
+	stdsql "database/sql"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -16,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"net/url"
 	"github.com/jung-kurt/gofpdf"
 	"github.com/wcharczuk/go-chart/v2"
 	"gorm.io/gorm"
+	"net/url"
 )
 
 // ============================================================
@@ -27,7 +28,6 @@ import (
 // ============================================================
 
 const claudeURL = "https://api.anthropic.com/v1/messages"
-const claudeModel = "claude-sonnet-4-5"
 
 // ============================================================
 // Core Service
@@ -125,7 +125,6 @@ func (s *AIBotService) getOrCreateState(chatID int64) *ConversationState {
 // ============================================================
 // System Prompt
 // ============================================================
-
 
 const systemPromptWithImageCapabilities = systemPrompt + `
 
@@ -371,7 +370,7 @@ func (s *AIBotService) callClaude(chatID int64, userMessage string) (string, err
 		for _, block := range toolBlocks {
 			args, _ := block.Input.(map[string]interface{})
 			result, execErr := s.executeFunction(chatID, block.Name, args)
-			
+
 			var resultJSON []byte
 			if execErr != nil {
 				resultJSON = []byte(`{"error":"` + execErr.Error() + `"}`)
@@ -622,16 +621,18 @@ func (s *AIBotService) getClaudeTools() []ClaudeTool {
 Úsala cuando las otras tools no cubran lo que el usuario necesita.
 SOLO SELECT — nunca INSERT, UPDATE, DELETE.
 Tablas disponibles:
-- products (barcode, "productName", quantity, "salePrice", "purchasePrice", "minStock", "categoryId", "supplierID")
-- sales (id, "totalAmount", "paymentMethod", "saleDate", "employeeDNI", "employeeName")
-- sale_items (id, "saleId", barcode, "productName", quantity, "unitPrice", "totalPrice")
-- expenses (id, description, amount, category, "paymentSource", date, status, "createdByDNI")
-- confirmed_orders (id, "supplierID", status, "createdAt", "totalEstimated")
-- confirmed_order_items (id, "orderId", barcode, "productName", quantity, "estimatedCost")
-- stock_movements (id, barcode, "productName", quantity, type, reason, "createdAt", "employeeDNI")
+- products (barcode, "productName", quantity, "salePrice", "purchasePrice", "minStock", "categoryId", "supplierId")
+- sales ("saleId", "totalAmount", "paymentMethod", "saleDate", "employeeDni", "clientDni", "creditAmount")
+- sale_details (id, "saleId", barcode, quantity, price, "costPrice", subtotal)
+- expenses (id, description, amount, category, "paymentSource", date, status, "createdByDni", supplier_id)
+- clients (dni, name, phone, "currentCredit", "creditLimit")
+- credit_payments (id, "clientDni", "paymentDate", "totalPaid", "amountCash", "amountTransfer")
+- confirmed_orders (id, supplier_id, status, confirmed_at, estimated_total)
+- confirmed_order_items (id, confirmed_order_id, product_id, quantity, estimated_price)
+- stock_movements (id, date, barcode, quantity, type, reason, employee_dni, reference_id)
 - categories (id, name, "marginPercentage")
-- suppliers (id, name, "visitDay", frequency)
-NOTA: Los nombres de columnas en camelCase van entre comillas dobles en PostgreSQL.`,
+- suppliers (id, name, "visitDay", visit_days, visit_frequency_days)
+NOTA: Respeta exactamente mayúsculas, comillas dobles y snake_case indicados arriba para PostgreSQL.`,
 			InputSchema: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -736,7 +737,7 @@ NOTA: Los nombres de columnas en camelCase van entre comillas dobles en PostgreS
 			},
 		},
 		{
-			Name: "bulk_receive_from_invoice",
+			Name:        "bulk_receive_from_invoice",
 			Description: "Ingresa múltiples productos a la Carga Maestra después de leer una factura. Llama esta tool cuando el usuario confirme que quiere ingresar los productos leídos de la imagen.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
@@ -763,7 +764,7 @@ NOTA: Los nombres de columnas en camelCase van entre comillas dobles en PostgreS
 			},
 		},
 		{
-			Name: "bulk_update_prices_from_invoice",
+			Name:        "bulk_update_prices_from_invoice",
 			Description: "Actualiza los precios de múltiples productos después de leer una factura. Requiere confirmación previa.",
 			InputSchema: map[string]interface{}{
 				"type": "object",
@@ -816,7 +817,7 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		items, _ := args["items"].([]interface{})
 		supplierName, _ := args["supplier_name"].(string)
 		isEgreso, _ := args["is_egreso"].(bool)
-		
+
 		if isEgreso && s.getPendingAction(chatID) != "bulk_receive_confirmed" {
 			s.setPendingAction(chatID, "bulk_receive_confirmed", args)
 			return map[string]interface{}{
@@ -826,30 +827,30 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 				"supplier":         supplierName,
 			}, nil
 		}
-		
+
 		s.clearPendingAction(chatID)
-		
+
 		var received []string
 		var errors []string
-		
+
 		for _, item := range items {
 			itemMap, _ := item.(map[string]interface{})
 			barcode, _ := itemMap["barcode"].(string)
 			productName, _ := itemMap["product_name"].(string)
 			quantity, _ := itemMap["quantity"].(float64)
 			unitPrice, _ := itemMap["unit_price"].(float64)
-			
+
 			var product models.Product
 			result := s.db.Where("barcode = ?", barcode).First(&product)
 			if result.Error != nil {
 				s.db.Where("\"productName\" ILIKE ?", "%"+productName+"%").First(&product)
 			}
-			
+
 			if product.Barcode == "" {
 				errors = append(errors, fmt.Sprintf("❌ No encontrado: %s", productName))
 				continue
 			}
-			
+
 			oldWAC := product.PurchasePrice
 			oldStock := product.Quantity
 			newStock := oldStock + quantity
@@ -859,12 +860,12 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 			} else {
 				newWAC = unitPrice
 			}
-			
+
 			s.db.Model(&product).Updates(map[string]interface{}{
 				"Quantity":      newStock,
 				"PurchasePrice": math.Round(newWAC*100) / 100,
 			})
-			
+
 			s.db.Create(&models.StockMovement{
 				Barcode:      product.Barcode,
 				Quantity:     quantity,
@@ -873,11 +874,11 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 				EmployeeName: "Bot Telegram",
 				Metadata:     "Ingresado desde factura vía bot",
 			})
-			
-			received = append(received, fmt.Sprintf("✅ %s: +%.0f uds · WAC $%.0f → $%.0f", 
+
+			received = append(received, fmt.Sprintf("✅ %s: +%.0f uds · WAC $%.0f → $%.0f",
 				product.ProductName, quantity, oldWAC, newWAC))
 		}
-		
+
 		return map[string]interface{}{
 			"received": received,
 			"errors":   errors,
@@ -886,7 +887,7 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 
 	case "bulk_update_prices_from_invoice":
 		items, _ := args["items"].([]interface{})
-		
+
 		if s.getPendingAction(chatID) != "bulk_price_confirmed" {
 			s.setPendingAction(chatID, "bulk_price_confirmed", args)
 			return map[string]interface{}{
@@ -895,35 +896,35 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 				"item_count":       len(items),
 			}, nil
 		}
-		
+
 		s.clearPendingAction(chatID)
 		var updated []string
-		
+
 		for _, item := range items {
 			itemMap, _ := item.(map[string]interface{})
 			barcode, _ := itemMap["barcode"].(string)
 			productName, _ := itemMap["product_name"].(string)
 			newCost, _ := itemMap["new_cost"].(float64)
-			
+
 			var product models.Product
 			s.db.Where("barcode = ? OR \"productName\" ILIKE ?", barcode, "%"+productName+"%").First(&product)
-			
+
 			if product.Barcode == "" {
 				continue
 			}
-			
+
 			oldPrice := product.PurchasePrice
 			newMargin := ((product.SalePrice - newCost) / product.SalePrice) * 100
-			
+
 			s.db.Model(&product).Updates(map[string]interface{}{
 				"PurchasePrice":    newCost,
 				"MarginPercentage": math.Round(newMargin*100) / 100,
 			})
-			
+
 			updated = append(updated, fmt.Sprintf("✅ %s: $%.0f → $%.0f (margen %.1f%%)",
 				product.ProductName, oldPrice, newCost, newMargin))
 		}
-		
+
 		return map[string]interface{}{
 			"updated": updated,
 			"summary": fmt.Sprintf("%d precios actualizados", len(updated)),
@@ -931,47 +932,53 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 
 	case "get_credit_clients":
 		clientName, _ := args["client_name"].(string)
-		
-		nameFilter := ""
-		if clientName != "" {
-			nameFilter = fmt.Sprintf("AND UPPER(c.name) LIKE UPPER('%%%s%%')", clientName)
-		}
-		
+		clientName = strings.TrimSpace(clientName)
+
 		var clients []struct {
-			ID          int     `json:"id"`
-			Name        string  `json:"name"`
-			Phone       string  `json:"phone"`
-			TotalDebt   float64 `json:"totalDebt"`
-			TotalPaid   float64 `json:"totalPaid"`
-			Balance     float64 `json:"balance"`
+			ID           string  `json:"id"`
+			Name         string  `json:"name"`
+			Phone        string  `json:"phone"`
+			TotalDebt    float64 `json:"totalDebt"`
+			TotalPaid    float64 `json:"totalPaid"`
+			Balance      float64 `json:"balance"`
 			LastPurchase string  `json:"lastPurchase"`
-			DaysSince   int     `json:"daysSince"`
+			DaysSince    int     `json:"daysSince"`
 		}
-		
-		s.db.Raw(fmt.Sprintf(`
-			SELECT 
-				c.id,
+
+		query := `
+			SELECT
+				c.dni AS id,
 				c.name,
-				c.phone,
-				COALESCE(SUM(CASE WHEN s.payment_method = 'FIADO' THEN s.total_amount ELSE 0 END), 0) as total_debt,
-				COALESCE(SUM(p.amount), 0) as total_paid,
-				COALESCE(SUM(CASE WHEN s.payment_method = 'FIADO' THEN s.total_amount ELSE 0 END), 0) - COALESCE(SUM(p.amount), 0) as balance,
-				MAX(s.created_at)::text as last_purchase,
-				EXTRACT(DAY FROM NOW() - MAX(s.created_at))::int as days_since
+				COALESCE(c.phone, '') AS phone,
+				COALESCE(c."currentCredit", 0) + COALESCE(payments.total_paid, 0) AS total_debt,
+				COALESCE(payments.total_paid, 0) AS total_paid,
+				COALESCE(c."currentCredit", 0) AS balance,
+				COALESCE(last_sale.last_purchase::text, '') AS last_purchase,
+				COALESCE(EXTRACT(DAY FROM NOW() - last_sale.last_purchase)::int, 0) AS days_since
 			FROM clients c
-			LEFT JOIN sales s ON s.client_id = c.id
-			LEFT JOIN client_payments p ON p.client_id = c.id
-			WHERE c.id IS NOT NULL %s
-			GROUP BY c.id, c.name, c.phone
-			HAVING COALESCE(SUM(CASE WHEN s.payment_method = 'FIADO' THEN s.total_amount ELSE 0 END), 0) - COALESCE(SUM(p.amount), 0) > 0
-			ORDER BY balance DESC
-		`, nameFilter)).Scan(&clients)
-		
-		var totalDeuda float64
-		for _, c := range clients {
-			totalDeuda += c.Balance
+			LEFT JOIN LATERAL (
+				SELECT SUM(cp."totalPaid") AS total_paid
+				FROM credit_payments cp
+				WHERE cp."clientDni" = c.dni AND cp.deleted_at IS NULL
+			) payments ON true
+			LEFT JOIN LATERAL (
+				SELECT MAX(s."saleDate") AS last_purchase
+				FROM sales s
+				WHERE s."clientDni" = c.dni AND s.deleted_at IS NULL
+			) last_sale ON true
+			WHERE c.deleted_at IS NULL
+			  AND COALESCE(c."currentCredit", 0) > 0
+			  AND (? = '' OR c.name ILIKE ?)
+			ORDER BY balance DESC`
+		if err := s.db.Raw(query, clientName, "%"+clientName+"%").Scan(&clients).Error; err != nil {
+			return nil, fmt.Errorf("consultando clientes con crédito: %w", err)
 		}
-		
+
+		var totalDeuda float64
+		for _, client := range clients {
+			totalDeuda += client.Balance
+		}
+
 		return map[string]interface{}{
 			"clients":    clients,
 			"count":      len(clients),
@@ -981,65 +988,93 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 	case "get_client_detail":
 		clientName, _ := args["client_name"].(string)
 		clientID, _ := args["client_id"].(float64)
-		
-		filter := ""
-		if clientID > 0 {
-			filter = fmt.Sprintf("WHERE c.id = %d", int(clientID))
-		} else if clientName != "" {
-			filter = fmt.Sprintf("WHERE UPPER(c.name) LIKE UPPER('%%%s%%')", clientName)
+		clientName = strings.TrimSpace(clientName)
+		clientDNI := ""
+		if clientID > 0 && clientID == math.Trunc(clientID) {
+			clientDNI = strconv.FormatInt(int64(clientID), 10)
 		}
-		
+		if clientDNI == "" && clientName == "" {
+			return map[string]interface{}{"error": "Se requiere client_id o client_name"}, nil
+		}
+
 		var client struct {
-			ID    int    `json:"id"`
-			Name  string `json:"name"`
-			Phone string `json:"phone"`
+			ID            string  `json:"id"`
+			Name          string  `json:"name"`
+			Phone         string  `json:"phone"`
+			CurrentCredit float64 `json:"-"`
 		}
-		s.db.Raw(fmt.Sprintf(`SELECT id, name, phone FROM clients %s LIMIT 1`, filter)).Scan(&client)
-		
+		if err := s.db.Raw(`
+			SELECT dni AS id, name, COALESCE(phone, '') AS phone,
+			       COALESCE("currentCredit", 0) AS current_credit
+			FROM clients
+			WHERE deleted_at IS NULL
+			  AND ((? <> '' AND dni = ?) OR (? = '' AND name ILIKE ?))
+			ORDER BY CASE WHEN dni = ? THEN 0 ELSE 1 END, name
+			LIMIT 1
+		`, clientDNI, clientDNI, clientDNI, "%"+clientName+"%", clientDNI).Scan(&client).Error; err != nil {
+			return nil, fmt.Errorf("consultando detalle del cliente: %w", err)
+		}
+		if client.ID == "" {
+			return map[string]interface{}{"error": "Cliente no encontrado"}, nil
+		}
+
 		var purchases []struct {
-			Date   string  `json:"date"`
-			Total  float64 `json:"total"`
-			Items  string  `json:"items"`
+			Date  string  `json:"date"`
+			Total float64 `json:"total"`
+			Items string  `json:"items"`
 		}
-		s.db.Raw(`
-			SELECT 
-				s.created_at::date::text as date,
-				s.total_amount as total,
-				STRING_AGG(si.product_name || ' x' || si.quantity::text, ', ') as items
+		if err := s.db.Raw(`
+			SELECT
+				s."saleDate"::date::text AS date,
+				CASE WHEN s."creditAmount" > 0 THEN s."creditAmount" ELSE s."totalAmount" END AS total,
+				COALESCE(STRING_AGG(COALESCE(p."productName", sd.barcode) || ' x' || sd.quantity::text, ', '), '') AS items
 			FROM sales s
-			LEFT JOIN sale_items si ON si.sale_id = s.id
-			WHERE s.client_id = ? AND s.payment_method = 'FIADO'
-			GROUP BY s.id, s.created_at, s.total_amount
-			ORDER BY s.created_at DESC
+			LEFT JOIN sale_details sd ON sd."saleId" = s."saleId" AND sd.deleted_at IS NULL
+			LEFT JOIN products p ON p.barcode = sd.barcode AND p.deleted_at IS NULL
+			WHERE s."clientDni" = ?
+			  AND s.deleted_at IS NULL
+			  AND (s."paymentMethod" = 'FIADO' OR s."creditAmount" > 0)
+			GROUP BY s."saleId", s."saleDate", s."creditAmount", s."totalAmount"
+			ORDER BY s."saleDate" DESC
 			LIMIT 20
-		`, client.ID).Scan(&purchases)
-		
+		`, client.ID).Scan(&purchases).Error; err != nil {
+			return nil, fmt.Errorf("consultando compras a crédito: %w", err)
+		}
+
 		var payments []struct {
 			Date   string  `json:"date"`
 			Amount float64 `json:"amount"`
 			Method string  `json:"method"`
 		}
-		s.db.Raw(`
-			SELECT 
-				created_at::date::text as date,
-				amount,
-				payment_method as method
-			FROM client_payments
-			WHERE client_id = ?
-			ORDER BY created_at DESC
-		`, client.ID).Scan(&payments)
-		
-		var totalDebt, totalPaid float64
-		for _, p := range purchases { totalDebt += p.Total }
-		for _, p := range payments { totalPaid += p.Amount }
-		
+		if err := s.db.Raw(`
+			SELECT
+				"paymentDate"::date::text AS date,
+				"totalPaid" AS amount,
+				CASE
+					WHEN "amountCash" > 0 AND "amountTransfer" > 0 THEN 'MIXTO'
+					WHEN "amountTransfer" > 0 THEN COALESCE(NULLIF("transferSource", ''), 'TRANSFERENCIA')
+					ELSE 'EFECTIVO'
+				END AS method
+			FROM credit_payments
+			WHERE "clientDni" = ? AND deleted_at IS NULL
+			ORDER BY "paymentDate" DESC
+		`, client.ID).Scan(&payments).Error; err != nil {
+			return nil, fmt.Errorf("consultando abonos del cliente: %w", err)
+		}
+
+		var totalPaid float64
+		for _, payment := range payments {
+			totalPaid += payment.Amount
+		}
+		totalDebt := client.CurrentCredit + totalPaid
+
 		return map[string]interface{}{
 			"client":    client,
 			"purchases": purchases,
 			"payments":  payments,
 			"totalDebt": totalDebt,
 			"totalPaid": totalPaid,
-			"balance":   totalDebt - totalPaid,
+			"balance":   client.CurrentCredit,
 		}, nil
 
 	case "send_payment_reminder":
@@ -1047,12 +1082,12 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		clientPhone, _ := args["client_phone"].(string)
 		amountOwed, _ := args["amount_owed"].(float64)
 		tone, _ := args["message_tone"].(string)
-		
+
 		state := s.getOrCreateState(chatID)
 		if state.PendingAction != "send_reminder" {
 			state.PendingAction = "send_reminder"
 			state.PendingPayload = args
-			
+
 			var msg string
 			switch tone {
 			case "urgente":
@@ -1062,27 +1097,27 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 			default:
 				msg = fmt.Sprintf("Hola *%s* 👋, le recordamos amablemente que tiene un saldo de *$%s* pendiente en Surtifamiliar. Cuando pueda nos colabora. ¡Gracias!", clientName, formatCOP(amountOwed))
 			}
-			
+
 			return map[string]interface{}{
 				"status":           "pending_confirmation",
 				"message_preview":  msg,
 				"requires_confirm": true,
 			}, nil
 		}
-		
+
 		state.PendingAction = ""
 		if clientPhone != "" {
-			waLink := fmt.Sprintf("https://wa.me/57%s?text=%s", 
+			waLink := fmt.Sprintf("https://wa.me/57%s?text=%s",
 				strings.ReplaceAll(clientPhone, " ", ""),
 				url.QueryEscape(fmt.Sprintf("Hola %s, le recordamos su saldo de $%s en Surtifamiliar", clientName, formatCOP(amountOwed))))
-			
+
 			return map[string]interface{}{
-				"status":   "sent",
-				"wa_link":  waLink,
-				"message":  "Recordatorio listo. Abre el link para enviarlo por WhatsApp.",
+				"status":  "sent",
+				"wa_link": waLink,
+				"message": "Recordatorio listo. Abre el link para enviarlo por WhatsApp.",
 			}, nil
 		}
-		
+
 		return map[string]interface{}{
 			"status":  "no_phone",
 			"message": fmt.Sprintf("El cliente %s no tiene teléfono registrado. Agrégalo en el POS para poder enviar mensajes.", clientName),
@@ -1091,16 +1126,18 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 	case "generate_report_pdf":
 		reportType, _ := args["report_type"].(string)
 		period, _ := args["period"].(string)
-		if period == "" { period = "today" }
-		
+		if period == "" {
+			period = "today"
+		}
+
 		pdfBytes, filename, err := s.generatePDF(reportType, period)
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}, nil
 		}
-		
+
 		reader := bytes.NewReader(pdfBytes)
-		go s.telegram.SendDocument(reader, filename, "📄 " + filename)
-		
+		go s.telegram.SendDocument(reader, filename, "📄 "+filename)
+
 		return map[string]interface{}{
 			"status":   "sent",
 			"filename": filename,
@@ -1110,15 +1147,17 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 	case "generate_chart":
 		chartType, _ := args["chart_type"].(string)
 		period, _ := args["period"].(string)
-		if period == "" { period = "today" }
-		
+		if period == "" {
+			period = "today"
+		}
+
 		imgBytes, filename, err := s.generateChart(chartType, period)
 		if err != nil {
 			return map[string]interface{}{"error": err.Error()}, nil
 		}
-		
+
 		go s.telegram.SendPhoto(imgBytes, filename)
-		
+
 		return map[string]interface{}{
 			"status":  "sent",
 			"message": "Gráfica enviada por Telegram",
@@ -1173,12 +1212,12 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 			}
 			return map[string]interface{}{"error": "producto no encontrado"}, nil
 		}
-		
+
 		stats, err := s.prodRepo.GetAllWithLowStock()
 		if err != nil {
 			return nil, err
 		}
-		
+
 		var result []map[string]interface{}
 		limit := 20
 		for i, p := range stats {
@@ -1186,11 +1225,11 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 				break
 			}
 			result = append(result, map[string]interface{}{
-				"name": p.ProductName,
+				"name":  p.ProductName,
 				"stock": p.Quantity,
 			})
 		}
-		
+
 		return map[string]interface{}{
 			"items": result,
 			"count": len(stats),
@@ -1202,22 +1241,22 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		if err != nil {
 			return nil, err
 		}
-		
+
 		var total float64
 		catMap := make(map[string]float64)
 		for _, e := range expenses {
 			total += e.Amount
 			catMap[e.Category] += e.Amount
 		}
-		
+
 		return map[string]interface{}{
-			"total": total,
+			"total":       total,
 			"by_category": catMap,
 		}, nil
 
 	case "get_restock_suggestions":
 		prods, _ := s.prodRepo.GetAllWithLowStock()
-		
+
 		var report []map[string]interface{}
 		limit := 10
 		for i, p := range prods {
@@ -1225,16 +1264,16 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 				break
 			}
 			report = append(report, map[string]interface{}{
-				"name": p.ProductName,
+				"name":          p.ProductName,
 				"suggested_qty": 20,
-				"supplier_id": p.SupplierID,
+				"supplier_id":   p.SupplierID,
 			})
 		}
-		
+
 		return map[string]interface{}{
 			"suggestions": report,
-			"count": len(report),
-			"has_more": len(prods) > limit,
+			"count":       len(report),
+			"has_more":    len(prods) > limit,
 		}, nil
 
 	case "approve_restock_order":
@@ -1243,34 +1282,34 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 			return nil, fmt.Errorf("supplier_id must be a number")
 		}
 		supplierID := uint(supplierIDf)
-		
+
 		err := s.restRepo.ClearPurchaseList(supplierID)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]interface{}{
-			"status": "success",
+			"status":  "success",
 			"message": fmt.Sprintf("Pedido aprobado para proveedor %d", supplierID),
 		}, nil
 
 	case "update_product_price":
 		newPrice, _ := args["new_price"].(float64)
 		name, _ := args["product_name"].(string)
-		
+
 		prod, err := s.prodRepo.GetByName(name)
 		if err != nil || prod == nil {
 			return nil, fmt.Errorf("producto no encontrado")
 		}
-		
+
 		oldPrice := prod.SalePrice
 		prod.SalePrice = newPrice
 		err = s.prodRepo.Update(prod.Barcode, prod)
-		
+
 		log.Printf("TELEGRAM_AUDIT: Changed price of %s from %v to %v", prod.ProductName, oldPrice, newPrice)
-		
+
 		return map[string]interface{}{
-			"status": "success",
-			"product": prod.ProductName,
+			"status":    "success",
+			"product":   prod.ProductName,
 			"new_price": newPrice,
 		}, err
 
@@ -1278,19 +1317,19 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		amount, _ := args["amount"].(float64)
 		concept, _ := args["concept"].(string)
 		cat, _ := args["category"].(string)
-		
+
 		expense := &models.Expense{
-			Amount: amount,
-			Description: concept,
-			Category: cat,
-			Date: now,
+			Amount:       amount,
+			Description:  concept,
+			Category:     cat,
+			Date:         now,
 			CreatedByDNI: "TELEGRAM_BOT",
-			Status: "PAID",
+			Status:       "PAID",
 		}
-		
+
 		err := s.expRepo.Save(expense)
 		return map[string]interface{}{
-			"status": "success",
+			"status":     "success",
 			"expense_id": expense.ID,
 		}, err
 
@@ -1304,7 +1343,7 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		if err != nil {
 			return nil, err
 		}
-		
+
 		return map[string]interface{}{
 			"top": top,
 		}, nil
@@ -1313,86 +1352,76 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		from, to := parseDateRange("today", loc)
 		sales, _ := s.saleRepo.GetTotalSalesByRange(from, to)
 		expenses, _ := s.expRepo.GetPaidAmountByRange(from, to)
-		
+
 		return map[string]interface{}{
-			"sales": sales,
+			"sales":    sales,
 			"expenses": expenses,
-			"net": sales - expenses,
+			"net":      sales - expenses,
 		}, nil
 
 	case "query_database":
-		sql, _ := args["sql"].(string)
+		query, _ := args["sql"].(string)
 		description, _ := args["description"].(string)
-
-		// Seguridad — solo permitir SELECT
-		sqlUpper := strings.ToUpper(strings.TrimSpace(sql))
-		if !strings.HasPrefix(sqlUpper, "SELECT") {
-			return map[string]interface{}{
-				"error": "Solo se permiten consultas SELECT",
-			}, nil
+		if err := validateBotReadOnlyQuery(query); err != nil {
+			return map[string]interface{}{"error": err.Error()}, nil
 		}
 
-		// Bloquear palabras peligrosas
-		forbidden := []string{"DROP", "DELETE", "UPDATE", "INSERT", "TRUNCATE", "ALTER", "CREATE"}
-		for _, word := range forbidden {
-			if strings.Contains(sqlUpper, word) {
-				return map[string]interface{}{
-					"error": "Consulta no permitida por seguridad",
-				}, nil
-			}
-		}
-
-		log.Printf("🤖 Bot DB Query: %s — %s", description, sql)
-
-		// Ejecutar query
-		rows, err := s.db.Raw(sql).Rows()
-		if err != nil {
-			return map[string]interface{}{
-				"error": "Error en consulta: " + err.Error(),
-			}, nil
-		}
-		defer rows.Close()
-
-		// Obtener columnas
-		columns, _ := rows.Columns()
-
-		// Leer resultados
+		log.Printf("🤖 Bot DB Query: %s", description)
 		var results []map[string]interface{}
-		for rows.Next() {
-			values := make([]interface{}, len(columns))
-			valuePtrs := make([]interface{}, len(columns))
-			for i := range values {
-				valuePtrs[i] = &values[i]
+		err := s.db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec("SET LOCAL statement_timeout = '3s'").Error; err != nil {
+				return fmt.Errorf("configurando timeout: %w", err)
 			}
-			rows.Scan(valuePtrs...)
+			rows, err := tx.Raw(query).Rows()
+			if err != nil {
+				return fmt.Errorf("ejecutando consulta: %w", err)
+			}
+			defer rows.Close()
 
-			row := make(map[string]interface{})
-			for i, col := range columns {
-				val := values[i]
-				// Convertir []byte a string para legibilidad
-				if b, ok := val.([]byte); ok {
-					row[col] = string(b)
-				} else {
-					row[col] = val
+			columns, err := rows.Columns()
+			if err != nil {
+				return fmt.Errorf("leyendo columnas: %w", err)
+			}
+			for rows.Next() {
+				values := make([]interface{}, len(columns))
+				valuePtrs := make([]interface{}, len(columns))
+				for i := range values {
+					valuePtrs[i] = &values[i]
+				}
+				if err := rows.Scan(valuePtrs...); err != nil {
+					return fmt.Errorf("leyendo fila: %w", err)
+				}
+				row := make(map[string]interface{}, len(columns))
+				for i, column := range columns {
+					if value, ok := values[i].([]byte); ok {
+						row[column] = string(value)
+					} else {
+						row[column] = values[i]
+					}
+				}
+				results = append(results, row)
+				if len(results) == 50 {
+					break
 				}
 			}
-			results = append(results, row)
+			if err := rows.Err(); err != nil {
+				return fmt.Errorf("recorriendo resultados: %w", err)
+			}
+			return nil
+		}, &stdsql.TxOptions{ReadOnly: true})
+		if err != nil {
+			log.Printf("[AI-BOT] query_database falló: %v", err)
+			return map[string]interface{}{"error": "No fue posible ejecutar la consulta"}, nil
 		}
 
-		// Limitar a 50 filas para no saturar el contexto
-		if len(results) > 50 {
-			results = results[:50]
-			return map[string]interface{}{
-				"data":    results,
-				"warning": "Resultado limitado a 50 filas",
-				"total":   len(results),
-			}, nil
-		}
-
-		return map[string]interface{}{
+		response := map[string]interface{}{
 			"data":  results,
 			"total": len(results),
-		}, nil
+		}
+		if len(results) == 50 {
+			response["warning"] = "Resultado limitado a 50 filas"
+		}
+		return response, nil
 	}
 
 	if name == "get_today_suppliers" {
@@ -1459,7 +1488,7 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		results := make([]supplierResult, 0, len(sups))
 		for _, sp := range sups {
 			var crit []critProduct
-			_ = s.db.Raw(`
+			if err := s.db.Raw(`
 				SELECT barcode,
 				       "productName" AS product_name,
 				       COALESCE(quantity, 0) AS quantity,
@@ -1472,7 +1501,9 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 				  AND COALESCE(quantity, 0) <= COALESCE("minStock", 0)
 				ORDER BY (COALESCE("minStock", 0) - COALESCE(quantity, 0)) DESC
 				LIMIT 50
-			`, sp.ID).Scan(&crit).Error
+			`, sp.ID).Scan(&crit).Error; err != nil {
+				return nil, fmt.Errorf("consultando inventario crítico del proveedor %d: %w", sp.ID, err)
+			}
 
 			results = append(results, supplierResult{
 				ID:            sp.ID,
@@ -1486,10 +1517,10 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 		}
 
 		return map[string]interface{}{
-			"day":             targetDay,
-			"date":            now.Format("2006-01-02"),
-			"supplierCount":   len(results),
-			"suppliers":       results,
+			"day":           targetDay,
+			"date":          now.Format("2006-01-02"),
+			"supplierCount": len(results),
+			"suppliers":     results,
 			"totalCriticalItems": func() int {
 				total := 0
 				for _, r := range results {
@@ -1510,7 +1541,7 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 func parseDateRange(period string, loc *time.Location) (time.Time, time.Time) {
 	now := time.Now().In(loc)
 	var from, to time.Time
-	
+
 	switch period {
 	case "today":
 		from = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
@@ -1525,7 +1556,7 @@ func parseDateRange(period string, loc *time.Location) (time.Time, time.Time) {
 		from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
 		to = now
 	}
-	
+
 	return from, to
 }
 
@@ -1542,39 +1573,84 @@ func formatCOP(amount float64) string {
 	return strings.Join(parts, ".")
 }
 
+func validateBotReadOnlyQuery(query string) error {
+	trimmed := strings.TrimSpace(query)
+	if trimmed == "" {
+		return fmt.Errorf("La consulta está vacía")
+	}
+	if strings.Contains(trimmed, ";") {
+		return fmt.Errorf("No se permiten múltiples sentencias ni punto y coma")
+	}
+	if strings.Contains(trimmed, "--") || strings.Contains(trimmed, "/*") || strings.Contains(trimmed, "*/") {
+		return fmt.Errorf("No se permiten comentarios SQL")
+	}
+
+	tokens := strings.FieldsFunc(strings.ToUpper(trimmed), func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < '0' || r > '9') && r != '_'
+	})
+	if len(tokens) == 0 || tokens[0] != "SELECT" {
+		return fmt.Errorf("Solo se permiten consultas SELECT")
+	}
+	forbidden := map[string]struct{}{
+		"ALTER": {}, "ANALYZE": {}, "CALL": {}, "COPY": {}, "CREATE": {},
+		"DELETE": {}, "DO": {}, "DROP": {}, "EXECUTE": {}, "GRANT": {},
+		"INSERT": {}, "LOCK": {}, "REINDEX": {}, "REVOKE": {}, "TRUNCATE": {},
+		"UPDATE": {}, "VACUUM": {},
+	}
+	for _, token := range tokens {
+		if _, blocked := forbidden[token]; blocked {
+			return fmt.Errorf("Consulta no permitida por seguridad")
+		}
+	}
+
+	upper := strings.ToUpper(trimmed)
+	if strings.Contains(upper, " FOR UPDATE") || strings.Contains(upper, " FOR SHARE") || strings.Contains(upper, " INTO ") {
+		return fmt.Errorf("La consulta debe ser estrictamente de solo lectura")
+	}
+	return nil
+}
+
 func (s *AIBotService) generatePDF(reportType, period string) ([]byte, string, error) {
 	pdf := gofpdf.New("P", "mm", "A4", "")
 	pdf.AddPage()
 	pdf.SetFont("Arial", "B", 16)
-	
+
 	today := time.Now().Format("02/01/2006")
-	
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	from, to := parseDateRange(period, loc)
+	if from.IsZero() || to.IsZero() {
+		return nil, "", fmt.Errorf("período de reporte no soportado: %s", period)
+	}
+
 	switch reportType {
 	case "ventas":
+
 		pdf.Cell(0, 10, "REPORTE DE VENTAS - Surtifamiliar")
 		pdf.Ln(8)
 		pdf.SetFont("Arial", "", 10)
 		pdf.Cell(0, 6, fmt.Sprintf("Fecha: %s | Período: %s", today, period))
 		pdf.Ln(10)
-		
+
 		var sales []struct {
 			Hour   string  `json:"hour"`
 			Count  int     `json:"count"`
 			Total  float64 `json:"total"`
 			Method string  `json:"method"`
 		}
-		s.db.Raw(`
-			SELECT 
-				TO_CHAR(created_at, 'HH12:MI AM') as hour,
-				COUNT(*) as count,
-				SUM(total_amount) as total,
-				payment_method as method
+		if err := s.db.Raw(`
+			SELECT
+				TO_CHAR("saleDate", 'HH12:MI AM') AS hour,
+				COUNT(*) AS count,
+				SUM("totalAmount") AS total,
+				"paymentMethod" AS method
 			FROM sales
-			WHERE DATE(created_at) = CURRENT_DATE
-			GROUP BY TO_CHAR(created_at, 'HH12:MI AM'), payment_method
+			WHERE "saleDate" >= ? AND "saleDate" < ? AND deleted_at IS NULL
+			GROUP BY TO_CHAR("saleDate", 'HH12:MI AM'), "paymentMethod"
 			ORDER BY hour
-		`).Scan(&sales)
-		
+		`, from, to).Scan(&sales).Error; err != nil {
+			return nil, "", fmt.Errorf("consultando ventas para PDF: %w", err)
+		}
+
 		pdf.SetFont("Arial", "B", 10)
 		pdf.SetFillColor(240, 240, 240)
 		pdf.CellFormat(40, 8, "Hora", "1", 0, "C", true, 0, "")
@@ -1582,7 +1658,7 @@ func (s *AIBotService) generatePDF(reportType, period string) ([]byte, string, e
 		pdf.CellFormat(40, 8, "Transacciones", "1", 0, "C", true, 0, "")
 		pdf.CellFormat(50, 8, "Total", "1", 0, "C", true, 0, "")
 		pdf.Ln(-1)
-		
+
 		pdf.SetFont("Arial", "", 9)
 		var grandTotal float64
 		for _, saleRow := range sales {
@@ -1593,40 +1669,39 @@ func (s *AIBotService) generatePDF(reportType, period string) ([]byte, string, e
 			pdf.Ln(-1)
 			grandTotal += saleRow.Total
 		}
-		
+
 		pdf.SetFont("Arial", "B", 10)
 		pdf.CellFormat(130, 8, "TOTAL", "1", 0, "R", true, 0, "")
 		pdf.CellFormat(50, 8, fmt.Sprintf("$%s", formatCOP(grandTotal)), "1", 0, "R", true, 0, "")
-		
+
 	case "cuentas_cobrar":
 		pdf.Cell(0, 10, "CUENTAS POR COBRAR - Surtifamiliar")
 		pdf.Ln(8)
 		pdf.SetFont("Arial", "", 10)
 		pdf.Cell(0, 6, fmt.Sprintf("Generado: %s", today))
 		pdf.Ln(10)
-		
+
 		var clients []struct {
 			Name    string  `json:"name"`
 			Phone   string  `json:"phone"`
 			Balance float64 `json:"balance"`
 			Days    int     `json:"days"`
 		}
-		s.db.Raw(`
-			SELECT 
+		if err := s.db.Raw(`
+			SELECT
 				c.name,
-				c.phone,
-				SUM(CASE WHEN s.payment_method = 'FIADO' THEN s.total_amount ELSE 0 END) -
-				COALESCE((SELECT SUM(amount) FROM client_payments WHERE client_id = c.id), 0) as balance,
-				EXTRACT(DAY FROM NOW() - MAX(s.created_at))::int as days
+				COALESCE(c.phone, '') AS phone,
+				COALESCE(c."currentCredit", 0) AS balance,
+				COALESCE(EXTRACT(DAY FROM NOW() - MAX(s."saleDate"))::int, 0) AS days
 			FROM clients c
-			JOIN sales s ON s.client_id = c.id
-			WHERE s.payment_method = 'FIADO'
-			GROUP BY c.id, c.name, c.phone
-			HAVING SUM(CASE WHEN s.payment_method = 'FIADO' THEN s.total_amount ELSE 0 END) -
-				   COALESCE((SELECT SUM(amount) FROM client_payments WHERE client_id = c.id), 0) > 0
+			LEFT JOIN sales s ON s."clientDni" = c.dni AND s.deleted_at IS NULL
+			WHERE c.deleted_at IS NULL AND COALESCE(c."currentCredit", 0) > 0
+			GROUP BY c.dni, c.name, c.phone, c."currentCredit"
 			ORDER BY balance DESC
-		`).Scan(&clients)
-		
+		`).Scan(&clients).Error; err != nil {
+			return nil, "", fmt.Errorf("consultando cartera para PDF: %w", err)
+		}
+
 		pdf.SetFont("Arial", "B", 10)
 		pdf.SetFillColor(240, 240, 240)
 		pdf.CellFormat(70, 8, "Cliente", "1", 0, "L", true, 0, "")
@@ -1634,7 +1709,7 @@ func (s *AIBotService) generatePDF(reportType, period string) ([]byte, string, e
 		pdf.CellFormat(40, 8, "Dias", "1", 0, "C", true, 0, "")
 		pdf.CellFormat(30, 8, "Saldo", "1", 0, "R", true, 0, "")
 		pdf.Ln(-1)
-		
+
 		pdf.SetFont("Arial", "", 9)
 		var totalDeuda float64
 		for _, c := range clients {
@@ -1645,91 +1720,90 @@ func (s *AIBotService) generatePDF(reportType, period string) ([]byte, string, e
 			pdf.Ln(-1)
 			totalDeuda += c.Balance
 		}
-		
+
 		pdf.SetFont("Arial", "B", 10)
 		pdf.CellFormat(160, 8, "TOTAL POR COBRAR", "1", 0, "R", true, 0, "")
 		pdf.CellFormat(30, 8, fmt.Sprintf("$%s", formatCOP(totalDeuda)), "1", 0, "R", true, 0, "")
-		
+
 	case "cierre_dia":
 		pdf.Cell(0, 10, fmt.Sprintf("CIERRE DEL DIA - %s", today))
 	}
-	
+
 	filename := fmt.Sprintf("reporte_%s_%s.pdf", reportType, time.Now().Format("20060102"))
-	
+
 	var buf bytes.Buffer
 	err := pdf.Output(&buf)
 	return buf.Bytes(), filename, err
 }
 
 func (s *AIBotService) generateChart(chartType, period string) ([]byte, string, error) {
-	var dateFilter string
-	switch period {
-	case "today":
-		dateFilter = "DATE(created_at) = CURRENT_DATE"
-	case "week":
-		dateFilter = "created_at >= DATE_TRUNC('week', CURRENT_DATE)"
-	case "month":
-		dateFilter = "created_at >= DATE_TRUNC('month', CURRENT_DATE)"
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	from, to := parseDateRange(period, loc)
+	if from.IsZero() || to.IsZero() {
+		return nil, "", fmt.Errorf("período de gráfica no soportado: %s", period)
 	}
-	
+
 	switch chartType {
 	case "ventas_por_hora":
 		var data []struct {
 			Hour  string  `json:"hour"`
 			Total float64 `json:"total"`
 		}
-		s.db.Raw(fmt.Sprintf(`
-			SELECT TO_CHAR(created_at, 'HH AM') as hour, SUM(total_amount) as total
-			FROM sales WHERE %s
-			GROUP BY TO_CHAR(created_at, 'HH AM')
+		if err := s.db.Raw(`
+			SELECT TO_CHAR("saleDate", 'HH AM') AS hour, SUM("totalAmount") AS total
+			FROM sales
+			WHERE "saleDate" >= ? AND "saleDate" < ? AND deleted_at IS NULL
+			GROUP BY TO_CHAR("saleDate", 'HH AM')
 			ORDER BY hour
-		`, dateFilter)).Scan(&data)
-		
+		`, from, to).Scan(&data).Error; err != nil {
+			return nil, "", fmt.Errorf("consultando ventas por hora: %w", err)
+		}
+
 		graph := chart.BarChart{
 			Title:  "Ventas por hora - " + period,
 			Width:  800,
 			Height: 400,
 			Bars:   make([]chart.Value, len(data)),
 		}
-		for i, d := range data {
-			graph.Bars[i] = chart.Value{
-				Label: d.Hour,
-				Value: d.Total,
-			}
+		for i, datum := range data {
+			graph.Bars[i] = chart.Value{Label: datum.Hour, Value: datum.Total}
 		}
-		
+
 		var buf bytes.Buffer
 		err := graph.Render(chart.PNG, &buf)
 		return buf.Bytes(), fmt.Sprintf("ventas_hora_%s.png", period), err
-		
+
 	case "ventas_por_metodo":
 		var data []struct {
 			Method string  `json:"method"`
 			Total  float64 `json:"total"`
 		}
-		s.db.Raw(fmt.Sprintf(`
-			SELECT payment_method as method, SUM(total_amount) as total
-			FROM sales WHERE %s
-			GROUP BY payment_method ORDER BY total DESC
-		`, dateFilter)).Scan(&data)
-		
-		values := make([]chart.Value, len(data))
-		for i, d := range data {
-			values[i] = chart.Value{Label: d.Method, Value: d.Total}
+		if err := s.db.Raw(`
+			SELECT "paymentMethod" AS method, SUM("totalAmount") AS total
+			FROM sales
+			WHERE "saleDate" >= ? AND "saleDate" < ? AND deleted_at IS NULL
+			GROUP BY "paymentMethod"
+			ORDER BY total DESC
+		`, from, to).Scan(&data).Error; err != nil {
+			return nil, "", fmt.Errorf("consultando ventas por método: %w", err)
 		}
-		
+
+		values := make([]chart.Value, len(data))
+		for i, datum := range data {
+			values[i] = chart.Value{Label: datum.Method, Value: datum.Total}
+		}
 		pie := chart.PieChart{
 			Title:  "Ventas por metodo de pago",
 			Width:  600,
 			Height: 400,
 			Values: values,
 		}
-		
+
 		var buf bytes.Buffer
 		err := pie.Render(chart.PNG, &buf)
 		return buf.Bytes(), "ventas_metodo.png", err
 	}
-	
+
 	return nil, "", fmt.Errorf("tipo de grafica no soportado")
 }
 
@@ -1780,7 +1854,7 @@ func (s *AIBotService) ProcessImageMessage(chatID int64, imgBase64, mimeType, ca
 		for _, block := range toolBlocks {
 			args, _ := block.Input.(map[string]interface{})
 			result, err := s.executeFunction(chatID, block.Name, args)
-			
+
 			var resultJSON []byte
 			if err != nil {
 				resultJSON = []byte(`{"error":"` + err.Error() + `"}`)
@@ -1853,12 +1927,12 @@ func (s *AIBotService) buildRequest(state *ConversationState, isImage bool) Clau
 	maxTokens := 1024
 	// Inyección dinámica de fecha/hora actual de Bogotá en cada request
 	sysPrompt := buildSystemPrompt(false)
-	model := "claude-haiku-4-5"
+	model := FastModel()
 
 	if isImage {
 		maxTokens = 4096 // Las facturas pueden tener muchos productos
 		sysPrompt = buildSystemPrompt(true)
-		model = "claude-sonnet-4-5"
+		model = VisionModel()
 	}
 	// Si el último mensaje menciona reporte, detalle o desglose
 	lastMsg := ""

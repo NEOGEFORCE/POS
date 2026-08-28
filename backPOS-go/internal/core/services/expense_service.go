@@ -3,6 +3,8 @@ package services
 import (
 	"errors"
 	"log"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -66,41 +68,78 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 		expense.PaidAmount = expense.Amount
 	}
 
-	// Auto-asignar campos de monto por canal si no vinieron del frontend
-	// para que los reportes puedan distinguir el canal correctamente
-	if expense.Status != "PENDING" &&
-		expense.CashAmount == 0 && expense.NequiAmount == 0 &&
-		expense.DaviplataAmount == 0 && expense.FondoAmount == 0 {
-		src := strings.ToUpper(strings.TrimSpace(expense.PaymentSource))
-		switch {
-		case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
-			expense.NequiAmount = expense.Amount
-		case strings.Contains(src, "DAVIPLATA"):
-			expense.DaviplataAmount = expense.Amount
-		case strings.Contains(src, "FONDO") || strings.Contains(src, "BOVEDA") || strings.Contains(src, "BÓVEDA"):
-			expense.FondoAmount = expense.Amount
-			expense.PaymentSource = "FONDO"
-		case strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") || strings.Contains(src, "PENDING"):
-			// Deudas y préstamos no afectan la caja ni cuentas digitales
-		default:
-			expense.CashAmount = expense.Amount
-		}
-	}
+	parsePaymentSourceAmounts(expense)
 
 	err := s.repo.Save(expense)
 	if err == nil {
-		// Si es un pago a proveedor, registrar día de entrega para aprendizaje de rutas
 		if expense.SupplierID != nil {
-			// IMPORTANTE: NO auto-completar ni marcar pedidos como recibidos al crear un egreso.
-			// Los pedidos de recepción deben permanecer PENDIENTES (EN CAMINO) hasta que el usuario
-			// haga la recepción física de mercancía o haga clic en "Ya llegó".
-			_ = s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days")
+			if err := s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days"); err != nil {
+				log.Printf("[EXPENSE] no se pudo aprender día de entrega del proveedor %d: %v", *expense.SupplierID, err)
+			}
 		}
 
 		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
+}
+
+func parsePaymentSourceAmounts(expense *models.Expense) {
+	if expense.Status == "PENDING" {
+		return
+	}
+
+	if expense.CashAmount > 0 || expense.NequiAmount > 0 || expense.DaviplataAmount > 0 || expense.FondoAmount > 0 || expense.CoinsAmount > 0 {
+		return
+	}
+
+	src := strings.ToUpper(strings.TrimSpace(expense.PaymentSource))
+	if src == "" {
+		expense.CashAmount = expense.Amount
+		return
+	}
+
+	re := regexp.MustCompile(`(NEQUI|DAVIPLATA|CAJA|CASH|EFECTIVO|FONDO|BOVEDA|BÓVEDA|MONEDAS|ALCANCIA|ALCANCÍA):\s*\$?([\d.,]+)`)
+	matches := re.FindAllStringSubmatch(src, -1)
+
+	if len(matches) > 0 {
+		for _, m := range matches {
+			method := strings.ToUpper(m[1])
+			valStr := strings.ReplaceAll(m[2], ".", "")
+			valStr = strings.ReplaceAll(valStr, ",", ".")
+			val, _ := strconv.ParseFloat(valStr, 64)
+
+			switch {
+			case strings.Contains(method, "NEQUI"):
+				expense.NequiAmount += val
+			case strings.Contains(method, "DAVIPLATA"):
+				expense.DaviplataAmount += val
+			case strings.Contains(method, "FONDO") || strings.Contains(method, "BOVEDA"):
+				expense.FondoAmount += val
+			case strings.Contains(method, "MONEDA") || strings.Contains(method, "ALCANCIA"):
+				expense.CoinsAmount += val
+			default:
+				expense.CashAmount += val
+			}
+		}
+		return
+	}
+
+	switch {
+	case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
+		expense.NequiAmount = expense.Amount
+	case strings.Contains(src, "DAVIPLATA"):
+		expense.DaviplataAmount = expense.Amount
+	case strings.Contains(src, "MONEDA") || strings.Contains(src, "ALCANCIA") || strings.Contains(src, "ALCANCÍA"):
+		expense.CoinsAmount = expense.Amount
+		expense.PaymentSource = "MONEDAS"
+	case strings.Contains(src, "FONDO") || strings.Contains(src, "BOVEDA") || strings.Contains(src, "BÓVEDA"):
+		expense.FondoAmount = expense.Amount
+		expense.PaymentSource = "FONDO"
+	case strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") || strings.Contains(src, "PENDING"):
+	default:
+		expense.CashAmount = expense.Amount
+	}
 }
 
 func (s *ExpenseService) GetAllExpenses(supplier, concept string) ([]models.Expense, error) {
@@ -132,8 +171,41 @@ func (s *ExpenseService) DeleteExpense(id uint) error {
 }
 
 func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
+	if expense.Amount <= 0 {
+		return errors.New("el monto del egreso debe ser mayor a cero")
+	}
+
+	if expense.PaymentSource == "PRESTAMO" || expense.PaymentSource == "PREST." {
+		expense.Status = "PENDING"
+		expense.RemainingAmount = expense.Amount
+		expense.PaidAmount = 0
+		expense.CashAmount = 0
+		expense.NequiAmount = 0
+		expense.DaviplataAmount = 0
+		expense.FondoAmount = 0
+		expense.CoinsAmount = 0
+	} else if expense.Status == "PAID" || expense.Status == "" {
+		expense.Status = "PAID"
+		expense.RemainingAmount = 0
+		expense.PaidAmount = expense.Amount
+		parsePaymentSourceAmounts(expense)
+	} else if expense.Status == "PENDING" {
+		expense.RemainingAmount = expense.Amount
+		expense.PaidAmount = 0
+		expense.CashAmount = 0
+		expense.NequiAmount = 0
+		expense.DaviplataAmount = 0
+		expense.FondoAmount = 0
+		expense.CoinsAmount = 0
+	}
+
 	err := s.repo.Update(id, expense)
 	if err == nil {
+		if expense.SupplierID != nil {
+			if err := s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days"); err != nil {
+				log.Printf("[EXPENSE] no se pudo aprender día de entrega del proveedor %d: %v", *expense.SupplierID, err)
+			}
+		}
 		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
 		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
@@ -250,10 +322,16 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 
 	// Automatización: Marcar pedido esperado como recibido
 	if expense.SupplierID != nil {
-		_ = s.expected.MarkAsReceivedBySupplier(*expense.SupplierID)
+		if s.expected != nil {
+			if err := s.expected.MarkAsReceivedBySupplier(*expense.SupplierID); err != nil {
+				log.Printf("[EXPENSE] no se pudo marcar pedido esperado del proveedor %d: %v", *expense.SupplierID, err)
+			}
+		}
 
 		// Auto-aprendizaje de ruta: día actual = día de entrega (delivery_days).
-		_ = s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days")
+		if err := s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days"); err != nil {
+			log.Printf("[EXPENSE] no se pudo aprender día de entrega del proveedor %d: %v", *expense.SupplierID, err)
+		}
 	}
 
 	// Preparar entradas de recepción basadas en los items de la orden
@@ -283,7 +361,6 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 
 	return expense, nil
 }
-
 
 // autoCompletePendingPurchaseOrders cierra automáticamente las órdenes de
 // compra (PurchaseOrder) en estado PENDING del proveedor cuya deliveryDate

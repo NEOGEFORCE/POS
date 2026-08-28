@@ -1,10 +1,12 @@
 package services
 
 import (
+	"log"
+	"time"
+
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/sse"
-	"time"
 )
 
 type AuditService struct {
@@ -16,7 +18,7 @@ func NewAuditService(repo ports.AuditRepository) *AuditService {
 }
 
 func (s *AuditService) Log(dni, name, action, module, details, human, changes, ip, device string, isCritical bool) {
-	log := &models.AuditLog{
+	auditLog := &models.AuditLog{
 		EmployeeDNI:   dni,
 		EmployeeName:  name,
 		Action:        action,
@@ -31,8 +33,11 @@ func (s *AuditService) Log(dni, name, action, module, details, human, changes, i
 	}
 	go func() {
 		defer func() { recover() }()
-		_ = s.repo.Create(log)
-		
+		if err := s.repo.Create(auditLog); err != nil {
+			log.Printf("[AUDIT] no se pudo persistir %s/%s: %v", module, action, err)
+			return
+		}
+
 		// AVISO GLOBAL: Nueva acción registrada en auditoría
 		sse.GetSSEService().BroadcastAuditUpdate()
 	}()

@@ -135,18 +135,20 @@ type DashboardOverview struct {
 	TodayExpenses ExpenseSummary  `json:"todayExpenses"`
 	TodayCashFlow CashFlowSummary `json:"todayCashFlow"`
 	// Financial Reconciliation V5.5
-	SystemBalance      float64 `json:"systemBalance"`
-	ReportedBalance    float64 `json:"reportedBalance"`
-	GlobalDifference   float64 `json:"globalDifference"`
-	TotalExpensesPaid    float64 `json:"totalExpensesPaid"`
+	SystemBalance         float64 `json:"systemBalance"`
+	ReportedBalance       float64 `json:"reportedBalance"`
+	GlobalDifference      float64 `json:"globalDifference"`
+	TotalExpensesPaid     float64 `json:"totalExpensesPaid"`
 	TotalCashExpensesPaid float64 `json:"totalCashExpensesPaid"`
-	EstimatedNetProfit   float64 `json:"estimatedNetProfit"`
-	InventoryCostValue   float64 `json:"inventoryCostValue"`
-	InventoryRetailValue float64 `json:"inventoryRetailValue"`
-	TodayNetProfit       float64 `json:"todayNetProfit"`
+	EstimatedNetProfit    float64 `json:"estimatedNetProfit"`
+	InventoryCostValue    float64 `json:"inventoryCostValue"`
+	InventoryRetailValue  float64 `json:"inventoryRetailValue"`
+	TodayNetProfit        float64 `json:"todayNetProfit"`
 	// Vault/Fondo V9.5
-	VaultBalance         float64 `json:"vaultBalance"`
-	VaultExpenses        float64 `json:"vaultExpenses"`
+	VaultBalance  float64 `json:"vaultBalance"`
+	VaultExpenses float64 `json:"vaultExpenses"`
+	CoinsSavings  float64 `json:"coinsSavings"`
+	BillsBalance  float64 `json:"billsBalance"`
 
 	GlobalHistoricalExpected float64 `json:"globalHistoricalExpected"`
 	GlobalHistoricalReal     float64 `json:"globalHistoricalReal"`
@@ -155,10 +157,10 @@ type DashboardOverview struct {
 	ShiftEgresosEfectivo     float64 `json:"shiftEgresosEfectivo"`
 	ShiftVentaReal           float64 `json:"shiftVentaReal"`
 	TotalLiquidity           float64 `json:"totalLiquidity"`
-	Coins100             float64 `json:"coins100"`
-	Coins200             float64 `json:"coins200"`
-	Coins500             float64 `json:"coins500"`
-	Coins1000            float64 `json:"coins1000"`
+	Coins100                 float64 `json:"coins100"`
+	Coins200                 float64 `json:"coins200"`
+	Coins500                 float64 `json:"coins500"`
+	Coins1000                float64 `json:"coins1000"`
 }
 
 type CashFlowSummary struct {
@@ -177,7 +179,6 @@ type ExpenseSummary struct {
 	Amount float64 `json:"amount"`
 	Count  int     `json:"count"`
 }
-
 
 type CategoryReportItem struct {
 	Category string  `json:"category"`
@@ -203,12 +204,12 @@ type VoidReportItem struct {
 type PnLReport struct {
 	From             time.Time `json:"from"`
 	To               time.Time `json:"to"`
-	TotalRevenue     float64 `json:"totalRevenue"`
-	TotalCOGS        float64 `json:"totalCogs"`
-	GrossProfit      float64 `json:"grossProfit"`
-	TotalExpenses    float64 `json:"totalExpenses"`
-	NetProfit        float64 `json:"netProfit"`
-	MarginPercentage float64 `json:"marginPercentage"`
+	TotalRevenue     float64   `json:"totalRevenue"`
+	TotalCOGS        float64   `json:"totalCogs"`
+	GrossProfit      float64   `json:"grossProfit"`
+	TotalExpenses    float64   `json:"totalExpenses"`
+	NetProfit        float64   `json:"netProfit"`
+	MarginPercentage float64   `json:"marginPercentage"`
 }
 
 type StockMovementReportItem struct {
@@ -223,27 +224,37 @@ type StockMovementReportItem struct {
 }
 
 func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string, endDateStr string) (*DashboardOverview, error) {
-	// CACHÃ‰ L1: Retorno instantÃ¡neo si existe en RAM (Barrera HFT)
-	if cached, found := cache.CacheManager.Get(cache.CacheKeyDashboardOverview); found {
-		if overview, ok := cached.(*DashboardOverview); ok {
-			log.Println("ðŸš€ HFT: Dashboard HIT (L1 Cache Intercepted)")
-			return overview, nil
+	// CACHÉ L1 EN RAM, ahora sí en uso.
+	//
+	// Antes se hacía Delete() al entrar y Set() al salir, pero NUNCA un Get():
+	// la caché era de escritura pura y cada petición recalculaba el dashboard
+	// completo (decenas de consultas). Con varias pestañas abiertas y el
+	// refresco automático, eso era carga constante sobre Postgres.
+	//
+	// El TTL es corto a propósito: el dashboard tiene que sentirse en vivo. Se
+	// invalida de inmediato al guardar una venta, un cierre o un egreso, así que
+	// una cifra recién registrada no espera el vencimiento.
+	cacheKey := cache.CacheKeyDashboardOverview + "_" + startDateStr + "_" + endDateStr
+	if cached, found := cache.CacheManager.Get(cacheKey); found {
+		if ov, ok := cached.(*DashboardOverview); ok {
+			return ov, nil
 		}
 	}
 
 	key := fmt.Sprintf("overview_%s_%s", startDateStr, endDateStr)
 	val, err, _ := s.sg.Do(key, func() (interface{}, error) {
 		log.Println("âš¡ HFT: Dashboard MISS (Ejecutando Goroutines de Alta Intensidad...)")
-	
+
 		// Usar el contexto de la peticiÃ³n para permitir cancelaciÃ³n
 		g, _ := errgroup.WithContext(ctx)
 
-		now := time.Now().UTC()
 		// 0. Determinar Rango del Turno Actual (Para Cierre y Caja)
-		activeShift, _ := s.shiftRepo.GetActive()
+		activeShift, err := s.shiftRepo.GetActive()
+		if err != nil {
+			return nil, fmt.Errorf("obteniendo turno activo del dashboard: %w", err)
+		}
 		var shiftStartDate time.Time
 		var lastClosure *models.CashierClosure
-		var globalReportedByMethod map[string]float64
 		var globalHistoricalExpected, globalHistoricalReal float64
 
 		// Usar la zona horaria local (Colombia) para determinar los lÃ­mites del dÃ­a
@@ -253,7 +264,10 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		if activeShift != nil {
 			shiftStartDate = activeShift.StartTime
 		} else {
-			lastClosure, _ = s.closureRepo.GetLast()
+			lastClosure, err = s.closureRepo.GetLast()
+			if err != nil {
+				return nil, fmt.Errorf("obteniendo último cierre del dashboard: %w", err)
+			}
 			if lastClosure != nil {
 				shiftStartDate = lastClosure.EndDate
 			} else {
@@ -269,7 +283,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 
 		// 0.1 Determinar Inicio del DÃ­a Calendario (Medianoche Local)
 		dayStart := time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 0, 0, loc)
-	
+
 		// Para reportes mensuales y semanales (usamos UTC para la DB)
 		nowUTC := time.Now()
 		currentMonthStart := time.Date(nowUTC.Year(), nowUTC.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -285,7 +299,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				shiftStartDate = dayStart
 			}
 		}
-	
+
 		if endDateStr != "" {
 			if t, err := time.Parse(time.RFC3339, endDateStr); err == nil {
 				nowUTC = t
@@ -295,24 +309,19 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		}
 
 		g.Go(func() error {
-			lastClosure, _ = s.closureRepo.GetLast()
-			return nil
-		})
-	
-		g.Go(func() error {
-			globalReportedByMethod, _ = s.closureRepo.GetGlobalReportedBalanceByMethod()
-			return nil
-		})
-
-		g.Go(func() error {
-			globalHistoricalExpected, globalHistoricalReal, _ = s.closureRepo.GetGlobalHistoricalSum()
-			return nil
+			var err error
+			globalHistoricalExpected, globalHistoricalReal, err = s.closureRepo.GetGlobalHistoricalSum()
+			return err
 		})
 
 		var totalSalesAmount, totalProductsSold, totalExpensesAmount, monthlyCollectedDebts float64
 		var mvStats *ports.MVMonthlyStats
 		var mvTrend []ports.MVMonthlyStats
-		currentMonthKey := now.Format("2006-01")
+		// La vista materializada agrupa por 'YYYY-MM' en hora Colombia, así que
+		// la clave debe salir de nowLocal. Con time.Now().UTC() el último día del
+		// mes después de las 19:00 consultaba el mes siguiente y el dashboard
+		// mensual quedaba en $0.
+		currentMonthKey := nowLocal.Format("2006-01")
 
 		var todayExpensesRaw []models.Expense
 		var todayPaymentsRaw []models.CreditPayment
@@ -344,7 +353,6 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		var globalSalesByMethod, globalCollectedByMethod, globalPaidByMethod map[string]float64
 		var dayExpensesRaw []models.Expense
 		var dayPaymentsRaw []models.CreditPayment
-		var globalCoins map[string]float64
 
 		// 1. Get Materialized View Stats (Instant)
 		g.Go(func() error {
@@ -365,7 +373,10 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				pendingDebtsAmount = amount
 				pendingDebtsCount = count
 			}
-			pendingDebtsList, _ = s.expenseRepo.GetExpensesByStatus("PENDING")
+			pendingDebtsList, err = s.expenseRepo.GetExpensesByStatus("PENDING")
+			if err != nil {
+				log.Printf("[Dashboard] Error listando deudas pendientes: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
@@ -383,42 +394,54 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetByDateRange (Expenses Shift) desde %v", shiftStartDate)
 			var err error
 			todayExpensesRaw, err = s.expenseRepo.GetByDateRange(shiftStartDate, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error Expenses Shift: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error Expenses Shift: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetByDateRange (Expenses Day) desde %v", dayStart)
 			var err error
 			dayExpensesRaw, err = s.expenseRepo.GetByDateRange(dayStart, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error Expenses Day: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error Expenses Day: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetByDateRange (Payments Shift) desde %v", shiftStartDate)
 			var err error
 			todayPaymentsRaw, err = s.creditRepo.GetByDateRange(shiftStartDate, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error Payments Shift: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error Payments Shift: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetByDateRange (Payments Day) desde %v", dayStart)
 			var err error
 			dayPaymentsRaw, err = s.creditRepo.GetByDateRange(dayStart, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error Payments Day: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error Payments Day: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetDashboardStats (Day) desde %v", dayStart)
 			var err error
 			todaySalesAmount, todaySalesCount, _, err = s.saleRepo.GetDashboardStats(dayStart, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error Stats (Day): %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error Stats (Day): %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetDashboardStats (Shift) desde %v", shiftStartDate)
 			var err error
 			shiftSalesAmount, shiftSalesCount, _, err = s.saleRepo.GetDashboardStats(shiftStartDate, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error Stats (Shift): %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error Stats (Shift): %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
@@ -444,14 +467,18 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		g.Go(func() error {
 			var err error
 			lowStockRaw, err = s.productRepo.GetAllWithLowStock()
-			if err != nil { log.Printf("â Œ [Dashboard] Error LowStock: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error LowStock: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			var err error
 			salesFilter := ports.SaleFilter{Page: 1, PageSize: 20, From: currentMonthStart.Format("2006-01-02"), To: nextMonthStart.Format("2006-01-02")}
 			recentSalesRaw, _, err = s.saleRepo.FindAll(salesFilter)
-			if err != nil { log.Printf("â Œ [Dashboard] Error RecentSales: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error RecentSales: %v", err)
+			}
 			return nil
 		})
 
@@ -474,14 +501,18 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			var err error
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetSalesBreakdown (Day) desde %v", dayStart)
 			todaySalesByPayment, err = s.saleRepo.GetSalesBreakdownByRange(dayStart, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error SalesByPayment (Day): %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error SalesByPayment (Day): %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			var err error
 			log.Printf("ðŸ“Š [Dashboard] Sincronizando Shift desde GetCashierClosure")
 			shiftClosure, err = s.GetCashierClosure()
-			if err != nil { log.Printf("â Œ [Dashboard] Error GetCashierClosure: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error GetCashierClosure: %v", err)
+			}
 			return nil
 		})
 		// Global Reconciliation Queries
@@ -489,47 +520,52 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			log.Printf("ðŸ“Š [Dashboard] Iniciando GetGlobalTotalPaidExpenses")
 			var err error
 			globalExpenses, err = s.expenseRepo.GetGlobalTotalPaidExpenses()
-			if err != nil { log.Printf("â Œ [Dashboard] Error GlobalExpenses: %v", err) }
-			return nil
-		})
-		g.Go(func() error {
-			log.Printf("ðŸ“Š [Dashboard] Iniciando GetGlobalCoins")
-			var err error
-			globalCoins, err = s.closureRepo.GetGlobalCoins()
-			if err != nil { log.Printf("â Œ [Dashboard] Error GlobalCoins: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error GlobalExpenses: %v", err)
+			}
 			return nil
 		})
 		// Financial Stats V5.5
 		g.Go(func() error {
 			var err error
 			inventoryCostValue, err = s.productRepo.GetGlobalInventoryValue()
-			if err != nil { log.Printf("â Œ [Dashboard] Error InventoryCost: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error InventoryCost: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			var err error
 			inventoryRetailValue, err = s.productRepo.GetGlobalInventoryRetailValue()
-			if err != nil { log.Printf("â Œ [Dashboard] Error InventoryRetail: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error InventoryRetail: %v", err)
+			}
 			return nil
 		})
 		// Breakdown Reconciliation Queries
 		g.Go(func() error {
 			var err error
 			globalSalesByMethod, err = s.saleRepo.GetGlobalSalesByMethod()
-			if err != nil { log.Printf("â Œ [Dashboard] Error GlobalSalesByMethod: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error GlobalSalesByMethod: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			var err error
 			globalCollectedByMethod, err = s.saleRepo.GetGlobalCollectedDebtsByMethod()
-			if err != nil { log.Printf("â Œ [Dashboard] Error GlobalCollectedByMethod: %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error GlobalCollectedByMethod: %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			var err error
 			globalPaidByMethodRaw, err := s.expenseRepo.GetGlobalPaidExpensesByMethod()
-  			if err != nil { log.Printf("â Œ [Dashboard] Error GlobalPaidByMethod: %v", err) }
-		
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error GlobalPaidByMethod: %v", err)
+			}
+
 			globalPaidByMethod = make(map[string]float64)
 			if globalPaidByMethodRaw != nil {
 				for method, amount := range globalPaidByMethodRaw {
@@ -564,19 +600,23 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 					}
 				}
 			}
-  			return nil
+			return nil
 		})
 		// Today Profit Components
 		g.Go(func() error {
 			var err error
 			todayExpenses, err = s.expenseRepo.GetPaidAmountByRange(shiftStartDate, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error TodayExpenses (Shift): %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error TodayExpenses (Shift): %v", err)
+			}
 			return nil
 		})
 		g.Go(func() error {
 			var err error
 			todayReturns, err = s.returnRepo.GetTotalReturnedByRange(shiftStartDate, nowUTC)
-			if err != nil { log.Printf("â Œ [Dashboard] Error TodayReturns (Shift): %v", err) }
+			if err != nil {
+				log.Printf("â Œ [Dashboard] Error TodayReturns (Shift): %v", err)
+			}
 			return nil
 		})
 
@@ -590,8 +630,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		})
 		// Financial Stats V5.5
 
-		// Wait for all to finish, ignoring errors since we handle them inside
-		_ = g.Wait()
+		if err := g.Wait(); err != nil {
+			return nil, fmt.Errorf("calculando dashboard: %w", err)
+		}
 
 		// 2. UTILIDAD Y COGS (COSTE DE VENTAS)
 		var totalCOGS, monthlyExpenses float64
@@ -606,13 +647,24 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			// Si el usuario filtró por fechas, respetamos la fecha consultada (todaySalesAmount que viene de dayStart y nowUTC)
 			totalSalesAmount = todaySalesAmount
 			// Recalculamos COGS y Gastos dinámicamente para el rango consultado
-			totalCOGS, _ = s.saleRepo.GetCOGSByRange(dayStart, nowUTC)
-			monthlyExpenses, _ = s.expenseRepo.GetPaidAmountByRange(dayStart, nowUTC)
+			totalCOGS, err = s.saleRepo.GetCOGSByRange(dayStart, nowUTC)
+			if err != nil {
+				return nil, fmt.Errorf("calculando COGS del rango: %w", err)
+			}
+			monthlyExpenses, err = s.expenseRepo.GetPaidAmountByRange(dayStart, nowUTC)
+			if err != nil {
+				return nil, fmt.Errorf("calculando egresos del rango: %w", err)
+			}
 			// Products Sold viene de todaySalesCount (o podemos dejar totalProductsSold en 0 temporalmente)
 			totalProductsSold = 0
 		}
 
-		estimatedNetProfit := totalSalesAmount - totalCOGS - monthlyExpenses
+		// El COGS y los gastos vienen de la vista materializada, que mide las
+		// ventas REGISTRADAS EN EL POS. Se guarda esa base aparte para calcular
+		// el ratio de costo sobre la misma población que produjo el COGS.
+		posSalesBase := totalSalesAmount
+
+		totalExpensesAmount = monthlyExpenses
 		todayExpensesByMethod := make(map[string]float64)
 		for _, e := range todayExpensesRaw {
 			status := strings.ToUpper(e.Status)
@@ -631,7 +683,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 					}
 				} else {
 					method := strings.ToUpper(e.PaymentSource)
-					if method == "CAJA" { method = "EFECTIVO" }
+					if method == "CAJA" {
+						method = "EFECTIVO"
+					}
 					todayExpensesByMethod[method] += (e.Amount + e.TaxAmount)
 				}
 			}
@@ -653,7 +707,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 					}
 				} else {
 					method := strings.ToUpper(e.PaymentSource)
-					if method == "CAJA" { method = "EFECTIVO" }
+					if method == "CAJA" {
+						method = "EFECTIVO"
+					}
 					dayExpensesByMethod[method] += (e.Amount + e.TaxAmount)
 				}
 			}
@@ -669,7 +725,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			}
 			if p.AmountTransfer > 0 {
 				method := strings.ToUpper(p.TransferSource)
-				if method == "" { method = "NEQUI" }
+				if method == "" {
+					method = "NEQUI"
+				}
 				todayCollectedByMethod[method] += p.AmountTransfer
 			}
 		}
@@ -681,7 +739,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			}
 			if p.AmountTransfer > 0 {
 				method := strings.ToUpper(p.TransferSource)
-				if method == "" { method = "NEQUI" }
+				if method == "" {
+					method = "NEQUI"
+				}
 				dayCollectedByMethod[method] += p.AmountTransfer
 			}
 		}
@@ -700,38 +760,29 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			normalizedShiftSales["FIADO"] = shiftClosure.TotalCreditIssued
 			normalizedShiftSales["TRANSFERENCIA"] = shiftClosure.TotalTransfer
 			normalizedShiftSales["MIXTO"] = shiftClosure.TotalMixed
-		
+
 			shiftSalesAmount = shiftClosure.TotalSales
 			shiftExpensesCount = int64(len(shiftClosure.Expenses))
 			shiftExpensesAmount = shiftClosure.TotalExpenses
 		}
-	
+
 		// Reconstruir mapas históricos iterando los cierres reales para la Venta Real
 		salesByMonth = make(map[string]float64)
 		dailySalesMap = make(map[string]float64)
 		allClosures, _ := s.GetClosuresHistory()
-		for _, c := range allClosures {
-			if !c.EndDate.IsZero() {
-				monthStr := c.EndDate.In(loc).Format("2006-01")
-				cDigital := c.TotalNequi + c.TotalDaviplata + c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
-				cExp := c.Expenses
-				if len(cExp) == 0 && c.ExpensesDetail != "" {
-					_ = json.Unmarshal([]byte(c.ExpensesDetail), &cExp)
-				}
-				cEgCaja := 0.0
-				for _, e := range cExp {
-					cash, _, _, _ := parseExpenseChannels(&e)
-					cEgCaja += cash
-				}
-				cVentasCajero := c.PhysicalCash + cDigital + cEgCaja + c.TotalReturns
-				if cVentasCajero == 0 {
-					cVentasCajero = c.TotalSales
-				}
-				salesByMonth[monthStr] += cVentasCajero
-				
-				dayStr := c.EndDate.In(loc).Format("2006-01-02")
-				dailySalesMap[dayStr] += cVentasCajero
+		for i := range allClosures {
+			c := &allClosures[i]
+			if c.EndDate.IsZero() {
+				continue
 			}
+			// FUENTE ÚNICA: la misma función que alimenta la columna
+			// "VENTAS TOTALES" del historial de cierres en /reports.
+			cVentasCajero := ComputeClosureMetrics(c).VentasCajero
+			if cVentasCajero == 0 {
+				cVentasCajero = c.TotalSales
+			}
+			salesByMonth[c.EndDate.In(loc).Format("2006-01")] += cVentasCajero
+			dailySalesMap[c.EndDate.In(loc).Format("2006-01-02")] += cVentasCajero
 		}
 
 		expensesByMonth = make(map[string]float64)
@@ -756,14 +807,29 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			totalSalesAmount = salesByMonth[currentMonthStr]
 		}
 
+		// La UTILIDAD se calcula AQUÍ, después de que totalSalesAmount quedó en
+		// su valor definitivo (la venta auditada de los cierres).
+		//
+		// Antes se calculaba 137 líneas más arriba, con la cifra de la vista
+		// materializada, que en los cierres editados incluye los egresos del
+		// FONDO dentro de las ventas. O sea el recibo de luz inflaba la ganancia.
+		//
+		// totalExpensesAmount se declaraba y NUNCA se asignaba, así que la
+		// tarjeta de Gastos salía en $0 y Profit quedaba igual a las ventas.
+		estimatedNetProfit := totalSalesAmount - totalCOGS - monthlyExpenses
+
 		for _, trend := range mvTrend {
 			expensesByMonth[trend.MonthYear] = trend.TotalExpenses
 			profitByMonth[trend.MonthYear] = salesByMonth[trend.MonthYear] - trend.TotalExpenses
 		}
 		// ReconciliaciÃ³n Global
 		var globalSalesTotal, globalCollected float64
-		for _, v := range globalSalesByMethod { globalSalesTotal += v }
-		for _, v := range globalCollectedByMethod { globalCollected += v }
+		for _, v := range globalSalesByMethod {
+			globalSalesTotal += v
+		}
+		for _, v := range globalCollectedByMethod {
+			globalCollected += v
+		}
 
 		// Reconstruir salesByPayment desde MVStats (Mes Actual)
 		salesByPayment = make(map[string]float64)
@@ -784,9 +850,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			minStock := int(p.MinStock)
 			threshold := GetCriticalThreshold(minStock)
 			warningThreshold := int(math.Ceil(float64(minStock) * 0.50))
-			
+
 			if int(p.Quantity) == -1 {
-			    continue
+				continue
 			}
 			if int(p.Quantity) <= threshold {
 				criticalCount++
@@ -807,17 +873,19 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		recentSales := []map[string]interface{}{}
 		for _, sale := range recentSalesRaw {
 			clientName := "Consumidor Final"
-			if sale.Client.Name != "" { clientName = sale.Client.Name }
+			if sale.Client.Name != "" {
+				clientName = sale.Client.Name
+			}
 			recentSales = append(recentSales, map[string]interface{}{
-				"id": sale.SaleID, 
-				"total": sale.TotalAmount, 
-				"date": sale.SaleDate.Format(time.RFC3339), 
-				"client": clientName, 
-				"payment_method": sale.PaymentMethod,
+				"id":              sale.SaleID,
+				"total":           sale.TotalAmount,
+				"date":            sale.SaleDate.Format(time.RFC3339),
+				"client":          clientName,
+				"payment_method":  sale.PaymentMethod,
 				"transfer_source": sale.TransferSource,
-				"cash_amount": sale.CashAmount,
+				"cash_amount":     sale.CashAmount,
 				"transfer_amount": sale.TransferAmount,
-				"credit_amount": sale.CreditAmount,
+				"credit_amount":   sale.CreditAmount,
 			})
 		}
 		if len(recentSales) > 18 {
@@ -825,24 +893,82 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		}
 
 		dailySalesLast7 := []DailyPoint{}
+		// Las claves de dailySalesMap se escriben en hora Colombia
+		// (c.EndDate.In(loc)), así que hay que LEERLAS en hora Colombia.
+		// Con time.Now().UTC() el gráfico pedía la clave de mañana a partir de
+		// las 19:00 y el día en curso aparecía en $0.
 		for i := 6; i >= 0; i-- {
-			d := now.AddDate(0, 0, -i)
-			dStr := d.Format("2006-01-02")
+			dStr := nowLocal.AddDate(0, 0, -i).Format("2006-01-02")
 			dailySalesLast7 = append(dailySalesLast7, DailyPoint{Date: dStr, Amount: dailySalesMap[dStr]})
 		}
 
 		totalReports, _ := s.reportRepo.Count()
 
-		// CALCULOS HOTFIX DE PUNTO CERO
-		baseEfectivo := 0.0
+		// CALCULOS DE BOVEDA Y FONDO CON PUNTO DE PARTIDA MAESTRO
+		// Base fija acordada: Efectivo Billetes = $1.050.000, Monedas 500/1000 = $91.500
+		baseBilletesInicial := 1050000.0
+		baseMonedas1000Inicial := 91500.0
+		baseMonedas200Inicial := 0.0
+		baseMonedas100Inicial := 0.0
 
-		if lastClosure != nil {
-			baseEfectivo = lastClosure.PhysicalCash
+		// Fecha de corte del punto de partida maestro (8 de Agosto de 2026, 22:00)
+		baselineDate := time.Date(2026, time.August, 8, 22, 0, 0, 0, loc)
+
+		// Acumular solo los cierres nuevos realizados POSTERIORMENTE al punto de partida.
+		// Se reutiliza allClosures, que ya se cargó arriba: antes se volvía a
+		// llamar closureRepo.GetAll(), trayendo todo el historial dos veces por
+		// cada carga del dashboard.
+		var newPhysicalCash, newCoins1000, newCoins200, newCoins100 float64
+		for _, c := range allClosures {
+			closureTime := c.EndDate
+			if closureTime.IsZero() {
+				closureTime = c.Date
+			}
+			if closureTime.After(baselineDate) {
+				cCoins1000 := c.Coins1000 + c.Coins500
+				cCoins200 := c.Coins200
+				cCoins100 := c.Coins100
+				cCoinsTotal := cCoins1000 + cCoins200 + cCoins100
+
+				cCashBills := c.PhysicalCash - cCoinsTotal
+				if cCashBills < 0 {
+					cCashBills = 0
+				}
+
+				newPhysicalCash += cCashBills
+				newCoins1000 += cCoins1000
+				newCoins200 += cCoins200
+				newCoins100 += cCoins100
+			}
 		}
 
+		// Acumular solo los egresos de FONDO y MONEDAS nuevos realizados POSTERIORMENTE al punto de partida
+		var newFundExpenses, newCoinsExpenses float64
+		fondoExpensesMap, err := s.expenseRepo.GetGlobalPaidExpensesByMethodInRange(baselineDate, nowUTC)
+		if err == nil {
+			newFundExpenses = fondoExpensesMap["FONDO"]
+			newCoinsExpenses = fondoExpensesMap["MONEDAS"] + fondoExpensesMap["ALCANCIA"]
+		}
+
+		// SIN PISO A CERO. Si la cuenta da negativo hay que mostrarlo: significa
+		// que el sistema cree que salió más plata de la bóveda de la que entró,
+		// y eso solo puede pasar por dos razones reales:
+		//   - Salió efectivo de la bóveda registrado en otro canal (una
+		//     consignación al banco, o un egreso marcado como CAJA).
+		//   - Un egreso quedó mal clasificado.
+		//
+		// Taparlo con un $0 hacía imposible distinguir "la bóveda está vacía" de
+		// "las cuentas no cuadran".
+		bovedaBilletes := baseBilletesInicial + newPhysicalCash - newFundExpenses
+
+		totalCoins1000 := baseMonedas1000Inicial + newCoins1000 - newCoinsExpenses
+		totalCoins200 := baseMonedas200Inicial + newCoins200
+		totalCoins100 := baseMonedas100Inicial + newCoins100
+		totalMonedasAcumuladas := totalCoins1000 + totalCoins200 + totalCoins100
+
+		bovedaFisicaAcumulada := bovedaBilletes + totalMonedasAcumuladas
 		saldoNequiReal := globalSalesByMethod["NEQUI"] + globalCollectedByMethod["NEQUI"] - globalPaidByMethod["NEQUI"]
 		saldoDaviplataReal := globalSalesByMethod["DAVIPLATA"] + globalCollectedByMethod["DAVIPLATA"] - globalPaidByMethod["DAVIPLATA"]
-		bovedaFisicaAcumulada := globalReportedByMethod["EFECTIVO"] - globalPaidByMethod["FONDO"]
 
 		result := DashboardOverview{
 			TotalSalesAmount:    totalSalesAmount,
@@ -875,7 +1001,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			MissingItems:          missingItems,
 			SavingsOpportunities:  savingsOpportunities,
 			RealCashFlow: CashFlowSummary{
-				Cash:      baseEfectivo, // Efectivo Operativo de Caja (Aislado de la sumatoria global)
+				Cash:      bovedaBilletes, // Efectivo Operativo de Bóveda
 				Nequi:     saldoNequiReal,
 				Daviplata: saldoDaviplataReal,
 			},
@@ -893,24 +1019,36 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				Nequi:     normalizedSales["NEQUI"] + dayCollectedByMethod["NEQUI"] - dayExpensesByMethod["NEQUI"],
 				Daviplata: normalizedSales["DAVIPLATA"] + dayCollectedByMethod["DAVIPLATA"] - dayExpensesByMethod["DAVIPLATA"],
 			},
-			// CÃ LCULO DE SALDOS (BÃ³veda Estricta y RestauraciÃ³n Digital)
-			VaultBalance:     bovedaFisicaAcumulada,
-		
-			SystemBalance:    baseEfectivo + bovedaFisicaAcumulada,
-		
+			// CÁLCULO DE SALDOS (Bóveda Estricta y Restauración Digital)
+			VaultBalance: bovedaBilletes,
+			CoinsSavings: totalMonedasAcumuladas,
+			BillsBalance: bovedaBilletes,
+
+			SystemBalance: bovedaFisicaAcumulada,
+
 			GlobalDifference: (globalHistoricalReal - globalPaidByMethod["FONDO"]) - (globalHistoricalExpected - globalPaidByMethod["FONDO"]),
-		
-			ReportedBalance:  bovedaFisicaAcumulada,
-		
-			VaultExpenses:    shiftFundExpenses,
-			TotalExpensesPaid:    globalExpenses,
-			TotalCashExpensesPaid: globalPaidByMethod["EFECTIVO"],
+
+			ReportedBalance: bovedaFisicaAcumulada,
+
+			VaultExpenses:            shiftFundExpenses,
+			TotalExpensesPaid:        globalExpenses,
+			TotalCashExpensesPaid:    globalPaidByMethod["EFECTIVO"],
 			GlobalHistoricalExpected: globalHistoricalExpected - globalPaidByMethod["FONDO"],
 			GlobalHistoricalReal:     globalHistoricalReal - globalPaidByMethod["FONDO"],
-		
-			ShiftEfectivoFisico:      (func() float64 { if shiftClosure != nil { return shiftClosure.ExpectedCash }; return 0 })(),
-			ShiftIngresosDigitales:   (func() float64 { if shiftClosure != nil { return shiftClosure.TotalNequi + shiftClosure.TotalDaviplata + shiftClosure.TotalBancolombia + shiftClosure.TotalCard + shiftClosure.TotalOtherTransfer }; return 0 })(),
-			ShiftEgresosEfectivo:     (func() float64 {
+
+			ShiftEfectivoFisico: (func() float64 {
+				if shiftClosure != nil {
+					return shiftClosure.ExpectedCash
+				}
+				return 0
+			})(),
+			ShiftIngresosDigitales: (func() float64 {
+				if shiftClosure != nil {
+					return shiftClosure.TotalNequi + shiftClosure.TotalDaviplata + shiftClosure.TotalBancolombia + shiftClosure.TotalCard + shiftClosure.TotalOtherTransfer
+				}
+				return 0
+			})(),
+			ShiftEgresosEfectivo: (func() float64 {
 				total := 0.0
 				if shiftClosure != nil {
 					for _, e := range shiftClosure.Expenses {
@@ -929,19 +1067,31 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				return 0
 			})(),
 			TotalLiquidity: bovedaFisicaAcumulada + saldoNequiReal + saldoDaviplataReal,
-		
+
 			EstimatedNetProfit:   estimatedNetProfit,
 			InventoryCostValue:   inventoryCostValue,
 			InventoryRetailValue: inventoryRetailValue,
-			TodayNetProfit:       (todaySalesAmount - (func() float64 { if totalSalesAmount > 0 { return (totalCOGS / totalSalesAmount) * todaySalesAmount }; return 0 }())) - (todayExpenses - todayExpensesByMethod["FONDO"]),
-			Coins100:             globalCoins["100"],
-			Coins200:             globalCoins["200"],
-			Coins500:             globalCoins["500"],
-			Coins1000:            globalCoins["1000"],
+			TodayNetProfit: (todaySalesAmount - (func() float64 {
+				if posSalesBase > 0 {
+					return (totalCOGS / posSalesBase) * todaySalesAmount
+				}
+				return 0
+			}())) - (todayExpenses - todayExpensesByMethod["FONDO"]),
+			Coins100:  totalCoins100,
+			Coins200:  totalCoins200,
+			Coins500:  0,
+			Coins1000: totalCoins1000,
 		}
 
-		// Actualizar CachÃ© L1 con 1 hora de TTL
-		cache.CacheManager.Set(cache.CacheKeyDashboardOverview, &result, 1*time.Hour)
+		// El sistema opera en pesos colombianos: no existen centavos. Los
+		// decimales que aparecían en el dashboard ($35.890.820,78) venían de
+		// acumular float64 sobre miles de operaciones. Se redondea al salir.
+		roundOverviewMoney(&result)
+
+		// TTL corto: el dashboard debe sentirse en vivo. Cualquier venta, cierre
+		// o egreso invalida la caché de inmediato, así que este vencimiento solo
+		// protege contra ráfagas de peticiones idénticas.
+		cache.CacheManager.Set(cacheKey, &result, 20*time.Second)
 
 		return &result, nil
 	})
@@ -960,13 +1110,13 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 			var newExpenses []models.Expense
 			b, _ := json.Marshal(forgotten)
 			json.Unmarshal(b, &newExpenses)
-			
+
 			// Load existing expenses from the closure
 			var existingExpenses []models.Expense
 			if closure.ExpensesDetail != "" {
 				json.Unmarshal([]byte(closure.ExpensesDetail), &existingExpenses)
 			}
-			
+
 			for _, exp := range newExpenses {
 				if exp.Amount > 0 {
 					exp.Date = closure.Date
@@ -977,7 +1127,7 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 				}
 			}
 			delete(updates, "forgotten_expenses")
-			
+
 		}
 
 		// ALWAYS refresh expenses detail to capture any out-of-band expense creations
@@ -986,7 +1136,10 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 		for i := range expenses {
 			e := &expenses[i]
 			if e.Status == "PENDING" {
-				e.CashAmount = 0; e.NequiAmount = 0; e.DaviplataAmount = 0; e.FondoAmount = 0
+				e.CashAmount = 0
+				e.NequiAmount = 0
+				e.DaviplataAmount = 0
+				e.FondoAmount = 0
 				continue
 			}
 			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
@@ -1017,15 +1170,11 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 			updates["expenses_detail"] = "[]"
 		}
 
-		// Recalcular montos consolidados (total_sales, expected_cash, difference) para mantener consistencia
-		egresosEfectivo := 0.0
-		egresosGlobales := 0.0
-		for _, e := range expenses {
-			if e.Status != "PENDING" && strings.ToUpper(e.Category) != "DEVOLUCIONES" {
-				egresosEfectivo += e.CashAmount
-				egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-			}
-		}
+		// FUENTE ÚNICA del arqueo: ComputeClosureMetrics sobre los egresos ya
+		// normalizados. Antes este bloque tenía su propia suma inline.
+		snapshot := *closure
+		snapshot.Expenses = expenses
+		snapshot.ExpensesDetail = ""
 
 		physicalCash := closure.PhysicalCash
 		if pc, ok := updates["physical_cash"]; ok {
@@ -1036,6 +1185,11 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 				physicalCash = float64(v)
 			}
 		}
+		snapshot.PhysicalCash = physicalCash
+
+		m := ComputeClosureMetrics(&snapshot)
+		egresosEfectivo := m.EgresosCaja
+		physicalCash = m.PhysicalCash
 
 		// Recalcular ventas reales del turno desde las ventas grabadas en BD
 		salesInPeriod, _ := s.saleRepo.GetByDateRangeWithoutDetails(closure.StartDate, closure.EndDate)
@@ -1044,9 +1198,13 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 			status := strings.ToUpper(sale.Status)
 			if status == "PAID" || status == "CREDIT" {
 				netCash := sale.CashAmount - sale.Change
-				if netCash < 0 { netCash = 0 }
+				if netCash < 0 {
+					netCash = 0
+				}
 				cleanTransfer := sale.TransferAmount
-				if cleanTransfer < 0 { cleanTransfer = 0 }
+				if cleanTransfer < 0 {
+					cleanTransfer = 0
+				}
 				realTotalSales += (netCash + cleanTransfer)
 			}
 		}
@@ -1055,10 +1213,16 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 			realTotalSales += p.TotalPaid
 		}
 
+		// MATEMÁTICA REAL, SIN PISO A CERO.
+		//
+		// Si en un turno los egresos superan las ventas registradas en el POS
+		// (típico al vender productos sin código de barras y pagar gastos con
+		// ese dinero), el esperado da NEGATIVO. Eso es correcto y hay que
+		// mostrarlo: forzarlo a $0 escondía el sobrante real del cajero.
+		//
+		// Ejemplo real del cierre #158: esperado -$72.780 con $16.500 contados
+		// da un sobrante de +$89.280, no de +$16.500.
 		expectedCash := closure.OpeningCash + closure.TotalCash - egresosEfectivo - closure.TotalReturns
-		if expectedCash <= 0 && closure.ExpectedCash > 0 {
-			expectedCash = closure.ExpectedCash
-		}
 		diferencia := physicalCash - expectedCash
 
 		if realTotalSales > 0 {
@@ -1068,11 +1232,15 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 		}
 		updates["expected_cash"] = expectedCash
 		updates["difference"] = diferencia
-		updates["total_expenses"] = egresosGlobales
+		// total_expenses es la columna de EGRESOS EN EFECTIVO. Antes aquí se
+		// escribía el total global (efectivo + nequi + davi + FONDO), y como la
+		// vista materializada del mes la suma dentro de las ventas, el recibo de
+		// luz pagado del fondo terminaba contando como venta.
+		updates["total_expenses"] = egresosEfectivo
 	}
 	err = s.closureRepo.Update(id, updates)
 	if err == nil {
-		cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+		cache.InvalidateDashboard()
 	}
 	return err
 }
@@ -1151,7 +1319,7 @@ func (s *DashboardService) calculateTopProductsFromSales(sales []models.Sale) []
 func (s *DashboardService) AdjustInitialBalance(cash, nequi, daviplata float64, employeeName string, employeeDNI string) error {
 	// Round down to avoid "monedas" (if they input decimals or exact coins, we assume they only care about bills/thousands)
 	// Actually, just save the exact float they pass, the UI can handle rounding, but we will ensure it's clean.
-	
+
 	activeShift, err := s.shiftRepo.GetActive()
 	if err != nil || activeShift == nil {
 		activeShift = &models.ActiveShift{
@@ -1176,7 +1344,7 @@ func (s *DashboardService) AdjustInitialBalance(cash, nequi, daviplata float64, 
 	}
 
 	// Invalidar caché
-	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
 
 	log.Printf("📊 [AdjustInitialBalance] Fondo inicial ajustado en Turno Activo. Cash: %f, Nequi: %f, Davi: %f", cash, nequi, daviplata)
 	return nil
@@ -1225,19 +1393,25 @@ type CashierClosure struct {
 }
 
 func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
-	activeShift, _ := s.shiftRepo.GetActive()
-	
+	activeShift, err := s.shiftRepo.GetActive()
+	if err != nil {
+		return nil, fmt.Errorf("obteniendo turno activo: %w", err)
+	}
+
 	loc := time.FixedZone("America/Bogota", -5*60*60)
 	nowLocal := time.Now().In(loc)
-	
+
 	var startDate time.Time
 	var lastClosure *models.CashierClosure
 
-	lastClosure, _ = s.closureRepo.GetLast()
+	lastClosure, err = s.closureRepo.GetLast()
+	if err != nil {
+		return nil, fmt.Errorf("obteniendo último cierre: %w", err)
+	}
 	openingCash := 0.0
 	openingNequi := 0.0
 	openingDaviplata := 0.0
-	
+
 	if activeShift != nil {
 		// Si hay un turno abierto manualmente, la fecha de inicio y el saldo son los de ese turno
 		startDate = activeShift.StartTime
@@ -1293,7 +1467,7 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 	var closure CashierClosure
 	loc = time.FixedZone("America/Bogota", -5*60*60)
-	
+
 	// Determinar el día mayoritario de las transacciones (Ventas + Egresos)
 	dateCounts := make(map[string]int)
 	for _, sale := range sales {
@@ -1331,14 +1505,20 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	creditsIssuedMap := make(map[string]models.Sale)
 	for _, sale := range sales {
 		status := strings.ToUpper(sale.Status)
-		if (status == "PAID" || status == "CREDIT") {
+		if status == "PAID" || status == "CREDIT" {
 			closure.SalesCount++
 			netCashInSale := sale.CashAmount - sale.Change
-			if netCashInSale < 0 { netCashInSale = 0 }
+			if netCashInSale < 0 {
+				netCashInSale = 0
+			}
 			cleanTransfer := sale.TransferAmount
-			if cleanTransfer < 0 { cleanTransfer = 0 }
+			if cleanTransfer < 0 {
+				cleanTransfer = 0
+			}
 			cleanCredit := sale.CreditAmount
-			if cleanCredit < 0 { cleanCredit = 0 }
+			if cleanCredit < 0 {
+				cleanCredit = 0
+			}
 
 			// TotalSales se calculará al final según las reglas del usuario
 			closure.TotalCash += netCashInSale
@@ -1347,9 +1527,15 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 			// Si la venta tiene mÃ¡s de un medio de pago, es MIXTA
 			methodsCount := 0
-			if netCashInSale > 0 { methodsCount++ }
-			if cleanTransfer > 0 { methodsCount++ }
-			if cleanCredit > 0 { methodsCount++ }
+			if netCashInSale > 0 {
+				methodsCount++
+			}
+			if cleanTransfer > 0 {
+				methodsCount++
+			}
+			if cleanCredit > 0 {
+				methodsCount++
+			}
 			if methodsCount > 1 {
 				closure.TotalMixed += (netCashInSale + cleanTransfer + cleanCredit)
 			}
@@ -1366,11 +1552,16 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 			if sale.TransferAmount > 0 {
 				switch strings.ToUpper(sale.TransferSource) {
-				case "NEQUI": closure.TotalNequi += sale.TransferAmount
-				case "DAVIPLATA": closure.TotalDaviplata += sale.TransferAmount
-				case "BANCOLOMBIA": closure.TotalBancolombia += sale.TransferAmount
-				case "TARJETA": closure.TotalCard += sale.TransferAmount
-				default: closure.TotalOtherTransfer += sale.TransferAmount
+				case "NEQUI":
+					closure.TotalNequi += sale.TransferAmount
+				case "DAVIPLATA":
+					closure.TotalDaviplata += sale.TransferAmount
+				case "BANCOLOMBIA":
+					closure.TotalBancolombia += sale.TransferAmount
+				case "TARJETA":
+					closure.TotalCard += sale.TransferAmount
+				default:
+					closure.TotalOtherTransfer += sale.TransferAmount
 				}
 			}
 		}
@@ -1397,11 +1588,16 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 
 		if p.AmountTransfer > 0 {
 			switch strings.ToUpper(p.TransferSource) {
-			case "NEQUI": closure.TotalNequi += p.AmountTransfer
-			case "DAVIPLATA": closure.TotalDaviplata += p.AmountTransfer
-			case "BANCOLOMBIA": closure.TotalBancolombia += p.AmountTransfer
-			case "TARJETA": closure.TotalCard += p.AmountTransfer
-			default: closure.TotalOtherTransfer += p.AmountTransfer
+			case "NEQUI":
+				closure.TotalNequi += p.AmountTransfer
+			case "DAVIPLATA":
+				closure.TotalDaviplata += p.AmountTransfer
+			case "BANCOLOMBIA":
+				closure.TotalBancolombia += p.AmountTransfer
+			case "TARJETA":
+				closure.TotalCard += p.AmountTransfer
+			default:
+				closure.TotalOtherTransfer += p.AmountTransfer
 			}
 		}
 	}
@@ -1418,34 +1614,28 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 		}
 	}
 
-	for _, expense := range expenses {
-		if strings.ToUpper(expense.Status) != "PENDING" {
-			closure.TotalExpenses += (expense.Amount + expense.TaxAmount)
+	// TotalExpenses = solo egresos en EFECTIVO (para cuadre de caja física).
+	// Los egresos de FONDO/NEQUI/DIGITAL no salen de la gaveta.
+	//
+	// FUENTE ÚNICA: parseExpenseChannels, la misma clasificación que usan el
+	// historial, el dashboard y los reportes. Antes aquí había dos parseos
+	// distintos, y ninguno excluía la categoría DEVOLUCIONES, así que las
+	// devoluciones se restaban dos veces del efectivo esperado.
+	var cashExpenses float64
+	for i := range expenses {
+		expense := expenses[i]
+		cash, _, _, _ := parseExpenseChannels(&expense)
+		if !strings.EqualFold(strings.TrimSpace(expense.Category), "DEVOLUCIONES") {
+			cashExpenses += cash
 		}
 		closure.Expenses = append(closure.Expenses, expense)
 	}
+	closure.TotalExpenses = cashExpenses
 
 	// Regla del usuario: Ventas Totales = Efectivo (Caja) + Transferencias (Los abonos ya están sumados en TotalCash y TotalTransfer)
 	closure.TotalSales = closure.TotalCash + closure.TotalTransfer
 
 	closure.NetBalance = closure.TotalSales - closure.TotalReturns - closure.TotalExpenses
-
-	
-  	var cashExpenses float64
-  	for _, e := range expenses {
-  		if strings.ToUpper(e.Status) != "PENDING" {
-			// Preferir la columna CashAmount (precisa) sobre el parseo de PaymentSource (propenso a errores)
-			if e.CashAmount > 0 {
-				cashExpenses += e.CashAmount
-			} else if e.CashAmount == 0 && e.NequiAmount == 0 && e.DaviplataAmount == 0 && e.FondoAmount == 0 {
-				// Legacy: no tiene montos por canal, revisar PaymentSource
-				src := strings.ToUpper(e.PaymentSource)
-				if src == "EFECTIVO" || src == "CAJA" || src == "" {
-					cashExpenses += (e.Amount + e.TaxAmount)
-				}
-			}
-  		}
-  	}
 
 	var cashReturns float64
 	for _, ret := range returns {
@@ -1465,94 +1655,139 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 }
 
 func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error {
-	// 0. Persistir egresos nuevos (manuales) en la base de datos
-	for i := range closureDTO.Expenses {
-		if closureDTO.Expenses[i].ID == 0 {
-			// Es un egreso manual del cierre, lo guardamos permanentemente
-			if closureDTO.Expenses[i].Date.IsZero() {
-				closureDTO.Expenses[i].Date = time.Now()
-			}
-			closureDTO.Expenses[i].CreatedByDNI = closureDTO.ClosedByDNI
-			_ = s.expenseRepo.Save(&closureDTO.Expenses[i])
-		}
-	}
-
-	// 0.1 Serializar gastos detallados si existen
-	if len(closureDTO.Expenses) > 0 {
-		// Normalizar montos por canal antes de serializar
+	now := time.Now()
+	err := s.closureRepo.Transaction(func(tx interface{}) error {
 		for i := range closureDTO.Expenses {
-			e := &closureDTO.Expenses[i]
-			if e.Status == "PENDING" { continue }
-			src := strings.ToUpper(e.PaymentSource)
-			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-			if sum == 0 {
-				tot := e.Amount + e.TaxAmount
-				if strings.Contains(src, "/") || strings.Contains(src, ":") {
-					parts := strings.Split(src, "/")
-					for _, part := range parts {
-						p := strings.TrimSpace(part)
-						var val float64
-						if idx := strings.Index(p, "$"); idx != -1 {
-							cleanStr := strings.ReplaceAll(p[idx+1:], ".", "")
-							cleanStr = strings.ReplaceAll(cleanStr, ",", ".")
-							cleanStr = strings.TrimSpace(cleanStr)
-							var num float64
-							if _, err := fmt.Sscanf(cleanStr, "%f", &num); err == nil {
-								val = num
-							}
-						}
-						if val == 0 {
-							val = tot
-						}
-
-						if strings.Contains(p, "NEQUI") {
-							e.NequiAmount += val
-						} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
-							e.DaviplataAmount += val
-						} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND") {
-							e.FondoAmount += val
-						} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") {
-							e.CashAmount += val
-						}
-					}
-				} else if strings.Contains(src, "NEQUI") {
-					e.NequiAmount = tot
-				} else if strings.Contains(src, "DAVIPLATA") || strings.Contains(src, "DAVI") {
-					e.DaviplataAmount = tot
-				} else if strings.Contains(src, "FONDO") || strings.Contains(src, "BOVEDA") || strings.Contains(src, "BÓVEDA") || strings.Contains(src, "FOND") {
-					e.FondoAmount = tot
-				} else if strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") {
-					// Debt - 0 cash/digital
-				} else {
-					e.CashAmount = tot
-				}
+			expense := &closureDTO.Expenses[i]
+			if expense.ID != 0 {
+				continue
+			}
+			if expense.Date.IsZero() {
+				expense.Date = now
+			}
+			expense.CreatedByDNI = closureDTO.ClosedByDNI
+			if err := s.expenseRepo.SaveWithTx(tx, expense); err != nil {
+				return fmt.Errorf("guardando egreso manual del cierre: %w", err)
 			}
 		}
-		expensesJSON, _ := json.Marshal(closureDTO.Expenses)
-		closureDTO.ExpensesDetail = string(expensesJSON)
-	}
 
-	// 1. Save the history closure
-	err := s.closureRepo.Save(closureDTO)
+		if err := normalizeClosureExpenses(closureDTO.Expenses); err != nil {
+			return err
+		}
+		if len(closureDTO.Expenses) > 0 {
+			expensesJSON, err := json.Marshal(closureDTO.Expenses)
+			if err != nil {
+				return fmt.Errorf("serializando egresos del cierre: %w", err)
+			}
+			closureDTO.ExpensesDetail = string(expensesJSON)
+		}
+		if err := applyCashBreakdown(closureDTO); err != nil {
+			return err
+		}
+
+		metrics := ComputeClosureMetrics(closureDTO)
+		closureDTO.TotalExpenses = metrics.EgresosCaja
+		closureDTO.ExpectedCash = closureDTO.OpeningCash + closureDTO.TotalCash - metrics.EgresosCaja - closureDTO.TotalReturns
+		closureDTO.Difference = metrics.PhysicalCash - closureDTO.ExpectedCash
+
+		if err := s.closureRepo.SaveWithTx(tx, closureDTO); err != nil {
+			return fmt.Errorf("guardando cierre: %w", err)
+		}
+		if err := s.shiftRepo.CloseActiveWithTx(tx); err != nil {
+			return fmt.Errorf("cerrando turno activo: %w", err)
+		}
+		newShift := &models.ActiveShift{
+			StartTime:   now,
+			OpeningCash: 0,
+			CashierDNI:  closureDTO.ClosedByDNI,
+			CashierName: closureDTO.ClosedByName,
+			Status:      "OPEN",
+		}
+		if err := s.shiftRepo.SaveWithTx(tx, newShift); err != nil {
+			return fmt.Errorf("abriendo siguiente turno: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
+	cache.InvalidateDashboard()
+	return nil
+}
 
-	// INVALIDAR CACHÉ DEL DASHBOARD PARA ACTUALIZAR BOVEDA INMEDIATAMENTE
-	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
-
-	// 2. Close the active shift
-	_ = s.shiftRepo.CloseActive()
-
-	// 3. Automatically open a new shift
-	newShift := &models.ActiveShift{
-		StartTime:   time.Now(),
-		OpeningCash: 0,
-		CashierDNI:  closureDTO.ClosedByDNI,
-		CashierName: closureDTO.ClosedByName,
-		Status:      "OPEN",
+func normalizeClosureExpenses(expenses []models.Expense) error {
+	for i := range expenses {
+		expense := &expenses[i]
+		if strings.EqualFold(expense.Status, "PENDING") {
+			continue
+		}
+		if expense.CashAmount+expense.NequiAmount+expense.DaviplataAmount+expense.FondoAmount != 0 {
+			continue
+		}
+		total := expense.Amount + expense.TaxAmount
+		source := strings.ToUpper(expense.PaymentSource)
+		if strings.Contains(source, "/") || strings.Contains(source, ":") {
+			for _, part := range strings.Split(source, "/") {
+				part = strings.TrimSpace(part)
+				value := total
+				if index := strings.Index(part, "$"); index >= 0 {
+					clean := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(part[index+1:], ".", ""), ",", "."))
+					parsed, err := strconv.ParseFloat(clean, 64)
+					if err != nil {
+						return fmt.Errorf("monto inválido en canal de egreso %q: %w", part, err)
+					}
+					value = parsed
+				}
+				assignExpenseChannel(expense, part, value)
+			}
+			continue
+		}
+		assignExpenseChannel(expense, source, total)
 	}
-	return s.shiftRepo.Save(newShift)
+	return nil
+}
+
+func assignExpenseChannel(expense *models.Expense, source string, value float64) {
+	switch {
+	case strings.Contains(source, "NEQUI"):
+		expense.NequiAmount += value
+	case strings.Contains(source, "DAVIPLATA"), strings.Contains(source, "DAVI"):
+		expense.DaviplataAmount += value
+	case strings.Contains(source, "FONDO"), strings.Contains(source, "BOVEDA"), strings.Contains(source, "BÓVEDA"), strings.Contains(source, "FOND"):
+		expense.FondoAmount += value
+	case strings.Contains(source, "PREST"), strings.Contains(source, "DEUDA"):
+		return
+	default:
+		expense.CashAmount += value
+	}
+}
+
+func applyCashBreakdown(closure *models.CashierClosure) error {
+	if closure.CashBills == 0 && strings.TrimSpace(closure.CashBreakdown) != "" {
+		var breakdown struct {
+			Bills map[string]string `json:"bills"`
+			Coins map[string]string `json:"coins"`
+		}
+		if err := json.Unmarshal([]byte(closure.CashBreakdown), &breakdown); err != nil {
+			return fmt.Errorf("desglose de efectivo inválido: %w", err)
+		}
+		for denomination, rawQuantity := range breakdown.Bills {
+			value, err := strconv.ParseFloat(denomination, 64)
+			if err != nil {
+				return fmt.Errorf("denominación inválida %q: %w", denomination, err)
+			}
+			quantity, err := strconv.ParseFloat(rawQuantity, 64)
+			if err != nil {
+				return fmt.Errorf("cantidad inválida para denominación %q: %w", denomination, err)
+			}
+			closure.CashBills += value * quantity
+		}
+	}
+	coinsTotal := closure.Coins1000 + closure.Coins500 + closure.Coins200 + closure.Coins100
+	if closure.PhysicalCash == 0 && (closure.CashBills > 0 || coinsTotal > 0) {
+		closure.PhysicalCash = closure.CashBills + coinsTotal
+	}
+	return nil
 }
 
 func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error) {
@@ -1561,63 +1796,162 @@ func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error)
 		return nil, err
 	}
 
-	for i := range closures {
-		c := &closures[i]
-		if c.ExpensesDetail != "" {
-			var expenses []models.Expense
-			json.Unmarshal([]byte(c.ExpensesDetail), &expenses)
-
-			egresosEfectivoTurno := 0.0
-			for j := range expenses {
-				e := &expenses[j]
-				if e.Status == "PENDING" {
-					continue
-				}
-				
-				src := strings.ToUpper(e.PaymentSource)
-				if !strings.Contains(src, ": $") && !strings.Contains(src, " / ") {
-					totalExp := e.Amount + e.TaxAmount
-					e.CashAmount = 0
-					e.NequiAmount = 0
-					e.DaviplataAmount = 0
-					e.FondoAmount = 0
-					
-					if src == "" || src == "CAJA" || src == "EFECTIVO" {
-						e.CashAmount = totalExp
-					} else if src == "NEQUI" {
-						e.NequiAmount = totalExp
-					} else if src == "DAVIPLATA" {
-						e.DaviplataAmount = totalExp
-					} else if src == "FONDO" {
-						e.FondoAmount = totalExp
-					} else if src != "PREST." && src != "DEUDA" && src != "PRESTAMO" {
-						e.CashAmount = totalExp
-					}
-				} else {
-					sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-					if sum > 0 && e.TaxAmount > 0 && sum == e.Amount {
-						if e.NequiAmount > 0 {
-							e.NequiAmount += e.TaxAmount
-						} else if e.DaviplataAmount > 0 {
-							e.DaviplataAmount += e.TaxAmount
-						} else if e.FondoAmount > 0 {
-							e.FondoAmount += e.TaxAmount
-						} else {
-							e.CashAmount += e.TaxAmount
-						}
-					}
-				}
-				
-				egresosEfectivoTurno += e.CashAmount
-			}
-
-			// ingresosDigitales := c.TotalNequi + c.TotalDaviplata + c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
-			// ventaReal := c.PhysicalCash + ingresosDigitales + egresosEfectivoTurno
-			// c.TotalSales = ventaReal
-		}
+	// FUENTE ÚNICA: misma hidratación de egresos y mismo arqueo que el detalle
+	// del cierre y que el reporte de flujo desglosado. Por lotes: una sola
+	// consulta de egresos para todo el historial.
+	if _, err := s.HydrateClosuresBatch(closures); err != nil {
+		return nil, err
 	}
 
 	return closures, nil
+}
+
+// HydrateClosuresBatch hidrata y calcula el arqueo de MUCHOS cierres con UNA
+// sola consulta de egresos, en vez de una por cierre.
+//
+// RENDIMIENTO: HydrateClosureExpenses consulta la base por cada cierre. Llamarla
+// en un bucle sobre el historial completo son cientos de consultas por cada
+// carga del dashboard y de cada reporte. Esta versión trae todos los egresos del
+// rango completo una vez y los reparte en memoria.
+func (s *DashboardService) HydrateClosuresBatch(closures []models.CashierClosure) ([]ClosureMetrics, error) {
+	metrics := make([]ClosureMetrics, len(closures))
+	if len(closures) == 0 {
+		return metrics, nil
+	}
+
+	// Rango que cubre todos los turnos.
+	var minStart, maxEnd time.Time
+	for i := range closures {
+		c := &closures[i]
+		if !c.StartDate.IsZero() && (minStart.IsZero() || c.StartDate.Before(minStart)) {
+			minStart = c.StartDate
+		}
+		if !c.EndDate.IsZero() && c.EndDate.After(maxEnd) {
+			maxEnd = c.EndDate
+		}
+	}
+
+	var allExpenses []models.Expense
+	if !minStart.IsZero() && !maxEnd.IsZero() {
+		var err error
+		allExpenses, err = s.expenseRepo.GetByDateRange(minStart, maxEnd)
+		if err != nil {
+			return nil, fmt.Errorf("hidratando egresos de cierres: %w", err)
+		}
+	}
+
+	// Ordenar una sola vez permite ubicar cada rango de turno con búsqueda
+	// binaria. Se preserva el comportamiento inclusivo y también cierres que
+	// pudieran solaparse, sin recorrer todos los egresos por cada cierre.
+	sort.Slice(allExpenses, func(i, j int) bool { return allExpenses[i].Date.Before(allExpenses[j].Date) })
+	for i := range closures {
+		c := &closures[i]
+		realExp := expensesWithinRange(allExpenses, c.StartDate, c.EndDate)
+		mergeClosureExpenses(c, realExp)
+		metrics[i] = s.publishClosureMetrics(c)
+	}
+
+	return metrics, nil
+}
+
+func expensesWithinRange(expenses []models.Expense, start, end time.Time) []models.Expense {
+	if start.IsZero() || end.IsZero() || end.Before(start) || len(expenses) == 0 {
+		return nil
+	}
+	first := sort.Search(len(expenses), func(i int) bool { return !expenses[i].Date.Before(start) })
+	last := sort.Search(len(expenses), func(i int) bool { return expenses[i].Date.After(end) })
+	if first >= last {
+		return nil
+	}
+	return expenses[first:last]
+}
+
+// mergeClosureExpenses combina el snapshot guardado con los egresos vivos.
+// Los vivos ganan cuando coincide el ID; los manuales sin ID se conservan.
+// El orden es estable (por ID) porque el recorrido de un map en Go es aleatorio.
+func mergeClosureExpenses(c *models.CashierClosure, realExp []models.Expense) {
+	var snapExp []models.Expense
+	if strings.TrimSpace(c.ExpensesDetail) != "" && c.ExpensesDetail != "[]" {
+		_ = json.Unmarshal([]byte(c.ExpensesDetail), &snapExp)
+	}
+
+	var expenses []models.Expense
+	if len(realExp) > 0 {
+		expMap := make(map[uint]models.Expense, len(snapExp)+len(realExp))
+		var noIDExpenses []models.Expense
+		for _, e := range snapExp {
+			if e.ID > 0 {
+				expMap[e.ID] = e
+			} else {
+				noIDExpenses = append(noIDExpenses, e)
+			}
+		}
+		for _, e := range realExp {
+			expMap[e.ID] = e
+		}
+		for _, e := range expMap {
+			expenses = append(expenses, e)
+		}
+		expenses = append(expenses, noIDExpenses...)
+	}
+	if len(expenses) == 0 && len(snapExp) > 0 {
+		expenses = snapExp
+	}
+
+	if len(expenses) > 0 {
+		sort.Slice(expenses, func(i, j int) bool {
+			if expenses[i].ID != expenses[j].ID {
+				return expenses[i].ID < expenses[j].ID
+			}
+			return expenses[i].Description < expenses[j].Description
+		})
+		c.Expenses = expenses
+	}
+}
+
+// publishClosureMetrics calcula el arqueo y publica los campos calculados.
+// Asume que los egresos ya están hidratados.
+func (s *DashboardService) publishClosureMetrics(c *models.CashierClosure) ClosureMetrics {
+	m := ComputeClosureMetrics(c)
+
+	if len(c.Expenses) > 0 {
+		expBytes, _ := json.Marshal(c.Expenses)
+		c.ExpensesDetail = string(expBytes)
+
+		c.TotalExpenses = m.EgresosCaja
+		// MISMA fórmula que SaveClosure y que la pantalla del cajero: incluye la
+		// base de apertura y NO tiene piso a cero, para que el sobrante o
+		// faltante que se muestre sea el real.
+		c.ExpectedCash = c.OpeningCash + c.TotalCash - m.EgresosCaja - c.TotalReturns
+		c.Difference = m.PhysicalCash - c.ExpectedCash
+	}
+
+	c.VentasCajero = m.VentasCajero
+	c.PhysicalCashReal = m.PhysicalCash
+	c.DigitalIncome = m.DigitalIncome
+	c.EgresosCaja = m.EgresosCaja
+	c.EgresosFondo = m.EgresosFondo
+	c.EgresosDigital = m.EgresosDigital
+	c.EgresosTotales = m.EgresosTotales
+
+	return m
+}
+
+// applyClosureMetrics hidrata los egresos de UN cierre y calcula su arqueo.
+//
+// OJO: hace una consulta a la base. Para procesar varios cierres usar
+// HydrateClosuresBatch, que resuelve todo con una sola consulta.
+func (s *DashboardService) applyClosureMetrics(c *models.CashierClosure) (ClosureMetrics, error) {
+	var realExp []models.Expense
+	if !c.StartDate.IsZero() && !c.EndDate.IsZero() {
+		var err error
+		realExp, err = s.expenseRepo.GetByDateRange(c.StartDate, c.EndDate)
+		if err != nil {
+			return ClosureMetrics{}, fmt.Errorf("hidratando egresos del cierre: %w", err)
+		}
+	}
+	mergeClosureExpenses(c, realExp)
+	return s.publishClosureMetrics(c), nil
 }
 
 func (s *DashboardService) GetClosureByID(id uint) (*models.CashierClosure, error) {
@@ -1625,12 +1959,18 @@ func (s *DashboardService) GetClosureByID(id uint) (*models.CashierClosure, erro
 	if err != nil {
 		return nil, err
 	}
-	if closure.ExpensesDetail != "" {
-		json.Unmarshal([]byte(closure.ExpensesDetail), &closure.Expenses)
+
+	// FUENTE ÚNICA: misma hidratación de egresos y mismo arqueo que el historial
+	// y que el reporte de flujo desglosado.
+	if _, err := s.applyClosureMetrics(closure); err != nil {
+		return nil, err
 	}
 
 	// Fetch Credits Issued
-	sales, _ := s.saleRepo.GetByDateRange(closure.StartDate, closure.EndDate)
+	sales, err := s.saleRepo.GetByDateRange(closure.StartDate, closure.EndDate)
+	if err != nil {
+		return nil, fmt.Errorf("consultando ventas del cierre: %w", err)
+	}
 	var creditsIssued []models.Sale
 	for _, sale := range sales {
 		if strings.ToUpper(sale.Status) == "CREDIT" {
@@ -1660,80 +2000,34 @@ func (s *DashboardService) DeleteClosure(id uint) error {
 	}
 
 	// Invalidar cachÃ© del dashboard para que los totales se recalculen
-	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
 
 	log.Printf("ðŸ—‘ï¸ [DeleteClosure] Cierre ID #%d eliminado permanentemente del sistema", id)
 	return nil
 }
 
 func (s *DashboardService) GetRankingReport(from, to time.Time) ([]ports.ProductRankingItem, error) {
-	sales, err := s.saleRepo.GetByDateRange(from, to)
-	if err != nil {
-		return nil, err
-	}
-
-	rankingMap := make(map[string]*ports.ProductRankingItem)
-	for _, sale := range sales {
-		st := strings.ToUpper(sale.Status)
-		if st != "PAID" && st != "CREDIT" { continue }
-		for _, detail := range sale.SaleDetails {
-			if _, ok := rankingMap[detail.Barcode]; !ok {
-				name := detail.Barcode
-				if detail.Product.ProductName != "" {
-					name = detail.Product.ProductName
-				}
-				rankingMap[detail.Barcode] = &ports.ProductRankingItem{
-					Barcode: detail.Barcode,
-					Name:    name,
-				}
-			}
-			rankingMap[detail.Barcode].Quantity += detail.Quantity
-			rankingMap[detail.Barcode].Total += detail.Subtotal
-		}
-	}
-
-	ranking := []ports.ProductRankingItem{}
-	for _, item := range rankingMap {
-		ranking = append(ranking, *item)
-	}
-
-	sort.Slice(ranking, func(i, j int) bool {
-		return ranking[i].Quantity > ranking[j].Quantity
-	})
-
-	return ranking, nil
+	return s.saleRepo.GetTopSellingProducts(from, to, 0)
 }
 
 func (s *DashboardService) GetCategoryReport(from, to time.Time) ([]CategoryReportItem, error) {
-	sales, err := s.saleRepo.GetByDateRange(from, to)
+	aggregates, err := s.saleRepo.GetSalesByCategoryByRange(from, to)
 	if err != nil {
 		return nil, err
 	}
 
-	categoryMap := make(map[string]*CategoryReportItem)
-	for _, sale := range sales {
-		st := strings.ToUpper(sale.Status)
-		if st != "PAID" && st != "CREDIT" { continue }
-		for _, detail := range sale.SaleDetails {
-			catName := detail.Product.Category.Name
-			if catName == "" {
-				catName = "SIN CATEGORÃA"
-			}
-			if _, ok := categoryMap[catName]; !ok {
-				categoryMap[catName] = &CategoryReportItem{
-					Category: catName,
-				}
-			}
-			categoryMap[catName].Quantity += detail.Quantity
-			categoryMap[catName].Total += detail.Subtotal
+	report := make([]CategoryReportItem, 0, len(aggregates))
+	for _, aggregate := range aggregates {
+		category := aggregate.Category
+		if category == "" {
+			category = "SIN CATEGORÃA"
 		}
+		report = append(report, CategoryReportItem{
+			Category: category,
+			Quantity: aggregate.Quantity,
+			Total:    aggregate.Total,
+		})
 	}
-
-	report := []CategoryReportItem{}
-	for _, item := range categoryMap {
-		report = append(report, *item)
-	}
-
 	return report, nil
 }
 
@@ -1746,7 +2040,9 @@ func (s *DashboardService) GetVIPClientsReport(from, to time.Time) ([]VIPClientI
 	clientMap := make(map[string]*VIPClientItem)
 	for _, sale := range sales {
 		st := strings.ToUpper(sale.Status)
-		if st != "PAID" && st != "CREDIT" { continue }
+		if st != "PAID" && st != "CREDIT" {
+			continue
+		}
 		if sale.ClientDNI == "" {
 			continue
 		}
@@ -1820,35 +2116,32 @@ func (s *DashboardService) GetVoidsReport(from, to time.Time) ([]VoidReportItem,
 }
 
 func (s *DashboardService) GetPnLReport(from, to time.Time) (*PnLReport, error) {
-	// Ajustamos el rango: end debe ser el final del dÃ­a si solo viene la fecha
-	// Pero como ya viene como time.Time, lo usamos directamente.
-	// Si el llamador mandÃ³ "2023-01-01 00:00:00", queremos hasta "2023-01-01 23:59:59"
-	// pero eso lo debe manejar el llamador o lo ajustamos aquÃ­ si detectamos que es medianoche.
-	
 	endDate := to
 	if to.Hour() == 0 && to.Minute() == 0 {
 		endDate = to.Add(24*time.Hour - time.Second)
 	}
 
 	g, _ := errgroup.WithContext(context.Background())
-
-	var sales []models.Sale
-	var expenses []models.Expense
-	var payments []models.CreditPayment
+	var salesRevenue, cogs, totalExpenses, collectedPayments float64
 
 	g.Go(func() error {
 		var err error
-		sales, err = s.saleRepo.GetByDateRangeWithoutDetails(from, endDate)
+		salesRevenue, err = s.saleRepo.GetRevenueByRange(from, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		expenses, err = s.expenseRepo.GetByDateRange(from, endDate)
+		cogs, err = s.saleRepo.GetCOGSByRange(from, endDate)
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		payments, err = s.creditRepo.GetByDateRange(from, endDate)
+		totalExpenses, err = s.expenseRepo.GetTotalAmountByDateRange(from, endDate)
+		return err
+	})
+	g.Go(func() error {
+		var err error
+		collectedPayments, err = s.creditRepo.GetTotalCollectedByDateRange(from, endDate)
 		return err
 	})
 
@@ -1856,38 +2149,22 @@ func (s *DashboardService) GetPnLReport(from, to time.Time) (*PnLReport, error) 
 		return nil, err
 	}
 
-	var revenue float64
-	var cogs float64
-	for _, sale := range sales {
-		status := strings.ToUpper(sale.Status)
-		if status != "PAID" && status != "CREDIT" { continue }
-		revenue += sale.TotalAmount
-		for _, detail := range sale.SaleDetails {
-			cost := detail.CostPrice
-			if cost == 0 { cost = detail.Product.PurchasePrice }
-			cogs += detail.Quantity * cost
-		}
-	}
+	return buildPnLReport(from, to, salesRevenue+collectedPayments, cogs, totalExpenses), nil
+}
 
-	var totalExpenses float64
-	for _, e := range expenses {
-		totalExpenses += (e.Amount + e.TaxAmount)
-	}
-
-	for _, p := range payments {
-		revenue += p.TotalPaid
-	}
-
+func buildPnLReport(from, to time.Time, revenue, cogs, totalExpenses float64) *PnLReport {
 	grossProfit := revenue - cogs
 	netProfit := grossProfit - totalExpenses
 	margin := 0.0
-	if revenue > 0 { margin = (netProfit / revenue) * 100 }
+	if revenue > 0 {
+		margin = (netProfit / revenue) * 100
+	}
 
 	return &PnLReport{
 		From: from, To: to, TotalRevenue: revenue, TotalCOGS: cogs,
 		GrossProfit: grossProfit, TotalExpenses: totalExpenses,
 		NetProfit: netProfit, MarginPercentage: margin,
-	}, nil
+	}
 }
 
 type VaultAuditReport struct {
@@ -1981,10 +2258,10 @@ type MovementDetail struct {
 }
 
 type DetailedShiftReport struct {
-	StartTime time.Time        `json:"startTime"`
-	EndTime   time.Time        `json:"endTime"`
-	Employee  string           `json:"employee"`
-	Movements []MovementDetail `json:"movements"`
+	StartTime time.Time          `json:"startTime"`
+	EndTime   time.Time          `json:"endTime"`
+	Employee  string             `json:"employee"`
+	Movements []MovementDetail   `json:"movements"`
 	Totals    map[string]float64 `json:"totals"`
 }
 
@@ -2044,35 +2321,55 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 				Status:      exp.Status,
 				Description: exp.Description,
 			})
-			if strings.ToUpper(exp.Status) == "PAID" {
-				if strings.Contains(method, ":") && strings.Contains(method, "$") {
-					parts := strings.Split(method, " / ")
+			if strings.ToUpper(exp.Status) != "PENDING" {
+				sumChannels := exp.CashAmount + exp.NequiAmount + exp.DaviplataAmount + exp.FondoAmount
+				if sumChannels > 0 {
+					if exp.CashAmount > 0 {
+						totals["EFECTIVO"] -= exp.CashAmount
+					}
+					if exp.NequiAmount > 0 {
+						totals["NEQUI"] -= exp.NequiAmount
+					}
+					if exp.DaviplataAmount > 0 {
+						totals["DAVIPLATA"] -= exp.DaviplataAmount
+					}
+					if exp.FondoAmount > 0 {
+						totals["FONDO"] -= exp.FondoAmount
+					}
+				} else if strings.Contains(method, "/") || strings.Contains(method, ":") {
+					parts := strings.Split(method, "/")
 					for _, part := range parts {
-						subParts := strings.Split(part, ":")
-						if len(subParts) >= 2 {
-							subMethod := strings.TrimSpace(subParts[0])
-							subAmountStr := strings.TrimSpace(strings.ReplaceAll(subParts[1], "$", ""))
-							var subAmount float64
-							if strings.Contains(subAmountStr, ",") {
-								subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
-								subAmountStr = strings.ReplaceAll(subAmountStr, ",", ".")
-								subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
-							} else if strings.Contains(subAmountStr, ".") {
-								dotParts := strings.Split(subAmountStr, ".")
-								if len(dotParts) == 2 && len(dotParts[1]) <= 2 {
-									subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
-								} else {
-									subAmountStr = strings.ReplaceAll(subAmountStr, ".", "")
-									subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
-								}
-							} else {
-								subAmount, _ = strconv.ParseFloat(subAmountStr, 64)
-							}
-							totals[subMethod] -= subAmount
+						p := strings.TrimSpace(part)
+						var num float64
+						if idx := strings.Index(p, "$"); idx != -1 {
+							cleanStr := strings.ReplaceAll(p[idx+1:], ".", "")
+							cleanStr = strings.ReplaceAll(cleanStr, ",", ".")
+							cleanStr = strings.TrimSpace(cleanStr)
+							fmt.Sscanf(cleanStr, "%f", &num)
+						}
+						if num == 0 {
+							num = exp.Amount + exp.TaxAmount
+						}
+						if strings.Contains(p, "NEQUI") {
+							totals["NEQUI"] -= num
+						} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
+							totals["DAVIPLATA"] -= num
+						} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND") {
+							totals["FONDO"] -= num
+						} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") {
+							totals["EFECTIVO"] -= num
 						}
 					}
+				} else if method == "NEQUI" {
+					totals["NEQUI"] -= (exp.Amount + exp.TaxAmount)
+				} else if method == "DAVIPLATA" || method == "DAVI" {
+					totals["DAVIPLATA"] -= (exp.Amount + exp.TaxAmount)
+				} else if method == "FONDO" || method == "BOVEDA" || method == "BÓVEDA" || strings.Contains(method, "FOND") {
+					totals["FONDO"] -= (exp.Amount + exp.TaxAmount)
+				} else if strings.Contains(method, "PREST") || strings.Contains(method, "DEUDA") {
+					// Debt - 0
 				} else {
-					totals[method] -= (exp.Amount + exp.TaxAmount)
+					totals["EFECTIVO"] -= (exp.Amount + exp.TaxAmount)
 				}
 			}
 		}
@@ -2089,7 +2386,9 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 				method = "EFECTIVO"
 			} else {
 				method = strings.ToUpper(p.TransferSource)
-				if method == "" { method = "TRANSFERENCIA" }
+				if method == "" {
+					method = "TRANSFERENCIA"
+				}
 			}
 
 			movements = append(movements, MovementDetail{
@@ -2126,11 +2425,12 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 		Totals:    totals,
 	}, nil
 }
+
 type CashFlowDailyDetail struct {
-	Date     string  `json:"date"`
-	Income   float64 `json:"income"`
-	Expense  float64 `json:"expense"`
-	Balance  float64 `json:"balance"`
+	Date    string  `json:"date"`
+	Income  float64 `json:"income"`
+	Expense float64 `json:"expense"`
+	Balance float64 `json:"balance"`
 }
 
 type CashFlowReport struct {
@@ -2156,10 +2456,28 @@ func (s *DashboardService) GetCashFlowReport(from, to time.Time) (*CashFlowRepor
 	dailyMap := make(map[string]*CashFlowDailyDetail)
 	var totalIncome, totalExpense float64
 
-	for _, c := range closures {
-		dayStr := c.Date.Format("2006-01-02")
-		income := c.TotalCash + c.TotalTransfer
-		expense := c.TotalExpenses
+	// Hora Colombia y arqueo canónico, igual que el flujo desglosado.
+	// Antes: dayStr en UTC, income = TotalCash + TotalTransfer (el efectivo que
+	// dice el sistema, no el contado) y expense = TotalExpenses (columna
+	// contaminada con el FONDO en los cierres editados).
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	allMetrics, err := s.HydrateClosuresBatch(closures)
+	if err != nil {
+		return nil, err
+	}
+
+	for i := range closures {
+		c := &closures[i]
+		m := allMetrics[i]
+
+		ref := c.Date
+		if ref.IsZero() {
+			ref = c.EndDate
+		}
+		dayStr := ref.In(loc).Format("2006-01-02")
+
+		income := m.VentasCajero
+		expense := m.EgresosTotales
 
 		if d, exists := dailyMap[dayStr]; exists {
 			d.Income += income
@@ -2205,20 +2523,41 @@ type CashFlowDetailedReport struct {
 }
 
 type CashFlowDetailedDay struct {
-	Date         string                  `json:"date"`
-	TotalIncome  float64                 `json:"totalIncome"`
-	TotalExpense float64                 `json:"totalExpense"`
-	Events       []CashFlowDetailedEvent `json:"events"`
+	Date           string                  `json:"date"`
+	ClosureCount   int                     `json:"closureCount"`
+	TotalIncome    float64                 `json:"totalIncome"`
+	TotalExpense   float64                 `json:"totalExpense"`
+	IncomeCash     float64                 `json:"incomeCash"`
+	IncomeNequi    float64                 `json:"incomeNequi"`
+	IncomeDavi     float64                 `json:"incomeDavi"`
+	IncomeOther    float64                 `json:"incomeOther"`
+	Returns        float64                 `json:"returns"`
+	ExpenseCash    float64                 `json:"expenseCash"`
+	ExpenseFondo   float64                 `json:"expenseFondo"`
+	ExpenseDigital float64                 `json:"expenseDigital"`
+	ExpectedCash   float64                 `json:"expectedCash"`
+	Difference     float64                 `json:"difference"`
+	Events         []CashFlowDetailedEvent `json:"events"`
 }
 
 type CashFlowDetailedEvent struct {
-	Type          string  `json:"type"`
-	Concept       string  `json:"concept"`
-	IncomeCash    float64 `json:"incomeCash"`
-	IncomeNequi   float64 `json:"incomeNequi"`
-	IncomeDavi    float64 `json:"incomeDavi"`
-	IncomeOther   float64 `json:"incomeOther"`
-	ExpenseTotal  float64 `json:"expenseTotal"`
+	Type           string  `json:"type"`
+	Concept        string  `json:"concept"`
+	IncomeCash     float64 `json:"incomeCash"`
+	IncomeNequi    float64 `json:"incomeNequi"`
+	IncomeDavi     float64 `json:"incomeDavi"`
+	IncomeOther    float64 `json:"incomeOther"`
+	Returns        float64 `json:"returns"`
+	IncomeTotal    float64 `json:"incomeTotal"`
+	ExpenseCash    float64 `json:"expenseCash"`
+	ExpenseFondo   float64 `json:"expenseFondo"`
+	ExpenseDigital float64 `json:"expenseDigital"`
+	ExpenseTotal   float64 `json:"expenseTotal"`
+	// Cifras del arqueo, las mismas que muestra el modal "Ver detalle de cierre".
+	ExpectedCash  float64 `json:"expectedCash"`
+	Difference    float64 `json:"difference"`
+	IncomeSystem  float64 `json:"incomeSystem"`
+	NetBalance    float64 `json:"netBalance"`
 	PaymentMethod string  `json:"paymentMethod"`
 }
 
@@ -2253,6 +2592,15 @@ func (s *DashboardService) GetCashFlowDetailedRaw(from, to time.Time) ([]models.
 	if err := g.Wait(); err != nil {
 		return nil, nil, nil, err
 	}
+
+	// Hidratar y calcular el arqueo AQUÍ, en la fuente, para que todos los
+	// consumidores (PDF, Excel, CSV) reciban exactamente la misma lista de
+	// egresos y las mismas cifras que el detalle del cierre en pantalla.
+	// Por lotes: una sola consulta de egresos para todo el rango.
+	if _, err := s.HydrateClosuresBatch(closures); err != nil {
+		return nil, nil, nil, err
+	}
+
 	return closures, expenses, payments, nil
 }
 
@@ -2274,26 +2622,75 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 
 	var overallIncome, overallExpense float64
 
+	// Zona horaria de Colombia: la pantalla de historial agrupa los cierres en
+	// hora local del navegador, así que el reporte debe agrupar igual o los
+	// turnos cercanos a medianoche caen en días distintos en cada vista.
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+
 	// Turnos (Ingresos principales)
-	for _, c := range closures {
-		dayStr := c.Date.Format("2006-01-02")
+	for i := range closures {
+		c := &closures[i]
+
+		ref := c.Date
+		if ref.IsZero() {
+			ref = c.EndDate
+		}
+		dayStr := ref.In(loc).Format("2006-01-02")
 		d := getOrCreateDay(dayStr)
 
-		income := c.TotalCash + c.TotalTransfer
+		// FUENTE ÚNICA: el arqueo ya viene calculado desde
+		// GetCashFlowDetailedRaw, con los egresos hidratados (snapshot + vivos),
+		// igual que el detalle del cierre en pantalla.
+		m := ComputeClosureMetrics(c)
+
+		otros := c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
+
+		cashierName := c.ClosedByName
+		if cashierName == "" {
+			cashierName = "SIN CAJERO"
+		}
+
+		// MISMA fórmula del arqueo que usa el modal en pantalla y SaveClosure:
+		// con base de apertura y sin piso a cero.
+		expectedCash := c.OpeningCash + c.TotalCash - m.EgresosCaja - c.TotalReturns
+
 		d.Events = append(d.Events, CashFlowDetailedEvent{
-			Type:        "INGRESO",
-			Concept:     fmt.Sprintf("Cierre de Turno (ID: %d)", c.ID),
-			IncomeCash:  c.TotalCash,
-			IncomeOther: c.TotalTransfer,
-			ExpenseTotal: c.TotalExpenses,
+			Type:           "CIERRE",
+			Concept:        fmt.Sprintf("Turno #%d - %s (%s a %s)", c.ID, cashierName, c.StartDate.In(loc).Format("15:04"), c.EndDate.In(loc).Format("15:04")),
+			IncomeCash:     m.PhysicalCash,
+			IncomeNequi:    c.TotalNequi,
+			IncomeDavi:     c.TotalDaviplata,
+			IncomeOther:    otros,
+			Returns:        c.TotalReturns,
+			IncomeTotal:    m.VentasCajero,
+			ExpenseCash:    m.EgresosCaja,
+			ExpenseFondo:   m.EgresosFondo,
+			ExpenseDigital: m.EgresosDigital,
+			ExpenseTotal:   m.EgresosTotales,
+			// Mismas cifras que el modal "Ver detalle de cierre".
+			ExpectedCash: expectedCash,
+			Difference:   m.PhysicalCash - expectedCash,
+			IncomeSystem: c.TotalCash + m.DigitalIncome,
+			NetBalance:   (c.TotalCash + m.DigitalIncome) - m.EgresosTotales - c.TotalReturns,
 		})
 
-		d.TotalIncome += income
-		d.TotalExpense += c.TotalExpenses
-		overallIncome += income
-		overallExpense += c.TotalExpenses
-	}
+		d.IncomeCash += m.PhysicalCash
+		d.IncomeNequi += c.TotalNequi
+		d.IncomeDavi += c.TotalDaviplata
+		d.IncomeOther += otros
+		d.Returns += c.TotalReturns
+		d.ExpenseCash += m.EgresosCaja
+		d.ExpenseFondo += m.EgresosFondo
+		d.ExpenseDigital += m.EgresosDigital
+		d.ExpectedCash += expectedCash
+		d.Difference += m.PhysicalCash - expectedCash
 
+		d.TotalIncome += m.VentasCajero
+		d.TotalExpense += m.EgresosTotales
+		d.ClosureCount++
+		overallIncome += m.VentasCajero
+		overallExpense += m.EgresosTotales
+	}
 
 	var daysList []CashFlowDetailedDay
 	for _, d := range daysMap {
@@ -2313,4 +2710,3 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 		Days:         daysList,
 	}, nil
 }
-

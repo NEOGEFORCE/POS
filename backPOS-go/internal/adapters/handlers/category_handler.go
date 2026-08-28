@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"fmt"
@@ -34,6 +34,25 @@ func (h *CategoryHandler) Create(c *gin.Context) {
 	
 	// Verificar Duplicados
 	if existing, err := h.service.GetCategoryByName(category.Name); err == nil && existing != nil {
+		if !existing.IsActive {
+			dni, _ := c.Get("dni")
+			dniStr := fmt.Sprintf("%v", dni)
+			category.ID = existing.ID
+			category.IsActive = true
+			category.UpdatedByDNI = dniStr
+			if err := h.service.UpdateCategory(existing.ID, &category); err != nil {
+				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar categoría", err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Categoría reactivada exitosamente", "reactivated": true, "category": category})
+			go sse.GetSSEService().BroadcastCategoryUpdate(category)
+			name, _ := c.Get("userName")
+			h.auditService.Log(dniStr, fmt.Sprintf("%v", name), "REACTIVATE_CATEGORY", "TAXONOMY",
+				fmt.Sprintf("Categoría reactivada: %s", category.Name),
+				fmt.Sprintf("Se reactivó la categoría previamente eliminada: %s", category.Name),
+				"", c.ClientIP(), c.Request.UserAgent(), false)
+			return
+		}
 		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El nombre de la categoría ya existe en el sistema", gin.H{
 			"id":     existing.ID,
 			"name":   existing.Name,

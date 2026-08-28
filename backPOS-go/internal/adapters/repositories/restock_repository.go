@@ -1,4 +1,4 @@
-package repositories
+﻿package repositories
 
 import (
 	"backPOS-go/internal/core/domain/models"
@@ -43,13 +43,18 @@ func (r *PostgresRestockRepository) ClearPurchaseList(supplierID uint) error {
 
 func (r *PostgresRestockRepository) GetPendingOrders() ([]models.ConfirmedOrder, error) {
 	var orders []models.ConfirmedOrder
-	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").Where("status != ?", "received").Where("status != ?", "dismissed").Order("confirmed_at asc").Find(&orders).Error
+	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").
+		Where("LOWER(status) NOT IN (?, ?, ?, ?)", "completed", "processed", "dismissed", "canceled").
+		Order("confirmed_at asc").Find(&orders).Error
 	return orders, err
 }
 
 func (r *PostgresRestockRepository) GetPendingOrdersBySupplier(supplierID uint) ([]models.ConfirmedOrder, error) {
 	var orders []models.ConfirmedOrder
-	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").Where("supplier_id = ?", supplierID).Where("status != ?", "received").Where("status != ?", "dismissed").Order("confirmed_at asc").Find(&orders).Error
+	err := r.db.Preload("Supplier").Preload("Items").Preload("Items.Product").
+		Where("supplier_id = ?", supplierID).
+		Where("LOWER(status) NOT IN (?, ?, ?, ?)", "completed", "processed", "dismissed", "canceled").
+		Order("confirmed_at asc").Find(&orders).Error
 	return orders, err
 }
 

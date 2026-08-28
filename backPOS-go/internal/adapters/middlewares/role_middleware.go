@@ -7,34 +7,40 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func normalizeRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "administrador":
+		return "admin"
+	case "employee":
+		return "empleado"
+	default:
+		return strings.ToLower(strings.TrimSpace(role))
+	}
+}
+
+func roleAllowed(userRole, requiredRole string) bool {
+	userRole = normalizeRole(userRole)
+	requiredRole = normalizeRole(requiredRole)
+	if userRole == "superadmin" || userRole == "admin" {
+		return true
+	}
+	return userRole != "" && userRole == requiredRole
+}
+
 func RoleMiddleware(requiredRole string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		userRoleVal, exists := c.Get("role")
-		if !exists || userRoleVal == nil {
-			sendMiddlewareError(c, http.StatusForbidden, "ERR_FORBIDDEN", "Rol de usuario no encontrado en la sesión. Inicie sesión nuevamente.")
+		value, exists := c.Get("role")
+		userRole, ok := value.(string)
+		if !exists || !ok || strings.TrimSpace(userRole) == "" {
+			sendMiddlewareError(c, http.StatusForbidden, "ERR_FORBIDDEN", "Rol de usuario inválido en la sesión. Inicie sesión nuevamente.")
 			c.Abort()
 			return
 		}
-
-		userRole, ok := userRoleVal.(string)
-		if !ok {
-			sendMiddlewareError(c, http.StatusForbidden, "ERR_FORBIDDEN", "Formato de rol inválido en la sesión. Inicie sesión nuevamente.")
-			c.Abort()
-			return
-		}
-
-		userRole = strings.ToLower(userRole)
-
-		if userRole != strings.ToLower(requiredRole) && 
-		   userRole != "admin" && 
-		   userRole != "administrador" && 
-		   userRole != "superadmin" &&
-		   userRole != "auditor" { // admin/superadmin bypass
+		if !roleAllowed(userRole, requiredRole) {
 			sendMiddlewareError(c, http.StatusForbidden, "ERR_FORBIDDEN", "No tienes permisos para realizar esta acción")
 			c.Abort()
 			return
 		}
-
 		c.Next()
 	}
 }

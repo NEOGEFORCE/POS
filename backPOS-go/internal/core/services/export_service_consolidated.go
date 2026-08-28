@@ -1,4 +1,4 @@
-package services
+﻿package services
 
 import (
 	"bytes"
@@ -81,7 +81,7 @@ func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, 
 				finalNequi += val
 			} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
 				finalDavi += val
-			} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND") {
+			} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÃ“VEDA") || strings.Contains(p, "FOND") {
 				finalFondo += val
 			} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") || strings.Contains(p, "EFEC") {
 				finalCash += val
@@ -92,21 +92,32 @@ func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, 
 		}
 	}
 
-	if src == "NEQUI" {
-		return 0, total, 0, 0
-	} else if src == "DAVIPLATA" || src == "DAVI" {
-		return 0, 0, total, 0
-	} else if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
-		return 0, 0, 0, total
-	} else if strings.Contains(src, "PREST") || src == "DEUDA" {
-		return 0, 0, 0, 0
-	}
-
+	// PRIORIDAD: las columnas por canal son dato duro y se normalizan al
+	// guardar/editar el cierre; el texto de PaymentSource es solo el respaldo
+	// para egresos legacy que nunca tuvieron columnas.
+	//
+	// Este orden (mixto -> columnas -> texto) es el MISMO que usa el frontend en
+	// reports/components/ClosuresHistory.tsx. No invertirlo: si el texto gana
+	// sobre las columnas, un egreso con PaymentSource='FONDO' y CashAmount=50.000
+	// se clasifica distinto en el dashboard que en el historial de cierres.
 	rawCash := e.CashAmount
 	rawNequi := e.NequiAmount
 	rawDavi := e.DaviplataAmount
 	rawFondo := e.FondoAmount
 	sum := rawCash + rawNequi + rawDavi + rawFondo
+
+	if sum == 0 {
+		if strings.Contains(src, "NEQUI") || strings.Contains(src, "NEQ") {
+			return 0, total, 0, 0
+		} else if strings.Contains(src, "DAVIPLATA") || strings.Contains(src, "DAVI") {
+			return 0, 0, total, 0
+		} else if src == "BOVEDA" || src == "BÃ“VEDA" || strings.Contains(src, "FOND") {
+			return 0, 0, 0, total
+		} else if strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") {
+			// Deuda a proveedor: no mueve caja ni bancos todavÃ­a.
+			return 0, 0, 0, 0
+		}
+	}
 
 	if sum > 0 {
 		finalCash = rawCash
@@ -134,7 +145,7 @@ func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, 
 	return total, 0, 0, 0
 }
 
-// RenderClosurePDFData dibuja una página completa de auditoría de cierre en el PDF
+// RenderClosurePDFData dibuja una pÃ¡gina completa de auditorÃ­a de cierre en el PDF
 func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Location, data ClosurePrintData) {
 	pdf.AddPage()
 	
@@ -180,138 +191,62 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 		if expectedCash == 0 {
 			expectedCash = data.TotalCash - data.TotalExpenses - data.TotalReturns
 		}
-		amountRegex := regexp.MustCompile(`\$?([0-9.,]+)`)
-
+		// FUENTE UNICA de clasificacion por canal: parseExpenseChannels.
+		// Antes habia aqui una copia inline con reglas distintas (el texto de
+		// PaymentSource ganaba sobre las columnas con la plata), y por eso el PDF
+		// no coincidia con el detalle del cierre en pantalla.
 		for i := range data.Expenses {
 			e := &data.Expenses[i]
-			if strings.ToUpper(e.Status) == "PENDING" {
-				e.CashAmount = 0
-				e.NequiAmount = 0
-				e.DaviplataAmount = 0
-				e.FondoAmount = 0
-				continue
-			}
-			src := strings.ToUpper(e.PaymentSource)
-			tax := e.TaxAmount
-			base := e.Amount
-			total := base + tax
-
-			finalCash := 0.0
-			finalNequi := 0.0
-			finalDavi := 0.0
-			finalFondo := 0.0
-
-			if strings.Contains(src, "/") {
-				parts := strings.Split(src, "/")
-				for _, part := range parts {
-					p := strings.TrimSpace(part)
-					match := amountRegex.FindStringSubmatch(p)
-					val := 0.0
-					if len(match) >= 2 {
-						s := match[1]
-						if strings.Contains(s, ",") {
-							s = strings.ReplaceAll(s, ".", "")
-							s = strings.ReplaceAll(s, ",", ".")
-						} else if strings.Contains(s, ".") {
-							if matched, _ := regexp.MatchString(`\.\d{1,2}$`, s); !matched {
-								s = strings.ReplaceAll(s, ".", "")
-							}
-						}
-						val, _ = strconv.ParseFloat(s, 64)
-					}
-					if strings.Contains(p, "NEQUI") || strings.Contains(p, "NEQ") {
-						finalNequi += val
-					} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
-						finalDavi += val
-					} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND") {
-						finalFondo += val
-					} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") || strings.Contains(p, "EFEC") {
-						finalCash += val
-					}
-				}
-				if finalCash+finalNequi+finalDavi+finalFondo == 0 {
-					finalCash = total
-				}
-			} else if src == "NEQUI" {
-				finalNequi = total
-			} else if src == "DAVIPLATA" || src == "DAVI" {
-				finalDavi = total
-			} else if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
-				finalFondo = total
-			} else if strings.Contains(src, "PREST") || src == "DEUDA" {
-				// 0
-			} else {
-				rawCash := e.CashAmount
-				rawNequi := e.NequiAmount
-				rawDavi := e.DaviplataAmount
-				rawFondo := e.FondoAmount
-				sum := rawCash + rawNequi + rawDavi + rawFondo
-
-				if sum > 0 {
-					finalCash = rawCash
-					finalNequi = rawNequi
-					finalDavi = rawDavi
-					finalFondo = rawFondo
-					if tax > 0 && sum == base {
-						count := 0
-						if rawCash > 0 { count++ }
-						if rawNequi > 0 { count++ }
-						if rawDavi > 0 { count++ }
-						if rawFondo > 0 { count++ }
-						if count <= 1 {
-							if rawCash > 0 { finalCash += tax }
-							if rawNequi > 0 { finalNequi += tax }
-							if rawDavi > 0 { finalDavi += tax }
-							if rawFondo > 0 { finalFondo += tax }
-						} else {
-							if rawNequi > 0 { finalNequi += tax } else if rawDavi > 0 { finalDavi += tax } else if rawFondo > 0 { finalFondo += tax } else { finalCash += tax }
-						}
-					}
-				} else {
-					finalCash = total
-				}
-			}
-
-			e.CashAmount = finalCash
-			e.NequiAmount = finalNequi
-			e.DaviplataAmount = finalDavi
-			e.FondoAmount = finalFondo
+			cash, nequi, davi, fondo := parseExpenseChannels(e)
+			e.CashAmount = cash
+			e.NequiAmount = nequi
+			e.DaviplataAmount = davi
+			e.FondoAmount = fondo
 		}
 
 		egresosCaja := 0.0
 		egresosGlobales := 0.0
 		for _, e := range data.Expenses {
-			if strings.ToUpper(e.Status) != "PENDING" {
-				egresosCaja += e.CashAmount
-				egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+			if strings.ToUpper(e.Status) == "PENDING" {
+				continue
 			}
+			// Las devoluciones ya entran por TotalReturns. Contarlas tambiÃ©n
+			// aquÃ­ las restarÃ­a dos veces, y el detalle del cierre en pantalla
+			// tampoco las cuenta acÃ¡.
+			if !strings.EqualFold(strings.TrimSpace(e.Category), "DEVOLUCIONES") {
+				egresosCaja += e.CashAmount
+			}
+			egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
 		}
 
 		digitalIncome := data.TotalNequi + data.TotalDaviplata + data.TotalCard + data.TotalBancolombia + data.TotalOtherTransfer
-		cashIngresos := data.TotalCash + data.TotalCreditCollected
+
+		// TotalCash YA incluye el efectivo de los abonos (GetCashierClosure hace
+		// closure.TotalCash += p.AmountCash), asÃ­ que sumarle TotalCreditCollected
+		// contaba la recuperaciÃ³n de cartera dos veces. El detalle del cierre en
+		// pantalla usa solo totalCash.
+		cashIngresos := data.TotalCash
 
 		expectedCashFinal := data.ExpectedCash
 		if expectedCashFinal == 0 {
 			expectedCashFinal = cashIngresos - egresosCaja - data.TotalReturns
 		}
 
-		ventasCajero := data.PhysicalCash + digitalIncome + egresosCaja + data.TotalReturns
-		ventasSistema := expectedCashFinal + digitalIncome + egresosCaja
+		// Efectivo fÃ­sico REAL, sin sobrescrituras. Se prefiere el desglose de
+		// billetes y monedas porque es lo que el cajero digitÃ³.
+		physicalCash := data.CashBills + data.Coins1000 + data.Coins500 + data.Coins200 + data.Coins100
+		if physicalCash <= 0 {
+			physicalCash = data.PhysicalCash
+		}
+
+		ventasCajero := physicalCash + digitalIncome + egresosCaja + data.TotalReturns
+		ventasSistema := cashIngresos + digitalIncome
 		if data.Cajero == "MULTIPLE (SISTEMA)" {
 			ventasCajero = data.PhysicalCash
 			ventasSistema = data.TotalSales
 		}
-		realBalance := ventasCajero - ventasSistema
-
-		ingresosReales := data.TotalSales
-		if ingresosReales == 0 {
-			if (data.TotalCash + digitalIncome) > 0 {
-				ingresosReales = data.TotalCash + digitalIncome
-			} else {
-				ingresosReales = ventasSistema
-			}
-		}
-		balanceNetoReal := ingresosReales - egresosGlobales - data.TotalReturns
+		realBalance := physicalCash - expectedCashFinal
+		balanceNetoReal := ventasSistema - egresosGlobales - data.TotalReturns
 
 		boxY := pdf.GetY()
 		
@@ -334,20 +269,33 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 		pdf.SetFont("Arial", "B", 12)
 		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(ventasSistema)), "0", 0, "C", false, 0, "")
 
-		// Balance Real
+		// Sobrante / Faltante
+		balanceLabel := "SOBRANTE CAJA"
+		diffSign := ""
+		if realBalance < 0 {
+			balanceLabel = "FALTANTE CAJA"
+		} else if realBalance == 0 {
+			balanceLabel = "CAJA CUADRADA"
+		} else {
+			diffSign = "+"
+		}
 		pdf.SetFillColor(230, 245, 230)
+		if realBalance < 0 {
+			pdf.SetFillColor(254, 226, 226)
+		}
 		pdf.Rect(140, boxY, 60, 18, "DF")
 		pdf.SetXY(140, boxY + 2)
 		pdf.SetFont("Arial", "B", 7)
-		pdf.CellFormat(60, 5, tr("BALANCE REAL"), "0", 2, "C", false, 0, "")
+		pdf.CellFormat(60, 5, tr(balanceLabel), "0", 2, "C", false, 0, "")
 		pdf.SetFont("Arial", "B", 12)
-		pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(realBalance)), "0", 0, "C", false, 0, "")
+		pdf.CellFormat(60, 8, fmt.Sprintf("%s$%s", diffSign, formatCOP(realBalance)), "0", 0, "C", false, 0, "")
 		
 		pdf.SetY(boxY + 22)
 
 		pdf.SetFont("Arial", "I", 7)
-		pdf.CellFormat(190, 4, tr("* Ventas Cajero = Efectivo Contado + Digital + Egresos Caja"), "0", 1, "L", false, 0, "")
-		pdf.CellFormat(190, 4, tr("* Ventas Sistema = Efectivo Esperado + Digital + Egresos Caja"), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 4, tr(fmt.Sprintf("* Ventas Cajero = Efectivo Contado ($%s) + Digital ($%s) + Egresos Caja ($%s) = $%s", formatCOP(physicalCash), formatCOP(digitalIncome), formatCOP(egresosCaja), formatCOP(ventasCajero))), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 4, tr(fmt.Sprintf("* Ventas Sistema = Ventas registradas en el POS (Efectivo $%s + Digital $%s) = $%s", formatCOP(cashIngresos), formatCOP(digitalIncome), formatCOP(ventasSistema))), "0", 1, "L", false, 0, "")
+		pdf.CellFormat(190, 4, tr(fmt.Sprintf("* %s = Efectivo Fisico ($%s) - Efectivo Esperado ($%s) = %s$%s", balanceLabel, formatCOP(physicalCash), formatCOP(expectedCashFinal), diffSign, formatCOP(realBalance))), "0", 1, "L", false, 0, "")
 		pdf.Ln(2)
 
 		drawTable := func(title string, headers []string, widths []float64, rows [][]string) {
@@ -419,7 +367,7 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 			[]string{"Concepto", "Monto"}, 
 			[]float64{130, 60}, 
 			[][]string{
-				{"(+) Ingresos Totales (Efectivo + Digital)", fmt.Sprintf("$%s", formatCOP(ingresosReales))},
+				{"(+) Ingresos Totales (Efectivo + Digital)", fmt.Sprintf("$%s", formatCOP(ventasSistema))},
 				{"(-) Egresos Totales (Todos los canales)", fmt.Sprintf("$%s", formatCOP(egresosGlobales))},
 				{"(-) Devoluciones Totales", fmt.Sprintf("$%s", formatCOP(data.TotalReturns))},
 				{"(=) BALANCE NETO DEL TURNO", fmt.Sprintf("$%s", formatCOP(balanceNetoReal))},
@@ -435,11 +383,19 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 				{"(=) EFECTIVO ESPERADO EN CAJA", fmt.Sprintf("$%s", formatCOP(expectedCashFinal))},
 			})
 
+		cashBillsVal := data.CashBills
+		if cashBillsVal == 0 && physicalCash > 0 {
+			coinsSum := data.Coins1000 + data.Coins500 + data.Coins200 + data.Coins100
+			if physicalCash > coinsSum {
+				cashBillsVal = physicalCash - coinsSum
+			}
+		}
+
 		drawTable("DESGLOSE DE EFECTIVO REPORTADO", 
 			[]string{"Denominacion", "Monto"}, 
 			[]float64{130, 60}, 
 			[][]string{
-				{"Billetes", fmt.Sprintf("$%s", formatCOP(data.CashBills))},
+				{"Billetes", fmt.Sprintf("$%s", formatCOP(cashBillsVal))},
 				{"Monedas 1000", fmt.Sprintf("$%s", formatCOP(data.Coins1000))},
 				{"Monedas 500", fmt.Sprintf("$%s", formatCOP(data.Coins500))},
 				{"Monedas 200", fmt.Sprintf("$%s", formatCOP(data.Coins200))},
@@ -544,7 +500,6 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 
 	for _, c := range closures {
 		totalExpectedCash += c.ExpectedCash
-		totalPhysicalCash += c.PhysicalCash
 		totalNequi += c.TotalNequi
 		totalDaviplata += c.TotalDaviplata
 		totalCard += c.TotalCard
@@ -575,21 +530,31 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 		}
 
 		cDigital := c.TotalNequi + c.TotalDaviplata + c.TotalCard + c.TotalBancolombia + c.TotalOtherTransfer
-		cCashIn := c.TotalCash + c.TotalCreditCollected
+		// TotalCash ya incluye el efectivo de los abonos; no sumar
+		// TotalCreditCollected o se cuenta la cartera dos veces.
+		cCashIn := c.TotalCash
 
-		cEgCaja := 0.0
-		for _, e := range cExp {
-			cash, _, _, _ := parseExpenseChannels(&e)
-			cEgCaja += cash
+		// FUENTE ÃšNICA: el mismo cÃ¡lculo que el detalle del cierre en pantalla
+		// y que las tablas del dashboard. Sin valores sobrescritos.
+		cc := c
+		if len(cc.Expenses) == 0 && len(cExp) > 0 {
+			cc.Expenses = cExp
 		}
+		m := ComputeClosureMetrics(&cc)
+
+		cEgCaja := m.EgresosCaja
+		cPhys := m.PhysicalCash
+		// El total consolidado debe sumar el MISMO efectivo que imprime cada
+		// hoja individual, así que se acumula el valor canónico.
+		totalPhysicalCash += cPhys
 
 		cExpCash := c.ExpectedCash
 		if cExpCash == 0 {
 			cExpCash = cCashIn - cEgCaja - c.TotalReturns
 		}
 
-		cVentasCajero := c.PhysicalCash + cDigital + cEgCaja + c.TotalReturns
-		cVentasSistema := cExpCash + cDigital + cEgCaja
+		cVentasCajero := m.VentasCajero
+		cVentasSistema := cCashIn + cDigital
 
 		sumVentasCajero += cVentasCajero
 		sumVentasSistema += cVentasSistema
@@ -612,7 +577,7 @@ func (s *ExportService) GenerateConsolidatedClosurePDF(closures []models.Cashier
 			RangoFechaStr:        "TURNO:",
 			TurnoStr:             fmt.Sprintf("%s a %s", c.StartDate.In(loc).Format("02/01/06 15:04"), c.EndDate.In(loc).Format("02/01/06 15:04")),
 			IDStr:                fmt.Sprintf("CC-%d", c.ID),
-			PhysicalCash:         c.PhysicalCash,
+			PhysicalCash:         cPhys,
 			TotalSales:           c.TotalSales,
 			TotalCreditCollected: c.TotalCreditCollected,
 			TotalNequi:           c.TotalNequi,
@@ -677,15 +642,15 @@ func extractConsolidatedConcept(desc string, category string) string {
 	cleanUpper := strings.ToUpper(strings.TrimSpace(clean))
 	catUpper := strings.ToUpper(strings.TrimSpace(category))
 
-	// 1. Nómina
-	if strings.Contains(cleanUpper, "NOMINA") || strings.Contains(cleanUpper, "NÓMINA") || catUpper == "NOMINA" {
-		return "PAGO DE NÓMINA"
+	// 1. NÃ³mina
+	if strings.Contains(cleanUpper, "NOMINA") || strings.Contains(cleanUpper, "NÃ“MINA") || catUpper == "NOMINA" {
+		return "PAGO DE NÃ“MINA"
 	}
 
-	// 2. Proveedores y Recepción de Mercancía
+	// 2. Proveedores y RecepciÃ³n de MercancÃ­a
 	isSupplier := strings.Contains(cleanUpper, "PAGO DE PROVEEDOR") ||
 		strings.Contains(cleanUpper, "PAGO PROVEEDOR") ||
-		strings.Contains(cleanUpper, "RECEPCIÓN DE MERCANCÍA") ||
+		strings.Contains(cleanUpper, "RECEPCIÃ“N DE MERCANCÃA") ||
 		strings.Contains(cleanUpper, "RECEPCION DE MERCANCIA") ||
 		strings.Contains(cleanUpper, "RECEPCION MERCANCIA") ||
 		strings.Contains(cleanUpper, "ABONO A DEUDA") ||
@@ -695,8 +660,8 @@ func extractConsolidatedConcept(desc string, category string) string {
 	if isSupplier {
 		providerName := clean
 		prefixes := []string{
-			"RECEPCIÓN DE MERCANCÍA -", "RECEPCION DE MERCANCIA -", "RECEPCION MERCANCIA -",
-			"RECEPCIÓN DE MERCANCÍA", "RECEPCION DE MERCANCIA", "RECEPCION MERCANCIA",
+			"RECEPCIÃ“N DE MERCANCÃA -", "RECEPCION DE MERCANCIA -", "RECEPCION MERCANCIA -",
+			"RECEPCIÃ“N DE MERCANCÃA", "RECEPCION DE MERCANCIA", "RECEPCION MERCANCIA",
 			"ABONO A DEUDA:", "ABONO A DEUDA -", "ABONO A DEUDA",
 			"PAGO DE PROVEEDOR -", "PAGO PROVEEDOR -",
 		}
@@ -842,305 +807,4 @@ func ConsolidatePaymentsForGeneralReport(rawPayments []models.CreditPayment) []m
 		})
 	}
 	return result
-}
-
-func (s *ExportService) GenerateProfitabilityPDF(r *ProfitabilityReport) (*bytes.Buffer, error) {
-	pdf := gofpdf.New("P", "mm", "A4", "")
-	tr := pdf.UnicodeTranslatorFromDescriptor("")
-	pdf.SetMargins(10, 10, 10)
-	pdf.SetAutoPageBreak(true, 15)
-	pdf.AddPage()
-
-	// Header
-	pdf.SetFont("Arial", "B", 18)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(190, 10, tr("SUPERMERCADO SURTIFAMILIAR"), "0", 1, "L", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 14)
-	pdf.SetTextColor(60, 60, 60)
-	pdf.CellFormat(120, 7, tr("Reporte de Rentabilidad"), "0", 0, "L", false, 0, "")
-
-	pdf.SetFont("Arial", "", 10)
-	pdf.SetFillColor(241, 239, 232)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(70, 7, tr("Mes / Período Auditado"), "1", 1, "C", true, 0, "")
-
-	pdf.SetFont("Arial", "", 10)
-	loc, _ := time.LoadLocation("America/Bogota")
-	if loc == nil { loc = time.Local }
-	nowStr := time.Now().In(loc).Format("02/01/2006 03:04:05 PM")
-	periodStr := fmt.Sprintf("Período: %s al %s  |  Generado: %s", r.From.Format("02/01/2006"), r.To.Format("02/01/2006"), nowStr)
-	pdf.CellFormat(190, 6, tr(periodStr), "0", 1, "L", false, 0, "")
-	pdf.Ln(4)
-
-	// Section 1: GANANCIA DE TODO LO VENDIDO
-	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(190, 7, tr("1. Ganancia de todo lo vendido"), "0", 1, "L", false, 0, "")
-
-	y1 := pdf.GetY()
-	// Card 1: Ventas totales
-	pdf.SetFillColor(241, 239, 232)
-	pdf.SetDrawColor(211, 209, 199)
-	pdf.Rect(10, y1, 60, 18, "DF")
-	pdf.SetXY(10, y1+2)
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(60, 4, tr("Ventas totales"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(r.TotalSales)), "0", 0, "C", false, 0, "")
-
-	// Card 2: Costo de la mercancía
-	pdf.Rect(75, y1, 60, 18, "DF")
-	pdf.SetXY(75, y1+2)
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(60, 4, tr("Costo de la mercancía"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(r.TotalCost)), "0", 0, "C", false, 0, "")
-
-	// Card 3: Ganancia bruta (Verde)
-	pdf.SetFillColor(234, 243, 222)
-	pdf.Rect(140, y1, 60, 18, "DF")
-	pdf.SetXY(140, y1+2)
-	pdf.SetFont("Arial", "", 8)
-	pdf.SetTextColor(39, 80, 10)
-	pdf.CellFormat(60, 4, tr("Ganancia bruta"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 12)
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(r.GrossProfit)), "0", 0, "C", false, 0, "")
-
-	pdf.SetY(y1 + 24)
-
-	// Section 2: GASTOS DEL NEGOCIO (SIN PROVEEDORES)
-	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(190, 7, tr("2. Gastos del negocio (sin proveedores)"), "0", 1, "L", false, 0, "")
-
-	opRows := [][]string{
-		{"Servicios públicos (Luz, Agua, Gas, Internet)", fmt.Sprintf("$%s", formatCOP(r.PublicServicesExp))},
-		{"Arriendo del local", fmt.Sprintf("$%s", formatCOP(r.RentExp))},
-		{"Imprevistos, arreglos y daños del local", fmt.Sprintf("$%s", formatCOP(r.MaintenanceExp))},
-		{"Sueldos y nómina", fmt.Sprintf("$%s", formatCOP(r.PayrollExp))},
-		{"Otros gastos varios del local", fmt.Sprintf("$%s", formatCOP(r.OtherOpExp))},
-	}
-
-	pdf.SetFont("Arial", "", 9)
-	pdf.SetDrawColor(211, 209, 199)
-	for _, row := range opRows {
-		pdf.CellFormat(130, 7, tr(row[0]), "1", 0, "L", false, 0, "")
-		pdf.SetFont("Arial", "B", 9)
-		pdf.CellFormat(60, 7, tr(row[1]), "1", 1, "R", false, 0, "")
-		pdf.SetFont("Arial", "", 9)
-	}
-
-	// Total Egresos Destacado (Rojo)
-	pdf.SetFillColor(252, 235, 235)
-	pdf.SetTextColor(121, 31, 31)
-	pdf.SetFont("Arial", "B", 10)
-	pdf.CellFormat(130, 8, tr("Total de gastos del negocio"), "1", 0, "L", true, 0, "")
-	pdf.CellFormat(60, 8, fmt.Sprintf("$%s", formatCOP(r.TotalOpExpenses)), "1", 1, "R", true, 0, "")
-	pdf.Ln(4)
-
-	// Desglose Detallado por Servicio y Rubro
-	if len(r.OpExpenseItems) > 0 {
-		if pdf.GetY() > 220 { pdf.AddPage() }
-		pdf.SetFont("Arial", "B", 9)
-		pdf.SetTextColor(60, 60, 60)
-		pdf.CellFormat(190, 6, tr("Desglose Detallado por Servicio y Rubro del Local:"), "0", 1, "L", false, 0, "")
-
-		pdf.SetFillColor(241, 239, 232)
-		pdf.SetTextColor(95, 94, 90)
-		pdf.SetFont("Arial", "B", 8)
-		pdf.CellFormat(25, 6, tr("Fecha"), "1", 0, "C", true, 0, "")
-		pdf.CellFormat(55, 6, tr("Servicio / Categoría"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(70, 6, tr("Detalle del Gasto"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(40, 6, tr("Monto"), "1", 1, "R", true, 0, "")
-
-		pdf.SetFont("Arial", "", 8)
-		pdf.SetTextColor(44, 44, 42)
-		limitExp := len(r.OpExpenseItems)
-		if limitExp > 30 { limitExp = 30 }
-		for i := 0; i < limitExp; i++ {
-			if pdf.GetY() > 270 { pdf.AddPage() }
-			item := r.OpExpenseItems[i]
-			dateStr := item.Date.Format("02/01/2006")
-			pdf.CellFormat(25, 6, tr(dateStr), "1", 0, "C", false, 0, "")
-			pdf.CellFormat(55, 6, tr(item.Category), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(70, 6, tr(item.Description), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(40, 6, fmt.Sprintf("$%s", formatCOP(item.Amount)), "1", 1, "R", false, 0, "")
-		}
-	}
-	pdf.Ln(6)
-
-	// Section 3: MOVIMIENTO DE EFECTIVO (CAJA)
-	if pdf.GetY() > 220 { pdf.AddPage() }
-	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(190, 7, tr("3. Movimiento del efectivo (caja)"), "0", 1, "L", false, 0, "")
-
-	y3 := pdf.GetY()
-	cWidth := 44.0
-	gap := 4.0
-
-	// Card 1
-	pdf.SetFillColor(241, 239, 232)
-	pdf.Rect(10, y3, cWidth, 16, "DF")
-	pdf.SetXY(10, y3+1)
-	pdf.SetFont("Arial", "", 7)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(cWidth, 4, tr("Efectivo que entró"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 10)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(cWidth, 7, fmt.Sprintf("$%s", formatCOP(r.TotalCashInflows)), "0", 0, "C", false, 0, "")
-
-	// Card 2
-	x2 := 10 + cWidth + gap
-	pdf.Rect(x2, y3, cWidth, 16, "DF")
-	pdf.SetXY(x2, y3+1)
-	pdf.SetFont("Arial", "", 7)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(cWidth, 4, tr("Efectivo gastado local"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 10)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(cWidth, 7, fmt.Sprintf("$%s", formatCOP(r.CashExpenses)), "0", 0, "C", false, 0, "")
-
-	// Card 3
-	x3 := x2 + cWidth + gap
-	pdf.Rect(x3, y3, cWidth, 16, "DF")
-	pdf.SetXY(x3, y3+1)
-	pdf.SetFont("Arial", "", 7)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(cWidth, 4, tr("Prestado a clientes"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 10)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(cWidth, 7, fmt.Sprintf("$%s", formatCOP(r.CreditSales)), "0", 0, "C", false, 0, "")
-
-	// Card 4
-	x4 := x3 + cWidth + gap
-	pdf.Rect(x4, y3, cWidth, 16, "DF")
-	pdf.SetXY(x4, y3+1)
-	pdf.SetFont("Arial", "", 7)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(cWidth, 4, tr("Ventas transferencia"), "0", 2, "C", false, 0, "")
-	pdf.SetFont("Arial", "B", 10)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(cWidth, 7, fmt.Sprintf("$%s", formatCOP(r.TransferSales)), "0", 0, "C", false, 0, "")
-
-	pdf.SetY(y3 + 22)
-
-	// Section 4: CARTERA Y DEUDAS
-	if pdf.GetY() > 210 { pdf.AddPage() }
-	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(190, 7, tr("4. A quién se le debe y quién debe"), "0", 1, "L", false, 0, "")
-
-	// 4.1 Cartera Por Cobrar (Fiados)
-	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(190, 5, tr("Plata que los clientes le deben a usted (fiado)"), "0", 1, "L", false, 0, "")
-
-	pdf.SetFillColor(250, 238, 218)
-	pdf.SetTextColor(99, 56, 6)
-	pdf.SetFont("Arial", "B", 9)
-	pdf.CellFormat(130, 7, tr("Total por cobrar"), "1", 0, "L", true, 0, "")
-	pdf.CellFormat(60, 7, fmt.Sprintf("$%s", formatCOP(r.TotalCreditReceivable)), "1", 1, "R", true, 0, "")
-
-	if len(r.CreditReceivables) > 0 {
-		pdf.SetFillColor(241, 239, 232)
-		pdf.SetTextColor(95, 94, 90)
-		pdf.SetFont("Arial", "B", 8)
-		pdf.CellFormat(60, 6, tr("Cliente"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(40, 6, tr("Cédula"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(40, 6, tr("Teléfono"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(50, 6, tr("Debe"), "1", 1, "R", true, 0, "")
-
-		pdf.SetFont("Arial", "", 8)
-		pdf.SetTextColor(44, 44, 42)
-		limit := len(r.CreditReceivables)
-		if limit > 20 { limit = 20 }
-		for i := 0; i < limit; i++ {
-			if pdf.GetY() > 270 { pdf.AddPage() }
-			c := r.CreditReceivables[i]
-			pdf.CellFormat(60, 6, tr(c.ClientName), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(40, 6, tr(c.ClientDNI), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(40, 6, tr(c.Phone), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(50, 6, fmt.Sprintf("$%s", formatCOP(c.Balance)), "1", 1, "R", false, 0, "")
-		}
-	}
-	pdf.Ln(4)
-
-	// 4.2 Deudas Por Pagar (A quién se le debe)
-	if pdf.GetY() > 220 { pdf.AddPage() }
-	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(95, 94, 90)
-	pdf.CellFormat(190, 5, tr("Plata que el negocio debe (proveedores o préstamos)"), "0", 1, "L", false, 0, "")
-
-	pdf.SetFillColor(241, 239, 232)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.SetFont("Arial", "B", 9)
-	pdf.CellFormat(130, 7, tr("Total por pagar"), "1", 0, "L", true, 0, "")
-	pdf.CellFormat(60, 7, fmt.Sprintf("$%s", formatCOP(r.TotalDebtsPayable)), "1", 1, "R", true, 0, "")
-
-	if len(r.DebtsPayable) > 0 {
-		pdf.SetFillColor(241, 239, 232)
-		pdf.SetTextColor(95, 94, 90)
-		pdf.SetFont("Arial", "B", 8)
-		pdf.CellFormat(75, 6, tr("A quién se le debe"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(65, 6, tr("Concepto / Detalle"), "1", 0, "L", true, 0, "")
-		pdf.CellFormat(50, 6, tr("Monto"), "1", 1, "R", true, 0, "")
-
-		pdf.SetFont("Arial", "", 8)
-		pdf.SetTextColor(44, 44, 42)
-		limit := len(r.DebtsPayable)
-		if limit > 20 { limit = 20 }
-		for i := 0; i < limit; i++ {
-			if pdf.GetY() > 270 { pdf.AddPage() }
-			d := r.DebtsPayable[i]
-			creditor := d.ProviderName
-			if creditor == "" {
-				creditor = "Acreedor Varios"
-			}
-
-			concept := d.Concept
-			if concept == "" {
-				concept = "Deuda pendiente"
-			}
-
-			pdf.CellFormat(75, 6, tr(creditor), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(65, 6, tr(concept), "1", 0, "L", false, 0, "")
-			pdf.CellFormat(50, 6, fmt.Sprintf("$%s", formatCOP(d.Balance)), "1", 1, "R", false, 0, "")
-		}
-	}
-	pdf.Ln(6)
-
-	// Section 5: RESULTADO FINAL
-	if pdf.GetY() > 220 { pdf.AddPage() }
-	pdf.SetFont("Arial", "B", 11)
-	pdf.SetTextColor(44, 44, 42)
-	pdf.CellFormat(190, 7, tr("5. Con lo pagado, esto quedó"), "0", 1, "L", false, 0, "")
-
-	y5 := pdf.GetY()
-	pdf.SetFillColor(234, 243, 222)
-	pdf.SetDrawColor(39, 80, 10)
-	pdf.Rect(10, y5, 190, 26, "DF")
-	pdf.SetXY(10, y5+2)
-
-	pdf.SetFont("Arial", "", 9)
-	pdf.SetTextColor(39, 80, 10)
-	calcText := fmt.Sprintf("Ganancia bruta ($%s) menos gastos del negocio ($%s)", formatCOP(r.GrossProfit), formatCOP(r.TotalOpExpenses))
-	pdf.CellFormat(190, 4, tr(calcText), "0", 2, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 18)
-	pdf.CellFormat(190, 9, fmt.Sprintf("$%s", formatCOP(r.NetProfit)), "0", 2, "C", false, 0, "")
-
-	pdf.SetFont("Arial", "B", 9)
-	pdf.CellFormat(190, 4, tr("Ganancia libre del período"), "0", 0, "C", false, 0, "")
-
-	var buf bytes.Buffer
-	if err := pdf.Output(&buf); err != nil {
-		return nil, fmt.Errorf("error building profitability pdf: %w", err)
-	}
-	return &buf, nil
 }

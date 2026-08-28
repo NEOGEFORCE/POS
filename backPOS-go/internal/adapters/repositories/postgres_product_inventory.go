@@ -91,7 +91,7 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 		barcodes = append(barcodes, barcode)
 	}
 
-	query += "ELSE 0 END)::numeric, 3) WHERE barcode IN ?"
+	query += "ELSE 0 END)::numeric, 3), updated_at = NOW() WHERE barcode IN ?"
 	args = append(args, barcodes)
 
 	if err := gormDB.Exec(query, args...).Error; err != nil {
@@ -104,7 +104,8 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 	// Sincronizar automáticamente los packs que dependan de los productos base ajustados
 	packUpdateQuery := `
 		UPDATE products p
-		SET quantity = FLOOR(b.quantity / p."packMultiplier")
+		SET quantity = FLOOR(b.quantity / p."packMultiplier"),
+		    updated_at = NOW()
 		FROM products b
 		WHERE p."isPack" = true 
 		  AND p."baseProductBarcode" = b.barcode 
@@ -134,14 +135,61 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 
 // SyncSuppliers sincroniza la lista de proveedores autorizados para un producto
 func (r *PostgresProductRepository) SyncSuppliers(barcode string, supplierIDs []uint) error {
-	var suppliers []models.Supplier
-	if len(supplierIDs) > 0 {
-		if err := r.db.Where("id IN ?", supplierIDs).Find(&suppliers).Error; err != nil {
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("barcode = ?", barcode).First(&product).Error; err != nil {
+			return fmt.Errorf("producto %s no encontrado: %w", barcode, err)
+		}
+
+		uniqueIDs := make([]uint, 0, len(supplierIDs))
+		seen := make(map[uint]struct{})
+		for _, id := range supplierIDs {
+			if id == 0 {
+				continue
+			}
+			if _, exists := seen[id]; exists {
+				continue
+			}
+			seen[id] = struct{}{}
+			uniqueIDs = append(uniqueIDs, id)
+		}
+		if len(uniqueIDs) > 0 {
+			var count int64
+			if err := tx.Model(&models.Supplier{}).Where("id IN ?", uniqueIDs).Count(&count).Error; err != nil {
+				return err
+			}
+			if count != int64(len(uniqueIDs)) {
+				return fmt.Errorf("uno o más proveedores seleccionados no existen")
+			}
+		}
+
+		var previous []models.ProductSupplier
+		if err := tx.Where("product_barcode = ?", barcode).Find(&previous).Error; err != nil {
 			return err
 		}
+		prices := make(map[uint]float64, len(previous))
+		for _, link := range previous {
+			prices[link.SupplierID] = link.PurchasePrice
+		}
+		if err := tx.Where("product_barcode = ?", barcode).Delete(&models.ProductSupplier{}).Error; err != nil {
+			return err
+		}
+		links := make([]models.ProductSupplier, 0, len(uniqueIDs))
+		for _, id := range uniqueIDs {
+			links = append(links, models.ProductSupplier{ProductID: barcode, SupplierID: id, PurchasePrice: prices[id]})
+		}
+		if len(links) > 0 {
+			if err := tx.Create(&links).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-
-	return r.db.Model(&models.Product{Barcode: barcode}).Association("Suppliers").Replace(suppliers)
+	r.AfterCommitUpdate(barcode)
+	return nil
 }
 
 // BulkReceive procesa una recepción masiva de mercancía, gestionando costos, impuestos y productos tipo pack.
@@ -156,7 +204,10 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				for _, m := range movements {
 					if err := tx.Model(&models.Product{}).
 						Where("barcode = ?", m.Barcode).
-						UpdateColumn("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", m.Quantity)).Error; err != nil {
+						Updates(map[string]interface{}{
+							"quantity":   gorm.Expr("ROUND((quantity - ?)::numeric, 3)", m.Quantity),
+							"updated_at": time.Now(),
+						}).Error; err != nil {
 						return err
 					}
 				}
@@ -171,7 +222,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 
 		totalAmount := 0.0
 		var mainSupplierID *uint = supplierID
-		
+
 		employeeName := ""
 		if employeeDNI != "" {
 			var emp models.Employee
@@ -191,7 +242,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				supplierName = sup.Name
 			}
 		}
-		
+
 		receptionID := fmt.Sprintf("RECP-%d", time.Now().Unix())
 		for _, entry := range entries {
 			var product models.Product
@@ -200,7 +251,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					// Crear el "Item Libre" sobre la marcha para que pueda ser recibido e inventariado
 					var defaultCat models.Category
 					tx.Order("id asc").First(&defaultCat)
-					
+
 					product = models.Product{
 						Barcode:       entry.Barcode,
 						ProductName:   "Item Libre",
@@ -285,7 +336,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				if isEgreso {
 					product.Quantity = physicalStock
 				}
-				
+
 				// Si es pack, también debemos ajustar el stock del producto base proporcionalmente
 				if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 && diff != 0 {
 					var baseProduct models.Product
@@ -329,7 +380,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 
 				expandedQuantity := entry.AddedQuantity * float64(product.PackMultiplier)
-				
+
 				if isEgreso {
 					baseProduct.Quantity += expandedQuantity
 					if err := tx.Save(&baseProduct).Error; err != nil {
@@ -370,9 +421,12 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				currentStock = 0
 			}
 
-			// Mantenemos el costo total para ProductSupplier si se necesita
-			totalEntryCost := entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua - entry.Discount
-			
+			// REGLA DEL NEGOCIO: el COSTO capturado es el precio NETO ya
+			// pagado en la factura, así que el DTO % NO se le resta. El
+			// descuento del proveedor es un beneficio que se traslada al
+			// PVP (sube el margen), no una rebaja del costo registrado.
+			totalEntryCost := entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua
+
 			oldPurchasePrice := product.PurchasePrice
 
 			if entry.NewPurchasePrice > 0 {
@@ -381,7 +435,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					totalOldValue := currentStock * oldPurchasePrice
 					totalNewValue := entry.AddedQuantity * entry.NewPurchasePrice
 					newWAC := (totalOldValue + totalNewValue) / (currentStock + entry.AddedQuantity)
-					
+
 					// Redondear a 2 decimales
 					product.PurchasePrice = math.Round(newWAC*100) / 100
 				} else {
@@ -427,9 +481,9 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				if product.SalePrice < oldSalePrice {
 					emoji = "📉"
 				}
-				changeMsg := fmt.Sprintf("%s %s: Antes $%s ➡️ Ahora $%s", 
-					emoji, product.ProductName, 
-					formatMoney(oldSalePrice), 
+				changeMsg := fmt.Sprintf("%s %s: Antes $%s ➡️ Ahora $%s",
+					emoji, product.ProductName,
+					formatMoney(oldSalePrice),
 					formatMoney(product.SalePrice))
 				changedProducts = append(changedProducts, changeMsg)
 
@@ -450,9 +504,9 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			// Guardar snapshot de los valores (IVA, DTO, Precios) para reconstrucción/edición futura
 			// Añadimos supplierName y employeeName para el historial de recepciones
 			type receptionMetadata struct {
-				Entry         interface{} `json:"entry"`
-				SupplierName  string      `json:"supplierName"`
-				EmployeeName  string      `json:"employeeName"`
+				Entry        interface{} `json:"entry"`
+				SupplierName string      `json:"supplierName"`
+				EmployeeName string      `json:"employeeName"`
 			}
 			meta := receptionMetadata{
 				Entry:        entry,
@@ -471,7 +525,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				movementQty = 0
 				movementReason = "PRICE_UPDATE_NO_STOCK"
 			}
-			
+
 			movement := models.StockMovement{
 				Date:         time.Now(),
 				Barcode:      entry.Barcode,
@@ -571,14 +625,14 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 
 				expense := models.Expense{
-					Description:   fmt.Sprintf("%s%s", description, freightLabel),
-					Amount:        actualSum,
-					Date:          time.Now(),
-					Status:        "PAID",
-					Category:      "Proveedores",
-					SupplierID:    mainSupplierID,
-					CreatedByDNI:  strings.ToUpper(strings.TrimSpace(employeeDNI)),
-					ReferenceID:   receptionID,
+					Description:  fmt.Sprintf("%s%s", description, freightLabel),
+					Amount:       actualSum,
+					Date:         time.Now(),
+					Status:       "PAID",
+					Category:     "Proveedores",
+					SupplierID:   mainSupplierID,
+					CreatedByDNI: strings.ToUpper(strings.TrimSpace(employeeDNI)),
+					ReferenceID:  receptionID,
 				}
 
 				for _, mp := range mixed {
@@ -589,13 +643,13 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					parts = append(parts, fmt.Sprintf("%s: $%s", methodUpper, formatMoney(mp.Amount)))
 
 					switch methodUpper {
-  					case "EFECTIVO", "CAJA", "CASH":
-  						expense.CashAmount += mp.Amount
-  					case "NEQUI":
-  						expense.NequiAmount += mp.Amount
-  						expense.TaxAmount += math.Ceil(mp.Amount * 0.004)
-  					case "DAVIPLATA":
-  						expense.DaviplataAmount += mp.Amount
+					case "EFECTIVO", "CAJA", "CASH":
+						expense.CashAmount += mp.Amount
+					case "NEQUI":
+						expense.NequiAmount += mp.Amount
+						expense.TaxAmount += math.Ceil(mp.Amount * 0.004)
+					case "DAVIPLATA":
+						expense.DaviplataAmount += mp.Amount
 					case "FONDO":
 						expense.FondoAmount += mp.Amount
 					case "PRESTAMO", "PREST.":
@@ -617,7 +671,7 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				if paymentSource == "PRESTAMO" || paymentSource == "PREST." || paymentSource == "DEUDA" {
 					status = "PENDING"
 				}
-				
+
 				expense := models.Expense{
 					Description:   description,
 					Amount:        totalAmount,
@@ -777,7 +831,10 @@ func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 			// MASTER SPRINT: Enforce 3 decimal precision in reversal
 			if err := tx.Model(&models.Product{}).
 				Where("barcode = ?", m.Barcode).
-				UpdateColumn("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", m.Quantity)).Error; err != nil {
+				Updates(map[string]interface{}{
+					"quantity":   gorm.Expr("ROUND((quantity - ?)::numeric, 3)", m.Quantity),
+					"updated_at": time.Now(),
+				}).Error; err != nil {
 				return err
 			}
 		}
@@ -805,6 +862,7 @@ func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 func formatMoney(amount float64) string {
 	return fmt.Sprintf("%.0f", amount)
 }
+
 // SanitizeAllNames recorre todos los productos y elimina tildes/normaliza nombres
 func (r *PostgresProductRepository) SanitizeAllNames() (int64, error) {
 	var products []models.Product
@@ -816,7 +874,7 @@ func (r *PostgresProductRepository) SanitizeAllNames() (int64, error) {
 	for _, p := range products {
 		cleanName := utils.NormalizeString(p.ProductName)
 		if cleanName != p.ProductName {
-			// Usar un query directo para evitar hooks de GORM si fuera necesario, 
+			// Usar un query directo para evitar hooks de GORM si fuera necesario,
 			// pero aquí queremos que se actualice el campo correctamente.
 			if err := r.db.Model(&models.Product{}).Where("barcode = ?", p.Barcode).Update("productName", cleanName).Error; err == nil {
 				count++

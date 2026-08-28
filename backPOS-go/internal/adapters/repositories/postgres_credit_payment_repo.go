@@ -1,4 +1,4 @@
-package repositories
+﻿package repositories
 
 import (
 	"backPOS-go/internal/core/domain/models"

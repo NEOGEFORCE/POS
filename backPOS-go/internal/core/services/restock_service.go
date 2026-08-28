@@ -1,6 +1,8 @@
 package services
 
 import (
+	"log"
+
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
@@ -54,7 +56,9 @@ func (s *RestockService) ConfirmOrder(supplierID uint, expectedDate, invoiceRef 
 	// de preventa/visita del proveedor. Se registra en visit_days (JSONB
 	// anti-duplicados). No-fatal: si falla no rompe la creación del pedido.
 	if s.supplierRepo != nil && supplierID != 0 {
-		_ = s.supplierRepo.LearnDay(supplierID, "visit_days")
+		if err := s.supplierRepo.LearnDay(supplierID, "visit_days"); err != nil {
+			log.Printf("[RESTOCK] no se pudo aprender día de visita del proveedor %d: %v", supplierID, err)
+		}
 	}
 
 	return s.repo.ClearPurchaseList(supplierID)

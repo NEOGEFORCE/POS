@@ -3,7 +3,9 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
+	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
 
@@ -14,13 +16,20 @@ type RestockHandler struct {
 	restockService   *services.RestockService
 	inventoryService *services.InventoryService
 	telegram         *services.TelegramService
+	metricsRepo      *repositories.RestockMetricsRepository
 }
 
-func NewRestockHandler(rs *services.RestockService, is *services.InventoryService, tg *services.TelegramService) *RestockHandler {
+func NewRestockHandler(
+	rs *services.RestockService,
+	is *services.InventoryService,
+	tg *services.TelegramService,
+	mr *repositories.RestockMetricsRepository,
+) *RestockHandler {
 	return &RestockHandler{
 		restockService:   rs,
 		inventoryService: is,
 		telegram:         tg,
+		metricsRepo:      mr,
 	}
 }
 
@@ -104,7 +113,8 @@ type ConfirmOrderItemReq struct {
 }
 
 type ConfirmOrderReq struct {
-	SupplierID       uint                  `json:"supplier_id"`
+	SupplierID uint `json:"supplier_id"`
+
 	ExpectedDate     string                `json:"expected_date"`
 	InvoiceRef       string                `json:"invoice_ref"`
 	Items            []ConfirmOrderItemReq `json:"items"`
@@ -112,37 +122,80 @@ type ConfirmOrderReq struct {
 	RealInvoiceTotal float64               `json:"real_invoice_total"`
 	ConfirmedBy      string                `json:"confirmed_by"`
 	EditOrderID      string                `json:"edit_order_id"`
+	AllowInTransit   bool                  `json:"allow_in_transit"`
+}
+
+func needsInTransitConfirmation(products []models.InTransitProduct, allowInTransit bool) bool {
+	return len(products) > 0 && !allowInTransit
 }
 
 func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 	var req ConfirmOrderReq
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos de pedido inválidos"})
+		return
+	}
+	if req.SupplierID == 0 || len(req.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "El proveedor y al menos un producto son obligatorios"})
 		return
 	}
 
-	var items []models.ConfirmedOrderItem
+	productIDs := make([]string, 0, len(req.Items))
+	items := make([]models.ConfirmedOrderItem, 0, len(req.Items))
+	estimatedTotal := 0.0
 	for _, reqItem := range req.Items {
+		barcode := strings.TrimSpace(reqItem.Barcode)
+		if barcode == "" || reqItem.Quantity <= 0 || reqItem.UnitCost < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Cada producto requiere código, cantidad positiva y costo válido"})
+			return
+		}
+		productIDs = append(productIDs, barcode)
 		items = append(items, models.ConfirmedOrderItem{
-			ProductID:      reqItem.Barcode,
+			ProductID:      barcode,
 			Quantity:       reqItem.Quantity,
 			EstimatedPrice: reqItem.UnitCost,
 		})
+		estimatedTotal += reqItem.Quantity * reqItem.UnitCost
 	}
 
-	err := h.restockService.ConfirmOrder(req.SupplierID, req.ExpectedDate, req.InvoiceRef, items, req.EstimatedTotal, req.RealInvoiceTotal, req.ConfirmedBy, req.EditOrderID)
+	conflicts, err := h.metricsRepo.FindInTransitProducts(c.Request.Context(), productIDs, req.EditOrderID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo verificar la mercancía en tránsito"})
+		return
+	}
+	if needsInTransitConfirmation(conflicts, req.AllowInTransit) {
+		c.JSON(http.StatusConflict, gin.H{
+			"code":     "PRODUCTS_IN_TRANSIT_CONFIRMATION_REQUIRED",
+			"error":    "Uno o más productos ya están en camino. Confirma si deseas pedir cantidad adicional",
+			"products": conflicts,
+		})
 		return
 	}
 
-	if req.EstimatedTotal > 0 {
-		diff := req.RealInvoiceTotal - req.EstimatedTotal
-		diffPercent := diff / req.EstimatedTotal
+	_, confirmedBy := GetContextUser(c)
+	realInvoiceTotal := req.RealInvoiceTotal
+	if realInvoiceTotal <= 0 {
+		realInvoiceTotal = estimatedTotal
+	}
+	if err := h.restockService.ConfirmOrder(
+		req.SupplierID,
+		req.ExpectedDate,
+		req.InvoiceRef,
+		items,
+		estimatedTotal,
+		realInvoiceTotal,
+		confirmedBy,
+		req.EditOrderID,
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo confirmar el pedido"})
+		return
+	}
 
-		if diffPercent > 0.05 {
-			msg := fmt.Sprintf("⚠️ PEDIDO PROVEEDOR %d — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción", 
-				req.SupplierID, req.EstimatedTotal, req.RealInvoiceTotal, diff)
+	if estimatedTotal > 0 {
+		diff := realInvoiceTotal - estimatedTotal
+		if diff/estimatedTotal > 0.05 {
+			msg := fmt.Sprintf("⚠️ PEDIDO PROVEEDOR %d — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción",
+				req.SupplierID, estimatedTotal, realInvoiceTotal, diff)
 			h.telegram.SendAlert(msg)
 		}
 	}
@@ -162,7 +215,7 @@ func (h *RestockHandler) GetPendingOrders(c *gin.Context) {
 func (h *RestockHandler) CancelPendingOrder(c *gin.Context) {
 	id := c.Param("id")
 	userDni, _ := c.Get("dni")
-	
+
 	err := h.restockService.UpdateOrderStatus(id, "CANCELED", userDni.(string))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error al cancelar el pedido"})
@@ -200,14 +253,14 @@ func (h *RestockHandler) GetPendingOrder(c *gin.Context) {
 func (h *RestockHandler) GetOrdersHistory(c *gin.Context) {
 	limit := 10
 	offset := 0
-	
+
 	if limitStr := c.Query("limit"); limitStr != "" {
 		fmt.Sscanf(limitStr, "%d", &limit)
 	}
 	if offsetStr := c.Query("offset"); offsetStr != "" {
 		fmt.Sscanf(offsetStr, "%d", &offset)
 	}
-	
+
 	filters := make(map[string]interface{})
 	if supplier := c.Query("supplier_id"); supplier != "" {
 		filters["supplier_id"] = supplier
@@ -221,7 +274,7 @@ func (h *RestockHandler) GetOrdersHistory(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	
+
 	c.JSON(http.StatusOK, gin.H{
 		"data":  orders,
 		"total": total,

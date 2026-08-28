@@ -1,12 +1,15 @@
+//go:build tools_legacy
+// +build tools_legacy
+
 package main
 
 import (
 	"fmt"
-	"log"
-	"os"
+	"github.com/joho/godotenv"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	"github.com/joho/godotenv"
+	"log"
+	"os"
 )
 
 type Client struct {
@@ -17,7 +20,7 @@ type Client struct {
 func main() {
 	// Ahora que estamos dentro de backPOS-go, cargamos el .env local
 	_ = godotenv.Load("../../.env")
-	
+
 	host := os.Getenv("DB_HOST")
 	user := os.Getenv("DB_USER")
 	password := os.Getenv("DB_PASSWORD")
@@ -30,7 +33,7 @@ func main() {
 
 	dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%s sslmode=disable", host, user, password, dbname, port)
 	fmt.Printf("Intentando conectar a %s:%s...\n", host, port)
-	
+
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Error conectando a la DB: %v", err)

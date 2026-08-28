@@ -12,6 +12,12 @@ type ProductRankingItem struct {
 	Total    float64 `json:"total"`
 }
 
+type CategorySalesItem struct {
+	Category string  `json:"category"`
+	Quantity float64 `json:"quantity"`
+	Total    float64 `json:"total"`
+}
+
 type SaleFilter struct {
 	Page        int
 	PageSize    int
@@ -40,6 +46,7 @@ type MVMonthlyStats struct {
 type SaleRepository interface {
 	Create(sale *models.Sale) error
 	CreateWithTx(tx interface{}, sale *models.Sale) error
+	AfterCommit()
 	GetDB() interface{}
 	GetAll() ([]models.Sale, error)
 	GetByDateRange(from, to time.Time) ([]models.Sale, error)
@@ -55,7 +62,9 @@ type SaleRepository interface {
 	GetMonthlyTotals() (map[string]float64, error)
 	GetSoldQuantityByProduct(barcode string, from, to time.Time) (float64, error)
 	GetSoldQuantitiesByBarcodes(barcodes []string, from, to time.Time) (map[string]float64, error)
+	GetSoldQuantitiesByBarcodesForWindows(barcodes []string, recentFrom, extendedFrom, to time.Time) (map[string]float64, map[string]float64, error)
 	GetTopSellingProducts(from, to time.Time, limit int) ([]ProductRankingItem, error)
+	GetSalesByCategoryByRange(from, to time.Time) ([]CategorySalesItem, error)
 	GetMajorityDayForRange(from, to time.Time) (string, error)
 	GetDailySalesByRange(from, to time.Time) (map[string]float64, error)
 	GetSalesByPaymentMethod(from, to time.Time) (map[string]float64, error)
@@ -66,6 +75,7 @@ type SaleRepository interface {
 	GetGlobalCollectedDebtsByMethod() (map[string]float64, error)
 	GetGlobalCOGS() (float64, error)
 	GetCOGSByRange(from, to time.Time) (float64, error)
+	GetRevenueByRange(from, to time.Time) (float64, error)
 	GetTotalSalesByRange(from, to time.Time) (float64, error)
 	GetSalesBreakdownByRange(from, to time.Time) (map[string]float64, error)
 	GetPendingByClient(clientDNI string) ([]models.Sale, error)

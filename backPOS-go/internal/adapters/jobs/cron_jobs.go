@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -20,14 +21,15 @@ import (
 )
 
 type CronManager struct {
-	scheduler *cron.Cron
-	db        *gorm.DB
-	telegram  *services.TelegramService
-	inventory *services.InventoryService
-	supplier  *services.SupplierService
-	orders    *services.PurchaseOrderService
-	expected  *services.ExpectedOrderService
-	restock   *services.RestockService
+	scheduler      *cron.Cron
+	db             *gorm.DB
+	telegram       *services.TelegramService
+	inventory      *services.InventoryService
+	supplier       *services.SupplierService
+	orders         *services.PurchaseOrderService
+	expected       *services.ExpectedOrderService
+	restock        *services.RestockService
+	restockNightly *services.RestockNightlyService
 }
 
 func NewCronManager(
@@ -38,20 +40,22 @@ func NewCronManager(
 	ord *services.PurchaseOrderService,
 	exp *services.ExpectedOrderService,
 	res *services.RestockService,
+	rns *services.RestockNightlyService,
 ) *CronManager {
 	// LOCALIZACIÓN FIJA: Colombia (UTC-5) - Independiente de la configuración del servidor
 	loc := time.FixedZone("America/Bogota", -5*60*60)
 	scheduler := cron.New(cron.WithLocation(loc))
 
 	return &CronManager{
-		scheduler: scheduler,
-		db:        db,
-		telegram:  tg,
-		inventory: inv,
-		supplier:  sup,
-		orders:    ord,
-		expected:  exp,
-		restock:   res,
+		scheduler:      scheduler,
+		db:             db,
+		telegram:       tg,
+		inventory:      inv,
+		supplier:       sup,
+		orders:         ord,
+		expected:       exp,
+		restock:        res,
+		restockNightly: rns,
 	}
 }
 
@@ -60,12 +64,18 @@ func (m *CronManager) Start() {
 	_, err := m.scheduler.AddFunc("@every 5m", func() {
 		log.Println("📊 [Cron] Solicitando Refresco de Dashboard...")
 		refresher.GetRefresherService(m.db).RequestRefresh("mv_dashboard_stats_monthly")
-		
+
 		// AVISO GLOBAL: Estadísticas pesadas actualizadas por el sistema
 		go sse.GetSSEService().BroadcastDashboardUpdate()
 	})
 	if err != nil {
 		log.Printf("❌ Failed to schedule Dashboard Refresher: %v", err)
+	}
+
+	// Job 6: Nightly Smart Restock Pre-calculation (Daily at 09:00 PM - America/Bogota)
+	_, err = m.scheduler.AddFunc("0 21 * * *", m.handleNightlyRestockCalculation)
+	if err != nil {
+		log.Printf("❌ Failed to schedule Nightly Restock Calculation: %v", err)
 	}
 
 	// Job 1: Suggested Orders (Daily at 07:00 AM)
@@ -102,9 +112,19 @@ func (m *CronManager) Start() {
 	log.Println("🕒 Cron Scheduler Started with America/Bogota Location")
 }
 
+func (m *CronManager) Stop(ctx context.Context) error {
+	jobsDone := m.scheduler.Stop()
+	select {
+	case <-jobsDone.Done():
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (m *CronManager) handleSuggestedOrdersAlert() {
 	log.Println("🔄 Running Daily Suggested Orders Job (07:05 AM)...")
-	
+
 	loc, _ := time.LoadLocation("America/Bogota")
 	// Determinar día actual
 	days := map[time.Weekday]string{
@@ -116,7 +136,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 		time.Saturday:  "Sábado",
 		time.Sunday:    "Domingo",
 	}
-	
+
 	today := days[time.Now().In(loc).Weekday()]
 	suppliers, err := m.supplier.GetSuppliersByVisitDay(today)
 	if err != nil {
@@ -130,7 +150,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 
 	for _, s := range suppliers {
 		suggested, _ := m.inventory.GetSuggestedOrders(s.ID, false)
-		
+
 		var criticalItems []string
 		var urgentAlerts []string
 
@@ -151,7 +171,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 				}
 				urgentAlerts = append(urgentAlerts, fmt.Sprintf("• *%s*: Subir stock base a *%.0f un* _(%s)_", item.ProductName, newMin, item.Alert))
 			}
-			
+
 			// Items agotados o bajo min stock con cantidad sugerida a pedir
 			if item.Stock <= 0 || item.Status == "CRITICAL" {
 				criticalItems = append(criticalItems, fmt.Sprintf("• *%s* ➔ Pedir *%.0f un*", item.ProductName, qtyToOrder))
@@ -162,7 +182,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 			var message strings.Builder
 			message.WriteString(fmt.Sprintf("🛎️ *VISITAS HOY: %s*\n", strings.ToUpper(s.Name)))
 			message.WriteString("➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n")
-			
+
 			if len(criticalItems) > 0 {
 				message.WriteString("📦 *PRODUCTOS AGOTADOS A PEDIR*:\n")
 				for _, ci := range criticalItems {
@@ -170,7 +190,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 				}
 				message.WriteString("\n")
 			}
-			
+
 			if len(urgentAlerts) > 0 {
 				message.WriteString("⚡ *RECOMENDACIONES DE LA IA (STOCK BASE)*:\n")
 				for _, alert := range urgentAlerts {
@@ -178,7 +198,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 				}
 				message.WriteString("\n")
 			}
-			
+
 			message.WriteString("➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖➖\n")
 			message.WriteString("📱 _Abre el panel de Pedidos Inteligentes para autorizar y generar._")
 			m.telegram.SendAlert(message.String())
@@ -188,7 +208,7 @@ func (m *CronManager) handleSuggestedOrdersAlert() {
 
 func (m *CronManager) handlePendingDeliveriesAlert() {
 	log.Println("🤖 Running Daily Pending Deliveries Job...")
-	
+
 	orders, err := m.orders.GetPendingOrdersByDeliveryDate(time.Now())
 	if err != nil {
 		log.Printf("❌ Job 2 Error: %v", err)
@@ -216,10 +236,15 @@ func (m *CronManager) handleLogisticReportJob() {
 
 	loc, _ := time.LoadLocation("America/Bogota")
 	todayStr := time.Now().In(loc).Format("2006-01-02")
-	
+
 	// Excluir proveedores que ya tienen egreso registrado hoy
 	var paidSupplierIDs []uint
-	m.db.Model(&models.Expense{}).Where("category = 'Proveedores' AND supplierId IS NOT NULL AND DATE(date) >= ?", todayStr).Pluck("supplierId", &paidSupplierIDs)
+	if err := m.db.Model(&models.Expense{}).
+		Where("category = ? AND supplier_id IS NOT NULL AND DATE(date) >= ?", "Proveedores", todayStr).
+		Pluck("supplier_id", &paidSupplierIDs).Error; err != nil {
+		log.Printf("❌ Job 2 Error consultando egresos pagados: %v", err)
+		return
+	}
 	paidMap := make(map[uint]bool)
 	for _, id := range paidSupplierIDs {
 		paidMap[id] = true
@@ -251,7 +276,7 @@ func (m *CronManager) handleLogisticReportJob() {
 	// 1. Confirmed Orders (Solo pedidos programados para HOY que no hayan sido cerrados o pagados)
 	var confirmed []models.ConfirmedOrder
 	m.db.Preload("Supplier").Preload("Items").Where("DATE(expected_date) = ? AND UPPER(status) NOT IN ('COMPLETED', 'DISCARDED', 'RECEIVED', 'DELIVERED', 'CANCELED', 'CANCELLED')", todayStr).Find(&confirmed)
-	
+
 	for _, o := range confirmed {
 		if o.SupplierID > 0 && paidMap[o.SupplierID] {
 			continue // Ya fue pagado hoy
@@ -287,7 +312,7 @@ func (m *CronManager) handleLogisticReportJob() {
 
 	for _, supName := range supplierOrderList {
 		o := supplierMap[supName]
-		list.WriteString(fmt.Sprintf("🚛 *%s*\n   💰 Valor: `$%s COP` | 📦 Ítems: `%d`\n\n", 
+		list.WriteString(fmt.Sprintf("🚛 *%s*\n   💰 Valor: `$%s COP` | 📦 Ítems: `%d`\n\n",
 			o.SupplierName, formatMoney(o.Total), o.ItemCount))
 		totalAmount += o.Total
 	}
@@ -337,7 +362,7 @@ func (m *CronManager) handleNightlyBackupJob() {
 	dbUser := os.Getenv("DB_USER")
 	dbName := os.Getenv("DB_NAME")
 	dbPass := os.Getenv("DB_PASSWORD")
-	
+
 	// 2. Ruta de pg_dump (Configurable por .env para producción)
 	pgDumpRaw := strings.TrimSpace(strings.Trim(os.Getenv("PG_DUMP_PATH"), "\""))
 	pgDumpPath := filepath.Clean(pgDumpRaw)
@@ -351,18 +376,18 @@ func (m *CronManager) handleNightlyBackupJob() {
 		m.telegram.SendAlert(fmt.Sprintf("❌ *FALLO DE RESPALDO:* El ejecutable pg_dump no se encontró en `%s`. Verifica el .env.", pgDumpPath))
 		return
 	}
-	
+
 	// 3. Crear archivo temporal para el backup
 	filename := fmt.Sprintf("backup_pos_%s.sql", time.Now().Format("2006-01-02_15-04"))
 	backupPath := filepath.Join(os.TempDir(), filename)
-	
+
 	// 4. Ejecutar pg_dump directamente (Más estable que usar cmd /C)
 	args := []string{"-U", dbUser, "-d", dbName, "-f", backupPath}
 	cmd := exec.Command(pgDumpPath, args...)
-	
+
 	// Pasar PGPASSWORD via Environment para evitar diálogos interactivos
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+dbPass)
-	
+
 	log.Printf("🛠️ Executing Backup: %s %v", pgDumpPath, args)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -380,9 +405,9 @@ func (m *CronManager) handleNightlyBackupJob() {
 	defer file.Close()
 	defer os.Remove(backupPath) // Limpiar después de enviar
 
-	caption := fmt.Sprintf("💾 *RESPALDO NOCTURNO AUTOMÁTICO*\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Protegido_", 
+	caption := fmt.Sprintf("💾 *RESPALDO NOCTURNO AUTOMÁTICO*\n📅 Fecha: `%s`\n🚀 _Sistema POS Pro Protegido_",
 		time.Now().Format("02/01/2006 15:04"))
-	
+
 	err = m.telegram.SendDocument(file, filename, caption)
 	if err != nil {
 		log.Printf("❌ Failed to send backup to Telegram: %v", err)
@@ -394,7 +419,7 @@ func (m *CronManager) handleShelfStockCriticalAlert() {
 
 	loc, _ := time.LoadLocation("America/Bogota")
 	todayStr := time.Now().In(loc).Format("2006-01-02")
-	
+
 	expectedOrders, _ := m.expected.GetExpectedOrdersByDate(todayStr)
 	expectedSuppliers := make(map[string]bool)
 	for _, o := range expectedOrders {
@@ -446,4 +471,18 @@ func (m *CronManager) handleShelfStockCriticalAlert() {
 	}
 
 	m.telegram.SendAlert(message)
+}
+
+func (m *CronManager) handleNightlyRestockCalculation() {
+	log.Println("🌙 Running Nightly Smart Restock Calculation Job (09:00 PM)...")
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+
+	if err := m.restockNightly.RunNightlyMetricsCalculation(ctx); err != nil {
+		log.Printf("❌ Nightly Restock Calculation Error: %v", err)
+		m.telegram.SendAlert(fmt.Sprintf("⚠️ *FALLO EN CÁLCULO NOCTURNO DE RESTOCK:* %v", err))
+	} else {
+		log.Println("✅ Nightly Smart Restock Calculation Finished Successfully.")
+		go sse.GetSSEService().Broadcast("RESTOCK_UPDATE", map[string]string{"status": "completed"})
+	}
 }

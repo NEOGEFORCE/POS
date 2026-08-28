@@ -6,7 +6,9 @@ import (
 )
 
 type ClosureRepository interface {
+	Transaction(fn func(tx interface{}) error) error
 	Save(closure *models.CashierClosure) error
+	SaveWithTx(tx interface{}, closure *models.CashierClosure) error
 	GetByDateRange(from, to time.Time) ([]models.CashierClosure, error)
 	GetAll() ([]models.CashierClosure, error)
 	GetByID(id uint) (*models.CashierClosure, error)

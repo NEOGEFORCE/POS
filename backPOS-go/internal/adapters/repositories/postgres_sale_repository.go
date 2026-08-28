@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 
+	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
 	"sync"
@@ -30,7 +31,9 @@ func (r *PostgresSaleRepository) GetDB() interface{} {
 
 func (r *PostgresSaleRepository) invalidateDashboardCache() {
 	// Borrado de cache local es trivial (in-memory map), lo dejamos síncrono.
-	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
+	// Se purgan TODAS las variantes del overview: hay una entrada por rango de
+	// fechas, así que borrar solo la clave base dejaba cifras viejas vivas.
+	cache.InvalidateDashboard()
 
 	// MV refresh y SSE broadcast se mueven a goroutine de fondo: no son
 	// requeridos para responder al cliente HTTP. El broadcast SSE sobre
@@ -42,6 +45,16 @@ func (r *PostgresSaleRepository) invalidateDashboardCache() {
 				log.Printf("⚠️ [invalidateDashboardCache] recovered: %v", rec)
 			}
 		}()
+
+		// Pedir el refresco de la vista mensual. Los repositorios de gastos,
+		// productos y devoluciones ya lo hacían; el de VENTAS no, y por eso las
+		// cifras del mes quedaban viejas hasta el cron de 5 minutos.
+		// RequestRefresh tiene debounce de 10s: una ráfaga de ventas no satura
+		// Postgres.
+		if rf := refresher.GetRefresher(); rf != nil {
+			rf.RequestRefresh("mv_dashboard_stats_monthly")
+		}
+
 		sse.GetSSEService().BroadcastNewSale(nil)
 	}()
 }
@@ -59,11 +72,11 @@ func (r *PostgresSaleRepository) CreateWithTx(tx interface{}, sale *models.Sale)
 	if !ok {
 		return r.db.Create(sale).Error
 	}
-	err := gormDB.Create(sale).Error
-	if err == nil {
-		r.invalidateDashboardCache()
-	}
-	return err
+	return gormDB.Create(sale).Error
+}
+
+func (r *PostgresSaleRepository) AfterCommit() {
+	r.invalidateDashboardCache()
 }
 
 func (r *PostgresSaleRepository) GetAll() ([]models.Sale, error) {
@@ -118,20 +131,30 @@ func (r *PostgresSaleRepository) GetByID(id uint) (*models.Sale, error) {
 		return nil, err
 	}
 
-	// Calcular cantidades ya devueltas para cada item
-	for i := range sale.SaleDetails {
-		var returned float64
-		// Sumamos la cantidad de return_details donde isExchange = false (es una devolución de entrada)
-		r.db.Table("return_details").
-			Joins("JOIN returns ON returns.id = return_details.\"returnId\"").
-			Where("returns.\"saleId\" = ? AND return_details.barcode = ? AND return_details.\"isExchange\" = ?", 
-				sale.SaleID, sale.SaleDetails[i].Barcode, false).
-			Select("COALESCE(SUM(return_details.quantity), 0)").
-			Scan(&returned)
-		
-		sale.SaleDetails[i].ReturnedQty = returned
+	// Cargar cantidades devueltas en una sola consulta agrupada, sin una
+	// subconsulta por cada detalle de la venta.
+	type returnedQuantity struct {
+		Barcode  string
+		TotalQty float64
 	}
-	
+	var returned []returnedQuantity
+	if err := r.db.Table("return_details").
+		Joins("JOIN returns ON returns.id = return_details.\"returnId\"").
+		Where("returns.\"saleId\" = ? AND returns.deleted_at IS NULL AND return_details.deleted_at IS NULL AND return_details.\"isExchange\" = ?", sale.SaleID, false).
+		Select("return_details.barcode, COALESCE(SUM(return_details.quantity), 0) AS total_qty").
+		Group("return_details.barcode").
+		Scan(&returned).Error; err != nil {
+		return nil, fmt.Errorf("consultando cantidades devueltas de venta %d: %w", sale.SaleID, err)
+	}
+
+	returnedByBarcode := make(map[string]float64, len(returned))
+	for _, row := range returned {
+		returnedByBarcode[row.Barcode] = row.TotalQty
+	}
+	for i := range sale.SaleDetails {
+		sale.SaleDetails[i].ReturnedQty = returnedByBarcode[sale.SaleDetails[i].Barcode]
+	}
+
 	return &sale, nil
 }
 
@@ -229,7 +252,7 @@ func (r *PostgresSaleRepository) FindAll(filter ports.SaleFilter) ([]models.Sale
 		var results []result
 		r.db.Table("return_details").
 			Joins("JOIN returns ON returns.id = return_details.\"returnId\"").
-			Where("returns.\"saleId\" IN ? AND return_details.\"isExchange\" = ?", saleIDs, false).
+			Where("returns.\"saleId\" IN ? AND returns.deleted_at IS NULL AND return_details.deleted_at IS NULL AND return_details.\"isExchange\" = ?", saleIDs, false).
 			Select("returns.\"saleId\", return_details.barcode, SUM(return_details.quantity) as total_qty").
 			Group("returns.\"saleId\", return_details.barcode").
 			Scan(&results)
@@ -255,8 +278,8 @@ func (r *PostgresSaleRepository) FindAll(filter ports.SaleFilter) ([]models.Sale
 
 func (r *PostgresSaleRepository) GetDashboardStats(from, to time.Time) (float64, int64, float64, error) {
 	var stats struct {
-		TotalAmount  float64
-		TotalCount   int64
+		TotalAmount float64
+		TotalCount  int64
 	}
 
 	// 1. Efectivo Contado + Digitales (Ventas PAGADAS)
@@ -304,7 +327,6 @@ func (r *PostgresSaleRepository) GetDashboardStats(from, to time.Time) (float64,
 
 	return stats.TotalAmount, stats.TotalCount, productsSold, nil
 }
-
 
 func (r *PostgresSaleRepository) UpdatePayment(id uint, sale *models.Sale) error {
 	err := r.db.Model(&models.Sale{}).Where("\"saleId\" = ?", id).Updates(map[string]interface{}{
@@ -362,14 +384,14 @@ func (r *PostgresSaleRepository) GetSoldQuantityByProduct(barcode string, from, 
 	query := r.db.Table("sale_details").
 		Joins("JOIN sales ON sales.\"saleId\" = sale_details.\"saleId\"").
 		Where("sale_details.barcode = ?", barcode)
-	
+
 	if !from.IsZero() {
 		query = query.Where("sales.\"saleDate\" >= ?", from)
 	}
 	if !to.IsZero() {
 		query = query.Where("sales.\"saleDate\" <= ?", to)
 	}
-	
+
 	err := query.Select("COALESCE(SUM(sale_details.quantity), 0)").Scan(&total).Error
 	return total, err
 }
@@ -410,33 +432,88 @@ func (r *PostgresSaleRepository) GetSoldQuantitiesByBarcodes(barcodes []string, 
 	return results, nil
 }
 
+func (r *PostgresSaleRepository) GetSoldQuantitiesByBarcodesForWindows(barcodes []string, recentFrom, extendedFrom, to time.Time) (map[string]float64, map[string]float64, error) {
+	recent := make(map[string]float64)
+	extended := make(map[string]float64)
+	if len(barcodes) == 0 {
+		return recent, extended, nil
+	}
+
+	rows, err := r.db.Table("sale_details").
+		Joins(`JOIN sales ON sales."saleId" = sale_details."saleId"`).
+		Select(`sale_details.barcode,
+			SUM(CASE WHEN sales."saleDate" >= ? THEN sale_details.quantity ELSE 0 END) AS recent_total,
+			SUM(sale_details.quantity) AS extended_total`, recentFrom).
+		Where("sale_details.barcode IN ?", barcodes).
+		Where(`sales."saleDate" >= ? AND sales."saleDate" <= ?`, extendedFrom, to).
+		Group("sale_details.barcode").
+		Rows()
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var barcode string
+		var recentTotal, extendedTotal float64
+		if err := rows.Scan(&barcode, &recentTotal, &extendedTotal); err != nil {
+			return nil, nil, err
+		}
+		recent[barcode] = recentTotal
+		extended[barcode] = extendedTotal
+	}
+	return recent, extended, rows.Err()
+}
+
 func (r *PostgresSaleRepository) GetTopSellingProducts(from, to time.Time, limit int) ([]ports.ProductRankingItem, error) {
 	var ranking []ports.ProductRankingItem
 	query := `
-		SELECT 
-			agg.barcode, 
-			COALESCE(p."productName", 'VENTA RÁPIDA / VARIOS') as name, 
-			agg.quantity, 
+		SELECT
+			agg.barcode,
+			COALESCE(p."productName", 'VENTA RÁPIDA / VARIOS') as name,
+			agg.quantity,
 			agg.total
 		FROM (
-			SELECT 
-				sd.barcode, 
-				SUM(sd.quantity) as quantity, 
+			SELECT
+				sd.barcode,
+				SUM(sd.quantity) as quantity,
 				SUM(sd.subtotal) as total
 			FROM sale_details sd
 			JOIN sales s ON s."saleId" = sd."saleId"
 			WHERE s."saleDate" >= ? AND s."saleDate" <= ? AND s.status IN ('PAID', 'CREDIT') AND s.deleted_at IS NULL
 			GROUP BY sd.barcode
-			ORDER BY quantity DESC
-			LIMIT ?
 		) agg
 		LEFT JOIN products p ON p.barcode = agg.barcode
+		ORDER BY agg.quantity DESC
 	`
-	err := r.db.Raw(query, from, to, limit).Scan(&ranking).Error
-	if err != nil {
-		log.Printf("❌ [GetTopSellingProducts] Error: %v", err)
+	args := []interface{}{from, to}
+	if limit > 0 {
+		query += " LIMIT ?"
+		args = append(args, limit)
 	}
-	return ranking, err
+	if err := r.db.Raw(query, args...).Scan(&ranking).Error; err != nil {
+		log.Printf("❌ [GetTopSellingProducts] Error: %v", err)
+		return nil, err
+	}
+	return ranking, nil
+}
+
+func (r *PostgresSaleRepository) GetSalesByCategoryByRange(from, to time.Time) ([]ports.CategorySalesItem, error) {
+	var report []ports.CategorySalesItem
+	err := r.db.Table("sale_details sd").
+		Select(`COALESCE(c.name, '') AS category, SUM(sd.quantity) AS quantity, SUM(sd.subtotal) AS total`).
+		Joins(`JOIN sales s ON s."saleId" = sd."saleId"`).
+		Joins(`LEFT JOIN products p ON p.barcode = sd.barcode`).
+		Joins(`LEFT JOIN categories c ON c.id = p."categoryId"`).
+		Where(`s."saleDate" >= ? AND s."saleDate" <= ? AND s.status IN ('PAID', 'CREDIT') AND s.deleted_at IS NULL`, from, to).
+		Group("c.name").
+		Order("total DESC").
+		Scan(&report).Error
+	if err != nil {
+		log.Printf("❌ [GetSalesByCategoryByRange] Error: %v", err)
+		return nil, err
+	}
+	return report, nil
 }
 func (r *PostgresSaleRepository) GetMajorityDayForRange(from, to time.Time) (string, error) {
 	var result string
@@ -520,7 +597,7 @@ func (r *PostgresSaleRepository) GetSalesByPaymentMethod(from, to time.Time) (ma
 
 func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
-	
+
 	// 1. Sumar efectivo directo de todas las ventas (PAID y CREDIT)
 	var totalCash float64
 	r.db.Raw(`
@@ -529,7 +606,7 @@ func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (
 		WHERE "saleDate" >= ? AND "saleDate" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL
 	`, from, to).Scan(&totalCash)
 	results["EFECTIVO"] = totalCash
-	
+
 	// 2. Sumar transferencias agrupadas por su origen (NEQUI, DAVIPLATA, etc.)
 	rows, err := r.db.Raw(`
 		SELECT COALESCE("transferSource", 'TRANSFERENCIA') as source, SUM("transferAmount") as total
@@ -546,7 +623,7 @@ func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (
 			results[m] += a
 		}
 	}
-	
+
 	// 3. Sumar el monto que quedó debiéndose (FIADO)
 	var totalFiado float64
 	r.db.Raw(`
@@ -555,7 +632,7 @@ func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (
 		WHERE "saleDate" >= ? AND "saleDate" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL
 	`, from, to).Scan(&totalFiado)
 	results["FIADO"] = totalFiado
-	
+
 	return results, nil
 }
 
@@ -593,7 +670,7 @@ func (r *PostgresSaleRepository) GetGlobalTotalSales() (float64, error) {
 		log.Printf("❌ [GetGlobalTotalSales] Error en sales: %v", err)
 		return 0, nil
 	}
-	
+
 	var totalPayments float64
 	err = r.db.Table("credit_payments").Where("deleted_at IS NULL").Select("COALESCE(SUM(\"totalPaid\"), 0)").Scan(&totalPayments).Error
 	if err != nil {
@@ -664,9 +741,22 @@ func (r *PostgresSaleRepository) GetCOGSByRange(from, to time.Time) (float64, er
 	return total, nil
 }
 
+func (r *PostgresSaleRepository) GetRevenueByRange(from, to time.Time) (float64, error) {
+	var total float64
+	err := r.db.Model(&models.Sale{}).
+		Where("\"saleDate\" >= ? AND \"saleDate\" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL", from, to).
+		Select("COALESCE(SUM(\"totalAmount\"), 0)").
+		Scan(&total).Error
+	if err != nil {
+		log.Printf("❌ [GetRevenueByRange] Error: %v", err)
+		return 0, err
+	}
+	return total, nil
+}
+
 func (r *PostgresSaleRepository) GetGlobalSalesByMethod() (map[string]float64, error) {
 	results := make(map[string]float64)
-	
+
 	var totalCash, totalTransfer, totalCredit float64
 
 	// EFECTIVO: Todos los ingresos en efectivo netos (restando el cambio)
@@ -681,17 +771,32 @@ func (r *PostgresSaleRepository) GetGlobalSalesByMethod() (map[string]float64, e
 		Select("COALESCE(SUM(\"transferAmount\"), 0)").
 		Scan(&totalTransfer)
 
-	// FIADOS: Total de deuda pendiente (creditAmount)
+	// FIADOS: Total de deuda emitida
 	r.db.Model(&models.Sale{}).
 		Where("deleted_at IS NULL AND status IN ('PAID', 'CREDIT', 'FIADO')").
 		Select("COALESCE(SUM(\"creditAmount\"), 0)").
 		Scan(&totalCredit)
-	
+
 	results["EFECTIVO"] = totalCash
 	results["TRANSFERENCIA"] = totalTransfer
 	results["FIADO"] = totalCredit
 
-	// Breakdown for TransferSource
+	// Breakdown especifico para Nequi y Daviplata (considerando tanto transferNequi/Daviplata como transferSource)
+	var totalNequi, totalDaviplata float64
+	r.db.Model(&models.Sale{}).
+		Where("deleted_at IS NULL AND status IN ('PAID', 'CREDIT', 'FIADO')").
+		Select("COALESCE(SUM(CASE WHEN \"transferNequi\" > 0 THEN \"transferNequi\" WHEN UPPER(\"transferSource\") = 'NEQUI' THEN \"transferAmount\" ELSE 0 END), 0)").
+		Scan(&totalNequi)
+
+	r.db.Model(&models.Sale{}).
+		Where("deleted_at IS NULL AND status IN ('PAID', 'CREDIT', 'FIADO')").
+		Select("COALESCE(SUM(CASE WHEN \"transferDaviplata\" > 0 THEN \"transferDaviplata\" WHEN UPPER(\"transferSource\") IN ('DAVIPLATA', 'DAVI') THEN \"transferAmount\" ELSE 0 END), 0)").
+		Scan(&totalDaviplata)
+
+	results["NEQUI"] = totalNequi
+	results["DAVIPLATA"] = totalDaviplata
+
+	// Breakdown para otras fuentes de transferencia
 	rows, err := r.db.Table("sales").
 		Select("\"transferSource\", SUM(\"transferAmount\") as total").
 		Where("status IN ('PAID', 'CREDIT', 'FIADO') AND \"transferAmount\" > 0 AND \"deleted_at\" IS NULL").
@@ -703,8 +808,10 @@ func (r *PostgresSaleRepository) GetGlobalSalesByMethod() (map[string]float64, e
 			var source string
 			var total float64
 			if err := rows.Scan(&source, &total); err == nil {
-				if source == "" { source = "NEQUI" }
-				results[strings.ToUpper(source)] = total
+				sourceUpper := strings.ToUpper(source)
+				if sourceUpper != "" && sourceUpper != "NEQUI" && sourceUpper != "DAVIPLATA" && sourceUpper != "DAVI" && sourceUpper != "MIXTO" {
+					results[sourceUpper] = total
+				}
 			}
 		}
 	}
@@ -714,7 +821,7 @@ func (r *PostgresSaleRepository) GetGlobalSalesByMethod() (map[string]float64, e
 
 func (r *PostgresSaleRepository) GetGlobalCollectedDebtsByMethod() (map[string]float64, error) {
 	results := make(map[string]float64)
-	
+
 	var stats struct {
 		TotalCash     float64
 		TotalTransfer float64
@@ -723,7 +830,7 @@ func (r *PostgresSaleRepository) GetGlobalCollectedDebtsByMethod() (map[string]f
 	err := r.db.Table("credit_payments").
 		Select("COALESCE(SUM(\"amountCash\"), 0) as total_cash, COALESCE(SUM(\"amountTransfer\"), 0) as total_transfer").
 		Scan(&stats).Error
-	
+
 	if err != nil {
 		return nil, err
 	}
@@ -743,7 +850,9 @@ func (r *PostgresSaleRepository) GetGlobalCollectedDebtsByMethod() (map[string]f
 			var source string
 			var total float64
 			if err := rows.Scan(&source, &total); err == nil {
-				if source == "" { source = "NEQUI" }
+				if source == "" {
+					source = "NEQUI"
+				}
 				results[strings.ToUpper(source)] = total
 			}
 		}
@@ -753,7 +862,7 @@ func (r *PostgresSaleRepository) GetGlobalCollectedDebtsByMethod() (map[string]f
 }
 func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
-	
+
 	// Usamos una consulta unificada para evitar duplicidades y asegurar que cada movimiento se cuente una vez
 	// 1. Efectivo de Ventas y Abonos
 	var totalCash float64
@@ -766,7 +875,7 @@ func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (m
 			WHERE "paymentDate" >= ? AND "paymentDate" <= ?
 		) as combined_cash
 	`
- r.db.Raw(cashQuery, from, to, from, to).Scan(&totalCash)
+	r.db.Raw(cashQuery, from, to, from, to).Scan(&totalCash)
 	results["EFECTIVO"] = totalCash
 
 	// 2. Fiados (Monto de deuda emitido)
@@ -776,7 +885,7 @@ func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (m
 		Select("COALESCE(SUM(\"creditAmount\"), 0)").Scan(&totalFiados)
 	results["FIADO"] = totalFiados
 
-	// 3. Transferencias (Nequi, Daviplata, etc.) agrupadas
+	// 3. Transferencias (Nequi, Daviplata, etc.) desglosadas por canal
 	type TransferResult struct {
 		Source string
 		Total  float64
@@ -784,19 +893,35 @@ func (r *PostgresSaleRepository) GetSalesBreakdownByRange(from, to time.Time) (m
 	var transferResults []TransferResult
 	transferQuery := `
 		SELECT UPPER(COALESCE(source, 'TRANSFERENCIA')) as source, SUM(amount) as total FROM (
-			SELECT "transferSource" as source, "transferAmount" as amount FROM sales 
+			SELECT
+				CASE
+					WHEN "transferNequi" > 0 AND "transferDaviplata" = 0 THEN 'NEQUI'
+					WHEN "transferDaviplata" > 0 AND "transferNequi" = 0 THEN 'DAVIPLATA'
+					WHEN "transferNequi" > 0 AND "transferDaviplata" > 0 THEN 'NEQUI'
+					ELSE "transferSource"
+				END as source,
+				CASE
+					WHEN "transferNequi" > 0 AND "transferDaviplata" > 0 THEN "transferNequi"
+					ELSE "transferAmount"
+				END as amount
+			FROM sales
 			WHERE status IN ('PAID', 'CREDIT') AND "transferAmount" > 0 AND deleted_at IS NULL AND "saleDate" >= ? AND "saleDate" <= ?
+			UNION ALL
+			SELECT 'DAVIPLATA' as source, "transferDaviplata" as amount FROM sales
+			WHERE status IN ('PAID', 'CREDIT') AND "transferDaviplata" > 0 AND "transferNequi" > 0 AND deleted_at IS NULL AND "saleDate" >= ? AND "saleDate" <= ?
 			UNION ALL
 			SELECT "transferSource" as source, "amountTransfer" as amount FROM credit_payments 
 			WHERE "amountTransfer" > 0 AND "paymentDate" >= ? AND "paymentDate" <= ?
 		) as combined_transfers
 		GROUP BY 1
 	`
-	r.db.Raw(transferQuery, from, to, from, to).Scan(&transferResults)
-	
+	r.db.Raw(transferQuery, from, to, from, to, from, to).Scan(&transferResults)
+
 	totalTransferSum := 0.0
 	for _, tr := range transferResults {
-		if tr.Source == "" { tr.Source = "TRANSFERENCIA" }
+		if tr.Source == "" {
+			tr.Source = "TRANSFERENCIA"
+		}
 		results[tr.Source] = tr.Total
 		totalTransferSum += tr.Total
 	}
@@ -823,4 +948,3 @@ func (r *PostgresSaleRepository) GetCreditHistoryByClient(clientDNI string) ([]m
 		Find(&sales).Error
 	return sales, err
 }
-

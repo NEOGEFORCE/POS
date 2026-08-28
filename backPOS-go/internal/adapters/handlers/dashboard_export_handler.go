@@ -363,16 +363,18 @@ func (h *DashboardExportHandler) buildPayload(reportType string, c *gin.Context,
 	case "global-credit":
 		// Cartera Global (clientes con deuda)
 		type debtRow struct {
-			DNI            string
-			Name           string
-			CurrentCredit  float64
+			DNI           string
+			Name          string
+			CurrentCredit float64
 		}
 		var rows []debtRow
-		_ = h.db.Table("clients").
+		if err := h.db.Table("clients").
 			Select(`"dni" AS dni, "name" AS name, COALESCE("currentCredit", 0) AS current_credit`).
 			Where(`COALESCE("currentCredit", 0) > 0`).
 			Order(`current_credit DESC`).
-			Scan(&rows).Error
+			Scan(&rows).Error; err != nil {
+			return services.ReportPayload{}, fmt.Errorf("consultando cartera global: %w", err)
+		}
 
 		p := services.ReportPayload{
 			Title:    "Cartera Global (Fiados)",
@@ -411,6 +413,30 @@ func (h *DashboardExportHandler) render(p services.ReportPayload, format string)
 // =============================================================
 // Endpoints especÃ­ficos (devuelven JSON para uso en UI)
 // =============================================================
+
+// SendTicketToTelegram envía el comprobante de una venta al canal de
+// Telegram configurado. Recibe el ticket ya formateado por el POS para
+// que lo que llega al celular sea idéntico a lo que se imprime.
+func (h *DashboardExportHandler) SendTicketToTelegram(c *gin.Context) {
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.Text) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Falta el texto del comprobante", err)
+		return
+	}
+	if h.telegramService == nil {
+		SendError(c, http.StatusServiceUnavailable, ErrInternalServer, "Telegram no está configurado", nil)
+		return
+	}
+
+	// Se envía como bloque monoespaciado para que la alineación del ticket
+	// se conserve en el chat. SendMarkdownAlert no retorna error: publica
+	// de forma best-effort, así que se responde OK si el envío se despachó.
+	msg := "```\n" + body.Text + "\n```"
+	h.telegramService.SendMarkdownAlert(msg)
+	c.JSON(http.StatusOK, gin.H{"sent": true})
+}
 
 // GetCuadreRealRange JSON
 func (h *DashboardExportHandler) GetCuadreRealRange(c *gin.Context) {
@@ -518,25 +544,34 @@ func (h *DashboardExportHandler) GetClosureFullDetail(c *gin.Context) {
 
 	// Ventas del turno
 	var sales []models.Sale
-	_ = h.db.Preload("Client").Preload("Employee").Preload("SaleDetails").
+	if err := h.db.Preload("Client").Preload("Employee").Preload("SaleDetails").
 		Where(`"saleDate" BETWEEN ? AND ?`, closure.StartDate, closure.EndDate).
 		Where(`status IS NULL OR UPPER(status) <> 'CANCELLED'`).
 		Order(`"saleDate" ASC`).
-		Find(&sales).Error
+		Find(&sales).Error; err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudieron consultar las ventas del cierre", err)
+		return
+	}
 
 	// Egresos del turno
 	var expenses []models.Expense
-	_ = h.db.Preload("Creator").
+	if err := h.db.Preload("Creator").
 		Where(`date BETWEEN ? AND ?`, closure.StartDate, closure.EndDate).
 		Order(`date ASC`).
-		Find(&expenses).Error
+		Find(&expenses).Error; err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudieron consultar los egresos del cierre", err)
+		return
+	}
 
 	closure.Expenses = expenses
 
 	// Abonos a fiados del turno (necesarios para el desglose por mÃ©todo de pago)
 	var payments []models.CreditPayment
-	_ = h.db.Where(`"createdAt" BETWEEN ? AND ?`, closure.StartDate, closure.EndDate).
-		Find(&payments).Error
+	if err := h.db.Where(`"paymentDate" BETWEEN ? AND ?`, closure.StartDate, closure.EndDate).
+		Find(&payments).Error; err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudieron consultar los abonos del cierre", err)
+		return
+	}
 
 	// Desglose dinÃ¡mico por mÃ©todo de pago (BANCOLOMBIA, MASTERCARD, etc.)
 	closure.PaymentMethodsBreakdown = services.CalculatePaymentMethodsBreakdown(sales, payments)
@@ -557,12 +592,11 @@ func (h *DashboardExportHandler) GetClosureFullDetail(c *gin.Context) {
 
 	// Cuadre real para este cierre especÃ­fico
 
-
 	c.JSON(http.StatusOK, gin.H{
-		"closure":         closure,
-		"sales":           sales,
-		"expenses":        expenses,
-		"paymentSummary":  paymentSummary,
+		"closure":        closure,
+		"sales":          sales,
+		"expenses":       expenses,
+		"paymentSummary": paymentSummary,
 
 		"counts": gin.H{
 			"salesCount":    len(sales),
@@ -612,25 +646,22 @@ func parseDateRange(c *gin.Context) (time.Time, time.Time, error) {
 	return fromDate, toDate, nil
 }
 
-// fmtMoney formatea un float a "$1.234.567"
+// fmtMoney formatea un float a "$ 1.234.567" (moneda bogotana)
 func fmtMoney(v float64) string {
-	abs := v
-	neg := ""
+	sign := ""
 	if v < 0 {
-		abs = -v
-		neg = "-"
+		sign = "-"
+		v = -v
 	}
-	intPart := int64(abs)
-	str := fmt.Sprintf("%d", intPart)
-	// Insertar separadores de miles
+	digits := fmt.Sprintf("%.0f", v)
 	out := ""
-	for i, c := range reverse(str) {
-		if i > 0 && i%3 == 0 {
-			out = "." + out
+	for i, c := range digits {
+		if i > 0 && (len(digits)-i)%3 == 0 {
+			out += "."
 		}
-		out = string(c) + out
+		out += string(c)
 	}
-	return fmt.Sprintf("%s$%s", neg, out)
+	return fmt.Sprintf("%s$ %s", sign, out)
 }
 
 func reverse(s string) string {
@@ -642,7 +673,15 @@ func reverse(s string) string {
 }
 
 func fmtPct(v float64) string {
-	return fmt.Sprintf("%.2f%%", v*100)
+	return strings.Replace(fmt.Sprintf("%.1f%%", v*100), ".", ",", 1)
+}
+
+// safeRatio evita divisiones por cero al calcular márgenes.
+func safeRatio(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }
 
 // =============================================================
@@ -659,11 +698,41 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 
 	// 1. Resumen Financiero Ejecutivo
 	p.Rows = append(p.Rows, []string{"=== RESUMEN EJECUTIVO FINANCIERO ===", "", "", "", "", "", ""})
-	p.Rows = append(p.Rows, []string{"VENTAS TOTALES", "-", fmtMoney(r.TotalSales), "-", "-", "-", "INGRESOS"})
-	p.Rows = append(p.Rows, []string{"COSTO DE MERCANCÍA (COGS)", "-", "-", fmtMoney(r.TotalCost), "-", "-", "COSTOS"})
-	p.Rows = append(p.Rows, []string{"UTILIDAD BRUTA (Ventas - Costo)", "-", "-", "-", fmtMoney(r.GrossProfit), fmtPct(r.OverallMargin), "GANANCIA BRUTA"})
-	p.Rows = append(p.Rows, []string{"GASTOS OPERATIVOS DEL LOCAL", "-", "-", "-", fmtMoney(r.TotalOpExpenses), "-", "GASTOS LOCAL"})
-	p.Rows = append(p.Rows, []string{"GANANCIA LIBRE FINAL (Utilidad Neta)", "-", "-", "-", fmtMoney(r.NetProfit), fmtPct(r.NetMargin), "GANANCIA LIBRE"})
+	p.Rows = append(p.Rows, []string{"PASO 1: TODO EL DINERO QUE ENTRÓ (AUDITADO EN CAJA)", "-", fmtMoney(r.TotalSales), "-", "-", "-", "INGRESOS"})
+	p.Rows = append(p.Rows, []string{"PASO 2: COSTO DE LA MERCANCÍA", "-", "-", fmtMoney(r.TotalCost), "-", "-", "COSTOS"})
+	p.Rows = append(p.Rows, []string{"PASO 3: GANANCIA BRUTA DEL NEGOCIO", "-", "-", "-", fmtMoney(r.GrossProfit), fmtPct(r.OverallMargin), "GANANCIA BRUTA"})
+	p.Rows = append(p.Rows, []string{"PASO 4: GASTOS DEL LOCAL (SIN PROVEEDORES)", "-", "-", "-", fmtMoney(-r.TotalOpExpenses), "-", "GASTOS LOCAL"})
+	p.Rows = append(p.Rows, []string{"PASO 5: GANANCIA LIBRE REAL DEL MES", "-", "-", "-", fmtMoney(r.NetProfit), fmtPct(r.NetMargin), "GANANCIA LIBRE"})
+
+	// 1.1 De dónde salió la ganancia (margen real medido y extrapolado)
+	p.Rows = append(p.Rows, []string{"=== DE DÓNDE SALIÓ LA GANANCIA ===", "", "", "", "", "", ""})
+	p.Rows = append(p.Rows, []string{
+		"Productos con código y costo real registrado", "-",
+		fmtMoney(r.KnownSales), fmtMoney(r.KnownCost), fmtMoney(r.KnownProfit),
+		fmtPct(safeRatio(r.KnownProfit, r.KnownSales)), "COSTO REAL",
+	})
+	p.Rows = append(p.Rows, []string{
+		fmt.Sprintf("Resto de ingresos auditados (incluye %s de ventas rápidas)", fmtMoney(r.QuickSales)), "-",
+		fmtMoney(r.UncostedSales), fmtMoney(r.UncostedCost), fmtMoney(r.UncostedProfit),
+		fmtPct(safeRatio(r.UncostedProfit, r.UncostedSales)), "MARGEN REAL MEDIDO",
+	})
+	p.Rows = append(p.Rows, []string{
+		"MARGEN REAL DEL NEGOCIO (medido con costos reales)", "-", "-", "-", "-",
+		fmtPct(r.KnownMargin), "MARGEN BASE",
+	})
+
+	// 1.2 Composición de los ingresos auditados
+	if a := r.Audited; a != nil && a.ClosureCount > 0 {
+		p.Rows = append(p.Rows, []string{"=== COMPOSICIÓN DE LOS INGRESOS AUDITADOS ===", "", "", "", "", "", ""})
+		p.Rows = append(p.Rows, []string{"Efectivo contado en los cierres", fmt.Sprintf("%d cierres", a.ClosureCount), fmtMoney(a.PhysicalCash), "-", "-", "-", "EFECTIVO"})
+		p.Rows = append(p.Rows, []string{"Canales digitales (Nequi/Daviplata/Tarjeta/Bancos)", "-", fmtMoney(a.Digital), "-", "-", "-", "DIGITAL"})
+		p.Rows = append(p.Rows, []string{"Egresos pagados en efectivo (se devuelven al total)", "-", fmtMoney(a.CashExpenses), "-", "-", "-", "EGRESOS CAJA"})
+		p.Rows = append(p.Rows, []string{"Devoluciones", "-", fmtMoney(a.Returns), "-", "-", "-", "DEVOLUCIONES"})
+		p.Rows = append(p.Rows, []string{"TOTAL AUDITADO (PASO 1)", "-", fmtMoney(a.Total), "-", "-", "-", "TOTAL CAJA"})
+		p.Rows = append(p.Rows, []string{"Referencia: ventas del sistema / detalle de productos",
+			fmt.Sprintf("Sistema %s | Detalle %s", fmtMoney(r.SalesFromRegister), fmtMoney(r.SalesFromDetails)),
+			"-", "-", "-", "-", "REFERENCIA"})
+	}
 
 	// 2. Desglose de Gastos Operativos (Sin Proveedores)
 	p.Rows = append(p.Rows, []string{"=== GASTOS DEL LOCAL (SIN PROVEEDORES) ===", "", "", "", "", "", ""})
@@ -671,6 +740,9 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 	p.Rows = append(p.Rows, []string{"Arriendo de Local", "-", "-", "-", fmtMoney(r.RentExp), "-", "ARRIENDO"})
 	p.Rows = append(p.Rows, []string{"Imprevistos, Arreglos y Daños", "-", "-", "-", fmtMoney(r.MaintenanceExp), "-", "REPARACIONES"})
 	p.Rows = append(p.Rows, []string{"Sueldos y Nómina", "-", "-", "-", fmtMoney(r.PayrollExp), "-", "SUELDOS"})
+	if r.FinancialExp > 0 {
+		p.Rows = append(p.Rows, []string{"Obligaciones y Gastos Bancarios (cuotas, intereses)", "-", "-", "-", fmtMoney(r.FinancialExp), "-", "BANCARIOS"})
+	}
 	if r.OtherOpExp > 0 {
 		p.Rows = append(p.Rows, []string{"Otros Gastos Varios", "-", "-", "-", fmtMoney(r.OtherOpExp), "-", "OTROS GASTOS"})
 	}
@@ -684,6 +756,55 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 	p.Rows = append(p.Rows, []string{"Ventas Fiadas a Crédito (En el mes)", "-", fmtMoney(r.CreditSales), "-", "-", "-", "FIADOS MES"})
 	p.Rows = append(p.Rows, []string{"TOTAL CARTERA PENDIENTE POR COBRAR", fmt.Sprintf("%d clientes", len(r.CreditReceivables)), fmtMoney(r.TotalCreditReceivable), "-", "-", "-", "POR COBRAR"})
 	p.Rows = append(p.Rows, []string{"TOTAL DEUDAS DEL NEGOCIO POR PAGAR", fmt.Sprintf("%d deudas", len(r.DebtsPayable)), fmtMoney(r.TotalDebtsPayable), "-", "-", "-", "POR PAGAR"})
+
+	// 3.1 Saldos guardados al cierre del mes (base del mes siguiente)
+	if a := r.Audited; a != nil && a.Closing.HasData {
+		c := a.Closing
+		p.Rows = append(p.Rows, []string{"=== TOTAL GENERAL GUARDADO AL CIERRE (BASE DEL MES SIGUIENTE) ===", "", "", "", "", "", ""})
+		p.Rows = append(p.Rows, []string{"Efectivo Real en Mano (Caja / Fondo)", c.ClosedAt.Format("02/01/2006 03:04 PM"), fmtMoney(c.Cash), "-", "-", "-", "EFECTIVO"})
+		p.Rows = append(p.Rows, []string{"Nequi (Billetera Digital)", "-", fmtMoney(c.Nequi), "-", "-", "-", "NEQUI"})
+		p.Rows = append(p.Rows, []string{"Daviplata (Billetera Digital)", "-", fmtMoney(c.Daviplata), "-", "-", "-", "DAVIPLATA"})
+		p.Rows = append(p.Rows, []string{
+			"(=) TOTAL GENERAL GUARDADO (CAJA + DIGITAL)",
+			fmt.Sprintf("Último cierre #%d por %s", c.ClosureID, c.ClosedByName),
+			fmtMoney(c.Total), "-", "-", "-", "SALDO INICIAL",
+		})
+	}
+
+	// 3.2 Distribución de la ganancia: dónde quedó repartida
+	if w := r.WorkingCapital; w != nil && w.HasData {
+		p.Rows = append(p.Rows, []string{"=== DÓNDE ESTÁ REPARTIDA LA GANANCIA DEL MES ===", "", "", "", "", "", ""})
+		p.Rows = append(p.Rows, []string{
+			"Mercancía en el local (inventario al costo)",
+			fmt.Sprintf("Inicio %s", fmtMoney(w.InventoryOpening)),
+			fmtMoney(w.InventoryClosing), "-", fmtMoney(w.InventoryDelta), "-", "INVENTARIO",
+		})
+		for _, l := range w.Distribution() {
+			p.Rows = append(p.Rows, []string{
+				l.Concept,
+				fmt.Sprintf("Inicio %s", fmtMoney(l.Opening)),
+				fmtMoney(l.Closing),
+				"-",
+				fmtMoney(l.Delta),
+				"-",
+				l.Meaning,
+			})
+		}
+		p.Rows = append(p.Rows, []string{"(=) TOTAL GANANCIA LIBRE REAL", "-", "-", "-", fmtMoney(w.NetProfit), "-", "DISTRIBUIDA"})
+
+		// Liquidez: cuánto quedó "Libre Libre" vs atrapado en mercancía
+		liq := w.Liquidity
+		p.Rows = append(p.Rows, []string{"=== DINERO 'LIBRE LIBRE' VS INVERTIDO EN MERCANCIA ===", "", "", "", "", "", ""})
+		p.Rows = append(p.Rows, []string{
+			"Atrapado en Mercancía (Surtido)", fmtPct(liq.MerchandisePct), "-", "-",
+			fmtMoney(liq.InMerchandise), "-", "EN MERCANCIA",
+		})
+		p.Rows = append(p.Rows, []string{
+			"Dinero Líquido ('Libre Libre')", fmtPct(liq.LiquidPct), "-", "-",
+			fmtMoney(liq.Liquid), "-", "LIQUIDO",
+		})
+		p.Rows = append(p.Rows, []string{liq.Explanation, "-", "-", "-", "-", "-", "ESCENARIO " + liq.Scenario})
+	}
 
 	// 4. Detalle de Clientes Deudores (Fiados Pendientes)
 	if len(r.CreditReceivables) > 0 {
@@ -716,9 +837,14 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 		if !row.MeetsTarget {
 			check = "BAJO"
 		}
+		name := row.ProductName
+		detail := fmt.Sprintf("%.2f", row.UnitsSold)
+		if row.IsQuickSale {
+			detail += " (margen estimado 20%)"
+		}
 		p.Rows = append(p.Rows, []string{
-			row.ProductName,
-			fmt.Sprintf("%.2f", row.UnitsSold),
+			name,
+			detail,
 			fmtMoney(row.GrossSales),
 			fmtMoney(row.GrossCost),
 			fmtMoney(row.GrossProfit),
@@ -728,7 +854,7 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 	}
 
 	p.Totals = []string{
-		"TOTALES VENTAS",
+		"TOTAL AUDITADO",
 		"",
 		fmtMoney(r.TotalSales),
 		fmtMoney(r.TotalCost),
@@ -738,8 +864,11 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 	}
 
 	p.Footer = fmt.Sprintf(
-		"Efectivo Entrado: %s | Gastos Local: %s | Cartera por Cobrar: %s | GANANCIA LIBRE FINAL: %s",
-		fmtMoney(r.TotalCashInflows), fmtMoney(r.TotalOpExpenses), fmtMoney(r.TotalCreditReceivable), fmtMoney(r.NetProfit),
+		"Paso 1 (auditado en caja): %s | Costo: %s | Ganancia bruta: %s (margen real medido %s) | "+
+			"Gastos del local: %s | GANANCIA LIBRE: %s | Por cobrar: %s | Por pagar: %s",
+		fmtMoney(r.TotalSales), fmtMoney(r.TotalCost), fmtMoney(r.GrossProfit), fmtPct(r.KnownMargin),
+		fmtMoney(r.TotalOpExpenses), fmtMoney(r.NetProfit),
+		fmtMoney(r.TotalCreditReceivable), fmtMoney(r.TotalDebtsPayable),
 	)
 	return p
 }
@@ -812,9 +941,10 @@ func realCashToPayload(r *services.RealCashReport, title string) services.Report
 		Headers: []string{"Fecha", "ID", "Cajero", "Efectivo Real", "Nequi", "Daviplata", "Egresos", "Balance Real"},
 	}
 	for _, row := range r.Rows {
-		dateDisplay := row.StartDate.Format("02/01/06 15:04") + " a " + row.EndDate.Format("02/01/06 15:04")
+		locBog := time.FixedZone("America/Bogota", -5*60*60)
+		dateDisplay := row.StartDate.In(locBog).Format("02/01/06 15:04") + " a " + row.EndDate.In(locBog).Format("02/01/06 15:04")
 		if row.StartDate.IsZero() || row.EndDate.IsZero() {
-			dateDisplay = row.Date.Format("02/01/2006")
+			dateDisplay = row.Date.In(locBog).Format("02/01/2006")
 		}
 		p.Rows = append(p.Rows, []string{
 			dateDisplay,
@@ -841,35 +971,57 @@ func realCashToPayload(r *services.RealCashReport, title string) services.Report
 func boxClosureToPayload(closures []models.CashierClosure, from, to time.Time) services.ReportPayload {
 	p := services.ReportPayload{
 		Title:    "Cierres de Caja",
-		Subtitle: "Reporte consolidado de cierres en el rango",
+		Subtitle: "Mismas cifras que el historial de cierres en pantalla",
 		From:     from, To: to,
-		Headers: []string{"ID", "Fecha", "Cajero", "Ventas", "Efectivo Real", "Egresos", "Diferencia"},
+		Headers: []string{"ID", "Fecha", "Cajero", "Ventas Totales", "Efectivo Real", "Egreso Caja", "Egreso Fondo", "Egreso Digital", "Egresos Total", "Diferencia"},
 	}
-	var totalSales, totalReal, totalExpenses float64
-	for _, c := range closures {
-		dateDisplay := c.StartDate.Format("02/01/06 15:04") + " a " + c.EndDate.Format("02/01/06 15:04")
+
+	// Hora Colombia: el historial en pantalla muestra las fechas en hora local.
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+
+	var totalSales, totalReal, totalEgCaja, totalEgFondo, totalEgDigital, totalExpenses, totalDiff float64
+	for i := range closures {
+		c := &closures[i]
+
+		dateDisplay := c.StartDate.In(loc).Format("02/01/06 15:04") + " a " + c.EndDate.In(loc).Format("02/01/06 15:04")
 		if c.StartDate.IsZero() || c.EndDate.IsZero() {
-			dateDisplay = c.Date.Format("02/01/2006")
+			dateDisplay = c.Date.In(loc).Format("02/01/2006")
 		}
+
+		// FUENTE ÚNICA: idéntico a la tarjeta del historial y al dashboard.
+		// Antes esta fila usaba c.TotalSales como "Ventas" y la columna cruda
+		// c.PhysicalCash como "Efectivo Real", que no es lo que ve en pantalla.
+		m := services.ComputeClosureMetrics(c)
+
 		p.Rows = append(p.Rows, []string{
 			fmt.Sprintf("#%d", c.ID),
 			dateDisplay,
 			c.ClosedByName,
-			fmtMoney(c.TotalSales),
-			fmtMoney(c.PhysicalCash),
-			fmtMoney(c.TotalExpenses),
+			fmtMoney(m.VentasCajero),
+			fmtMoney(m.PhysicalCash),
+			fmtMoney(m.EgresosCaja),
+			fmtMoney(m.EgresosFondo),
+			fmtMoney(m.EgresosDigital),
+			fmtMoney(m.EgresosTotales),
 			fmtMoney(c.Difference),
 		})
-		totalSales += c.TotalSales
-		totalReal += c.PhysicalCash
-		totalExpenses += c.TotalExpenses
+		totalSales += m.VentasCajero
+		totalReal += m.PhysicalCash
+		totalEgCaja += m.EgresosCaja
+		totalEgFondo += m.EgresosFondo
+		totalEgDigital += m.EgresosDigital
+		totalExpenses += m.EgresosTotales
+		totalDiff += c.Difference
 	}
 	p.Totals = []string{
-		"TOTAL", "", "",
+		"TOTAL", "", fmt.Sprintf("%d cierres", len(closures)),
 		fmtMoney(totalSales),
 		fmtMoney(totalReal),
+		fmtMoney(totalEgCaja),
+		fmtMoney(totalEgFondo),
+		fmtMoney(totalEgDigital),
 		fmtMoney(totalExpenses),
-		"",
+		fmtMoney(totalDiff),
 	}
 	return p
 }
@@ -907,9 +1059,9 @@ func paymentsToPayload(sales []models.Sale, from, to time.Time) services.ReportP
 
 func inventoryToPayload(products []models.Product) services.ReportPayload {
 	p := services.ReportPayload{
-		Title:   "Inventario Actual",
+		Title:    "Inventario Actual",
 		Subtitle: "Snapshot del stock activo",
-		Headers: []string{"CÃ³digo", "Producto", "Stock", "Costo", "Venta", "Margen"},
+		Headers:  []string{"CÃ³digo", "Producto", "Stock", "Costo", "Venta", "Margen"},
 	}
 	for _, pr := range products {
 		margin := 0.0
@@ -1070,10 +1222,16 @@ var _ = cache.CacheKeyDashboardOverview
 func cashflowDetailedToPayload(r *services.CashFlowDetailedReport, from, to time.Time) services.ReportPayload {
 	p := services.ReportPayload{
 		Title:    "FLUJO DE CAJA - DESGLOSADO (DIARIO Y EVENTOS)",
-		Subtitle: "Detalle de ingresos físicos y digitales, y salidas de dinero.",
+		Subtitle: "VENTA TOTAL = Efectivo Contado + Nequi + Daviplata + Otros + Egresos Caja + Devoluciones",
 		From:     from,
 		To:       to,
-		Headers:  []string{"FECHA", "TIPO", "CONCEPTO", "EFECTIVO", "NEQUI", "DAVI.", "OTROS", "EGRESO"},
+		Headers: []string{
+			"FECHA", "TIPO", "CONCEPTO",
+			"EFECTIVO CONTADO", "NEQUI", "DAVIPLATA", "TARJETA/OTROS", "DEVOLUCIONES",
+			"VENTA TOTAL",
+			"EGRESO CAJA", "EGRESO FONDO", "EGRESO DIGITAL", "EGRESO TOTAL",
+			"EFECTIVO ESPERADO", "DIFERENCIA",
+		},
 	}
 
 	for _, day := range r.Days {
@@ -1086,34 +1244,70 @@ func cashflowDetailedToPayload(r *services.CashFlowDetailedReport, from, to time
 				formatCOP(ev.IncomeNequi),
 				formatCOP(ev.IncomeDavi),
 				formatCOP(ev.IncomeOther),
+				formatCOP(ev.Returns),
+				formatCOP(ev.IncomeTotal),
+				formatCOP(ev.ExpenseCash),
+				formatCOP(ev.ExpenseFondo),
+				formatCOP(ev.ExpenseDigital),
 				formatCOP(ev.ExpenseTotal),
+				formatCOP(ev.ExpectedCash),
+				formatCOP(ev.Difference),
 			})
 		}
-		// Subtotal
+		// Subtotal del día: cada columna suma su propia columna, para que el
+		// reporte se pueda verificar a mano sin adivinar qué hay en cada celda.
 		p.Rows = append(p.Rows, []string{
 			day.Date,
 			"TOTAL DIA",
-			"SUBTOTAL DIARIO",
+			fmt.Sprintf("SUBTOTAL (%d turnos)", day.ClosureCount),
+			formatCOP(day.IncomeCash),
+			formatCOP(day.IncomeNequi),
+			formatCOP(day.IncomeDavi),
+			formatCOP(day.IncomeOther),
+			formatCOP(day.Returns),
 			formatCOP(day.TotalIncome),
-			"-",
-			"-",
-			"-",
+			formatCOP(day.ExpenseCash),
+			formatCOP(day.ExpenseFondo),
+			formatCOP(day.ExpenseDigital),
 			formatCOP(day.TotalExpense),
+			formatCOP(day.ExpectedCash),
+			formatCOP(day.Difference),
 		})
+	}
+
+	// Gran total: se acumula por columna en vez de dejar guiones, que era lo
+	// que impedía cuadrar el mes contra los cierres.
+	var gCash, gNequi, gDavi, gOther, gRet, gEgCaja, gEgFondo, gEgDigital, gExp, gDiff float64
+	for _, day := range r.Days {
+		gCash += day.IncomeCash
+		gNequi += day.IncomeNequi
+		gDavi += day.IncomeDavi
+		gOther += day.IncomeOther
+		gRet += day.Returns
+		gEgCaja += day.ExpenseCash
+		gEgFondo += day.ExpenseFondo
+		gEgDigital += day.ExpenseDigital
+		gExp += day.ExpectedCash
+		gDiff += day.Difference
 	}
 
 	p.Totals = []string{
 		"GRAN TOTAL",
 		"-",
-		"-",
+		fmt.Sprintf("%d dias", len(r.Days)),
+		formatCOP(gCash),
+		formatCOP(gNequi),
+		formatCOP(gDavi),
+		formatCOP(gOther),
+		formatCOP(gRet),
 		formatCOP(r.TotalIncome),
-		"-",
-		"-",
-		"-",
+		formatCOP(gEgCaja),
+		formatCOP(gEgFondo),
+		formatCOP(gEgDigital),
 		formatCOP(r.TotalExpense),
+		formatCOP(gExp),
+		formatCOP(gDiff),
 	}
 
 	return p
 }
-
-

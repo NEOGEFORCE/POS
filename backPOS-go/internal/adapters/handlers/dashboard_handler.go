@@ -12,11 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"backPOS-go/internal/infrastructure/dbbackup"
 	"backPOS-go/internal/infrastructure/sse"
 	"github.com/gin-gonic/gin"
 	"github.com/jung-kurt/gofpdf"
+	"gorm.io/gorm"
+	"os"
+	"os/exec"
+	"path/filepath"
 )
-
 
 func formatCOP(amount float64) string {
 	// Manejo de negativos
@@ -27,7 +31,7 @@ func formatCOP(amount float64) string {
 
 	s := fmt.Sprintf("%.0f", amount)
 	var res strings.Builder
-	
+
 	if isNegative {
 		res.WriteRune('-')
 	}
@@ -42,21 +46,21 @@ func formatCOP(amount float64) string {
 	return res.String()
 }
 
-
 type DashboardHandler struct {
 	service         *services.DashboardService
 	telegramService *services.TelegramService
 	auditService    *services.AuditService
+	db              *gorm.DB
 }
 
-func NewDashboardHandler(s *services.DashboardService, tg *services.TelegramService, a *services.AuditService) *DashboardHandler {
-	return &DashboardHandler{service: s, telegramService: tg, auditService: a}
+func NewDashboardHandler(s *services.DashboardService, tg *services.TelegramService, a *services.AuditService, db *gorm.DB) *DashboardHandler {
+	return &DashboardHandler{service: s, telegramService: tg, auditService: a, db: db}
 }
 
 func (h *DashboardHandler) GetOverview(c *gin.Context) {
 	startDate := c.Query("startDate")
 	endDate := c.Query("endDate")
-	
+
 	data, err := h.service.GetOverview(c.Request.Context(), startDate, endDate)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener resumen del dashboard", err)
@@ -72,6 +76,35 @@ func (h *DashboardHandler) GetCashierClosure(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, data)
+}
+
+func applyTrustedClosureData(target *models.CashierClosure, trusted *services.CashierClosure) {
+	manualExpenses := make([]models.Expense, 0)
+	for _, expense := range target.Expenses {
+		if expense.ID == 0 {
+			manualExpenses = append(manualExpenses, expense)
+		}
+	}
+	target.SalesCount = trusted.SalesCount
+	target.TotalSales = trusted.TotalSales
+	target.TotalCash = trusted.TotalCash
+	target.TotalTransfer = trusted.TotalTransfer
+	target.TotalCard = trusted.TotalCard
+	target.TotalReturns = trusted.TotalReturns
+	target.ReturnsCount = trusted.ReturnsCount
+	target.TotalCreditIssued = trusted.TotalCreditIssued
+	target.TotalCreditCollected = trusted.TotalCreditCollected
+	target.OpeningCash = trusted.OpeningCash
+	target.OpeningNequi = trusted.OpeningNequi
+	target.OpeningDaviplata = trusted.OpeningDaviplata
+	target.TotalNequi = trusted.TotalNequi
+	target.TotalDaviplata = trusted.TotalDaviplata
+	target.TotalBancolombia = trusted.TotalBancolombia
+	target.TotalOtherTransfer = trusted.TotalOtherTransfer
+	target.NetBalance = trusted.NetBalance
+	target.CreditsIssued = trusted.CreditsIssued
+	target.CreditPayments = trusted.CreditPayments
+	target.Expenses = append(append([]models.Expense{}, trusted.Expenses...), manualExpenses...)
 }
 
 func (h *DashboardHandler) SaveClosure(c *gin.Context) {
@@ -91,35 +124,77 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 
 	// Asegurar que la fecha de fin sea la hora actual del servidor (UTC para consistencia)
 	closure.EndDate = time.Now()
-	
-	// Asignar la Fecha del cierre al momento exacto de su cierre (EndDate)
+
+	// Obtener la fecha de inicio correcta (desde el último cierre o inicio de turno)
 	if closure.ID == 0 {
-		closure.Date = closure.EndDate
-		
-		// Obtener la fecha de inicio correcta (desde el último cierre o inicio de turno)
-		// Llamamos al servicio GetCashierClosure que tiene toda esa lógica.
 		activeData, err := h.service.GetCashierClosure()
-		if err == nil && activeData != nil && !activeData.StartDate.IsZero() {
+		if err != nil || activeData == nil {
+			SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudieron verificar los totales reales del turno", err)
+			return
+		}
+		applyTrustedClosureData(&closure, activeData)
+		if !activeData.StartDate.IsZero() {
 			closure.StartDate = activeData.StartDate
 		} else {
-			// Fallback si no hay data
 			loc := time.FixedZone("America/Bogota", -5*60*60)
 			nowLocal := time.Now().In(loc)
 			closure.StartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 1, 0, loc)
 		}
+
+		// ── REGLA DE MAYORÍA DE VENTAS ──────────────────────────────────────────
+		// Si el turno abarca más de un día calendario (ej. viernes-sábado madrugada),
+		// el cierre se registra en el día donde cayó la MAYORÍA de las ventas,
+		// conservando la hora real de EndDate.
+		// Así un turno que abre el viernes y cierra el sábado a las 2 AM queda como "viernes".
+		loc := time.FixedZone("America/Bogota", -5*60*60)
+		startLocal := closure.StartDate.In(loc)
+		endLocal := closure.EndDate.In(loc)
+
+		// Solo aplicar si el turno cruza al menos un día calendario
+		if startLocal.Format("2006-01-02") != endLocal.Format("2006-01-02") {
+			type daySales struct {
+				Day   string
+				Count int
+			}
+			var results []daySales
+			h.db.Raw(
+				`SELECT TO_CHAR("saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS day,
+				        COUNT(*) AS count
+				 FROM sales
+				 WHERE "saleDate" BETWEEN ? AND ?
+				   AND deleted_at IS NULL
+				 GROUP BY day
+				 ORDER BY count DESC
+				 LIMIT 1`,
+				closure.StartDate, closure.EndDate,
+			).Scan(&results)
+
+			if len(results) > 0 && results[0].Day != "" {
+				// Reemplazamos solo la fecha (año-mes-día) por la del día con más ventas,
+				// manteniendo la hora real del EndDate en hora Bogotá.
+				if majority, parseErr := time.ParseInLocation("2006-01-02", results[0].Day, loc); parseErr == nil {
+					closure.Date = time.Date(
+						majority.Year(), majority.Month(), majority.Day(),
+						endLocal.Hour(), endLocal.Minute(), endLocal.Second(), 0, loc,
+					)
+					log.Printf("📅 [SaveClosure] Mayoría de ventas: %s (%d ventas) → fecha del cierre ajustada a %s",
+						results[0].Day, results[0].Count, closure.Date.Format("2006-01-02 15:04"))
+				} else {
+					closure.Date = closure.EndDate
+				}
+			} else {
+				closure.Date = closure.EndDate
+			}
+		} else {
+			// Turno de un solo día: usar EndDate directamente
+			closure.Date = closure.EndDate
+		}
 	} else {
 		// En modo edición, respetamos la fecha que envíe el cliente
-		// si viene vacía, retrocedemos al comportamiento por defecto (EndDate)
 		if closure.Date.IsZero() {
 			closure.Date = closure.EndDate
 		}
 	}
-
-	// Keep closure.TotalSales calculated from real sales & credit payments in GetCashierClosure()
-	if closure.TotalSales == 0 {
-		closure.TotalSales = closure.TotalCash + closure.TotalTransfer
-	}
-	// ---------------------------------------------------------
 
 	err := h.service.SaveClosure(&closure)
 	if err != nil {
@@ -137,15 +212,15 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	if expectedCash == 0 {
 		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
-	
+
 	realBalance := closure.PhysicalCash + closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer - closure.TotalExpenses
 
 	details := fmt.Sprintf("Cierre de caja ID #%d realizado por %s", closure.ID, closure.ClosedByName)
-	human := fmt.Sprintf("El cajero %s realizó el cierre de caja. Balance Real Físico: $%s. (Esperado sistema: $%s)", 
+	human := fmt.Sprintf("El cajero %s realizó el cierre de caja. Balance Real Físico: $%s. (Esperado sistema: $%s)",
 		closure.ClosedByName, fmt.Sprintf("%.2f", realBalance), fmt.Sprintf("%.2f", expectedCash))
-	
+
 	changes := fmt.Sprintf(`{"expected": %f, "physical": %f, "realBalance": %f}`, expectedCash, closure.PhysicalCash, realBalance)
-	
+
 	h.auditService.Log(dniStr, nameStr, "CASH_CLOSURE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), isCritical)
 
 	// BLINDAJE: El envío de Telegram y PDF se hace en una goroutine para no bloquear la respuesta al cliente
@@ -164,17 +239,90 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 		pdfBuf := h.generateClosurePDF(cl, false)
 		filename := fmt.Sprintf("CIERRE_%s_%s.pdf", time.Now().Format("20060102"), cl.ClosedByDNI)
 		_ = h.telegramService.SendDocument(pdfBuf, filename, "📄 Reporte de Cierre Profesional (PDF)")
-		
+
 		log.Printf("📤 [SaveClosure] Reportes asíncronos enviados para cierre ID: %d", cl.ID)
+
+		// RESPALDO AUTOMÁTICO POST-CIERRE DE CAJA (Base de datos limpia sin turnos abiertos)
+		h.triggerPostClosureBackup(cl)
 	}(closure)
 
 	// Notificar a todos los clientes conectados que hubo un cierre (Zero-Reload)
 	go sse.GetSSEService().BroadcastDashboardUpdate()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message": "Cierre de caja procesado y guardado correctamente", 
-		"id": closure.ID,
+		"message": "Cierre de caja procesado y guardado correctamente",
+		"id":      closure.ID,
 	})
+}
+
+func (h *DashboardHandler) triggerPostClosureBackup(cl models.CashierClosure) {
+	host := os.Getenv("DB_HOST")
+	port := os.Getenv("DB_PORT")
+	user := os.Getenv("DB_USER")
+	dbname := os.Getenv("DB_NAME")
+	pass := os.Getenv("DB_PASSWORD")
+
+	if host == "" {
+		host = "localhost"
+	}
+	if port == "" {
+		port = "5432"
+	}
+	if user == "" {
+		user = "postgres"
+	}
+	if dbname == "" {
+		dbname = "sistemapos"
+	}
+
+	pgDumpPath, _, err := dbbackup.ResolvePgDumpPath()
+	if err != nil {
+		log.Printf("❌ [PostClosureBackup] Error resolviendo pg_dump: %v", err)
+		return
+	}
+
+	timeStr := time.Now().Format("2006-01-02_15-04")
+	filename := fmt.Sprintf("backup_pos_cierre_%d_%s.sql", cl.ID, timeStr)
+	backupPath := filepath.Join(os.TempDir(), filename)
+
+	args := []string{"-h", host, "-p", port, "-U", user, "-d", dbname, "-F", "p", "-f", backupPath}
+	cmd := exec.Command(pgDumpPath, args...)
+	cmd.Env = append(os.Environ(), "PGPASSWORD="+pass)
+
+	log.Printf("🛠️ [PostClosureBackup] Generando respaldo tras Cierre #%d: %s %v", cl.ID, pgDumpPath, args)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Printf("❌ [PostClosureBackup] Error ejecutando pg_dump: %v. Salida: %s", err, string(output))
+		return
+	}
+
+	// 1. Guardar copia en el Escritorio para fácil acceso del usuario
+	desktopDir := `C:\Users\jaide\OneDrive\Desktop`
+	if _, errStat := os.Stat(desktopDir); os.IsNotExist(errStat) {
+		desktopDir = `C:\Users\jaide\Desktop`
+	}
+	desktopBackupPath := filepath.Join(desktopDir, filename)
+	if data, errRead := os.ReadFile(backupPath); errRead == nil {
+		_ = os.WriteFile(desktopBackupPath, data, 0644)
+		log.Printf("💾 [PostClosureBackup] Copia de respaldo guardada en Escritorio: %s", desktopBackupPath)
+	}
+
+	// 2. Enviar por Telegram
+	file, errOpen := os.Open(backupPath)
+	if errOpen != nil {
+		log.Printf("❌ [PostClosureBackup] Error abriendo archivo de respaldo: %v", errOpen)
+		return
+	}
+	defer file.Close()
+	defer os.Remove(backupPath)
+
+	caption := fmt.Sprintf("💾 *RESPALDO AUTOMÁTICO POST-CIERRE #%d*\n👤 Cajero: `%s` (%s)\n📅 Fecha Cierre: `%s`\n✅ _Base de datos limpia con caja cerrada y sin turnos pendientes_",
+		cl.ID, cl.ClosedByName, cl.ClosedByDNI, time.Now().Format("02/01/2006 15:04"))
+
+	if h.telegramService != nil {
+		_ = h.telegramService.SendDocument(file, filename, caption)
+		log.Printf("🚀 [PostClosureBackup] Respaldo enviado exitosamente a Telegram.")
+	}
 }
 
 func (h *DashboardHandler) AdjustInitialBalance(c *gin.Context) {
@@ -224,6 +372,32 @@ func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Reporte parcial enviado a Telegram"})
 }
 
+func parseCurrencyHelper(s string) float64 {
+	var numStr strings.Builder
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || r == '.' || r == ',' {
+			numStr.WriteRune(r)
+		}
+	}
+	raw := numStr.String()
+	if raw == "" {
+		return 0
+	}
+	if strings.Contains(raw, ",") && strings.Contains(raw, ".") {
+		raw = strings.ReplaceAll(raw, ".", "")
+		raw = strings.ReplaceAll(raw, ",", ".")
+	} else if strings.Count(raw, ".") > 1 {
+		raw = strings.ReplaceAll(raw, ".", "")
+	} else if strings.Contains(raw, ".") {
+		parts := strings.Split(raw, ".")
+		if len(parts) == 2 && len(parts[1]) == 3 {
+			raw = strings.ReplaceAll(raw, ".", "")
+		}
+	}
+	val, _ := strconv.ParseFloat(raw, 64)
+	return val
+}
+
 func normalizeExpensesForReport(expenses []models.Expense) {
 	for i := range expenses {
 		e := &expenses[i]
@@ -234,83 +408,76 @@ func normalizeExpensesForReport(expenses []models.Expense) {
 			e.FondoAmount = 0
 			continue
 		}
-		
-		src := strings.ToUpper(e.PaymentSource)
-		total := e.Amount + e.TaxAmount
 
-		if src == "NEQUI" {
-			e.NequiAmount = total
-			e.CashAmount = 0
-			e.DaviplataAmount = 0
-			e.FondoAmount = 0
-			continue
-		} else if src == "DAVIPLATA" || src == "DAVI" {
-			e.DaviplataAmount = total
-			e.CashAmount = 0
-			e.NequiAmount = 0
-			e.FondoAmount = 0
-			continue
-		} else if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
-			e.FondoAmount = total
-			e.CashAmount = 0
-			e.NequiAmount = 0
-			e.DaviplataAmount = 0
-			e.PaymentSource = "FONDO"
-			continue
-		} else if src == "PREST." || src == "DEUDA" || src == "PRESTAMO" {
-			e.CashAmount = 0
-			e.NequiAmount = 0
-			e.DaviplataAmount = 0
-			e.FondoAmount = 0
-			continue
-		}
+		src := strings.ToUpper(strings.TrimSpace(e.PaymentSource))
+		tax := e.TaxAmount
+		base := e.Amount
+		total := base + tax
 
 		rawCash := e.CashAmount
 		rawNequi := e.NequiAmount
 		rawDavi := e.DaviplataAmount
 		rawFondo := e.FondoAmount
-		tax := e.TaxAmount
-		base := e.Amount
-		
-		finalCash := rawCash
-		finalNequi := rawNequi
-		finalDavi := rawDavi
-		finalFondo := rawFondo
-		
-		sum := rawCash + rawNequi + rawDavi + rawFondo
-		if sum == 0 {
-			if src == "NEQUI" {
-				finalNequi = base + tax
-			} else if src == "DAVIPLATA" {
-				finalDavi = base + tax
-			} else if src != "PREST." && src != "DEUDA" && src != "PRESTAMO" {
-				finalCash = base + tax
-			}
-		} else if tax > 0 && sum == base {
-			isSingle := 0
-			if rawCash > 0 { isSingle++ }
-			if rawNequi > 0 { isSingle++ }
-			if rawDavi > 0 { isSingle++ }
-			if rawFondo > 0 { isSingle++ }
-			
-			if isSingle <= 1 {
-				if rawCash > 0 { finalCash += tax }
-				if rawNequi > 0 { finalNequi += tax }
-				if rawDavi > 0 { finalDavi += tax }
-				if rawFondo > 0 { finalFondo += tax }
-			} else {
-				if rawNequi > 0 {
-					finalNequi += tax
-				} else if rawDavi > 0 {
-					finalDavi += tax
-				} else if rawFondo > 0 {
-					finalFondo += tax
-				} else {
-					finalCash += tax
+		sumChannels := rawCash + rawNequi + rawDavi + rawFondo
+
+		finalCash := 0.0
+		finalNequi := 0.0
+		finalDavi := 0.0
+		finalFondo := 0.0
+
+		if strings.Contains(src, "/") {
+			for _, part := range strings.Split(src, "/") {
+				p := strings.TrimSpace(part)
+				val := parseCurrencyHelper(p)
+				if strings.Contains(p, "NEQUI") || strings.Contains(p, "NEQ") {
+					finalNequi += val
+				} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
+					finalDavi += val
+				} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND") {
+					finalFondo += val
+				} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") || strings.Contains(p, "EFEC") {
+					finalCash += val
 				}
 			}
+			if finalCash+finalNequi+finalDavi+finalFondo == 0 {
+				finalCash = total
+			}
+		} else if sumChannels > 0 {
+			finalCash = rawCash
+			finalNequi = rawNequi
+			finalDavi = rawDavi
+			finalFondo = rawFondo
+			if tax > 0 && sumChannels == base {
+				if rawCash > 0 && rawNequi == 0 && rawDavi == 0 && rawFondo == 0 {
+					finalCash += tax
+				} else if rawNequi > 0 && rawCash == 0 && rawDavi == 0 && rawFondo == 0 {
+					finalNequi += tax
+				} else if rawDavi > 0 && rawCash == 0 && rawNequi == 0 && rawFondo == 0 {
+					finalDavi += tax
+				} else if rawFondo > 0 && rawCash == 0 && rawNequi == 0 && rawDavi == 0 {
+					finalFondo += tax
+				} else {
+					if rawNequi > 0 {
+						finalNequi += tax
+					} else if rawDavi > 0 {
+						finalDavi += tax
+					} else {
+						finalCash += tax
+					}
+				}
+			}
+		} else if src == "NEQUI" {
+			finalNequi = total
+		} else if src == "DAVIPLATA" || src == "DAVI" {
+			finalDavi = total
+		} else if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" {
+			finalFondo = total
+		} else if src == "PREST." || src == "DEUDA" || src == "PRESTAMO" {
+			// Debt -> 0
+		} else {
+			finalCash = total
 		}
-		
+
 		e.CashAmount = finalCash
 		e.NequiAmount = finalNequi
 		e.DaviplataAmount = finalDavi
@@ -328,33 +495,30 @@ func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool)
 		title = "⏳ *REPORTE DE AVANCE (PARCIAL)*"
 	}
 
-	expectedCash := closure.ExpectedCash
-	if expectedCash == 0 {
-		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
-	}
-
-	// 1. LÓGICA MATEMÁTICA DEL REPORTE
-	efectivoContado := closure.PhysicalCash
-	ingresosDigitales := closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer
-
+	// 1. FUENTE ÚNICA DEL ARQUEO
+	// Antes esta función tenía su propia matemática: leía PhysicalCash crudo,
+	// sumaba e.CashAmount a mano, omitía la base de apertura y forzaba el
+	// esperado a $0 cuando salía negativo. Por eso el mensaje de Telegram no
+	// coincidía con el modal ni con el reporte.
 	if len(closure.Expenses) == 0 && closure.ExpensesDetail != "" {
 		json.Unmarshal([]byte(closure.ExpensesDetail), &closure.Expenses)
 	}
-
 	normalizeExpensesForReport(closure.Expenses)
 
-	egresosEfectivoTurno := 0.0
-	for _, e := range closure.Expenses {
-		if strings.ToUpper(e.Category) != "DEVOLUCIONES" && e.Status != "PENDING" {
-			egresosEfectivoTurno += e.CashAmount
-		}
+	m := services.ComputeClosureMetrics(&closure)
+	efectivoContado := m.PhysicalCash
+	ingresosDigitales := m.DigitalIncome
+	egresosEfectivoTurno := m.EgresosCaja
+	ventasTotalesCajero := m.VentasCajero
+
+	ventasTotalesSistema := closure.TotalSales
+	if ventasTotalesSistema == 0 {
+		ventasTotalesSistema = closure.TotalCash + ingresosDigitales
 	}
 
-	efectivoParaVentaReal := efectivoContado
-	if isPartial {
-		efectivoParaVentaReal = expectedCash
-	}
-	ventaReal := efectivoParaVentaReal + ingresosDigitales + egresosEfectivoTurno
+	// Sin piso a cero: si los egresos superan lo que entró, el esperado es
+	// negativo y el sobrante real es la resta completa.
+	expectedCash := closure.OpeningCash + closure.TotalCash - egresosEfectivoTurno - closure.TotalReturns
 	diferenciaFisica := efectivoContado - expectedCash
 
 	// Variables auxiliares para la vista
@@ -365,10 +529,12 @@ func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool)
 	diferenciaIcon := "🟢 SOBRANTE"
 	if diferenciaFisica < 0 {
 		diferenciaIcon = "🔴 FALTANTE"
+	} else if diferenciaFisica == 0 {
+		diferenciaIcon = "⚪ CUADRADO"
 	}
 
 	loc := time.FixedZone("America/Bogota", -5*60*60)
-	
+
 	// 2. CONSTRUCCIÓN DE PLANTILLA
 	var msg strings.Builder
 
@@ -379,15 +545,90 @@ func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool)
 	msg.WriteString(fmt.Sprintf("🏁 *FIN:*    `%s`\n", closure.EndDate.In(loc).Format("02/01/2006 15:04")))
 	msg.WriteString("━━━━━━━━━━━━━━━━━━━━\n\n")
 
-	msg.WriteString("🧮 *VENTA REAL DEL DÍA (RECONSTRUIDO)*\n")
-	msg.WriteString(fmt.Sprintf("💰 *TOTAL VENTAS:* `$%s`\n", formatCOP(ventaReal)))
-	msg.WriteString("📋 _(Efectivo Contado + Digital + Egresos Caja)_\n\n")
+	msg.WriteString("🧮 *VENTA TOTAL DEL CAJERO (RECAUDO REAL)*\n")
+	msg.WriteString(fmt.Sprintf("💰 *TOTAL RECAUDADO:* `$%s`\n", formatCOP(ventasTotalesCajero)))
+	msg.WriteString(fmt.Sprintf("📋 _(Efectivo Contado $%s + Digital $%s + Egresos Caja $%s)_\n\n", formatCOP(efectivoContado), formatCOP(ingresosDigitales), formatCOP(egresosEfectivoTurno)))
+
+	msg.WriteString("📊 *VENTAS REGISTRADAS EN EL POS (SISTEMA)*\n")
+	msg.WriteString(fmt.Sprintf("▫️ Total Sistema: `$%s`\n", formatCOP(ventasTotalesSistema)))
+	msg.WriteString(fmt.Sprintf("▫️ Efectivo POS: `$%s` | Digital: `$%s`\n\n", formatCOP(closure.TotalCash), formatCOP(ingresosDigitales)))
 
 	msg.WriteString("💵 *1. RESUMEN DE CAJA (ARQUEO FÍSICO)*\n")
-	msg.WriteString(fmt.Sprintf("▫️ Efectivo Esperado:  `$%s`\n", formatCOP(expectedCash)))
-	msg.WriteString(fmt.Sprintf("▫️ Efectivo Contado:   `$%s`\n", formatCOP(efectivoContado)))
+	msg.WriteString(fmt.Sprintf("▫️ Entradas Efectivo: `$%s`\n", formatCOP(closure.TotalCash)))
+	msg.WriteString(fmt.Sprintf("▫️ Egresos de Caja:   `-$%s`\n", formatCOP(egresosEfectivoTurno)))
+	if closure.TotalReturns > 0 {
+		msg.WriteString(fmt.Sprintf("▫️ Devoluciones:      `-$%s`\n", formatCOP(closure.TotalReturns)))
+	}
+	msg.WriteString(fmt.Sprintf("▫️ Efectivo Esperado: `$%s`\n", formatCOP(expectedCash)))
+	msg.WriteString(fmt.Sprintf("▫️ Efectivo Contado:  `$%s`\n", formatCOP(efectivoContado)))
 	msg.WriteString("────────────────────\n")
 	msg.WriteString(fmt.Sprintf("🚨 *DIFERENCIA FÍSICA:* %s `$%s`\n\n", diferenciaIcon, formatCOP(diferenciaFisicaAbs)))
+
+	// Desglose de billetes y monedas reportado por el cajero
+	totalBillsAmount := closure.CashBills
+	c1000 := closure.Coins1000
+	c500 := closure.Coins500
+	c200 := closure.Coins200
+	c100 := closure.Coins100
+
+	if closure.CashBreakdown != "" {
+		var bd struct {
+			Bills map[string]string `json:"bills"`
+			Coins map[string]string `json:"coins"`
+		}
+		if err := json.Unmarshal([]byte(closure.CashBreakdown), &bd); err == nil {
+			if len(bd.Bills) > 0 {
+				sumB := 0.0
+				for valStr, qtyStr := range bd.Bills {
+					val, _ := strconv.ParseFloat(valStr, 64)
+					qty, _ := strconv.ParseFloat(qtyStr, 64)
+					sumB += val * qty
+				}
+				if sumB > 0 {
+					totalBillsAmount = sumB
+				}
+			}
+			if len(bd.Coins) > 0 {
+				if v, ok := bd.Coins["500/1000"]; ok {
+					if val, err := strconv.ParseFloat(v, 64); err == nil && val > 0 {
+						c1000 = val
+					}
+				}
+				if v, ok := bd.Coins["200"]; ok {
+					if val, err := strconv.ParseFloat(v, 64); err == nil && val > 0 {
+						c200 = val
+					}
+				}
+				if v, ok := bd.Coins["100"]; ok {
+					if val, err := strconv.ParseFloat(v, 64); err == nil && val > 0 {
+						c100 = val
+					}
+				}
+			}
+		}
+	}
+
+	msg.WriteString("🧩 *DESGLOSE DE EFECTIVO REPORTADO*\n")
+	if totalBillsAmount > 0 || closure.CashBills > 0 {
+		if totalBillsAmount == 0 {
+			totalBillsAmount = closure.CashBills
+		}
+		msg.WriteString(fmt.Sprintf("▫️ Billetes:            `$%s`\n", formatCOP(totalBillsAmount)))
+	}
+	if c1000 > 0 {
+		msg.WriteString(fmt.Sprintf("▫️ Monedas 500 / 1000:   `$%s`\n", formatCOP(c1000)))
+	}
+	if c500 > 0 {
+		msg.WriteString(fmt.Sprintf("▫️ Monedas 500:          `$%s`\n", formatCOP(c500)))
+	}
+	if c200 > 0 {
+		msg.WriteString(fmt.Sprintf("▫️ Monedas 200:          `$%s`\n", formatCOP(c200)))
+	}
+	if c100 > 0 {
+		msg.WriteString(fmt.Sprintf("▫️ Monedas 100:          `$%s`\n", formatCOP(c100)))
+	}
+	msg.WriteString("────────────────────\n")
+	msg.WriteString(fmt.Sprintf("💵 *TOTAL CONTEO:*       `$%s`\n\n", formatCOP(efectivoContado)))
 
 	msg.WriteString("📱 *2. MEDIOS DIGITALES Y OTROS*\n")
 	msg.WriteString(fmt.Sprintf("▫️ Nequi:      `$%s`\n", formatCOP(closure.TotalNequi)))
@@ -400,17 +641,17 @@ func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool)
 	msg.WriteString(fmt.Sprintf("📲 *TOTAL DIGITAL:*  `$%s`\n\n", formatCOP(ingresosDigitales)))
 
 	msg.WriteString("💸 *3. EGRESOS DETALLADOS POR CANAL*\n")
-	
+
 	// 3. CONTROL DE EGRESOS POR CANAL
 	type splitExpense struct {
 		Desc   string
 		Amount float64
 	}
 	egresosAgrupados := make(map[string][]splitExpense)
-	
+
 	totalEfectivo := 0.0
 	totalFondo := 0.0
-	
+
 	for _, e := range closure.Expenses {
 		if e.CashAmount > 0 {
 			egresosAgrupados["EFECTIVO"] = append(egresosAgrupados["EFECTIVO"], splitExpense{Desc: e.Description, Amount: e.CashAmount})
@@ -514,8 +755,6 @@ func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool)
 	return msg.String()
 }
 
-
-
 func (h *DashboardHandler) GetClosuresHistory(c *gin.Context) {
 	data, err := h.service.GetClosuresHistory()
 	if err != nil {
@@ -575,7 +814,6 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		return
 	}
 
-
 	if startDateStr, ok := updates["start_date"].(string); ok && startDateStr != "" {
 		if parsedStart, err := time.ParseInLocation("2006-01-02T15:04", startDateStr, time.Local); err == nil {
 			updates["start_date"] = parsedStart
@@ -604,7 +842,21 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		}
 	}
 
-	// ----------------------------------------------------------------------
+	// NO recalcular aquí el arqueo. Antes este handler escribía su propia
+	// version de expected_cash y difference (sin la base de apertura) y acto
+	// seguido el servicio los recalculaba con otra fórmula y los sobrescribía:
+	// dos escrituras contradictorias en la misma petición.
+	//
+	// Ahora el arqueo lo calcula UNA sola vez UpdateClosure en el servicio,
+	// con services.ComputeClosureMetrics. Aquí solo se normalizan los canales
+	// de los egresos para que la BD refleje la separación exacta.
+	if closureObj, err := h.service.GetClosureByID(uint(id)); err == nil && closureObj != nil {
+		if len(closureObj.Expenses) > 0 {
+			normalizeExpensesForReport(closureObj.Expenses)
+			expBytes, _ := json.Marshal(closureObj.Expenses)
+			updates["expenses_detail"] = string(expBytes)
+		}
+	}
 
 	err = h.service.UpdateClosure(uint(id), updates)
 	if err != nil {
@@ -665,7 +917,6 @@ func (h *DashboardHandler) GetGlobalDebt(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"totalDebt": debt})
 }
 
-
 func (h *DashboardHandler) generateClosurePDF(closure models.CashierClosure, isPartial bool) *bytes.Buffer {
 	return GenerateClosurePDF(closure, isPartial)
 }
@@ -725,6 +976,3 @@ func GenerateClosurePDF(closure models.CashierClosure, isPartial bool) *bytes.Bu
 	}
 	return &buf
 }
-
-
-

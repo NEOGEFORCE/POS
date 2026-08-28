@@ -118,7 +118,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	// Auditoría de Pedido
 	dniEmployee, _ := c.Get("dni")
 	name, _ := c.Get("userName")
-	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), fmt.Sprintf("%v", name), "CREATE_ORDER", "LOGISTICS", 
+	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), fmt.Sprintf("%v", name), "CREATE_ORDER", "LOGISTICS",
 		fmt.Sprintf("Nuevo pedido a proveedor ID: %d", order.SupplierID),
 		fmt.Sprintf("Se generó una orden de compra para el proveedor ID #%d por $%s", order.SupplierID, fmt.Sprintf("%.2f", order.EstimatedCost)),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -126,7 +126,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 
 func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 	supplierIDStr := c.Query("supplier_id")
-	
+
 	// SPRINT: Unified list
 	var unified []map[string]interface{}
 	var hasSupplierFilter bool
@@ -150,7 +150,7 @@ func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 	} else {
 		orders, err = h.orderService.GetAllOrders()
 	}
-	
+
 	if err == nil {
 		for _, o := range orders {
 			unified = append(unified, map[string]interface{}{
@@ -246,99 +246,71 @@ func (h *OrderHandler) GetOrderItems(c *gin.Context) {
 	idStr := c.Param("id")
 	sourceType := c.Query("source") // optional: purchase_order, confirmed, expected
 
-	// Try as confirmed order first (ConfirmedOrder = Pedido Inteligente)
+	type itemDetail struct {
+		ProductName string  `json:"productName"`
+		Barcode     string  `json:"barcode"`
+		Quantity    float64 `json:"quantity"`
+		UnitCost    float64 `json:"unitCost"`
+	}
+
 	if sourceType == "" || sourceType == "confirmed" {
-		orders, err := h.restockService.GetPendingOrders()
-		if err == nil {
-			for _, co := range orders {
-				if fmt.Sprintf("%v", co.ID) == idStr {
-					type ItemDetail struct {
-						ProductName string  `json:"productName"`
-						Barcode     string  `json:"barcode"`
-						Quantity    float64 `json:"quantity"`
-						UnitCost    float64 `json:"unitCost"`
-					}
-					items := make([]ItemDetail, 0, len(co.Items))
-					for _, item := range co.Items {
-						name := item.ProductID
-						if item.Product.ProductName != "" {
-							name = item.Product.ProductName
-						}
-						items = append(items, ItemDetail{
-							ProductName: name,
-							Barcode:     item.ProductID,
-							Quantity:    float64(item.Quantity),
-							UnitCost:    item.EstimatedPrice,
-						})
-					}
-					c.JSON(http.StatusOK, items)
-					return
+		if order, err := h.restockService.GetOrderByID(idStr); err == nil && order != nil {
+			items := make([]itemDetail, 0, len(order.Items))
+			for _, item := range order.Items {
+				name := item.ProductID
+				if item.Product.ProductName != "" {
+					name = item.Product.ProductName
 				}
+				items = append(items, itemDetail{
+					ProductName: name,
+					Barcode:     item.ProductID,
+					Quantity:    float64(item.Quantity),
+					UnitCost:    item.EstimatedPrice,
+				})
 			}
+			c.JSON(http.StatusOK, items)
+			return
 		}
 	}
 
-	// Try as purchase order
-	if sourceType == "" || sourceType == "purchase_order" {
-		allOrders, err := h.orderService.GetAllOrders()
-		if err == nil {
-			for _, po := range allOrders {
-				if fmt.Sprintf("%v", po.ID) == idStr {
-					type ItemDetail struct {
-						ProductName string  `json:"productName"`
-						Barcode     string  `json:"barcode"`
-						Quantity    float64 `json:"quantity"`
-						UnitCost    float64 `json:"unitCost"`
-					}
-					items := make([]ItemDetail, 0, len(po.OrderItems))
-					for _, item := range po.OrderItems {
-						name := item.ProductBarcode
-						if item.Product.ProductName != "" {
-							name = item.Product.ProductName
-						}
-						items = append(items, ItemDetail{
-							ProductName: name,
-							Barcode:     item.ProductBarcode,
-							Quantity:    float64(item.Quantity),
-							UnitCost:    item.UnitPrice,
-						})
-					}
-					c.JSON(http.StatusOK, items)
-					return
+	numericID, parseErr := strconv.ParseUint(idStr, 10, 64)
+	if parseErr == nil && (sourceType == "" || sourceType == "purchase_order") {
+		if order, err := h.orderService.GetOrder(uint(numericID)); err == nil && order != nil {
+			items := make([]itemDetail, 0, len(order.OrderItems))
+			for _, item := range order.OrderItems {
+				name := item.ProductBarcode
+				if item.Product.ProductName != "" {
+					name = item.Product.ProductName
 				}
+				items = append(items, itemDetail{
+					ProductName: name,
+					Barcode:     item.ProductBarcode,
+					Quantity:    float64(item.Quantity),
+					UnitCost:    item.UnitPrice,
+				})
 			}
+			c.JSON(http.StatusOK, items)
+			return
 		}
 	}
 
-	// Try as expected order (preventa)
-	if sourceType == "" || sourceType == "expected" {
-		expectedOrders, err := h.expectedOrderService.GetAllExpectedOrders()
-		if err == nil {
-			for _, eo := range expectedOrders {
-				if fmt.Sprintf("%v", eo.ID) == idStr {
-					type ItemDetail struct {
-						ProductName string  `json:"productName"`
-						Barcode     string  `json:"barcode"`
-						Quantity    float64 `json:"quantity"`
-						UnitCost    float64 `json:"unitCost"`
-					}
-					items := make([]ItemDetail, 0, len(eo.Items))
-					for _, item := range eo.Items {
-						items = append(items, ItemDetail{
-							ProductName: item.ProductName,
-							Barcode:     item.Barcode,
-							Quantity:    float64(item.ExpectedQuantity),
-							UnitCost:    0,
-						})
-					}
-					c.JSON(http.StatusOK, items)
-					return
-				}
+	if parseErr == nil && (sourceType == "" || sourceType == "expected") {
+		if order, err := h.expectedOrderService.GetExpectedOrder(uint(numericID)); err == nil && order != nil {
+			items := make([]itemDetail, 0, len(order.Items))
+			for _, item := range order.Items {
+				items = append(items, itemDetail{
+					ProductName: item.ProductName,
+					Barcode:     item.Barcode,
+					Quantity:    float64(item.ExpectedQuantity),
+					UnitCost:    0,
+				})
 			}
+			c.JSON(http.StatusOK, items)
+			return
 		}
 	}
 
-	// Not found — return empty array (no error, el modal lo maneja)
+	// Compatibilidad: el modal existente interpreta una lista vacía como no encontrado.
 	c.JSON(http.StatusOK, []interface{}{})
 }
 
@@ -355,7 +327,7 @@ func (h *OrderHandler) DismissOrder(c *gin.Context) {
 	}
 
 	dniEmployee, _ := c.Get("dni")
-	
+
 	switch req.Type {
 	case "purchase_order":
 		idStr := fmt.Sprintf("%v", req.ID)
@@ -509,12 +481,11 @@ func (h *OrderHandler) SendDeliverySummaryToTelegram(c *gin.Context) {
 	})
 }
 
-
 // formatMoney formatea un valor numérico agregando puntos de miles (formato COP) sin decimales.
 func formatMoney(amount float64) string {
 	intAmt := int64(amount)
 	s := fmt.Sprintf("%d", intAmt)
-	
+
 	// Si es negativo, guardamos el signo
 	sign := ""
 	if intAmt < 0 {
@@ -638,7 +609,7 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 	go sse.GetSSEService().BroadcastDashboardUpdate()
 
 	// Auditoría de Preventa
-	h.auditService.Log(dni, name, "CREATE_EXPECTED_ORDER", "LOGISTICS", 
+	h.auditService.Log(dni, name, "CREATE_EXPECTED_ORDER", "LOGISTICS",
 		fmt.Sprintf("Preventa registrada: %s ($%.2f)", req.SupplierName, req.TotalEstimated),
 		fmt.Sprintf("Se registró una preventa para %s por $%s", req.SupplierName, fmt.Sprintf("%.2f", req.TotalEstimated)),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -649,7 +620,7 @@ func (h *OrderHandler) CreateExpectedOrder(c *gin.Context) {
 // BLINDAJE DEFENSIVO: Nunca retorna 500, siempre 200 OK (array vacío si hay error)
 func (h *OrderHandler) GetExpectedOrdersToday(c *gin.Context) {
 	dateStr := c.Query("date")
-	
+
 	var orders []models.ExpectedOrder
 	var err error
 

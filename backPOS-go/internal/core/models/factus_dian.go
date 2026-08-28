@@ -1,4 +1,4 @@
-package models
+﻿package models
 
 // Factus Document Type Parametric Table
 type DocumentType struct {

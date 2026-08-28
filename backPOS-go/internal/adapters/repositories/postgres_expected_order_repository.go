@@ -115,7 +115,6 @@ func (r *PostgresExpectedOrderRepository) GetSupplierByID(id uint) (*models.Supp
 	return &supplier, nil
 }
 
-func (r *PostgresExpectedOrderRepository) UpdateSupplierDeliveryDays(id uint, days string) error {
-	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("delivery_day", days).Error
+func (r *PostgresExpectedOrderRepository) UpdateSupplierDeliveryDays(id uint, days models.StringArray) error {
+	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("delivery_days", days).Error
 }
-

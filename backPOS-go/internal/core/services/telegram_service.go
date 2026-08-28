@@ -319,8 +319,18 @@ func (s *TelegramService) StartListener(invService *InventoryService, saleRepo p
 
 		for update := range updates {
 			if update.CallbackQuery != nil {
+				callbackChatID := int64(0)
+				if update.CallbackQuery.Message != nil {
+					callbackChatID = update.CallbackQuery.Message.Chat.ID
+				} else if update.CallbackQuery.From != nil {
+					callbackChatID = update.CallbackQuery.From.ID
+				}
+				if callbackChatID != s.chatID {
+					log.Printf("⚠️ [Telegram-Listener] Callback ignorado desde chat no autorizado: %d", callbackChatID)
+					continue
+				}
 				if aiBotService != nil {
-					aiBotService.HandleCallbackQuery(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Data)
+					aiBotService.HandleCallbackQuery(callbackChatID, update.CallbackQuery.Data)
 				}
 				// Responder al callback para quitar el "reloj" de cargando en el botón
 				callback := tgbotapi.NewCallback(update.CallbackQuery.ID, "")
@@ -329,6 +339,10 @@ func (s *TelegramService) StartListener(invService *InventoryService, saleRepo p
 			}
 
 			if update.Message == nil {
+				continue
+			}
+			if update.Message.Chat.ID != s.chatID {
+				log.Printf("⚠️ [Telegram-Listener] Mensaje ignorado desde chat no autorizado: %d", update.Message.Chat.ID)
 				continue
 			}
 
@@ -432,7 +446,7 @@ func (s *TelegramService) handleVendidoToday(dashService *DashboardService) stri
 	report += fmt.Sprintf("💵 *Total Bruto:* $%s\n", fmt.Sprintf("%.0f", overview.TodaySalesAmount))
 	report += fmt.Sprintf("📊 *Transacciones:* %d\n", overview.TodaySalesCount)
 	report += fmt.Sprintf("📉 *Utilidad Neta:* $%s\n", fmt.Sprintf("%.0f", overview.TodayNetProfit))
-	
+
 	if overview.TodaySalesCount > 0 {
 		report += fmt.Sprintf("\n🎫 *Ticket Promedio:* $%s", fmt.Sprintf("%.0f", overview.TodaySalesAmount/float64(overview.TodaySalesCount)))
 	}
@@ -444,7 +458,7 @@ func (s *TelegramService) handleTopSemana(saleRepo ports.SaleRepository) string 
 	loc, _ := time.LoadLocation("America/Bogota")
 	now := time.Now().In(loc)
 	startOfWeek := now.AddDate(0, 0, -7)
-	
+
 	top, err := saleRepo.GetTopSellingProducts(startOfWeek, now, 10)
 	if err != nil {
 		return "❌ Error: " + err.Error()
@@ -482,7 +496,7 @@ func (s *TelegramService) handleBuscar(prodService *ProductService, query string
 	report += fmt.Sprintf("🏷️ *Código:* `%s`\n", product.Barcode)
 	report += fmt.Sprintf("💰 *Precio Venta:* $%s\n", fmt.Sprintf("%.0f", product.SalePrice))
 	report += fmt.Sprintf("📉 *Stock Actual:* %.2f\n", product.Quantity)
-	
+
 	if product.SupplierID != nil {
 		report += fmt.Sprintf("🚚 *ID Proveedor:* %d\n", *product.SupplierID)
 	}
@@ -519,9 +533,9 @@ func (s *TelegramService) handleCambiosHoy(prodService *ProductService) string {
 	report += "Estos son los precios que se deben haber actualizado hoy:\n\n"
 
 	for _, log := range logs {
-		report += fmt.Sprintf("📍 *%s*: $%s (Era $%s)\n", 
-			log.ProductName, 
-			fmt.Sprintf("%.0f", log.NewPrice), 
+		report += fmt.Sprintf("📍 *%s*: $%s (Era $%s)\n",
+			log.ProductName,
+			fmt.Sprintf("%.0f", log.NewPrice),
 			fmt.Sprintf("%.0f", log.OldPrice))
 	}
 
@@ -584,4 +598,15 @@ func (s *TelegramService) handleImageMessage(msg *tgbotapi.Message, aiBotService
 	}
 
 	s.SendMarkdownAlert(response)
+}
+
+// Stop detiene el long polling de Telegram. El worker de cola termina al salir el proceso.
+func (s *TelegramService) Stop() {
+	if s == nil {
+		return
+	}
+	s.active = false
+	if s.bot != nil {
+		s.bot.StopReceivingUpdates()
+	}
 }

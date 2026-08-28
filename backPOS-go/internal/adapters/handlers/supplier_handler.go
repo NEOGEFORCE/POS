@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"fmt"
@@ -34,6 +34,25 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 	
 	// Verificar Duplicados
 	if existing, err := h.service.GetSupplierByName(supplier.Name); err == nil && existing != nil {
+		if !existing.IsActive {
+			dni, _ := c.Get("dni")
+			dniStr := fmt.Sprintf("%v", dni)
+			supplier.ID = existing.ID
+			supplier.IsActive = true
+			supplier.UpdatedByDNI = dniStr
+			if err := h.service.UpdateSupplier(existing.ID, &supplier); err != nil {
+				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar proveedor", err)
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "Proveedor reactivado exitosamente", "reactivated": true, "supplier": supplier})
+			go sse.GetSSEService().BroadcastSupplierUpdate(supplier)
+			name, _ := c.Get("userName")
+			h.auditService.Log(dniStr, fmt.Sprintf("%v", name), "REACTIVATE_SUPPLIER", "DIRECTORY",
+				fmt.Sprintf("Proveedor reactivado: %s", supplier.Name),
+				fmt.Sprintf("Se reactivó el proveedor previamente eliminado: %s", supplier.Name),
+				"", c.ClientIP(), c.Request.UserAgent(), false)
+			return
+		}
 		SendError(c, http.StatusConflict, ErrDuplicateEntry, "El nombre del proveedor ya existe en el sistema", gin.H{
 			"id":     existing.ID,
 			"name":   existing.Name,

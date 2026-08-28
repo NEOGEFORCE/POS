@@ -6,8 +6,11 @@ import (
 	"backPOS-go/internal/infrastructure/cache"
 	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 	"time"
 )
 
@@ -20,9 +23,10 @@ func NewGormReturnRepository(db *gorm.DB) *GormReturnRepository {
 }
 
 func (r *GormReturnRepository) invalidateDashboardCache() {
-	// Invalidate RAM cache
-	cache.CacheManager.Delete(cache.CacheKeyDashboardOverview)
-	
+	// Invalidate RAM cache: TODAS las variantes del overview (hay una entrada
+	// por rango de fechas).
+	cache.InvalidateDashboard()
+
 	// Solicitar refresco asíncrono y debounced
 	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
 
@@ -53,17 +57,37 @@ func (r *GormReturnRepository) CreateWithTransaction(
 			}
 		}
 
-		// 2. Ajustar cantidades de stock de productos
+		// 2. Ajustar cantidades: delta positivo entra, delta negativo sale.
 		for barcode, delta := range adjustments {
 			if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).
-				Update("quantity", gorm.Expr("ROUND((quantity - ?)::numeric, 3)", delta)).Error; err != nil {
+				Update("quantity", gorm.Expr("ROUND((quantity + ?)::numeric, 3)", delta)).Error; err != nil {
 				return fmt.Errorf("error actualizando stock de producto %s: %w", barcode, err)
 			}
 		}
 
-		// 3. Guardar registro de la devolución
+		// 3. Guardar registro y enlazar la venta original.
+		ret.FinancialTraceReady = true
+		if ret.Date.IsZero() {
+			ret.Date = time.Now()
+		}
 		if err := tx.Create(ret).Error; err != nil {
 			return fmt.Errorf("error guardando devolución: %w", err)
+		}
+		if ret.ReturnType == "REFUND" && ret.TotalReturned > 0 {
+			expense := &models.Expense{
+				Date: ret.Date, Amount: ret.TotalReturned, Description: "DEVOLUCION_EFECTIVO",
+				PaymentSource: "EFECTIVO", Category: "Devoluciones", Status: "PAID",
+				CreatedByDNI: employeeDNI, ReturnRef: &ret.ID,
+			}
+			if err := tx.Create(expense).Error; err != nil {
+				return fmt.Errorf("error registrando egreso de devolución: %w", err)
+			}
+		}
+		if err := tx.Model(&models.Sale{}).Where("\"saleId\" = ?", ret.SaleID).Updates(map[string]interface{}{
+			"hasReturn": true,
+			"returnRef": ret.ID,
+		}).Error; err != nil {
+			return fmt.Errorf("error vinculando devolución a venta: %w", err)
 		}
 
 		return nil
@@ -157,13 +181,14 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 		}
 
 		ret := &models.Return{
-			SaleID:        req.InvoiceRef,
-			Date:          time.Now(),
-			TotalReturned: req.RefundAmount,
-			Reason:        "DEVOLUCION_AVANZADA",
-			ReturnType:    req.Type,
-			EmployeeDNI:   employeeDNI,
-			Details:       details,
+			SaleID:              req.InvoiceRef,
+			Date:                time.Now(),
+			TotalReturned:       req.RefundAmount,
+			Reason:              "DEVOLUCION_AVANZADA",
+			ReturnType:          req.Type,
+			FinancialTraceReady: true,
+			EmployeeDNI:         employeeDNI,
+			Details:             details,
 		}
 		if err := tx.Create(ret).Error; err != nil {
 			return fmt.Errorf("error guardando registro de devolución: %w", err)
@@ -186,6 +211,7 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 				Description:  "DEVOLUCION_EFECTIVO",
 				CreatedByDNI: employeeDNI,
 				Category:     "Devoluciones",
+				ReturnRef:    &ret.ID,
 			}
 			if err := tx.Create(expense).Error; err != nil {
 				return fmt.Errorf("error registrando egreso de caja: %w", err)
@@ -198,12 +224,13 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 
 			// Ingreso de caja (Mini-venta)
 			miniSale := &models.Sale{
-				SaleDate:      time.Now(),
-				EmployeeDNI:   employeeDNI,
-				ClientDNI:     clientDni,
-				TotalAmount:   req.ChargeAmount,
-				PaymentMethod: req.ChargeMethod,
-				Status:        "PAID",
+				SaleDate:        time.Now(),
+				EmployeeDNI:     employeeDNI,
+				ClientDNI:       clientDni,
+				TotalAmount:     req.ChargeAmount,
+				PaymentMethod:   req.ChargeMethod,
+				Status:          "PAID",
+				ParentReturnRef: &ret.ID,
 			}
 			switch req.ChargeMethod {
 			case "EFECTIVO", "CASH":
@@ -233,6 +260,116 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 }
 
 func (r *GormReturnRepository) DeleteWithTransaction(id uint, adminDNI string, adminName string) error {
-	// TODO: implement full deletion logic with transaction
+	var ret models.Return
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Preload("Details.Product.BaseProduct").First(&ret, id).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errors.New("devolución no encontrada o ya anulada")
+			}
+			return fmt.Errorf("error bloqueando devolución: %w", err)
+		}
+
+		if !ret.FinancialTraceReady {
+			return errors.New("devolución histórica sin trazabilidad financiera; vincule su egreso/cobro antes de anularla")
+		}
+
+		adjustments := make(map[string]float64)
+		movements := make([]models.StockMovement, 0, len(ret.Details))
+		for _, detail := range ret.Details {
+			targetBarcode := detail.Barcode
+			effectiveQty := detail.Quantity
+			if detail.Product.IsPack && detail.Product.BaseProductBarcode != nil && *detail.Product.BaseProductBarcode != "" {
+				targetBarcode = *detail.Product.BaseProductBarcode
+				effectiveQty = detail.Quantity * float64(detail.Product.PackMultiplier)
+			}
+			delta := -effectiveQty
+			movementType := models.MovementTypeOut
+			reason := models.MovementReasonReturnRevert
+			if detail.IsExchange {
+				delta = effectiveQty
+				movementType = models.MovementTypeIn
+				reason = models.MovementReasonExchangeRevert
+			}
+			adjustments[targetBarcode] += delta
+			movements = append(movements, models.StockMovement{
+				Date: time.Now(), Barcode: targetBarcode, Quantity: effectiveQty,
+				Type: movementType, Reason: reason, ReferenceID: fmt.Sprintf("REV-RET-%d", ret.ID),
+				EmployeeDNI: adminDNI, EmployeeName: adminName,
+			})
+		}
+		for barcode, delta := range adjustments {
+			if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).
+				Update("quantity", gorm.Expr("ROUND((quantity + ?)::numeric, 3)", delta)).Error; err != nil {
+				return fmt.Errorf("error revirtiendo stock de %s: %w", barcode, err)
+			}
+		}
+		if len(movements) > 0 {
+			if err := tx.Create(&movements).Error; err != nil {
+				return fmt.Errorf("error registrando reverso en kárdex: %w", err)
+			}
+		}
+
+		expenseDelete := tx.Where("return_ref = ?", ret.ID).Delete(&models.Expense{})
+		if expenseDelete.Error != nil {
+			return fmt.Errorf("error anulando egreso de devolución: %w", expenseDelete.Error)
+		}
+		if ret.ReturnType == "REFUND" && ret.TotalReturned > 0 && expenseDelete.RowsAffected == 0 {
+			return errors.New("la devolución no tiene un egreso correlacionado; reverso cancelado para proteger la caja")
+		}
+		if err := tx.Model(&models.Sale{}).Where("parent_return_ref = ?", ret.ID).Updates(map[string]interface{}{
+			"deletedReason": fmt.Sprintf("REVERSO DEVOLUCION #%d", ret.ID),
+			"deletedByDni":  adminDNI,
+		}).Error; err != nil {
+			return fmt.Errorf("error marcando cobro de cambio: %w", err)
+		}
+		if err := tx.Where("parent_return_ref = ?", ret.ID).Delete(&models.Sale{}).Error; err != nil {
+			return fmt.Errorf("error anulando cobro de cambio: %w", err)
+		}
+
+		if err := tx.Model(&models.ReturnDetail{}).Where("\"returnId\" = ?", ret.ID).Delete(&models.ReturnDetail{}).Error; err != nil {
+			return fmt.Errorf("error anulando detalles de devolución: %w", err)
+		}
+		if err := tx.Model(&models.Return{}).Where("id = ?", ret.ID).Updates(map[string]interface{}{
+			"deletedByDni":  adminDNI,
+			"deletedByName": adminName,
+			"deletedReason": "ANULACION_ADMINISTRATIVA",
+		}).Error; err != nil {
+			return fmt.Errorf("error registrando anulación: %w", err)
+		}
+		if err := tx.Delete(&ret).Error; err != nil {
+			return fmt.Errorf("error anulando devolución: %w", err)
+		}
+
+		var lastReturn models.Return
+		lastErr := tx.Where("\"saleId\" = ?", ret.SaleID).Order("id DESC").First(&lastReturn).Error
+		updates := map[string]interface{}{"hasReturn": false, "returnRef": 0}
+		if lastErr == nil {
+			updates["hasReturn"] = true
+			updates["returnRef"] = lastReturn.ID
+		} else if !errors.Is(lastErr, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("error recalculando devoluciones vigentes: %w", lastErr)
+		}
+		if err := tx.Model(&models.Sale{}).Where("\"saleId\" = ?", ret.SaleID).Updates(updates).Error; err != nil {
+			return fmt.Errorf("error actualizando venta original: %w", err)
+		}
+
+		snapshot, _ := json.Marshal(ret)
+		audit := &models.AuditLog{
+			EmployeeDNI: adminDNI, EmployeeName: adminName, Action: "REVERT_RETURN", Module: "SALES",
+			Details:       fmt.Sprintf("Anulación de devolución #%d", ret.ID),
+			HumanReadable: fmt.Sprintf("%s anuló la devolución #%d y se revirtieron stock y caja", adminName, ret.ID),
+			Changes:       string(snapshot), IsCritical: true, CreatedAt: time.Now(),
+		}
+		if err := tx.Create(audit).Error; err != nil {
+			return fmt.Errorf("error guardando auditoría del reverso: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	cache.InvalidateCache(cache.CacheKeyProducts)
+	r.invalidateDashboardCache()
 	return nil
 }

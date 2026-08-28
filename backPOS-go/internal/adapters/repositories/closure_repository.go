@@ -1,9 +1,11 @@
 package repositories
 
 import (
+	"errors"
+	"time"
+
 	"backPOS-go/internal/core/domain/models"
 	"gorm.io/gorm"
-	"time"
 )
 
 type closureRepository struct {
@@ -16,6 +18,18 @@ func NewClosureRepository(db *gorm.DB) *closureRepository {
 
 func (r *closureRepository) Save(closure *models.CashierClosure) error {
 	return r.db.Save(closure).Error
+}
+
+func (r *closureRepository) Transaction(fn func(tx interface{}) error) error {
+	return r.db.Transaction(func(tx *gorm.DB) error { return fn(tx) })
+}
+
+func (r *closureRepository) SaveWithTx(tx interface{}, closure *models.CashierClosure) error {
+	gormTx, ok := tx.(*gorm.DB)
+	if !ok {
+		return gorm.ErrInvalidDB
+	}
+	return gormTx.Save(closure).Error
 }
 
 func (r *closureRepository) GetByDateRange(from, to time.Time) ([]models.CashierClosure, error) {
@@ -42,6 +56,9 @@ func (r *closureRepository) GetByID(id uint) (*models.CashierClosure, error) {
 func (r *closureRepository) GetLast() (*models.CashierClosure, error) {
 	var closure models.CashierClosure
 	err := r.db.Order("date DESC, id DESC").First(&closure).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +80,7 @@ func (r *closureRepository) GetGlobalReportedBalanceByMethod() (map[string]float
 	err := r.db.Model(&models.CashierClosure{}).
 		Select("COALESCE(SUM(physical_cash), 0) as cash, COALESCE(SUM(total_nequi_real), 0) as nequi, COALESCE(SUM(total_daviplata_real), 0) as daviplata").
 		Scan(&result).Error
-	
+
 	balances := make(map[string]float64)
 	if err == nil {
 		balances["EFECTIVO"] = result.Cash
@@ -79,10 +96,16 @@ func (r *closureRepository) GetGlobalCoins() (map[string]float64, error) {
 		C500  float64
 		C1000 float64
 	}
+	// Filtrar monedas solo desde el 1 del mes actual (ej. 1 de Agosto)
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	nowLocal := time.Now().In(loc)
+	startOfMonth := time.Date(nowLocal.Year(), nowLocal.Month(), 1, 0, 0, 0, 0, loc)
+
 	err := r.db.Model(&models.CashierClosure{}).
+		Where("date >= ? OR end_date >= ?", startOfMonth, startOfMonth).
 		Select("COALESCE(SUM(coins100), 0) as c100, COALESCE(SUM(coins200), 0) as c200, COALESCE(SUM(coins500), 0) as c500, COALESCE(SUM(coins1000), 0) as c1000").
 		Scan(&result).Error
-	
+
 	coins := make(map[string]float64)
 	if err == nil {
 		coins["100"] = result.C100
@@ -108,7 +131,7 @@ func (r *closureRepository) GetGlobalHistoricalSum() (expected float64, real flo
 	err = r.db.Model(&models.CashierClosure{}).
 		Select("COALESCE(SUM(total_cash + total_credit_collected - total_expenses), 0) as expected, COALESCE(SUM(physical_cash), 0) as real").
 		Scan(&result).Error
-	
+
 	return result.Expected, result.Real, err
 }
 
@@ -168,4 +191,3 @@ func (r *closureRepository) Delete(id uint) error {
 func (r *closureRepository) Update(id uint, updates map[string]interface{}) error {
 	return r.db.Model(&models.CashierClosure{}).Where("id = ?", id).Updates(updates).Error
 }
-

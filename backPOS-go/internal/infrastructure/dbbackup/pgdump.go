@@ -1,4 +1,4 @@
-// Package dbbackup provee utilidades compartidas para los jobs de respaldo de BD.
+﻿// Package dbbackup provee utilidades compartidas para los jobs de respaldo de BD.
 //
 // El caso de uso primario es localizar el ejecutable `pg_dump` en sistemas
 // Windows con instalaciones heterogéneas: una máquina puede tener PostgreSQL

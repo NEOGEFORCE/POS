@@ -1,6 +1,8 @@
 package refresher
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -8,8 +10,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// RefresherService gestiona el refresco de vistas materializadas de forma asíncrona
-// y evita la saturación de la base de datos mediante debouncing y control de concurrencia.
+const (
+	refreshTimeout     = 2 * time.Minute
+	maxRefreshAttempts = 3
+)
+
+var allowedMaterializedViews = map[string]struct{}{
+	"mv_dashboard_stats_monthly": {},
+}
+
+// RefresherService serializa y agrupa refrescos para no saturar PostgreSQL.
 type RefresherService struct {
 	db          *gorm.DB
 	queue       chan string
@@ -23,7 +33,6 @@ var (
 	once     sync.Once
 )
 
-// GetRefresherService devuelve la instancia única del servicio (Singleton)
 func GetRefresherService(db *gorm.DB) *RefresherService {
 	once.Do(func() {
 		instance = &RefresherService{
@@ -37,27 +46,26 @@ func GetRefresherService(db *gorm.DB) *RefresherService {
 	return instance
 }
 
-// GetRefresher devuelve la instancia ya inicializada
-func GetRefresher() *RefresherService {
-	return instance
-}
+func GetRefresher() *RefresherService { return instance }
 
-// RequestRefresh solicita el refresco de una vista materializada
 func (s *RefresherService) RequestRefresh(viewName string) {
+	if _, ok := allowedMaterializedViews[viewName]; !ok {
+		log.Printf("[RefresherService] vista rechazada: %q", viewName)
+		return
+	}
 	select {
 	case s.queue <- viewName:
-		// Solicitud encolada
 	default:
-		// Cola llena, ignoramos (ya hay demasiadas pendientes)
-		log.Printf("⚠️ [RefresherService] Cola llena, ignorando refresco de %s", viewName)
+		// La cola contiene eventos de invalidación, no datos. Descartar cuando
+		// está llena es seguro porque un refresh pendiente cubre los anteriores.
+		log.Printf("[RefresherService] cola llena; %s ya tiene refrescos pendientes", viewName)
 	}
 }
 
 func (s *RefresherService) worker() {
-	log.Println("🚀 [RefresherService] Worker iniciado")
+	log.Println("[RefresherService] worker iniciado")
 	for viewName := range s.queue {
 		s.mu.Lock()
-		// Evitar refrescos si ya está ocupado o si se refrescó hace menos de 10 segundos (Debounce optimizado para HFT)
 		if s.isBusy[viewName] || time.Since(s.lastRefresh[viewName]) < 10*time.Second {
 			s.mu.Unlock()
 			continue
@@ -65,35 +73,55 @@ func (s *RefresherService) worker() {
 		s.isBusy[viewName] = true
 		s.mu.Unlock()
 
-		// Realizar el refresco
-		s.processRefresh(viewName)
+		err := s.processRefresh(viewName)
 
 		s.mu.Lock()
 		s.isBusy[viewName] = false
-		s.lastRefresh[viewName] = time.Now()
+		if err == nil {
+			s.lastRefresh[viewName] = time.Now()
+		}
 		s.mu.Unlock()
 	}
 }
 
-func (s *RefresherService) processRefresh(viewName string) {
-	start := time.Now()
-	log.Printf("🔄 [RefresherService] Iniciando refresco de %s...", viewName)
-	
-	// Intentar refresco concurrente primero (no bloquea lecturas en Postgres)
-	// IMPORTANTE: Requiere un índice único en la vista materializada
-	err := s.db.Exec("REFRESH MATERIALIZED VIEW CONCURRENTLY " + viewName).Error
+func concurrentRefreshStatement(viewName string) (string, error) {
+	if _, ok := allowedMaterializedViews[viewName]; !ok {
+		return "", fmt.Errorf("vista materializada no permitida: %q", viewName)
+	}
+	return "REFRESH MATERIALIZED VIEW CONCURRENTLY " + viewName, nil
+}
+
+func refreshRetryDelay(attempt int) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	return time.Duration(1<<(attempt-1)) * time.Second
+}
+
+func (s *RefresherService) processRefresh(viewName string) error {
+	statement, err := concurrentRefreshStatement(viewName)
 	if err != nil {
-		log.Printf("⚠️ [RefresherService] Error en refresco concurrente de %s: %v. Intentando normal (BLOQUEANTE)...", viewName, err)
-		// Si falla el concurrente, intentamos el normal como último recurso (ESTO PUEDE CONGELAR LECTURAS)
-		if err := s.db.Exec("REFRESH MATERIALIZED VIEW " + viewName).Error; err != nil {
-			log.Printf("❌ [RefresherService] Error crítico en refresco de %s: %v", viewName, err)
+		return err
+	}
+
+	started := time.Now()
+	var lastErr error
+	for attempt := 1; attempt <= maxRefreshAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), refreshTimeout)
+		lastErr = s.db.WithContext(ctx).Exec(statement).Error
+		cancel()
+		if lastErr == nil {
+			duration := time.Since(started)
+			log.Printf("[RefresherService] %s refrescada concurrentemente en %v", viewName, duration)
+			return nil
+		}
+
+		log.Printf("[RefresherService] intento %d/%d para %s fallo: %v", attempt, maxRefreshAttempts, viewName, lastErr)
+		if attempt < maxRefreshAttempts {
+			time.Sleep(refreshRetryDelay(attempt))
 		}
 	}
-	
-	duration := time.Since(start)
-	if duration > 2*time.Second {
-		log.Printf("⚠️ [RefresherService] ALERTA: Refresco de %s tardó demasiado (%v). Considere optimizar la consulta.", viewName, duration)
-	} else {
-		log.Printf("✅ [RefresherService] %s refrescada en %v", viewName, duration)
-	}
+
+	// Nunca usar REFRESH sin CONCURRENTLY: bloquearía todas las lecturas de la MV.
+	return fmt.Errorf("refresco concurrente de %s agotó reintentos: %w", viewName, lastErr)
 }

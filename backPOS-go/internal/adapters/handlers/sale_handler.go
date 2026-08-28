@@ -66,7 +66,7 @@ func (h *SaleHandler) Create(c *gin.Context) {
 				fmt.Printf("⚠️ [Audit-Sale] Recovery from panic: %v\n", r)
 			}
 		}()
-		h.auditService.Log(dniStr, nameStr, "CREATE_SALE", "SALES", 
+		h.auditService.Log(dniStr, nameStr, "CREATE_SALE", "SALES",
 			fmt.Sprintf("Venta registrada: #%d", sale.SaleID),
 			fmt.Sprintf("Se registró una nueva venta (#%d) por valor de $%s", sale.SaleID, fmt.Sprintf("%.2f", sale.TotalAmount)),
 			"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -124,7 +124,7 @@ func (h *SaleHandler) GetByID(c *gin.Context) {
 func (h *SaleHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
 	id, _ := strconv.ParseUint(idStr, 10, 32)
-	
+
 	var req struct {
 		Reason string `json:"reason" binding:"required"`
 	}
@@ -174,7 +174,7 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 	dniStr, nameStr := GetContextUser(c)
 
 	// Auditoría de Cambio de Pago
-	h.auditService.Log(dniStr, nameStr, "UPDATE_PAYMENT", "SALES", 
+	h.auditService.Log(dniStr, nameStr, "UPDATE_PAYMENT", "SALES",
 		fmt.Sprintf("Actualizado pago venta #%d", id),
 		fmt.Sprintf("Se modificó la información de pago para la venta #%d", id),
 		"{}", c.ClientIP(), c.Request.UserAgent(), true)
@@ -192,7 +192,6 @@ type AddSaleItemsReq struct {
 	CashAmount     float64             `json:"cashAmount"`
 	TransferAmount float64             `json:"transferAmount"`
 	TransferSource string              `json:"transferSource"`
-	EmployeeDNI    string              `json:"employeeDni"`
 }
 
 func (h *SaleHandler) AddItems(c *gin.Context) {
@@ -211,8 +210,8 @@ func (h *SaleHandler) AddItems(c *gin.Context) {
 		return
 	}
 
-	err := h.service.AddItemsToSale(saleID, req.Items, req.CashAmount, req.TransferAmount, req.TransferSource, req.EmployeeDNI)
-	if err != nil {
+	dni, _ := GetContextUser(c)
+	if err := h.service.AddItemsToSale(saleID, req.Items, req.CashAmount, req.TransferAmount, req.TransferSource, dni); err != nil {
 		if containsBusinessError(err.Error()) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		} else {
@@ -254,18 +253,8 @@ func (h *SaleHandler) Update(c *gin.Context) {
 	}
 
 	dniStr, nameStr := GetContextUser(c)
-	isAdmin := false
-	if claims, ok := c.Get("claims"); ok {
-		if cMap, ok2 := claims.(*map[string]interface{}); ok2 {
-			if role, ok3 := (*cMap)["role"].(string); ok3 && role == "ADMIN" {
-				isAdmin = true
-			}
-		} else if cMap, ok2 := claims.(map[string]interface{}); ok2 {
-			if role, ok3 := cMap["role"].(string); ok3 && role == "ADMIN" {
-				isAdmin = true
-			}
-		}
-	}
+	role := strings.ToLower(c.GetString("role"))
+	isAdmin := role == "admin" || role == "administrador" || role == "superadmin"
 
 	if err := h.service.UpdateSale(uint(id), &newSale, dniStr, isAdmin); err != nil {
 		msg := err.Error()

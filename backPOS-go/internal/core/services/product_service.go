@@ -7,11 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
+	"math"
 	"net/http"
 	"os"
-	"math"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type ProductService struct {
@@ -38,9 +42,24 @@ func applyRounding(val float64) float64 {
 func (s *ProductService) CreateProduct(product *models.Product) error {
 	// Aplicar redondeo si ya viene con precio
 	if product.SalePrice > 0 {
-		product.SalePrice = applyRounding(product.SalePrice)
+		product.SalePrice = normalizeManualSalePrice(product.SalePrice)
 	}
 	return s.repo.Save(product)
+}
+
+func (s *ProductService) RegisterShrinkage(shrinkage *models.Shrinkage) error {
+	if strings.TrimSpace(shrinkage.ProductID) == "" {
+		return fmt.Errorf("producto requerido")
+	}
+	if shrinkage.Quantity <= 0 {
+		return fmt.Errorf("la cantidad de merma debe ser positiva")
+	}
+	switch shrinkage.Reason {
+	case models.ShrinkageVencimiento, models.ShrinkageRotura, models.ShrinkageConsumoInt, models.ShrinkageHurto:
+	default:
+		return fmt.Errorf("motivo de merma inválido")
+	}
+	return s.repo.SaveShrinkage(shrinkage, nil)
 }
 
 func (s *ProductService) GetProduct(barcode string) (*models.Product, error) {
@@ -84,157 +103,177 @@ func (s *ProductService) GetOrphanedProducts() ([]models.Product, error) {
 }
 
 func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Product) error {
-	existing, err := s.repo.GetByBarcode(barcode)
+	if updatedProduct == nil {
+		return fmt.Errorf("producto requerido")
+	}
+	rawDB, ok := s.repo.GetDB().(*gorm.DB)
+	if !ok || rawDB == nil {
+		return fmt.Errorf("error de sistema: base de datos de productos inválida")
+	}
+
+	supplierIDs := make([]uint, 0, len(updatedProduct.Suppliers))
+	for _, supplier := range updatedProduct.Suppliers {
+		if supplier.ID > 0 {
+			supplierIDs = append(supplierIDs, supplier.ID)
+		}
+	}
+	options := ports.ProductUpdateOptions{
+		ReplaceSuppliers: updatedProduct.Suppliers != nil,
+		SupplierIDs:      supplierIDs,
+	}
+
+	targetBarcode := strings.TrimSpace(updatedProduct.Barcode)
+	if targetBarcode == "" {
+		targetBarcode = barcode
+	}
+
+	err := rawDB.Transaction(func(tx *gorm.DB) error {
+		var existing models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Unscoped().
+			Where("barcode = ?", barcode).First(&existing).Error; err != nil {
+			return fmt.Errorf("producto %s no encontrado: %w", barcode, err)
+		}
+		if !updatedProduct.UpdatedAt.IsZero() && !existing.UpdatedAt.Equal(updatedProduct.UpdatedAt) {
+			return fmt.Errorf("el producto cambió mientras estaba abierto; recargue antes de guardar")
+		}
+
+		if updatedProduct.PurchasePrice > 0 {
+			existing.PurchasePrice = updatedProduct.PurchasePrice
+		} else {
+			var supplierPrices []models.ProductSupplier
+			if err := tx.Where("product_barcode = ?", barcode).Find(&supplierPrices).Error; err != nil {
+				return fmt.Errorf("error consultando costos de proveedores: %w", err)
+			}
+			for _, supplierPrice := range supplierPrices {
+				if supplierPrice.PurchasePrice > existing.PurchasePrice {
+					existing.PurchasePrice = supplierPrice.PurchasePrice
+				}
+			}
+		}
+
+		existing.Barcode = targetBarcode
+		existing.ProductName = updatedProduct.ProductName
+		existing.IsWeighted = updatedProduct.IsWeighted
+		existing.CategoryID = updatedProduct.CategoryID
+		existing.AlternateCodes = updatedProduct.AlternateCodes
+		existing.Iva = updatedProduct.Iva
+		existing.Icui = updatedProduct.Icui
+		existing.Ibua = updatedProduct.Ibua
+		existing.Discount = updatedProduct.Discount
+		existing.MarginPercentage = updatedProduct.MarginPercentage
+		existing.ImageUrl = updatedProduct.ImageUrl
+		existing.MinStock = updatedProduct.MinStock
+		existing.IsActive = updatedProduct.IsActive
+		if updatedProduct.OrderMultiple > 0 {
+			existing.OrderMultiple = updatedProduct.OrderMultiple
+		}
+		if updatedProduct.UpdatedByDNI != "" {
+			existing.UpdatedByDNI = updatedProduct.UpdatedByDNI
+			existing.UpdatedByName = updatedProduct.UpdatedByName
+		}
+		if updatedProduct.SupplierID != nil {
+			if *updatedProduct.SupplierID > 0 {
+				supplierID := *updatedProduct.SupplierID
+				existing.SupplierID = &supplierID
+			} else {
+				existing.SupplierID = nil
+			}
+		}
+
+		existing.IsPack = updatedProduct.IsPack
+		existing.PackMultiplier = updatedProduct.PackMultiplier
+		existing.Quantity = updatedProduct.Quantity
+		if existing.IsPack {
+			if existing.PackMultiplier <= 0 {
+				return fmt.Errorf("un pack debe tener un multiplicador mayor que cero")
+			}
+			if updatedProduct.BaseProductBarcode == nil || strings.TrimSpace(*updatedProduct.BaseProductBarcode) == "" {
+				return fmt.Errorf("un pack debe indicar su producto base")
+			}
+			baseBarcode := strings.TrimSpace(*updatedProduct.BaseProductBarcode)
+			if baseBarcode == barcode || baseBarcode == targetBarcode {
+				return fmt.Errorf("un producto no puede ser su propio producto base")
+			}
+			existing.BaseProductBarcode = &baseBarcode
+
+			var baseProduct models.Product
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("barcode = ?", baseBarcode).First(&baseProduct).Error; err != nil {
+				return fmt.Errorf("producto base %s no encontrado: %w", baseBarcode, err)
+			}
+			calculatedPackQuantity := math.Floor(baseProduct.Quantity / float64(existing.PackMultiplier))
+			if updatedProduct.Quantity != calculatedPackQuantity {
+				newBaseQuantity := updatedProduct.Quantity * float64(existing.PackMultiplier)
+				delta := newBaseQuantity - baseProduct.Quantity
+				now := time.Now()
+				if err := tx.Model(&models.Product{}).Where("barcode = ?", baseBarcode).
+					Updates(map[string]interface{}{"quantity": newBaseQuantity, "updated_at": now}).Error; err != nil {
+					return fmt.Errorf("error sincronizando stock del producto base: %w", err)
+				}
+				movementType := models.MovementTypeIn
+				if delta < 0 {
+					movementType = models.MovementTypeOut
+				}
+				movement := &models.StockMovement{
+					Date:         now,
+					Barcode:      baseBarcode,
+					Quantity:     math.Abs(delta),
+					Type:         movementType,
+					Reason:       models.MovementReasonPackUpdateSync,
+					ReferenceID:  fmt.Sprintf("PSYNC-%d", now.UnixNano()),
+					EmployeeDNI:  updatedProduct.UpdatedByDNI,
+					EmployeeName: updatedProduct.UpdatedByName,
+				}
+				if err := s.movementRepo.SaveWithTx(tx, movement); err != nil {
+					return fmt.Errorf("error registrando ajuste del pack en kárdex: %w", err)
+				}
+			}
+		} else {
+			existing.BaseProductBarcode = nil
+			if existing.PackMultiplier <= 0 {
+				existing.PackMultiplier = 1
+			}
+		}
+
+		if updatedProduct.SalePrice > 0 && isHalfHundredPrice(updatedProduct.SalePrice) {
+			// Precio fijado a propósito en terminación 50: no se recalcula por margen.
+			existing.SalePrice = normalizeManualSalePrice(updatedProduct.SalePrice)
+		} else if existing.MarginPercentage > 0 && existing.PurchasePrice > 0 {
+			existing.SalePrice = applyRounding(existing.PurchasePrice * (1 + existing.MarginPercentage/100))
+		} else if updatedProduct.SalePrice > 0 {
+			existing.SalePrice = normalizeManualSalePrice(updatedProduct.SalePrice)
+		}
+
+		if existing.PurchasePrice > 0 && existing.SupplierID != nil && *existing.SupplierID > 0 {
+			options.SupplierPrice = &ports.ProductSupplierPriceUpdate{
+				SupplierID: *existing.SupplierID,
+				Price:      existing.PurchasePrice,
+			}
+		}
+
+		existing.Category = models.Category{}
+		existing.Supplier = models.Supplier{}
+		existing.UpdatedBy = models.Employee{}
+		existing.CreatedBy = models.Employee{}
+		existing.BaseProduct = nil
+		existing.Suppliers = nil
+		existing.ProductSuppliers = nil
+
+		if err := s.repo.UpdateWithTx(tx, barcode, &existing, options); err != nil {
+			return err
+		}
+		targetBarcode = existing.Barcode
+		return nil
+	})
 	if err != nil {
-		return err
-	}
-
-	// Si el cÃ³digo de barras ha cambiado, verificar que el nuevo no estÃ© ocupado por OTRO producto
-	// IMPORTANTE: Solo verificar el barcode principal, NO cÃ³digos alternos
-	if updatedProduct.Barcode != "" && updatedProduct.Barcode != barcode {
-		collision, err := s.repo.GetByBarcode(updatedProduct.Barcode)
-		if err == nil && collision != nil && collision.Barcode == updatedProduct.Barcode {
-			// Solo es colisiÃ³n si otro producto tiene ese barcode como cÃ³digo PRINCIPAL
-			return fmt.Errorf("el cÃ³digo de barras '%s' ya estÃ¡ en uso por el producto: %s", updatedProduct.Barcode, collision.ProductName)
-		}
-	}
-
-	// 1. LÃ³gica de Costo: Priorizar el precio manual del update para flexibilidad total
-	if updatedProduct.PurchasePrice > 0 {
-		existing.PurchasePrice = updatedProduct.PurchasePrice
-		
-		// Si tiene un proveedor principal, sincronizar ese costo tambiÃ©n
-		if existing.SupplierID != nil && *existing.SupplierID > 0 {
-			_ = s.repo.UpdateSupplierPrice(barcode, *existing.SupplierID, existing.PurchasePrice)
-		}
-	} else {
-		// Si no se envÃ­a precio nuevo, intentar mantener el mÃ¡ximo de proveedores (histÃ³rico)
-		supplierPrices, err := s.repo.GetSupplierPrices(barcode)
-		if err == nil && len(supplierPrices) > 0 {
-			maxCost := 0.0
-			for _, sp := range supplierPrices {
-				if sp.PurchasePrice > maxCost {
-					maxCost = sp.PurchasePrice
-				}
-			}
-			existing.PurchasePrice = maxCost
-		}
-	}
-
-	// 2. Actualizar campos básicos
-	if updatedProduct.Barcode != "" {
-		existing.Barcode = updatedProduct.Barcode // Permitir cambio de código principal
-	}
-	existing.ProductName = updatedProduct.ProductName
-	existing.IsWeighted = updatedProduct.IsWeighted
-	existing.CategoryID = updatedProduct.CategoryID
-	existing.AlternateCodes = updatedProduct.AlternateCodes // Nuevos códigos alternos
-	// Limpiar asociaciones para que GORM no sobreescriba foreign keys con objetos preloaded
-	existing.Category = models.Category{}
-	existing.Supplier = models.Supplier{}
-	existing.UpdatedBy = models.Employee{}
-	existing.CreatedBy = models.Employee{}
-	existing.BaseProduct = nil
-	existing.Suppliers = []models.Supplier{}
-	existing.Iva = updatedProduct.Iva
-	existing.Icui = updatedProduct.Icui
-	existing.Ibua = updatedProduct.Ibua
-	existing.MarginPercentage = updatedProduct.MarginPercentage
-	existing.ImageUrl = updatedProduct.ImageUrl
-	existing.MinStock = updatedProduct.MinStock
-	existing.IsActive = updatedProduct.IsActive
-	if updatedProduct.UpdatedByDNI != "" {
-		existing.UpdatedByDNI = updatedProduct.UpdatedByDNI
-		existing.UpdatedByName = updatedProduct.UpdatedByName
-	}
-	if updatedProduct.SupplierID != nil && *updatedProduct.SupplierID > 0 {
-		existing.SupplierID = updatedProduct.SupplierID
-	} else if updatedProduct.SupplierID != nil && *updatedProduct.SupplierID == 0 {
-		existing.SupplierID = nil
-	}
-
-	if updatedProduct.CategoryID == 0 {
-		existing.CategoryID = 0
-	}
-
-	// Lógica de Empaques (Sincronización con Producto Base)
-	existing.IsPack = updatedProduct.IsPack
-	existing.PackMultiplier = updatedProduct.PackMultiplier
-	if updatedProduct.BaseProductBarcode != nil && *updatedProduct.BaseProductBarcode != "" {
-		existing.BaseProductBarcode = updatedProduct.BaseProductBarcode
-
-		// BLINDAJE MODO PACK: Solo actualizar el base si hay un cambio real en la cantidad del pack
-		// solicitado por el usuario, evitando sobreescrituras accidentales por re-cálculos.
-		if existing.PackMultiplier > 0 {
-			baseProduct, err := s.repo.GetByBarcode(*existing.BaseProductBarcode)
-			if err == nil {
-				// Calcular cuÃ¡ntas unidades de empaque REPRESENTA el stock actual del base
-				currentCalculatedPackQty := math.Floor(baseProduct.Quantity / float64(existing.PackMultiplier))
-
-				// Si la cantidad que envÃ­a el usuario es diferente a la calculada, significa que el usuario
-				// quiere forzar un nuevo stock para el pack (y por ende para el base)
-				if updatedProduct.Quantity != currentCalculatedPackQty {
-					// Calcular nueva cantidad base: cantidad_pack * multiplicador
-					baseProduct.Quantity = updatedProduct.Quantity * float64(existing.PackMultiplier)
-					
-					// Usar UpdateQuantity para asegurar atomicidad e invalidaciÃ³n de cachÃ©
-					_ = s.repo.UpdateQuantity(baseProduct.Barcode, baseProduct.Quantity)
-
-					// Log del ajuste en el base
-					baseMovement := &models.StockMovement{
-						Date:         time.Now(),
-						Barcode:      baseProduct.Barcode,
-						Quantity:     baseProduct.Quantity,
-						Type:         "IN",
-						Reason:       "PACK_UPDATE_SYNC",
-						ReferenceID:  fmt.Sprintf("PSYNC-%d", time.Now().Unix()),
-						EmployeeDNI:  updatedProduct.UpdatedByDNI,
-						EmployeeName: updatedProduct.UpdatedByName,
-					}
-					_ = s.movementRepo.Save(baseMovement)
-				}
-			}
-		}
-	} else {
-		existing.BaseProductBarcode = nil // Aseguramos NULL en la DB si viene vacÃ­o o nulo
-	}
-	existing.Quantity = updatedProduct.Quantity
-	// 3. LÃ³gica de Precios:
-	if existing.MarginPercentage > 0 && existing.PurchasePrice > 0 {
-		suggested := existing.PurchasePrice * (1 + existing.MarginPercentage/100)
-		existing.SalePrice = applyRounding(suggested)
-	} else {
-		// Si no hay margen definido, usamos el precio de venta manual o el previo
-		if updatedProduct.SalePrice > 0 {
-			existing.SalePrice = applyRounding(updatedProduct.SalePrice)
-		}
-	}
-
-	// 4. (VerificaciÃ³n de duplicados ya se hizo arriba, no repetir)
-
-	// 5. Ejecutar Update principal (incluye cambio de barcode si aplica)
-	if err := s.repo.Update(barcode, existing); err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "23505") || strings.Contains(errStr, "duplicate key") {
-			return fmt.Errorf("error: el cÃ³digo de barras %s ya estÃ¡ en uso por otro producto", existing.Barcode)
+		errString := strings.ToLower(err.Error())
+		if strings.Contains(errString, "23505") || strings.Contains(errString, "duplicate key") || strings.Contains(errString, "ya pertenece") || strings.Contains(errString, "ya está asociado") {
+			return fmt.Errorf("el código de barras ya está en uso: %w", err)
 		}
 		return fmt.Errorf("error al persistir producto: %w", err)
 	}
 
-	// 5. Sincronizar Proveedores (Many-to-Many) - DESPUÃ‰S del update para usar el nuevo barcode si cambiÃ³
-	if len(updatedProduct.Suppliers) > 0 {
-		var ids []uint
-		for _, s := range updatedProduct.Suppliers {
-			if s.ID > 0 {
-				ids = append(ids, s.ID)
-			}
-		}
-		if len(ids) > 0 {
-			// Usamos existing.Barcode porque ya fue actualizado en la DB
-			_ = s.repo.SyncSuppliers(existing.Barcode, ids)
-		}
-	}
-
+	s.repo.AfterCommitUpdate(barcode, targetBarcode)
 	return nil
 }
 
@@ -253,181 +292,167 @@ func (s *ProductService) DeleteProduct(barcode string) error {
 }
 
 func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, newPurchasePrice float64, newSalePrice float64, supplierID *uint, iva, icui, ibua float64) error {
-	product, err := s.repo.GetByBarcode(barcode)
+	if addedQuantity <= 0 {
+		return fmt.Errorf("la cantidad recibida debe ser positiva")
+	}
+	db, ok := s.repo.GetDB().(*gorm.DB)
+	if !ok || db == nil {
+		return fmt.Errorf("repositorio de productos sin transacciones")
+	}
+	now := time.Now()
+	referenceID := fmt.Sprintf("RECP-%d", now.UnixNano())
+	affected := []string{barcode}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("barcode = ?", barcode).First(&product).Error; err != nil {
+			return err
+		}
+		previousStock := product.Quantity
+
+		if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
+			var base models.Product
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("barcode = ?", *product.BaseProductBarcode).First(&base).Error; err != nil {
+				return fmt.Errorf("obteniendo producto base: %w", err)
+			}
+			expanded := addedQuantity * float64(product.PackMultiplier)
+			base.Quantity += expanded
+			if err := tx.Save(&base).Error; err != nil {
+				return fmt.Errorf("actualizando producto base: %w", err)
+			}
+			baseMovement := &models.StockMovement{
+				Date: now, Barcode: base.Barcode, Quantity: expanded, Type: models.MovementTypeIn,
+				Reason: "PACK_RECEPTION", ReferenceID: referenceID,
+				EmployeeDNI: product.UpdatedByDNI, EmployeeName: product.UpdatedByName,
+			}
+			if err := s.movementRepo.SaveWithTx(tx, baseMovement); err != nil {
+				return fmt.Errorf("registrando movimiento del producto base: %w", err)
+			}
+			product.Quantity = math.Floor(base.Quantity / float64(product.PackMultiplier))
+			affected = append(affected, base.Barcode)
+		} else {
+			product.Quantity += addedQuantity
+		}
+
+		entryTotalCost := newPurchasePrice + iva + icui + ibua
+		if entryTotalCost > 0 {
+			totalLogicalStock := previousStock + addedQuantity
+			if totalLogicalStock > 0 {
+				product.PurchasePrice = ((previousStock * product.PurchasePrice) + (addedQuantity * entryTotalCost)) / totalLogicalStock
+			} else {
+				product.PurchasePrice = entryTotalCost
+			}
+			product.Iva, product.Icui, product.Ibua = iva, icui, ibua
+			if supplierID != nil {
+				link := models.ProductSupplier{ProductID: barcode, SupplierID: *supplierID, PurchasePrice: entryTotalCost}
+				if err := tx.Clauses(clause.OnConflict{
+					Columns:   []clause.Column{{Name: "product_barcode"}, {Name: "supplier_id"}},
+					DoUpdates: clause.AssignmentColumns([]string{"purchasePrice", "updated_at"}),
+				}).Create(&link).Error; err != nil {
+					return fmt.Errorf("actualizando precio del proveedor: %w", err)
+				}
+			}
+		}
+		if newSalePrice > 0 {
+			product.SalePrice = normalizeManualSalePrice(newSalePrice)
+		}
+		if product.PurchasePrice > 0 {
+			product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
+		}
+		if supplierID != nil {
+			product.SupplierID = supplierID
+		}
+		if err := tx.Save(&product).Error; err != nil {
+			return fmt.Errorf("actualizando producto: %w", err)
+		}
+		movement := &models.StockMovement{
+			Date: now, Barcode: barcode, Quantity: addedQuantity, Type: models.MovementTypeIn,
+			Reason: "RECEPTION", ReferenceID: referenceID,
+			EmployeeDNI: product.UpdatedByDNI, EmployeeName: product.UpdatedByName,
+		}
+		if err := s.movementRepo.SaveWithTx(tx, movement); err != nil {
+			return fmt.Errorf("registrando movimiento de recepción: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-
-	// === LÃ“GICA DE SINCRONIZACIÃ“N DE PACKS ===
-	// Si es un pack con producto base vÃ¡lido, el inventario real vive en el base
-	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
-		baseProduct, err := s.repo.GetByBarcode(*product.BaseProductBarcode)
-		if err != nil {
-			return fmt.Errorf("error obteniendo producto base (barcode=%s): %w", *product.BaseProductBarcode, err)
-		}
-
-		// 1. Calcular cantidad expandida y sumar al base
-		expandedQuantity := addedQuantity * float64(product.PackMultiplier)
-		baseProduct.Quantity += expandedQuantity
-
-		// 2. Guardar base product
-		if err := s.repo.Update(baseProduct.Barcode, baseProduct); err != nil {
-			return fmt.Errorf("error actualizando producto base: %w", err)
-		}
-
-		// 3. Sincronizar el stock del pack actual
-		product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
-
-		// Log en el KÃ¡rdex del Base
-		baseMovement := &models.StockMovement{
-			Date:         time.Now(),
-			Barcode:      baseProduct.Barcode,
-			Quantity:     expandedQuantity,
-			Type:         "IN",
-			Reason:       "PACK_RECEPTION",
-			ReferenceID:  fmt.Sprintf("PACK-%d", time.Now().Unix()),
-			EmployeeDNI:  product.UpdatedByDNI,
-			EmployeeName: product.UpdatedByName,
-		}
-		_ = s.movementRepo.Save(baseMovement)
-	} else {
-		// Comportamiento normal
-		product.Quantity += addedQuantity
-	}
-
-	// === LÃ“GICA DE COSTO PROMEDIO PONDERADO (WAC) ===
-	currentStock := product.Quantity - addedQuantity
-	if currentStock < 0 {
-		currentStock = 0
-	}
-
-	// El costo real de esta entrada es base + impuestos
-	entryTotalCost := newPurchasePrice + iva + icui + ibua
-
-	if entryTotalCost > 0 {
-		if currentStock+addedQuantity > 0 {
-			// FÃ³rmula: (StockAnterior * CostoAnterior + StockNuevo * CostoNuevo) / StockTotal
-			product.PurchasePrice = ((currentStock * product.PurchasePrice) + (addedQuantity * entryTotalCost)) / (currentStock + addedQuantity)
-		} else {
-			product.PurchasePrice = entryTotalCost
-		}
-
-		// Guardar los Ãºltimos impuestos aplicados como referencia
-		product.Iva = iva
-		product.Icui = icui
-		product.Ibua = ibua
-
-		// Actualizar el precio especÃ­fico del proveedor (como referencia histÃ³rica)
-		if supplierID != nil {
-			_ = s.repo.UpdateSupplierPrice(barcode, *supplierID, entryTotalCost)
+	s.repo.AfterCommitUpdate(affected...)
+	if supplierID != nil && s.expected != nil {
+		if err := s.expected.MarkAsReceivedBySupplier(*supplierID); err != nil {
+			log.Printf("[RECEIVE-STOCK] no se pudo actualizar pedido esperado del proveedor %d: %v", *supplierID, err)
 		}
 	}
-
-	if newSalePrice > 0 {
-		product.SalePrice = applyRounding(newSalePrice)
-		// Update persistent margin based on newest sale price vs current WAC cost
-		if product.PurchasePrice > 0 {
-			margin := ((product.SalePrice / product.PurchasePrice) - 1) * 100
-			product.MarginPercentage = margin
-		}
-	} else if product.PurchasePrice > 0 {
-		// El precio de venta NO SE TOCA automÃ¡ticamente.
-		// Solo recalculamos el margen informativo.
-		product.MarginPercentage = ((product.SalePrice / product.PurchasePrice) - 1) * 100
-	}
-
-	if supplierID != nil {
-		product.SupplierID = supplierID
-	}
-
-	if err := s.repo.Update(barcode, product); err != nil {
-		return err
-	}
-	
-	// AutomatizaciÃ³n: Marcar pedido esperado como recibido
-	if supplierID != nil {
-		_ = s.expected.MarkAsReceivedBySupplier(*supplierID)
-	}
-
-	// 4. Log the movement for Ð¿Ñ€Ð¾Ñ„ÐµÑÑÐ¸Ð¾Ð½Ð°Ð»ÑŒÐ½Ñ‹Ð¹ KÃ¡rdex
-	movement := &models.StockMovement{
-		Date:         time.Now(),
-		Barcode:      barcode,
-		Quantity:     addedQuantity,
-		Type:         "IN",
-		Reason:       "RECEPTION",
-		ReferenceID:  fmt.Sprintf("RECP-%d", time.Now().Unix()),
-		EmployeeDNI:  product.UpdatedByDNI,
-		EmployeeName: product.UpdatedByName,
-	}
-	_ = s.movementRepo.Save(movement)
-
 	return nil
 }
 
 func (s *ProductService) AdjustStock(barcode string, amount float64, employeeDNI string, employeeName string) error {
-	product, err := s.repo.GetByBarcode(barcode)
-	if err != nil {
-		return err
+	if amount == 0 {
+		return fmt.Errorf("el ajuste no puede ser cero")
 	}
+	db, ok := s.repo.GetDB().(*gorm.DB)
+	if !ok || db == nil {
+		return fmt.Errorf("repositorio de productos sin transacciones")
+	}
+	now := time.Now()
+	referenceID := fmt.Sprintf("ADJ-%d", now.UnixNano())
 	movementType := "ADJUSTMENT_UP"
 	if amount < 0 {
 		movementType = "ADJUSTMENT_DOWN"
 	}
-
-	// LÃ³gica de Packs (Ajuste Manual)
-	if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
-		baseProduct, err := s.repo.GetByBarcode(*product.BaseProductBarcode)
-		if err == nil {
-			// 1. Ajustar el producto base (multiplicando el ajuste)
-			baseAdjustment := amount * float64(product.PackMultiplier)
-			baseProduct.Quantity += baseAdjustment
-			if baseProduct.Quantity < 0 {
-				baseProduct.Quantity = 0
-			}
-			_ = s.repo.Update(baseProduct.Barcode, baseProduct)
-
-			// 2. Recalcular el stock del pack
-			product.Quantity = math.Floor(baseProduct.Quantity / float64(product.PackMultiplier))
-			_ = s.repo.UpdateQuantity(barcode, product.Quantity)
-
-			// Log en el base
-			baseMovement := &models.StockMovement{
-				Date:         time.Now(),
-				Barcode:      baseProduct.Barcode,
-				Quantity:     baseAdjustment,
-				Type:         movementType,
-				Reason:       "PACK_ADJUSTMENT_SYNC",
-				ReferenceID:  fmt.Sprintf("PADJ-%d", time.Now().Unix()),
-				EmployeeDNI:  employeeDNI,
-				EmployeeName: employeeName,
-			}
-			_ = s.movementRepo.Save(baseMovement)
-		}
-	} else {
-		// Comportamiento normal
-		product.Quantity += amount
-		if product.Quantity < 0 {
-			product.Quantity = 0
-		}
-		if err := s.repo.UpdateQuantity(barcode, product.Quantity); err != nil {
+	affected := []string{barcode}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("barcode = ?", barcode).First(&product).Error; err != nil {
 			return err
 		}
+		movements := make([]models.StockMovement, 0, 2)
+		if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" && product.PackMultiplier > 0 {
+			var base models.Product
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("barcode = ?", *product.BaseProductBarcode).First(&base).Error; err != nil {
+				return fmt.Errorf("obteniendo producto base: %w", err)
+			}
+			baseAdjustment := amount * float64(product.PackMultiplier)
+			if base.Quantity+baseAdjustment < 0 {
+				return fmt.Errorf("stock insuficiente: disponible %.3f", base.Quantity)
+			}
+			base.Quantity += baseAdjustment
+			if err := tx.Save(&base).Error; err != nil {
+				return err
+			}
+			product.Quantity = math.Floor(base.Quantity / float64(product.PackMultiplier))
+			if err := tx.Save(&product).Error; err != nil {
+				return err
+			}
+			movements = append(movements, models.StockMovement{
+				Date: now, Barcode: base.Barcode, Quantity: baseAdjustment, Type: movementType,
+				Reason: "PACK_ADJUSTMENT_SYNC", ReferenceID: referenceID,
+				EmployeeDNI: employeeDNI, EmployeeName: employeeName,
+			})
+			affected = append(affected, base.Barcode)
+		} else {
+			if product.Quantity+amount < 0 {
+				return fmt.Errorf("stock insuficiente: disponible %.3f", product.Quantity)
+			}
+			product.Quantity += amount
+			if err := tx.Save(&product).Error; err != nil {
+				return err
+			}
+		}
+		movements = append(movements, models.StockMovement{
+			Date: now, Barcode: barcode, Quantity: amount, Type: movementType,
+			Reason: "MANUAL_ADJUSTMENT", ReferenceID: referenceID,
+			EmployeeDNI: employeeDNI, EmployeeName: employeeName,
+		})
+		if err := s.movementRepo.BatchSaveWithTx(tx, movements); err != nil {
+			return fmt.Errorf("registrando movimientos de ajuste: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
-
-
-	movement := &models.StockMovement{
-		Date:         time.Now(),
-		Barcode:      barcode,
-		Quantity:     amount,
-		Type:         movementType,
-		Reason:       "MANUAL_ADJUSTMENT",
-		ReferenceID:  fmt.Sprintf("ADJ-%d", time.Now().Unix()),
-		EmployeeDNI:  employeeDNI,
-		EmployeeName: employeeName,
-	}
-	_ = s.movementRepo.Save(movement)
-
+	s.repo.AfterCommitUpdate(affected...)
 	return nil
 }
 
@@ -464,8 +489,10 @@ func (s *ProductService) BulkReceiveStock(entries []ports.ReceiveEntry, orderID 
 				break
 			}
 		}
-		if mainSupplierID > 0 {
-			_ = s.expected.MarkAsReceivedBySupplier(mainSupplierID)
+		if mainSupplierID > 0 && s.expected != nil {
+			if markErr := s.expected.MarkAsReceivedBySupplier(mainSupplierID); markErr != nil {
+				log.Printf("[BULK-RECEIVE] no se pudo marcar pedido esperado del proveedor %d: %v", mainSupplierID, markErr)
+			}
 		}
 	}
 	return err
@@ -483,34 +510,41 @@ func (s *ProductService) GetProductPriceComparison(barcode string) ([]models.Pro
 	return s.repo.GetSupplierPrices(barcode)
 }
 func (s *ProductService) OpenBulk(barcode string, employeeDNI string, employeeName string) error {
-	product, err := s.repo.GetByBarcode(barcode)
+	db, ok := s.repo.GetDB().(*gorm.DB)
+	if !ok || db == nil {
+		return fmt.Errorf("repositorio de productos sin transacciones")
+	}
+	err := db.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("barcode = ?", barcode).First(&product).Error; err != nil {
+			return fmt.Errorf("obteniendo producto: %w", err)
+		}
+		if product.Quantity < 1 {
+			return fmt.Errorf("no hay stock suficiente de %s para abrir", product.ProductName)
+		}
+		product.Quantity--
+		if err := tx.Save(&product).Error; err != nil {
+			return fmt.Errorf("actualizando stock del bulto: %w", err)
+		}
+		movement := &models.StockMovement{
+			Date:         time.Now(),
+			Barcode:      barcode,
+			Quantity:     1,
+			Type:         models.MovementTypeOut,
+			Reason:       "OPEN_BULK",
+			ReferenceID:  fmt.Sprintf("OPEN-%d", time.Now().UnixNano()),
+			EmployeeDNI:  employeeDNI,
+			EmployeeName: employeeName,
+		}
+		if err := s.movementRepo.SaveWithTx(tx, movement); err != nil {
+			return fmt.Errorf("registrando movimiento de apertura: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-
-	if product.Quantity < 1 {
-		return fmt.Errorf("no hay stock suficiente de %s para abrir", product.ProductName)
-	}
-
-	// 1. Restar 1 al stock
-	product.Quantity -= 1
-	if err := s.repo.UpdateQuantity(barcode, product.Quantity); err != nil {
-		return err
-	}
-
-	// 2. Registrar Movimiento de KÃ¡rdex Justificado
-	movement := &models.StockMovement{
-		Date:         time.Now(),
-		Barcode:      barcode,
-		Quantity:     1,
-		Type:         "OUT",
-		Reason:       "OPEN_BULK",
-		ReferenceID:  fmt.Sprintf("OPEN-%d", time.Now().Unix()),
-		EmployeeDNI:  employeeDNI,
-		EmployeeName: employeeName,
-	}
-	_ = s.movementRepo.Save(movement)
-
+	s.repo.AfterCommitUpdate(barcode)
 	return nil
 }
 func (s *ProductService) UpsertProduct(product *models.Product) error {
@@ -560,7 +594,6 @@ func (s *ProductService) EditReception(ref string, dniStr string, reason string,
 
 	return nil
 }
-
 
 // --- AI Invoice Reader Logic ---
 
@@ -664,23 +697,23 @@ func (s *ProductService) calculateItemDetails(product *models.Product, extracted
 }
 
 func buildInvoicePrompt(supplierName string, params *models.SupplierInvoiceParams) string {
-	prompt := fmt.Sprintf("\x60Analiza esta factura del proveedor \"%s\".\n" +
-		"Extrae TODOS los productos con sus cantidades y precios.\n" +
-		"Responde ÚNICAMENTE con JSON válido, sin texto adicional en el siguiente formato:\n" +
-		"[\n" +
-		"  {\n" +
-		"    \"name\": \"nombre exacto del producto como aparece en la factura\",\n" +
-		"    \"quantity\": número,\n" +
-		"    \"unitPrice\": número,\n" +
-		"    \"totalPrice\": número\n" +
-		"  }\n" +
-		"]\n" +
-		"Reglas estrictas:\n" +
-		"- Si solo aparece precio total de línea, divide entre cantidad para obtener unitario\n" +
-		"- Ignora filas de subtotal, total, descuentos globales, encabezados y pie de página\n" +
-		"- Si una cantidad dice \"1 PAC x 6 UND\", pon quantity: 6\n" +
-		"- Precios como números puros sin símbolos ni puntos de miles\n" +
-		"- Si un valor no es legible, pon 0\n" +
+	prompt := fmt.Sprintf("\x60Analiza esta factura del proveedor \"%s\".\n"+
+		"Extrae TODOS los productos con sus cantidades y precios.\n"+
+		"Responde ÚNICAMENTE con JSON válido, sin texto adicional en el siguiente formato:\n"+
+		"[\n"+
+		"  {\n"+
+		"    \"name\": \"nombre exacto del producto como aparece en la factura\",\n"+
+		"    \"quantity\": número,\n"+
+		"    \"unitPrice\": número,\n"+
+		"    \"totalPrice\": número\n"+
+		"  }\n"+
+		"]\n"+
+		"Reglas estrictas:\n"+
+		"- Si solo aparece precio total de línea, divide entre cantidad para obtener unitario\n"+
+		"- Ignora filas de subtotal, total, descuentos globales, encabezados y pie de página\n"+
+		"- Si una cantidad dice \"1 PAC x 6 UND\", pon quantity: 6\n"+
+		"- Precios como números puros sin símbolos ni puntos de miles\n"+
+		"- Si un valor no es legible, pon 0\n"+
 		"- NO incluyas productos con cantidad 0\x60", supplierName)
 
 	if params != nil && params.Notes != "" {
@@ -711,7 +744,7 @@ func (s *ProductService) callClaudeVision(imageBase64, mimeType, supplierName st
 
 	// Construir payload multimodal exacto para Claude
 	reqBody := map[string]interface{}{
-		"model":      "claude-opus-4-8",
+		"model":      VisionModel(),
 		"max_tokens": 4000,
 		"messages": []map[string]interface{}{
 			{
