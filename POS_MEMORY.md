@@ -28,17 +28,85 @@ En la pantalla de Sugerido de Compras (`/inventory/orders`):
 ---
 
 ## 🚨 REGLA PERMANENTE DE COMANDO: "pasa los cambios" / "pasa a producción" / "despliega"
-Cuando el usuario diga **"pasa los cambios"**, **"pasa a producción"**, **"despliega"** o cualquier variante similar en CUALQUIER conversación, ejecutar INMEDIATAMENTE y SIN PREGUNTAR la siguiente secuencia completa de compilación y despliegue a la máquina de producción (`192.168.1.6`):
+Cuando el usuario diga **"pasa los cambios"**, **"pasa a producción"**, **"despliega"** o cualquier
+variante similar en CUALQUIER conversación, ejecutar la secuencia de abajo sin pedir confirmación.
 
-1. **Compilar Backend Go:**
-   `go build -o server.exe ./cmd/api/main.go` (en `c:\Users\jaide\OneDrive\Desktop\POS\backPOS-go`)
-2. **Copiar Backend al Servidor:**
-   `cmd /c "copy /y server.exe \\192.168.1.6\pos\server.exe"`
-3. **Compilar Frontend Next.js (out/):**
-   `npm run build` (en `c:\Users\jaide\OneDrive\Desktop\POS\FrontPOS-main`)
-4. **Copiar Frontend al Servidor:**
-   `xcopy /E /I /Y out \\192.168.1.6\pos\out` (en `c:\Users\jaide\OneDrive\Desktop\POS\backPOS-go` o `FrontPOS-main`)
-5. **Confirmar al Usuario:** Notificar que el binario `server.exe` y los 268 archivos estáticos de la carpeta `out/` quedaron 100% copiados e instalados en `\\192.168.1.6\pos`.
+### 🔌 CONEXIÓN AL PC DE PRODUCCIÓN (actualizado 18/08/2026 tras formateo)
+
+| Dato | Valor |
+|---|---|
+| PC de producción | `DESKTOP-VK2U90S` (antes era DESKTOP-GNTMHFM — cambió con el formateo) |
+| IP del PC producción | **`192.168.1.6`** (no cambió) |
+| PC de desarrollo | `192.168.1.21` (jaide) |
+| **Ruta de despliegue correcta** | `\\DESKTOP-VK2U90S\Users\surti\Desktop\POS` |
+| Share publicado | Carpeta `POS` del escritorio (ruta larga — `\\IP\POS` ya NO funciona) |
+| Usuario en producción | `surti` |
+| Contraseña | Guardada en Administrador de credenciales. **NO escribir aquí.** |
+
+**⚠️ TRAMPAS CONOCIDAS:**
+- La ruta corta `\\192.168.1.6\POS` ya **NO funciona** tras el formateo — usar `\\DESKTOP-VK2U90S\Users\surti\Desktop\POS`.
+- Si da error de credenciales, correr: `cmd /c 'cmdkey /add:DESKTOP-VK2U90S /user:"DESKTOP-VK2U90S\surti" /pass:LA_CLAVE'`
+- RDP habilitado el 18/08/2026: conectar a `192.168.1.6` con usuario `surti`.
+- PSRemoting: habilitar con `Enable-PSRemoting -Force` en producción para acceso remoto de comandos.
+
+### 📦 SECUENCIA DE DESPLIEGUE
+
+**El usuario APAGA el servidor antes de pasar cambios**, así que se sobrescribe directo:
+no hace falta renombrar `server.exe` a `.old` ni hacer trucos con el archivo bloqueado.
+
+0. **RESPALDO AUTOMÁTICO** (siempre primero):
+   `powershell -ExecutionPolicy Bypass -File "C:\Users\jaide\OneDrive\Desktop\POS\hacer_respaldo.ps1"`
+   Guarda código fuente + binario de producción + volcado SQL en `C:\Users\jaide\Desktop\Respaldo\YYYY-MM-DD_HH-mm\`
+1. **Compilar Backend Go** en `C:\Users\jaide\OneDrive\Desktop\POS\backPOS-go`:
+   `go build -o server.exe ./cmd/api`
+2. **Compilar Frontend** en `C:\Users\jaide\OneDrive\Desktop\POS\FrontPOS-main`:
+   `npm run build` — su script `postbuild` ya copia `out/` a `backPOS-go/out` automáticamente.
+3. **Copiar backend:**
+   `Copy-Item backPOS-go\server.exe '\\DESKTOP-VK2U90S\Users\surti\Desktop\POS\server.exe' -Force`
+4. **Copiar frontend (espejo, borra lo obsoleto):**
+   `robocopy backPOS-go\out '\\DESKTOP-VK2U90S\Users\surti\Desktop\POS\out' /MIR /R:2 /W:2 /NFL /NDL /NP`
+5. **Avisar al usuario que puede volver a encender el servidor** (el binario nuevo solo toma efecto
+   al reiniciar el proceso).
+
+### 🖥️ CÓMO CORRE EL SERVIDOR EN PRODUCCIÓN
+En `\\192.168.1.6\POS` viven: `server.exe`, la carpeta `out/`, el `.env` (**nunca leerlo ni copiarlo**),
+`nssm.exe`, `reportsd/` y `lector-balanza-portatil/`. La presencia de **nssm.exe** indica que
+`server.exe` está registrado como **servicio de Windows** vía NSSM. El arranque/parada se hace en ese
+PC (no hay permisos de admin remoto).
+
+**⚠️ COMANDOS EXACTOS EN PRODUCCIÓN (PowerShell como admin en 192.168.1.6):**
+- `nssm` NO está en el PATH — hay que usar la ruta completa siempre.
+- Usuario del PC de producción: `surti` → ruta base: `C:\Users\surti\Desktop\POS\`
+- Nombre del servicio: **`POS_Server`** (con mayúsculas y guión bajo exactos)
+
+```powershell
+# DETENER el servidor:
+C:\Users\surti\Desktop\POS\nssm.exe stop POS_Server
+
+# INICIAR el servidor:
+C:\Users\surti\Desktop\POS\nssm.exe start POS_Server
+
+# VER ESTADO:
+C:\Users\surti\Desktop\POS\nssm.exe status POS_Server
+```
+
+### 🧹 LIMPIEZA DE `out/` — RESUELTO EL 05/08/2026
+`xcopy /E /I /Y` **agrega sin borrar**, y Next.js genera nombres de chunk con hash, así que cada
+despliegue dejaba basura. La carpeta `out/` de producción había llegado a **5.826 archivos y 210 MB**
+contra 269 archivos y 10 MB del build limpio.
+
+Se limpió con `robocopy /MIR` (borró 5.557 archivos y 925 carpetas obsoletas, ~200 MB) y quedó
+byte a byte idéntica al build. **El script `desplegar_a_produccion.bat` ya usa `robocopy /MIR`**,
+así que no se vuelve a acumular. Comando de referencia:
+
+```powershell
+robocopy 'C:\Users\jaide\OneDrive\Desktop\POS\backPOS-go\out' '\\192.168.1.6\POS\out' /MIR /R:2 /W:2 /NFL /NDL /NP
+```
+
+⚠️ `robocopy` devuelve **0-7 en éxito** (1=copió, 2=purgó, 3=ambos) y **>=8 en error real**. Nunca
+validar con `if %ERRORLEVEL% EQU 0`, porque un despliegue correcto devuelve 3 y se tomaría como fallo.
+Hacer el `/MIR` **con el servidor apagado**: si hay una pestaña abierta puede pedir un chunk viejo
+que acaba de borrarse.
 
 ---
 
@@ -351,3 +419,115 @@ orderService := services.NewPurchaseOrderService(orderRepo, supplierRepo)
 - **Cuadre al centavo en auditoría**: la tabla `expenses` y la auditoría de CCTV muestran ahora una fila por canal real (`EFECTIVO $50.000`, `NEQUI $200.000`) en lugar de un único "MIXTO $250.000". El cierre de caja desglosa cada canal con su monto exacto sin agruparse.
 - **Sin doble cobro de flete**: el bug donde un mixed con flete generaba 1 egreso adicional duplicado queda eliminado; el flete viaja distribuido entre canales y se etiqueta en la descripción.
 - **UX de caja más limpia**: con el carrito ocupando 70% del alto, el cajero ve toda la cuenta en pantalla sin hacer scroll, y la grilla de productos ocupa solo lo necesario para acceder a los más vendidos.
+
+---
+
+## 📅 2026-08-28 — Migración del esquema, optimización global y ajustes de operación
+
+**Se aplicaron por primera vez las 11 migraciones del runner, se optimizó todo el sistema y se corrigieron precios, alertas y pedidos inteligentes. Producción quedó operando con el binario nuevo.**
+
+### 🗄️ Migración del esquema (histórico)
+
+La base de producción nunca había pasado por el runner: el esquema venía del `AutoMigrate` del arranque antiguo y `schema_migrations` no existía. Las 11 versiones estaban pendientes.
+
+Antes de migrar se corrigieron dos daños heredados del binario viejo, que **no propagaba el cambio de código de barras** al renombrar un producto:
+
+- **62 movimientos de kárdex huérfanos** en 14 códigos (`GELATINAKIDS`, `PANCS`, `AGUILA LIGHT LT`, `MOGOLLA NEGRA DISTRIMANGLA`, `DONKANKG`, `GALLETAROJA` y 8 EAN).
+- **30 detalles de venta huérfanos** en 9 códigos de peso (`1.5KG`, `2KG`, `3KG`, `5KG`, `10KG`, `15KG`, `20KG`, `PAPAKG` y un EAN).
+
+Se resolvieron creando **23 productos marcadores inactivos** `[HISTORICO] <código>` con cantidad y precios en 0, para no perder historial de inventario. Se descartó borrar los movimientos.
+
+La migración `001_legacy_preflight` falló porque intentaba eliminar `uni_employees_dni`, restricción redundante con la llave primaria pero referenciada por llaves foráneas. Se hizo tolerante con `EXCEPTION WHEN dependent_objects_still_exist`: si hay dependencias, la conserva y continúa.
+
+Verificado antes de aplicar: 0 cierres afectados por la 003, 0 `clientTxId` duplicados, 0 `costPrice` nulos, 0 devoluciones huérfanas. **Los 81 cierres y las cifras contables quedaron intactos.**
+
+Paquete operativo creado en `paquete_produccion/`: `migrate.exe` autocontenido más scripts de respaldo, diagnóstico, corrección y medición. Todos exigen confirmación explícita y abortan si hay migraciones legacy pendientes sin autorización.
+
+### 💵 Regla de precios con terminación 50
+
+La regla automática (`>= 20` sube a la centena en frontend, `>= 25` en backend) **se conserva**. La excepción son los precios fijados a propósito en terminación 50, como el huevo a 550.
+
+- `pricing-helpers.mjs` y `pricing_round.go`: `normalizeSalePrice` respeta terminaciones de 50; `roundSaleLineSubtotal` cobra esos precios exactos y deja intactos los múltiplos de 100.
+- Botón **→50** en recepción y en crear/editar producto. Parte del precio **real** (450 × 1,20 = 540 → 550), no del ya inflado por la regla (600 → 600, que no cambiaba nada).
+- El recálculo por costo o margen usa `normalizeSalePrice`, así que tocar esos campos ya no deshace el ajuste.
+- Backend: el precio explícito en terminación 50 tiene prioridad sobre el recálculo por margen en `UpdateProduct`.
+- Bug de UI corregido: el clic en el botón disparaba primero el `blur` del campo, que ya había aplicado la regla. Se resolvió con `onMouseDown preventDefault`.
+
+### 🔔 Alertas de Telegram
+
+- Antes alertaban cuando el stock "no alcanzaba hasta la próxima visita", así que avisaban con 4 unidades para 39 días. **Ahora sólo cuando el producto llega a 0 o queda negativo.**
+- Las líneas se agrupan por código: un mismo producto en varias líneas de la venta ya no genera alertas duplicadas.
+- No se emite la alerta de agotamiento si ya se envió la de venta en negativo.
+- **"Próximo pedido" estaba mal de raíz**: restaba los días desde la última recepción del producto a la frecuencia de visita, dando cifras absurdas. Se reemplazó por el calendario real de días de visita del proveedor (`supplier_schedule.go`, 5 pruebas): muestra el día concreto o informa que no hay día registrado.
+
+### 📦 Pedidos Inteligentes V2
+
+- **Bug crítico**: la consulta del cálculo devolvía la columna `supplier_id` pero el modelo esperaba `primary_supplier_id`. Resultado: 2.162 métricas calculadas y **0 con proveedor**, por lo que filtrar por proveedor no mostraba nada y tampoco aparecía la tarjeta con fecha de entrega. Corregido con el alias correcto.
+- El filtro por proveedor ahora incluye los productos asociados en `product_suppliers`, no sólo el proveedor principal.
+- **Recomendación por última recepción y ventas**: `BuildRestockRecommendation` (6 pruebas) combina última recepción, consumo desde entonces, demanda corregida por agotados y cobertura. Devuelve texto y nivel: `urgent`, `order`, `wait`, `skip`.
+- La última recepción y el consumo posterior se calculan **en la consulta**, no en el batch, así siempre están frescos. Se implementó con CTEs agregadas tras descubrir que la versión con `LATERAL` hacía más de 4.000 subconsultas (224 ms → 48 ms).
+- **Faltantes reportados por caja** ahora se muestran en esta pantalla, con X para marcarlos `ADQUIRIDO` y sacarlos de la lista.
+- Cantidades **vacías** al entrar a un proveedor; la sugerencia se aplica con el botón o tocando el número.
+- Tarjetas de clase A/B/C compactadas y barra de "Orden seleccionada" movida de abajo (tapaba fecha de entrega y confirmar) a pegajosa arriba.
+- Selector de proveedor nativo reemplazado por buscador con filtrado sin acentos. Ojo: HeroUI **sólo filtra solo con `defaultItems`**; con `items` controlados el filtrado corre por cuenta propia.
+
+### 📷 Escáner por cámara
+
+- `fps` bajado de 25 a 12 y **doble lectura idéntica** obligatoria antes de aceptar: elimina los códigos confundidos sin perder agilidad.
+- Detector nativo del navegador (`useBarCodeDetectorIfSupported`), ventana rectangular, sin volteo, formatos ITF y QR añadidos.
+- Flash con detección real de capacidad vía `getCapabilities()`.
+- La cámara ya no se reinicia en cada render del padre (callbacks en refs).
+- **Regresión propia corregida**: pasar `focusMode` en las restricciones iniciales rompía el arranque con `CANNOT TRANSITION TO A NEW STATE`. Ahora se aplica después de arrancar y el reintento usa una instancia nueva.
+- El lector de facturas usa la cámara nativa con `capture="environment"`, que trae su propio flash.
+
+### 🤖 Modelos de IA actualizados
+
+`claude-opus-4-8` (inexistente, probablemente rompía el lector de facturas) y `claude-sonnet-4-5` estaban obsoletos. Centralizados en `ai_models.go` y configurables sin recompilar:
+
+| Uso | Modelo | Variable |
+|---|---|---|
+| Facturas e imágenes | `claude-sonnet-5` | `POS_AI_MODEL_VISION` |
+| Bot conversacional | `claude-sonnet-5` | `POS_AI_MODEL_CHAT` |
+| Respuestas rápidas | `claude-haiku-4-5-20251001` | `POS_AI_MODEL_FAST` |
+
+### 🎨 Tema claro y oscuro
+
+48 archivos corregidos: fondos `bg-[#09090b]` fijos sin variante clara, 15 backdrops de modal en gris casi negro, `text-white` sobre fondos blancos (toda la página de cierre de caja era ilegible en claro), 31 archivos con clases `dark:` contradictorias donde la última pisaba a la anterior, y una clase inválida `dark:border-white/5/[0.02]`.
+
+En `globals.css` se repararon variables inexistentes: `--primary`, `--foreground`, `--card`, `--radius`, `--card-shadow`. Se definió `--radius: 0.75rem` y la barra de desplazamiento pasó a ser sensible al tema.
+
+### ⚡ Rendimiento
+
+Medido con `EXPLAIN ANALYZE` en producción: catálogo 9,9 ms, sugerencias 48 ms, resumen del dashboard 3,6 ms. **La base no era el cuello.**
+
+El problema estaba en el frontend:
+
+- `revalidateOnFocus` sin límite recargaba los 2.161 productos cada vez que se volvía a la app. Ahora `focusThrottleInterval: 60000` y `dedupingInterval: 5000`.
+- El sondeo del catálogo pasó de 60 s a 5 min y las categorías a 10 min, porque los cambios reales llegan por SSE.
+- Backend: se eliminó el N+1 de `Sale.GetByID`, `AddItemsToSale` y devoluciones mediante carga masiva con índice de códigos principal, alternos y base; ranking y categorías pasaron a agregados SQL; Smart Restock combina las ventanas de 14 y 30 días en una consulta.
+- **P&L corregido**: cargaba ventas sin detalles y luego intentaba calcular el costo, así que `TotalCOGS` **siempre salía 0** y la utilidad se veía inflada. Ahora usa cuatro agregados concurrentes.
+
+Bundle: `/reports` 330 → 228 kB y `/sales/new` 453 → 316 kB. Assets de billetes de 2.737 a 653 KB.
+
+### 🔇 Otros ajustes
+
+- **Botón de silenciar**: sólo los toasts consultaban el mute. Se añadió `isSoundMuted` al pitido del escáner en ventas y a los dos sonidos de recepción, que eran los más fuertes.
+- **Notificaciones**: movidas de arriba a la izquierda (tapaban el selector de facturas) a arriba al centro, compactas, 240 px de ancho, máximo 2 a la vez, 3 segundos, a 34 px del borde. Se conectó `ThemedToaster`, que respeta el tema de la app en vez del del sistema operativo.
+
+### 🧪 Estado de validación
+
+```text
+Frontend   16/16 pruebas, TypeScript OK, ESLint 0 errores, build 29/29 páginas
+Backend    go build, go vet y go test ./... verdes
+Migración  11/11 APLICADAS
+Cierres    81 intactos · Ventas 10.583 · Ventas pagadas 82.742.700
+Respaldos  3 verificados con SHA-256
+```
+
+### ⚠️ Notas para el futuro
+
+- `daily_stock_snapshots` crece un registro por producto al día (~65.000 filas/mes con 2.161 productos). El cálculo sólo usa 30 días, así que conviene depurar los mayores a 90 días.
+- 435 warnings de ESLint pendientes (imports sin uso y dependencias de hooks). No bloquean el build.
+- `BulkReceive` sigue ejecutando ~5 consultas por producto dentro de la transacción. Optimizarlo requiere una base PostgreSQL de pruebas.
+- `Product.GetAll` y `Client.GetAll` devuelven el catálogo completo por contrato con IndexedDB offline. Paginarlos exige diseñar sincronización incremental.
+- Windows Application Control bloquea intermitentemente la ejecución de binarios de prueba de Go en el equipo de desarrollo.

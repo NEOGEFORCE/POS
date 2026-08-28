@@ -1,30 +1,18 @@
 @echo off
-echo ==============================================
-echo        SISTEMA POS PRO - BUILD DE PRODUCCION
-echo ==============================================
-echo.
+setlocal
+cd /d "%~dp0"
 
-echo Compilando Frontend (Next.js)...
-cd FrontPOS-main
+echo [1/2] Compilando frontend...
+pushd FrontPOS-main
 call npm run build
-if %ERRORLEVEL% neq 0 (
-    echo ❌ ERROR EN LA COMPILACION DEL FRONTEND
-    pause
-    exit /b %ERRORLEVEL%
-)
+if errorlevel 1 exit /b %ERRORLEVEL%
+popd
 
-echo.
-echo Compilando Backend (Go)...
-cd ../backPOS-go
-go build -o server_prod.exe cmd/api/main.go
-if %ERRORLEVEL% neq 0 (
-    echo ❌ ERROR EN LA COMPILACION DEL BACKEND
-    pause
-    exit /b %ERRORLEVEL%
-)
+echo [2/2] Compilando backend...
+pushd backPOS-go
+go build -trimpath -o server.exe ./cmd/api
+if errorlevel 1 exit /b %ERRORLEVEL%
+popd
 
-echo.
-echo ==============================================
-echo ✅ SISTEMA COMPILADO CON EXITO. Archivos listos para el PC de Produccion.
-echo ==============================================
-pause
+echo Build local completado. No se copio ni reinicio produccion.
+exit /b 0
