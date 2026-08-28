@@ -1,209 +1,240 @@
-/**
- * Scale Bridge — Serial-to-WebSocket bridge for Moresco HY-918 (CH340)
- * 
- * UNIFIED VERSION: Use this for both desktop and portable scale setups.
- * Configure via environment variables or .env file.
- * 
- * Protocol (JSON over WebSocket):
- *   Server → Client:
- *     { type: "weight",  value: 0.500 }
- *     { type: "status",  connected: true, port: "COM1" }
- *     { type: "error",   message: "..." }
- *     { type: "raw",     data: "ST,GS,+ 0.500kg" }
- */
-
 const { SerialPort } = require('serialport');
-const { ReadlineParser } = require('serialport');
 const WebSocket = require('ws');
 
-// ── Config ──────────────────────────────────────────────────────────────────
-const SERIAL_PORT    = process.env.SCALE_PORT || 'COM1';
+// Configuración
+const PREFERRED_PORT = process.env.SCALE_PORT || 'COM1';
 const BAUD_RATE      = parseInt(process.env.SCALE_BAUD || '4800', 10);
 const WS_PORT        = parseInt(process.env.SCALE_WS_PORT || '9876', 10);
-const RECONNECT_MS   = 3000;
-const HEARTBEAT_MS   = 2000;
-const WEIGHT_STABLE_THRESHOLD = 0.005; // kg — only broadcast if weight changed
-const MIN_WEIGHT     = 0.001; // ignore readings below 1g (noise)
+const RECONNECT_MS   = 2000;
+const WEIGHT_DIFF_THRESHOLD = 0.003; // kg
 
-// ── State ───────────────────────────────────────────────────────────────────
-let currentWeight    = 0;
-let serialConnected  = false;
-let port             = null;
-let parser           = null;
-let reconnectTimer   = null;
+console.log('====================================================');
+console.log('⚖️  SCALE BRIDGE v2.0 UNIFIED (AUTO-DETECCION)');
+console.log('====================================================');
+console.log(`Puerto preferido: ${PREFERRED_PORT} | Baud: ${BAUD_RATE} | WS: ${WS_PORT}`);
 
-// ── WebSocket Server ────────────────────────────────────────────────────────
-const wss = new WebSocket.Server({ port: WS_PORT }, () => {
-    console.log(`\x1b[36m⚖️  Scale Bridge WS listening on ws://localhost:${WS_PORT}\x1b[0m`);
-});
+// Servidor WebSocket
+let wss;
+try {
+    wss = new WebSocket.Server({ port: WS_PORT }, () => {
+        console.log(`✓ Servidor WebSocket escuchando en ws://localhost:${WS_PORT}`);
+    });
+} catch (e) {
+    console.error(`❌ Error iniciando WebSocket en puerto ${WS_PORT}:`, e.message);
+}
+
+let activePort = null;
+let currentWeight = 0;
+let isConnected = false;
+let reconnectTimer = null;
+let isScanning = false;
 
 function broadcast(data) {
+    if (!wss) return;
     const msg = JSON.stringify(data);
     wss.clients.forEach(client => {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(msg);
+            try { client.send(msg); } catch (e) {}
         }
     });
 }
 
-wss.on('connection', (ws) => {
-    console.log(`\x1b[32m✓ Client connected (total: ${wss.clients.size})\x1b[0m`);
-    
-    ws.send(JSON.stringify({ type: 'status', connected: serialConnected, port: SERIAL_PORT }));
-    ws.send(JSON.stringify({ type: 'weight', value: currentWeight }));
+if (wss) {
+    wss.on('connection', (ws) => {
+        console.log(`✓ Cliente POS conectado al WebSocket (Total: ${wss.clients.size})`);
+        
+        ws.send(JSON.stringify({ 
+            type: 'status', 
+            connected: isConnected, 
+            port: activePort ? activePort.path : '' 
+        }));
+        ws.send(JSON.stringify({ 
+            type: 'weight', 
+            value: currentWeight, 
+            display: currentWeight.toFixed(3) 
+        }));
 
-    ws.on('close', () => {
-        console.log(`\x1b[33m✗ Client disconnected (total: ${wss.clients.size})\x1b[0m`);
+        ws.on('message', (message) => {
+            try {
+                const data = JSON.parse(message);
+                if (data.type === 'ping') {
+                    ws.send(JSON.stringify({ type: 'pong' }));
+                    return;
+                }
+                if (data.type === 'command' && (data.value === 'read' || data.value === 'refresh')) {
+                    ws.send(JSON.stringify({ 
+                        type: 'weight', 
+                        value: currentWeight, 
+                        display: currentWeight.toFixed(3) 
+                    }));
+                }
+            } catch (e) {}
+        });
+
+        ws.on('close', () => {
+            console.log(`✗ Cliente POS desconectado (Restantes: ${wss.clients.size})`);
+        });
     });
-});
-
-// ── Weight Parsing ──────────────────────────────────────────────────────────
-function parseWeight(line) {
-    if (!line || typeof line !== 'string') return null;
-    
-    const cleaned = line.trim();
-    if (!cleaned) return null;
-
-    const match = cleaned.match(/([+-]?\s*\d+[.,]?\d*)/);
-    if (match) {
-        const numStr = match[1].replace(/\s/g, '').replace(',', '.');
-        const value = parseFloat(numStr);
-        if (!isNaN(value) && isFinite(value)) {
-            const absValue = Math.abs(value);
-            if (absValue <= 999 && absValue >= MIN_WEIGHT) {
-                return absValue;
-            }
-        }
-    }
-
-    return null;
 }
 
-// ── Serial Connection ───────────────────────────────────────────────────────
-function connectSerial() {
-    if (port && port.isOpen) return;
-    
-    console.log(`\x1b[36m⚖️  Connecting to ${SERIAL_PORT} at ${BAUD_RATE} baud...\x1b[0m`);
+// Intentar abrir un puerto específico
+async function tryOpenPort(portPath) {
+    return new Promise((resolve) => {
+        try {
+            console.log(`Intentando conectar a ${portPath} (${BAUD_RATE} baud)...`);
+            const p = new SerialPort({
+                path: portPath,
+                baudRate: BAUD_RATE,
+                dataBits: 8,
+                stopBits: 1,
+                parity: 'none',
+                autoOpen: false
+            });
+
+            p.open((err) => {
+                if (err) {
+                    console.log(`✗ No se pudo abrir ${portPath}: ${err.message}`);
+                    resolve(null);
+                } else {
+                    console.log(`✓ ¡PUERTO ${portPath} ABIERTO CON ÉXITO!`);
+                    resolve(p);
+                }
+            });
+        } catch (e) {
+            resolve(null);
+        }
+    });
+}
+
+// Buscar y conectar al puerto de la balanza
+async function scanAndConnect() {
+    if (isScanning || (activePort && activePort.isOpen)) return;
+    isScanning = true;
 
     try {
-        port = new SerialPort({
-            path: SERIAL_PORT,
-            baudRate: BAUD_RATE,
-            dataBits: 8,
-            stopBits: 1,
-            parity: 'none',
-            autoOpen: false
-        });
+        const ports = await SerialPort.list();
+        const portPaths = ports.map(p => p.path);
+        console.log(`Puertos COM detectados en el sistema: [${portPaths.join(', ') || 'Ninguno'}]`);
 
-        parser = port.pipe(new ReadlineParser({ delimiter: '\n' }));
+        let targetPorts = [];
+        if (PREFERRED_PORT && portPaths.includes(PREFERRED_PORT)) {
+            targetPorts.push(PREFERRED_PORT);
+        }
 
-        port.on('open', () => {
-            serialConnected = true;
-            console.log(`\x1b[32m✓ Serial port ${SERIAL_PORT} opened successfully\x1b[0m`);
-            broadcast({ type: 'status', connected: true, port: SERIAL_PORT });
-            
-            if (reconnectTimer) {
-                clearInterval(reconnectTimer);
-                reconnectTimer = null;
+        ports.forEach(p => {
+            const desc = (p.friendlyName || p.manufacturer || '').toLowerCase();
+            if (p.path !== PREFERRED_PORT && (desc.includes('ch340') || desc.includes('usb') || desc.includes('serial') || desc.includes('prolific') || desc.includes('ftdi'))) {
+                targetPorts.push(p.path);
             }
         });
 
-        port.on('error', (err) => {
-            console.error(`\x1b[31m✗ Serial error: ${err.message}\x1b[0m`);
-            serialConnected = false;
-            broadcast({ type: 'status', connected: false, port: SERIAL_PORT });
-            broadcast({ type: 'error', message: err.message });
-            scheduleReconnect();
+        portPaths.forEach(path => {
+            if (!targetPorts.includes(path)) {
+                targetPorts.push(path);
+            }
         });
 
-        port.on('close', () => {
-            console.log(`\x1b[33m⚠ Serial port closed\x1b[0m`);
-            serialConnected = false;
-            currentWeight = 0;
-            broadcast({ type: 'status', connected: false, port: SERIAL_PORT });
-            broadcast({ type: 'weight', value: 0 });
-            scheduleReconnect();
-        });
+        if (targetPorts.length === 0 && PREFERRED_PORT) {
+            targetPorts.push(PREFERRED_PORT);
+        }
 
-        let rawBuffer = '';
-        port.on('data', (data) => {
-            rawBuffer += data.toString('ascii');
-            if (rawBuffer.length > 30) rawBuffer = rawBuffer.slice(rawBuffer.length - 30);
-            
-            const matches = rawBuffer.match(/\d{1,3}\.\d{3}/g);
-            if (matches && matches.length > 0) {
-                const latestStr = matches[matches.length - 1];
-                const weight = parseFloat(latestStr);
-                if (!isNaN(weight) && Math.abs(weight - currentWeight) > WEIGHT_STABLE_THRESHOLD) {
-                    currentWeight = weight;
-                    console.log(`\x1b[32m⚖️ Peso detectado:\x1b[0m ${currentWeight} kg`);
-                    broadcast({ type: 'weight', value: currentWeight });
+        for (const portPath of targetPorts) {
+            const p = await tryOpenPort(portPath);
+            if (p) {
+                setupPort(p);
+                isScanning = false;
+                return;
+            }
+        }
+    } catch (e) {
+        console.error('Error durante escaneo de puertos:', e.message);
+    }
+
+    isScanning = false;
+    scheduleReconnect();
+}
+
+function setupPort(p) {
+    activePort = p;
+    isConnected = true;
+    broadcast({ type: 'status', connected: true, port: p.path });
+
+    let rawBuffer = '';
+
+    p.on('data', (chunk) => {
+        const str = chunk.toString('ascii');
+        rawBuffer += str;
+
+        if (rawBuffer.length > 50) {
+            rawBuffer = rawBuffer.slice(rawBuffer.length - 50);
+        }
+
+        const matches = rawBuffer.match(/\d{1,3}\.\d{2,3}/g);
+        if (matches && matches.length > 0) {
+            const latestStr = matches[matches.length - 1];
+            const peso = parseFloat(latestStr);
+            if (!isNaN(peso) && peso >= 0) {
+                if (Math.abs(peso - currentWeight) >= WEIGHT_DIFF_THRESHOLD || (peso === 0 && currentWeight > 0)) {
+                    currentWeight = peso;
+                    console.log(`⚖️ Peso recibido (${p.path}): ${peso.toFixed(3)} kg`);
+                    broadcast({ type: 'weight', value: peso, display: peso.toFixed(3) });
                 }
             }
-        });
+        }
+    });
 
-        port.open((err) => {
-            if (err) {
-                console.error(`\x1b[31m✗ Failed to open ${SERIAL_PORT}: ${err.message}\x1b[0m`);
-                serialConnected = false;
-                broadcast({ type: 'status', connected: false, port: SERIAL_PORT });
-                scheduleReconnect();
-            }
-        });
+    p.on('error', (err) => {
+        console.error(`✗ Error en puerto ${p.path}:`, err.message);
+        handlePortClose();
+    });
 
-    } catch (err) {
-        console.error(`\x1b[31m✗ Serial init error: ${err.message}\x1b[0m`);
-        scheduleReconnect();
+    p.on('close', () => {
+        console.log(`⚠ Puerto ${p.path} cerrado`);
+        handlePortClose();
+    });
+}
+
+function handlePortClose() {
+    isConnected = false;
+    currentWeight = 0;
+    if (activePort) {
+        try { activePort.close(); } catch (e) {}
+        activePort = null;
     }
+    broadcast({ type: 'status', connected: false, port: '' });
+    broadcast({ type: 'weight', value: 0, display: '0.000' });
+    scheduleReconnect();
 }
 
 function scheduleReconnect() {
     if (reconnectTimer) return;
-    console.log(`\x1b[33m↻ Will retry serial in ${RECONNECT_MS / 1000}s...\x1b[0m`);
-    reconnectTimer = setInterval(() => {
-        if (!serialConnected) {
-            if (port) {
-                try { port.close(); } catch(e) {}
-                port = null;
-                parser = null;
-            }
-            connectSerial();
-        } else {
-            clearInterval(reconnectTimer);
-            reconnectTimer = null;
+    console.log(`↻ Reintentando conexión en ${RECONNECT_MS / 1000}s...`);
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (!activePort || !activePort.isOpen) {
+            scanAndConnect();
         }
     }, RECONNECT_MS);
 }
 
-// ── Heartbeat ───────────────────────────────────────────────────────────────
+scanAndConnect();
+
 setInterval(() => {
-    broadcast({ type: 'weight', value: currentWeight });
-}, HEARTBEAT_MS);
+    if (isConnected) {
+        broadcast({ type: 'weight', value: currentWeight, display: currentWeight.toFixed(3) });
+    }
+}, 2000);
 
-// ── Startup ─────────────────────────────────────────────────────────────────
-console.log('');
-console.log('\x1b[1m\x1b[36m╔══════════════════════════════════════════╗\x1b[0m');
-console.log('\x1b[1m\x1b[36m║     ⚖️  SCALE BRIDGE v2.0 (UNIFIED)      ║\x1b[0m');
-console.log('\x1b[1m\x1b[36m║     Serial → WebSocket Bridge            ║\x1b[0m');
-console.log('\x1b[1m\x1b[36m╚══════════════════════════════════════════╝\x1b[0m');
-console.log(`  Serial Port:  ${SERIAL_PORT}`);
-console.log(`  Baud Rate:    ${BAUD_RATE}`);
-console.log(`  WS Port:      ${WS_PORT}`);
-console.log('');
-
-connectSerial();
-
-// ── Graceful shutdown ───────────────────────────────────────────────────────
 process.on('SIGINT', () => {
-    console.log('\n\x1b[33mShutting down...\x1b[0m');
-    if (port && port.isOpen) port.close();
-    wss.close();
+    if (activePort && activePort.isOpen) activePort.close();
+    if (wss) wss.close();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
-    if (port && port.isOpen) port.close();
-    wss.close();
+    if (activePort && activePort.isOpen) activePort.close();
+    if (wss) wss.close();
     process.exit(0);
 });
+
 

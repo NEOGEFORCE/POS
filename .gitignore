@@ -48,3 +48,23 @@ GIT.IGNORE
 
 # Gemini Antigravity
 .gemini/
+
+# Generated frontend/backend output
+out/
+**/out/
+reportsd/
+**/reportsd/
+*.pdf
+
+# Local project notes and one-off work
+POS_MEMORY.md
+scratch/
+**/scratch/
+*.go_tmp
+*.bak
+*.backup
+
+
+# Versioned application migrations are source code, not database dumps
+!backPOS-go/migrations/sql/
+!backPOS-go/migrations/sql/*.sql

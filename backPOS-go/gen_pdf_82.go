@@ -1,4 +1,8 @@
-package main
+//go:build tools_legacy
+// +build tools_legacy
+
+
+﻿package main
 
 import (
 	"backPOS-go/internal/core/domain/models"
@@ -107,7 +111,7 @@ func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, 
 }
 
 func main() {
-	dsn := "host=192.168.1.6 user=postgres password=123 dbname=sistemapos port=5432 sslmode=disable"
+	dsn := "host=invalid.invalid user=disabled dbname=disabled port=1 sslmode=disable connect_timeout=1"
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Error connecting DB: %v", err)

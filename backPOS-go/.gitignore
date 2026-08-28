@@ -18,3 +18,10 @@ go.work.sum
 # env file
 .env
 tmp/
+
+out/
+reportsd/
+*.pdf
+*.go_tmp
+*.bak
+scratch/
