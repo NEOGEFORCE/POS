@@ -1,17 +1,24 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Modal, ModalContent, Button, Avatar } from '@heroui/react';
-import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark } from 'lucide-react';
+import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins } from 'lucide-react';
 
 interface ExpensePaymentModalProps {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
   totalToPay: number;
   title?: string;
+  initialCash?: number;
+  initialNequi?: number;
+  initialDaviplata?: number;
+  initialFondo?: number;
+  initialCoins?: number;
+  initialPaymentSource?: string;
   onPay: (data: {
     cash: number;
     nequi: number;
     daviplata: number;
     fondo: number;
+    coins: number;
     paymentSourceString: string;
     taxAmount: number;
   }) => Promise<void>;
@@ -23,38 +30,72 @@ export function ExpensePaymentModal({
   onOpenChange,
   totalToPay,
   title = "AUTORIZAR EGRESO",
+  initialCash,
+  initialNequi,
+  initialDaviplata,
+  initialFondo,
+  initialCoins,
+  initialPaymentSource,
   onPay,
   onCloseComplete
 }: ExpensePaymentModalProps) {
-  const [activePaymentTab, setActivePaymentTab] = useState<'cash'|'NEQUI'|'DAVIPLATA'|'fondo'>('cash');
+  const [activePaymentTab, setActivePaymentTab] = useState<'cash'|'NEQUI'|'DAVIPLATA'|'fondo'|'coins'>('cash');
   const [dialogAmount, setDialogAmount] = useState<string>('');
   
   const [cashPaid, setCashPaid] = useState<number>(0);
   const [nequiPaid, setNequiPaid] = useState<number>(0);
   const [daviplataPaid, setDaviplataPaid] = useState<number>(0);
   const [fondoPaid, setFondoPaid] = useState<number>(0);
+  const [coinsPaid, setCoinsPaid] = useState<number>(0);
 
   const [showSuccessScreen, setShowSuccessScreen] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
   const isProcessingRef = useRef(false);
 
-  // Reset al abrir
+  // Inicializacion inteligente al abrir (preserva montos previos al editar)
   useEffect(() => {
     if (isOpen) {
-      setActivePaymentTab('cash');
       setDialogAmount('');
-      setCashPaid(0);
-      setNequiPaid(0);
-      setDaviplataPaid(0);
-      setFondoPaid(0);
       setShowSuccessScreen(false);
       setSubmittingPayment(false);
       isProcessingRef.current = false;
-    }
-  }, [isOpen]);
 
-  const totalAlreadyPaid = cashPaid + nequiPaid + daviplataPaid + fondoPaid;
+      const hasExplicit = (initialCash || 0) > 0 || (initialNequi || 0) > 0 || (initialDaviplata || 0) > 0 || (initialFondo || 0) > 0 || (initialCoins || 0) > 0;
+
+      if (hasExplicit) {
+        setCashPaid(initialCash || 0);
+        setNequiPaid(initialNequi || 0);
+        setDaviplataPaid(initialDaviplata || 0);
+        setFondoPaid(initialFondo || 0);
+        setCoinsPaid(initialCoins || 0);
+
+        if ((initialNequi || 0) > 0) setActivePaymentTab('NEQUI');
+        else if ((initialDaviplata || 0) > 0) setActivePaymentTab('DAVIPLATA');
+        else if ((initialFondo || 0) > 0) setActivePaymentTab('fondo');
+        else if ((initialCoins || 0) > 0) setActivePaymentTab('coins');
+        else setActivePaymentTab('cash');
+      } else {
+        setCashPaid(0);
+        setNequiPaid(0);
+        setDaviplataPaid(0);
+        setFondoPaid(0);
+        setCoinsPaid(0);
+        if (initialPaymentSource) {
+          const src = initialPaymentSource.toUpperCase();
+          if (src.includes('NEQUI')) setActivePaymentTab('NEQUI');
+          else if (src.includes('DAVIPLATA')) setActivePaymentTab('DAVIPLATA');
+          else if (src.includes('FONDO') || src.includes('BOVEDA') || src.includes('BÓVEDA')) setActivePaymentTab('fondo');
+          else if (src.includes('MONEDA') || src.includes('ALCANCIA') || src.includes('ALCANCÍA')) setActivePaymentTab('coins');
+          else setActivePaymentTab('cash');
+        } else {
+          setActivePaymentTab('cash');
+        }
+      }
+    }
+  }, [isOpen, initialCash, initialNequi, initialDaviplata, initialFondo, initialCoins, initialPaymentSource, totalToPay]);
+
+  const totalAlreadyPaid = cashPaid + nequiPaid + daviplataPaid + fondoPaid + coinsPaid;
   const remainingDebt = Math.max(0, totalToPay - totalAlreadyPaid);
   const isReady = totalAlreadyPaid >= totalToPay || (Number(dialogAmount) > 0 && totalAlreadyPaid + Number(dialogAmount) >= totalToPay);
   
@@ -80,6 +121,9 @@ export function ExpensePaymentModal({
       } else if (activePaymentTab === 'fondo') {
         setFondoPaid(prev => prev + Math.min(val, remainingDebt));
         setActivePaymentTab('cash');
+      } else if (activePaymentTab === 'coins') {
+        setCoinsPaid(prev => prev + Math.min(val, remainingDebt));
+        setActivePaymentTab('cash');
       } else {
         setCashPaid(prev => prev + Math.min(val, remainingDebt));
       }
@@ -96,6 +140,7 @@ export function ExpensePaymentModal({
     let finalNequi = nequiPaid;
     let finalDaviplata = daviplataPaid;
     let finalFondo = fondoPaid;
+    let finalCoins = coinsPaid;
 
     // 1. Aplicar el monto digitado en el input si el usuario no presiono '+' previamente
     if (currentDialogVal > 0) {
@@ -104,10 +149,11 @@ export function ExpensePaymentModal({
       else if (activePaymentTab === 'NEQUI') finalNequi += actualPay;
       else if (activePaymentTab === 'DAVIPLATA') finalDaviplata += actualPay;
       else if (activePaymentTab === 'fondo') finalFondo += actualPay;
+      else if (activePaymentTab === 'coins') finalCoins += actualPay;
     }
 
     // 2. Calcular el remanente real que falta por cubrir para completar el 100% del egreso
-    const totalAllocated = finalCash + finalNequi + finalDaviplata + finalFondo;
+    const totalAllocated = finalCash + finalNequi + finalDaviplata + finalFondo + finalCoins;
     const leftover = Math.max(0, totalToPay - totalAllocated);
 
     // 3. Si queda un remanente por pagar, asignarlo al método de pago que esté SELECCIONADO actualmente
@@ -120,21 +166,25 @@ export function ExpensePaymentModal({
         finalDaviplata += leftover;
       } else if (activePaymentTab === 'fondo') {
         finalFondo += leftover;
+      } else if (activePaymentTab === 'coins') {
+        finalCoins += leftover;
       }
     }
 
-    // Build the string: NEQUI: $1000 / CAJA: $1000
+    // Build the string: NEQUI: $1000 / CAJA: $1000 / ALCANCIA: $500
     const parts: string[] = [];
     if (finalNequi > 0) parts.push(`NEQUI: $${finalNequi}`);
     if (finalDaviplata > 0) parts.push(`DAVIPLATA: $${finalDaviplata}`);
     if (finalCash > 0) parts.push(`CAJA: $${finalCash}`);
     if (finalFondo > 0) parts.push(`FONDO: $${finalFondo}`);
+    if (finalCoins > 0) parts.push(`ALCANCIA: $${finalCoins}`);
     
     let finalPaymentSource = parts.join(' / ');
     if (!finalPaymentSource) {
       if (finalNequi > 0) finalPaymentSource = 'NEQUI';
       else if (finalDaviplata > 0) finalPaymentSource = 'DAVIPLATA';
       else if (finalFondo > 0) finalPaymentSource = 'FONDO';
+      else if (finalCoins > 0) finalPaymentSource = 'ALCANCIA';
       else finalPaymentSource = 'CAJA';
     }
 
@@ -146,6 +196,7 @@ export function ExpensePaymentModal({
         nequi: finalNequi,
         daviplata: finalDaviplata,
         fondo: finalFondo,
+        coins: finalCoins,
         paymentSourceString: finalPaymentSource,
         taxAmount: finalTax
       });
@@ -156,7 +207,7 @@ export function ExpensePaymentModal({
       isProcessingRef.current = false;
       setSubmittingPayment(false);
     }
-  }, [cashPaid, nequiPaid, daviplataPaid, fondoPaid, currentDialogVal, activePaymentTab, remainingDebt, actualPayment, onPay, submittingPayment]);
+  }, [cashPaid, nequiPaid, daviplataPaid, fondoPaid, coinsPaid, currentDialogVal, activePaymentTab, remainingDebt, actualPayment, onPay, submittingPayment]);
 
   // Teclado fisico
   useEffect(() => {
@@ -223,7 +274,7 @@ export function ExpensePaymentModal({
       classNames={{ 
         base: "bg-gray-50 dark:bg-zinc-950 max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none", 
         closeButton: "z-[100] absolute right-4 top-4 md:right-6 md:top-6 bg-gray-200/50 dark:bg-white/10 hover:bg-rose-500 hover:text-white text-gray-600 dark:text-gray-300 rounded-full p-2 md:p-3 transition-colors", 
-        wrapper: "fixed top-0 left-0 w-screen h-screen bg-[#09090b]/90 z-[9999] flex items-center justify-center" 
+        wrapper: "fixed top-0 left-0 w-screen h-screen bg-black/70 z-[9999] flex items-center justify-center" 
       }}
     >
       <ModalContent>
@@ -263,6 +314,7 @@ export function ExpensePaymentModal({
                 {[
                   { id: 'cash', label: 'Caja', icon: <Banknote size={14} className="md:w-5 md:h-5" /> },
                   { id: 'fondo', label: 'Bóveda', icon: <Landmark size={14} className="md:w-5 md:h-5" /> },
+                  { id: 'coins', label: 'Alcancía', icon: <Coins size={14} className="md:w-5 md:h-5" /> },
                   { id: 'NEQUI', label: 'Nequi', logo: '/logos/nequi.png' },
                   { id: 'DAVIPLATA', label: 'Daviplata', logo: '/logos/daviplata.png' },
                 ].map(tab => (
@@ -308,30 +360,50 @@ export function ExpensePaymentModal({
               <div className="flex flex-col md:flex-row gap-3 md:gap-8 flex-1 min-h-0">
                 <div className="w-full md:w-[360px] flex flex-col gap-2 md:gap-4 flex-shrink-0">
                   <div className="flex flex-col gap-2 w-full max-w-full overflow-x-auto custom-scrollbar pb-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       {nequiPaid > 0 && (
-                        <div className="px-3 py-1.5 bg-[#23004C]/10 border border-[#23004C]/20 rounded-2xl flex items-center gap-2">
-                           <img src="/logos/nequi.png" className="h-4 w-4 object-contain" />
+                        <div className="px-2.5 py-1.5 bg-[#23004C]/10 border border-[#23004C]/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
+                           <img src="/logos/nequi.png" className="h-4 w-4 object-contain" alt="Nequi" />
                            <span className="text-[10px] font-medium text-[#23004C] dark:text-[#E8D1FF] uppercase tracking-widest">${formatCurrency(nequiPaid)}</span>
+                           <button type="button" onClick={() => setNequiPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Nequi"><X size={12} /></button>
                         </div>
                       )}
                       {daviplataPaid > 0 && (
-                        <div className="px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-2">
-                           <img src="/logos/daviplata.png" className="h-4 w-4 object-contain" />
+                        <div className="px-2.5 py-1.5 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
+                           <img src="/logos/daviplata.png" className="h-4 w-4 object-contain" alt="Daviplata" />
                            <span className="text-[10px] font-medium text-red-500 dark:text-red-400 uppercase tracking-widest">${formatCurrency(daviplataPaid)}</span>
+                           <button type="button" onClick={() => setDaviplataPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Daviplata"><X size={12} /></button>
                         </div>
                       )}
                       {fondoPaid > 0 && (
-                        <div className="px-3 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl flex items-center gap-2">
+                        <div className="px-2.5 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
                            <Landmark size={14} className="text-cyan-500" />
                            <span className="text-[10px] font-medium text-cyan-600 dark:text-cyan-400 uppercase tracking-widest">${formatCurrency(fondoPaid)}</span>
+                           <button type="button" onClick={() => setFondoPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Bóveda"><X size={12} /></button>
+                        </div>
+                      )}
+                      {coinsPaid > 0 && (
+                        <div className="px-2.5 py-1.5 bg-amber-500/10 border border-amber-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
+                           <Coins size={14} className="text-amber-500" />
+                           <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest">${formatCurrency(coinsPaid)}</span>
+                           <button type="button" onClick={() => setCoinsPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Alcancía"><X size={12} /></button>
                         </div>
                       )}
                       {cashPaid > 0 && (
-                        <div className="px-3 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-2">
+                        <div className="px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
                            <Banknote size={14} className="text-emerald-500" />
                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 uppercase tracking-widest">${formatCurrency(cashPaid)}</span>
+                           <button type="button" onClick={() => setCashPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Caja"><X size={12} /></button>
                         </div>
+                      )}
+                      {totalAlreadyPaid > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => { setCashPaid(0); setNequiPaid(0); setDaviplataPaid(0); setFondoPaid(0); setCoinsPaid(0); }}
+                          className="text-[9px] font-bold text-rose-500 hover:text-rose-600 uppercase tracking-wider px-2 py-1 bg-rose-50 dark:bg-rose-500/10 rounded-xl border border-rose-200 dark:border-rose-500/20"
+                        >
+                          Limpiar
+                        </button>
                       )}
                     </div>
                   </div>

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import React, { memo, useMemo } from 'react';
 import { ShieldCheck, ShieldAlert, UserCircle, Users, Activity } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area } from 'recharts';

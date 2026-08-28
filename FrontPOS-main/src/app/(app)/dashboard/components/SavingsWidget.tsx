@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Card, CardHeader, CardBody, Chip, Button } from "@heroui/react";
 import { Sparkles, TrendingDown, ArrowRight, Truck } from "lucide-react";

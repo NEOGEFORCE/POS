@@ -133,7 +133,6 @@ interface DashboardKPIsProps {
 }
 
 export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps) {
-    if (!data) return null;
     const { toast } = useToast();
 
     // ESTADOS GLOBALES DE CONTROL
@@ -142,6 +141,8 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
     const [isResetExpectedModalOpen, setIsResetExpectedModalOpen] = React.useState(false);
     const [isResetting, setIsResetting] = React.useState(false);
     const [isResettingExpected, setIsResettingExpected] = React.useState(false);
+
+    if (!data) return null;
 
     // MANEJADORES DE REINICIO Y AJUSTE
     const handleResetProfit = async () => {
@@ -259,78 +260,136 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
 
             />
 
-            {/* Specialized Audit Card (Dinero Real) */}
+            {/* Specialized Audit Card (Dinero Real: Billetes, Monedas, Digitales y Total) */}
             <KpiCard
                 variant="audit"
                 hideHeader={true}
                 label="AUDITORIA DE CAJA"
                 value={0}
+                color="#3b82f6"
+                icon={LineChart}
                 sub={
-                                <div className="flex flex-col gap-0 w-full">
-                                    <div className="p-6 pb-6 bg-gradient-to-br from-zinc-500/5 to-transparent flex flex-col items-start">
-                                        <div className="flex items-center gap-1 mb-3">
-                                            <span className="font-medium uppercase tracking-widest leading-none tracking-tight text-[11px] text-gray-500 dark:text-zinc-500">
-                                                EFECTIVO REAL EN MANO (ACUMULADO)
-                                            </span>
-                                            <Tooltip content={
-                                                <div className="p-2 max-w-[250px]">
-                                                    <p className="text-[10px] font-bold text-gray-600 dark:text-zinc-300 mb-1 uppercase tracking-widest">Formula de Auditoria</p>
-                                                    <p className="text-[10px] text-gray-500 dark:text-zinc-400">Efectivo Fisico + Ingresos Digitales - Egresos Pagados = Efectivo Real</p>
-                                                </div>
-                                            } placement="top" className="bg-gray-50 dark:bg-zinc-900 border border-black/5 dark:border-white/10">
-                                                <Info size={12} className="text-gray-500 dark:text-zinc-500 cursor-help" />
-                                            </Tooltip>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <span className="font-medium tracking-tight leading-none tracking-tighter tabular-nums truncate text-2xl sm:text-3xl lg:text-4xl text-zinc-900 dark:text-zinc-100">
-                                                {formatCurrencyWithColor(Math.round(data.reportedBalance || 0))}
-                                            </span>
-                                        </div>
-                                    </div>
+                    <div className="flex flex-col gap-0 w-full">
+                        {/* 1. SECCIÓN SUPERIOR: EFECTIVO REAL EN MANO (ACUMULADO) */}
+                        <div className="p-5 sm:p-6 pb-4 bg-gradient-to-br from-zinc-500/5 to-transparent flex flex-col items-start">
+                            <div className="flex items-center justify-between w-full mb-2">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="font-bold uppercase tracking-widest leading-none text-[11px] text-zinc-600 dark:text-zinc-400 flex items-center gap-1">
+                                        EFECTIVO REAL EN MANO (ACUMULADO)
+                                        <Tooltip content={
+                                            <div className="p-2 max-w-[250px]">
+                                                <p className="text-[10px] font-bold text-gray-600 dark:text-zinc-300 mb-1 uppercase tracking-widest">Desglose Físico</p>
+                                                <p className="text-[10px] text-gray-500 dark:text-zinc-400">Billetes en Bóveda + Monedas en Alcancía = Efectivo Real Físico</p>
+                                            </div>
+                                        } placement="top" className="bg-gray-50 dark:bg-zinc-900 border border-black/5 dark:border-white/10">
+                                            <Info size={12} className="text-gray-400 dark:text-zinc-500 cursor-help" />
+                                        </Tooltip>
+                                    </span>
+                                </div>
+                            </div>
 
-                                    <div className="px-6 py-6 border-t border-zinc-200 dark:border-white/5 bg-[#18181b]">
-                                        <div className="flex flex-col">
-                                            <span className="text-[12px] text-zinc-100 font-bold uppercase tracking-widest mb-1">
-                                                TOTAL GENERAL GUARDADO (CAJA + DIGITAL)
+                            {/* VALOR TOTAL EFECTIVO FÍSICO */}
+                            <div className="flex items-baseline gap-2 mb-4">
+                                <span className="font-bold tracking-tight leading-none tabular-nums text-4xl sm:text-5xl text-zinc-900 dark:text-zinc-100">
+                                    ${formatCurrency(Math.round(data.reportedBalance || ((data.billsBalance || 0) + (data.coinsSavings || 0))))}
+                                </span>
+                            </div>
+
+                            {/* CONTENEDOR VERDE ESMERALDA: TOTAL GENERAL GUARDADO */}
+                            <div className="w-full rounded-2xl p-4 sm:p-5 bg-emerald-950/60 dark:bg-[#062419]/90 border border-emerald-500/30 flex flex-col gap-4 shadow-inner">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[10.5px] font-extrabold uppercase tracking-widest text-emerald-400">
+                                        TOTAL GENERAL GUARDADO (CAJA + DIGITAL)
+                                    </span>
+                                    <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight tabular-nums">
+                                        ${formatCurrency(Math.round(data.totalLiquidity || ((data.reportedBalance || 0) + (data.realCashFlow?.nequi || 0) + (data.realCashFlow?.daviplata || 0))))}
+                                    </span>
+                                </div>
+
+                                {/* TARJETA 1: ALCANCÍA (acumulado desde el punto de partida, NO del mes) */}
+                                <div className="rounded-xl p-3.5 bg-amber-950/40 dark:bg-amber-950/30 border border-amber-500/40 flex flex-col gap-2">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-1.5">
+                                            <Coins size={14} className="text-amber-400" />
+                                            <span className="text-[10px] font-black uppercase tracking-wider text-amber-400">
+                                                ALCANCÍA (MONEDAS ACUMULADAS)
                                             </span>
-                                            <span className="text-xl text-zinc-100 font-bold tracking-tight">
-                                                ${formatCurrency(Math.round(data.totalLiquidity || 0))}
-                                            </span>
+                                        </div>
+                                        <span className="text-xs sm:text-sm font-black text-amber-400 tabular-nums">
+                                            ${formatCurrency(Math.round(data.coinsSavings || ((data.coins1000 || 0) + (data.coins500 || 0) + (data.coins200 || 0) + (data.coins100 || 0)) || 0))}
+                                        </span>
+                                    </div>
+                                    <div className="flex flex-col gap-1 text-[9.5px] text-zinc-300 font-medium pt-1 border-t border-amber-500/20">
+                                        <div className="flex justify-between">
+                                            <span className="text-zinc-400">Monedas 500 / 1000:</span>
+                                            <span className="font-bold tabular-nums text-white">${formatCurrency(Math.round((data.coins1000 || 0) + (data.coins500 || 0) || (data.coinsSavings || 0)))}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-zinc-400">Monedas 200:</span>
+                                            <span className="font-bold tabular-nums text-white">${formatCurrency(Math.round(data.coins200 || 0))}</span>
+                                        </div>
+                                        <div className="flex justify-between">
+                                            <span className="text-zinc-400">Monedas 100:</span>
+                                            <span className="font-bold tabular-nums text-white">${formatCurrency(Math.round(data.coins100 || 0))}</span>
                                         </div>
                                     </div>
                                 </div>
-                            }
-                            icon={LineChart}
-                            color="#3b82f6"
-                            footer={
-                                <>
-                                    <div className="flex flex-col">
-                                        <span className="text-[9px] text-gray-500 dark:text-zinc-500 font-medium tracking-tight uppercase tracking-widest leading-none">
-                                            Billeteras Digitales (Total)
-                                        </span>
-                                            <div className="flex items-center gap-3 mt-1.5">
-                                                <div className="flex items-center gap-1.5 bg-purple-500/10 px-2 py-0.5 rounded-2xl border border-purple-500/20">
-                                                    <Smartphone size={10} className="text-purple-500" />
-                                                    <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100">NEQUI: ${formatCurrency(data.realCashFlow?.nequi || 0)}</span>
-                                                </div>
-                                                <div className="flex items-center gap-1.5 bg-rose-500/10 px-2 py-0.5 rounded-2xl border border-rose-500/20">
-                                                    <Smartphone size={10} className="text-rose-500" />
-                                                    <span className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100">DAVIPLATA: ${formatCurrency(data.realCashFlow?.daviplata || 0)}</span>
-                                                </div>
-                                            </div>
+
+                                {/* TARJETA 2: BÓVEDA (BILLETES OPERATIVOS) */}
+                                <div className="rounded-xl p-3.5 bg-emerald-900/40 dark:bg-emerald-950/40 border border-emerald-500/30 flex flex-col gap-2">
+                                    <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-1.5">
+                                            <Banknote size={14} className="text-emerald-400" />
+                                            <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                                                BÓVEDA (BILLETES OPERATIVOS)
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <span className="px-2 py-0.5 rounded-md text-[8px] font-black uppercase bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                                                OPERATIVO
+                                            </span>
+                                        </div>
                                     </div>
-                                    <div className="flex flex-col items-end gap-1.5">
-                                        <button 
-                                            onClick={() => setIsAuditModalOpen(true)}
-                                            className="h-8 px-3 bg-blue-500/10 hover:bg-blue-500/20 text-blue-500 border border-blue-500/30 rounded-2xl font-medium uppercase text-[8px] tracking-tight tracking-widest flex items-center gap-2 transition-all active:scale-95 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-blue-500/10"
-                                        >
-                                            <PlusCircle size={10} /> Ajustar Fondo
-                                        </button>
-                                        <span className="text-[7px] text-zinc-600 font-bold uppercase tracking-widest">Protocolo de Auditoria Maestro</span>
-                                    </div>
-                                </>
-                            }
-                        />
+                                    <span className="text-xl sm:text-2xl font-black text-white tabular-nums tracking-tight">
+                                        ${formatCurrency(Math.round(data.billsBalance || data.vaultBalance || (data.realCashFlow?.cash || 0)))}
+                                    </span>
+                                    <p className="text-[8px] sm:text-[9px] text-emerald-300/80 font-medium leading-tight">
+                                        💡 Egresos registrados por Bóveda/Fondo descuentan únicamente de los billetes acumulados.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                footer={
+                    <>
+                        <div className="flex flex-col">
+                            <span className="text-[9px] text-gray-500 dark:text-zinc-400 font-bold uppercase tracking-widest leading-none">
+                                BILLETERAS DIGITALES (TOTAL)
+                            </span>
+                            <div className="flex items-center gap-2 sm:gap-3 mt-1.5">
+                                <div className="flex items-center gap-1.5 bg-purple-500/10 px-2.5 py-1 rounded-xl border border-purple-500/20">
+                                    <Smartphone size={11} className="text-purple-500" />
+                                    <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">NEQUI: ${formatCurrency(Math.round(data.realCashFlow?.nequi || 0))}</span>
+                                </div>
+                                <div className="flex items-center gap-1.5 bg-rose-500/10 px-2.5 py-1 rounded-xl border border-rose-500/20">
+                                    <Smartphone size={11} className="text-rose-500" />
+                                    <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">DAVIPLATA: ${formatCurrency(Math.round(data.realCashFlow?.daviplata || 0))}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                            <button
+                                onClick={() => setIsAuditModalOpen(true)}
+                                className="h-8 px-3.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-600 dark:text-blue-400 border border-blue-500/30 rounded-xl font-bold uppercase text-[9px] tracking-wider flex items-center gap-1.5 transition-all active:scale-95 shadow-sm"
+                            >
+                                <PlusCircle size={12} /> AJUSTAR FONDO
+                            </button>
+                            <span className="text-[7px] text-zinc-500 font-bold uppercase tracking-widest">PROTOCOLO DE AUDITORIA MAESTRO</span>
+                        </div>
+                    </>
+                }
+            />
                         {/* MODAL DE REINICIO DE SALDO ESPERADO */}
                         <Modal 
                             isOpen={isResetExpectedModalOpen} 

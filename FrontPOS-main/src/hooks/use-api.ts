@@ -1,96 +1,79 @@
-import useSWR, { SWRConfiguration } from 'swr';
-import Cookies from 'js-cookie';
-import { extractApiError } from '@/lib/api-error';
-import { requestSessionRecovery } from '@/lib/session-recovery';
+import useSWR, { type SWRConfiguration } from "swr";
 
-import { API_URL } from '@/lib/constants';
+import { extractApiError } from "@/lib/api-error";
+import { API_URL } from "@/lib/constants";
+import { requestSessionRecovery } from "@/lib/session-recovery";
+import { getSessionToken } from "@/lib/session";
 
-const fetcher = async (url: string): Promise<any> => {
-  const token = Cookies.get('org-pos-token') || (typeof window !== 'undefined' ? localStorage.getItem('org-pos-token') : null);
-  const res = await fetch(`${API_URL}${url}`, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-  });
+type HttpError = Error & { status: number };
 
-  if (res.status === 401) {
-    if (typeof window !== 'undefined') {
-      Cookies.remove('org-pos-token');
-      Cookies.remove('org-pos-user');
-      window.location.href = '/login?expired=true';
-    }
-    const error = new Error('Sesión expirada');
-    (error as any).status = 401;
-    throw error;
-  }
-
-  if (!res.ok) {
-    const errorMsg = await extractApiError(res, 'Error al cargar datos');
-    const error = new Error(errorMsg);
-    (error as any).status = res.status;
-    throw error;
-  }
-
-  return res.json();
-};
-
-
-export function useApi<T = any>(
-  endpoint: string | null,
-  options?: SWRConfiguration
-) {
-  const { data, error, isLoading, isValidating, mutate } = useSWR<T>(
-    endpoint,
-    fetcher,
-    {
-      revalidateOnFocus: true,
-      revalidateOnMount: true,
-      revalidateOnReconnect: true,
-      keepPreviousData: true,
-      ...options,
-    }
-  );
-
-  return {
-    data,
-    error,
-    isLoading,
-    isValidating,
-    mutate,
-  };
+function statusError(message: string, status: number): HttpError {
+  const error = new Error(message) as HttpError;
+  error.status = status;
+  return error;
 }
 
-export function useApiWithPagination<T = any>(
-  endpoint: string | null,
-  page: number = 1,
-  pageSize: number = 50,
-  options?: SWRConfiguration
-) {
-  const key = endpoint
-    ? `${endpoint}?page=${page}&pageSize=${pageSize}`
-    : null;
+const fetcher = async (url: string): Promise<any> => {
+  const execute = async (token: string | null, allowRecovery: boolean): Promise<any> => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const response = await fetch(`${API_URL}${url}`, { headers, cache: "no-store" });
 
-  const { data, error, isLoading, isValidating, mutate } = useSWR<T>(
-    key,
-    fetcher,
-    {
-      revalidateOnFocus: true,
-      revalidateOnMount: true,
-      revalidateOnReconnect: true,
-      keepPreviousData: true,
-      ...options,
+    if (response.status === 401) {
+      if (!allowRecovery || typeof window === "undefined") {
+        throw statusError("Sesión expirada", 401);
+      }
+      try {
+        const renewedToken = await requestSessionRecovery();
+        return execute(renewedToken, false);
+      } catch {
+        throw statusError("Sesión cerrada por el usuario", 401);
+      }
     }
-  );
 
-  return {
-    data,
-    error,
-    isLoading,
-    isValidating,
-    mutate,
+    if (!response.ok) {
+      throw statusError(await extractApiError(response, "Error al cargar datos"), response.status);
+    }
+    return response.json();
   };
+
+  return execute(getSessionToken(), true);
+};
+
+export function useApi<T = unknown>(endpoint: string | null, options?: SWRConfiguration) {
+  const { data, error, isLoading, isValidating, mutate } = useSWR<T>(endpoint, fetcher, {
+    revalidateOnFocus: true,
+    revalidateOnMount: true,
+    revalidateOnReconnect: true,
+    keepPreviousData: true,
+    // En celular, cada vez que se vuelve a la app se revalidaba TODO (catálogo
+    // completo incluido). Se limita a una vez por minuto y se deduplican las
+    // peticiones repetidas; los cambios reales llegan por SSE.
+    focusThrottleInterval: 60000,
+    dedupingInterval: 5000,
+    ...options,
+  });
+  return { data, error, isLoading, isValidating, mutate };
+}
+
+export function useApiWithPagination<T = unknown>(
+  endpoint: string | null,
+  page = 1,
+  pageSize = 50,
+  options?: SWRConfiguration,
+) {
+  const separator = endpoint?.includes("?") ? "&" : "?";
+  const key = endpoint ? `${endpoint}${separator}page=${page}&pageSize=${pageSize}` : null;
+  const { data, error, isLoading, isValidating, mutate } = useSWR<T>(key, fetcher, {
+    revalidateOnFocus: true,
+    revalidateOnMount: true,
+    revalidateOnReconnect: true,
+    keepPreviousData: true,
+    focusThrottleInterval: 60000,
+    dedupingInterval: 5000,
+    ...options,
+  });
+  return { data, error, isLoading, isValidating, mutate };
 }
 
 export { fetcher };

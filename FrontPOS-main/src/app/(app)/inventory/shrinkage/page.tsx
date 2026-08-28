@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect, useRef } from "react";
 import { ScannerOverlay } from "@/components/ScannerOverlay";
@@ -117,7 +117,7 @@ export default function ShrinkagePage() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="border-red-900/20 bg-[#18181b] h-fit">
+        <Card className="border-red-900/20 bg-white dark:bg-[#18181b] h-fit">
           <CardHeader>
             <CardTitle>Nueva Baja de Inventario</CardTitle>
             <CardDescription>Escanee o busque el producto a dar de baja</CardDescription>
@@ -220,7 +220,7 @@ export default function ShrinkagePage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-[#18181b] border-border/50">
+        <Card className="bg-white dark:bg-[#18181b] border-border/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               Historial de Hoy

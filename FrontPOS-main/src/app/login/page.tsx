@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 // Cache buster for Turbopack HMR
 
 import { useState, useEffect } from 'react';
@@ -19,6 +19,7 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AnimatePresence, motion } from "framer-motion";
 import { useReducedMotionSafe } from "@/components/ui/motion";
+import { RunawayButton } from "@/components/ui/runaway-button";
 
 export default function LoginPage() {
   const { login, user } = useAuth();
@@ -262,16 +263,21 @@ export default function LoginPage() {
               />
             </div>
 
-            <Button
-              type="submit"
-              color="primary"
-              size="lg"
-              radius="lg"
-              isLoading={isLoading}
-              className="w-full h-14 mt-4 font-medium tracking-wide shadow-[0_0_20px_var(--accent-soft)] transition-all active:scale-[0.98]"
+            <RunawayButton
+              runaway={!username.trim() || !password.trim()}
+              socketClassName="w-full mt-4"
             >
-              INICIAR SESION
-            </Button>
+              <Button
+                type="submit"
+                color="primary"
+                size="lg"
+                radius="lg"
+                isLoading={isLoading}
+                className="w-full h-14 font-medium tracking-wide shadow-[0_0_20px_var(--accent-soft)] transition-all active:scale-[0.98]"
+              >
+                INICIAR SESION
+              </Button>
+            </RunawayButton>
           </form>
         </div>
       </motion.div>

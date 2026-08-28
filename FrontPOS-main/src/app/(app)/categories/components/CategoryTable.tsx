@@ -17,7 +17,7 @@ import {
     LayoutGrid
 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconCategory } from '@tabler/icons-react';
+
 import { Category } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
 
@@ -90,7 +90,7 @@ const CategoryTable = memo(({
                 if (!isAdmin) return <div className="flex justify-end pr-4"><span className="text-[7px] font-medium text-gray-400 uppercase tracking-widest tracking-tight opacity-50">Solo Lectura</span></div>;
                 return (
                     <div className="flex justify-end gap-1.5 md:gap-2 px-1">
-                        <Tooltip content="EDITAR CATEGORIA" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                        <Tooltip content="EDITAR CATEGORIA" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button 
                                 isIconOnly 
                                 size="sm" 
@@ -148,7 +148,7 @@ const CategoryTable = memo(({
                                     <EmptyState 
                                         title="Sin departamentos registrados" 
                                         description="No hemos encontrado categorias en este catalogo. Registra una nueva para comenzar a organizar tu inventario."
-                                        icon={<IconCategory size={48} className="text-gray-300" />}
+                                        icon={<Shapes size={48} className="text-gray-300" />}
                                     />
                                 }
                             >
@@ -174,7 +174,7 @@ const CategoryTable = memo(({
                             categories.map((c) => (
                                 <div key={c.id} className="p-3.5 rounded-2xl border card-base border-none border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-between gap-3 transform active:scale-[0.98] transition-all shrink-0">
                                     <div className="flex items-center gap-3 min-w-0">
-                                        <div className="h-10 w-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10 shrink-0 transform -rotate-1">
+                                        <div className="h-10 w-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/10 shrink-0 transform -rotate-1">
                                             <LayoutGrid size={18} strokeWidth={2.5} />
                                         </div>
                                         <div className="flex flex-col flex-1 min-h-0 min-w-0 h-full w-full">

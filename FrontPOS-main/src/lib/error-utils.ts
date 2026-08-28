@@ -1,4 +1,4 @@
-/**
+﻿/**
  * extractErrorMessage - Extracts a human-readable error message from any API error response.
  * Handles: standard JSON { error: { message } }, Factus 422 validation maps,
  * plain text responses, and network failures.

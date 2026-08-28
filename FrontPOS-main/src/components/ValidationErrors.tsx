@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { memo } from 'react';
 import { AlertTriangle } from 'lucide-react';

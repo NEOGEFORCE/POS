@@ -1,8 +1,8 @@
-"use client";
+﻿"use client";
 
 import { ReactNode } from "react";
 import { Card, CardBody, Button } from "@heroui/react";
-import { IconSearch, IconPlus } from "@tabler/icons-react";
+import { Search, Plus } from "lucide-react";
 
 interface EmptyStateProps {
     title: string;
@@ -21,7 +21,7 @@ export const EmptyState = ({
     onAction,
     compact = false
 }: EmptyStateProps) => {
-    const defaultIcon = <IconSearch size={compact ? 24 : 48} className="text-gray-300" />;
+    const defaultIcon = <Search size={compact ? 24 : 48} className="text-gray-300" />;
     
     return (
         <Card className={`w-full border-2 border-dashed border-gray-200 dark:border-white/10 bg-transparent shadow-none ${compact ? 'py-4' : 'py-12'}`}>
@@ -40,7 +40,7 @@ export const EmptyState = ({
                         color="success" 
                         variant="flat"
                         size={compact ? "sm" : "md"}
-                        startContent={<IconPlus size={compact ? 14 : 18} />}
+                        startContent={<Plus size={compact ? 14 : 18} />}
                         onPress={onAction}
                         className={compact ? "h-8 px-4 text-[10px] font-medium uppercase tracking-tight" : "mt-2"}
                     >

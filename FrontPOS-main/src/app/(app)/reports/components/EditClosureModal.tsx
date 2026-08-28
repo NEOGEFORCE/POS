@@ -9,10 +9,12 @@ import { Edit, Save } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 
+import { getClosureExpensesSummary, getRealPhysicalCash } from '@/lib/closures-helpers.mjs';
+
 interface EditClosureModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
-  closure: any; // We use any to avoid importing the whole interface if not exported, but we can type it roughly
+  closure: any;
   onSuccess: () => void;
 }
 
@@ -34,10 +36,15 @@ export default function EditClosureModal({ isOpen, onOpenChange, closure, onSucc
 
   useEffect(() => {
     if (closure) {
+      const summary = getClosureExpensesSummary(closure);
+      const realPhys = getRealPhysicalCash(closure);
+      const cashIngresos = Number(closure.totalCash || 0);
+      const expCash = cashIngresos - summary.cashExpenses - (closure.totalReturns || 0);
+
       setFormData({
-        physicalCash: closure.physicalCash || 0,
-        expectedCash: closure.expectedCash || (closure.openingCash + closure.totalCash - closure.totalExpenses),
-        totalExpenses: closure.totalExpenses || 0,
+        physicalCash: realPhys,
+        expectedCash: expCash,
+        totalExpenses: summary.totalExpenses,
         totalNequiReal: closure.totalNequiReal || closure.totalNequi || 0,
         totalDaviplataReal: closure.totalDaviplataReal || closure.totalDaviplata || 0,
       });

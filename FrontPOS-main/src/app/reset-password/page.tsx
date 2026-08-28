@@ -164,7 +164,7 @@ function ResetPasswordForm() {
             type="submit"
             color="primary"
             isLoading={isLoading}
-            className="w-full h-16 text-lg font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white dark:text-black rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
+            className="w-full h-16 text-lg font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 dark:text-black rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
           >
             ACTUALIZAR ACCESO
           </Button>

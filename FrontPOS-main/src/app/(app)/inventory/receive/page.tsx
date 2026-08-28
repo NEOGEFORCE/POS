@@ -1,4 +1,4 @@
-
+﻿
 "use client";
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
@@ -19,6 +19,7 @@ import dynamic from 'next/dynamic';
 import { useAuth } from '@/lib/auth';
 import { apiFetch, ApiError } from '@/lib/api-error';
 import { API_URL } from '@/lib/constants';
+import { isSoundMuted } from '@/lib/audio-utils';
 import PendingOrdersView from './components/PendingOrdersView';
 
 const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
@@ -29,13 +30,7 @@ const InvoiceReaderModal = dynamic(() => import('./components/InvoiceReaderModal
 const UnmatchedItemsReviewer = dynamic(() => import('./components/UnmatchedItemsReviewer'), { ssr: false });
 import { ExpensePaymentModal } from '../../expenses/components/ExpensePaymentModal';
 
-// Stats Component inline (mismo patron que ProductStats)
-const SPARKLINE_DATA_1 = [{ val: 40 }, { val: 30 }, { val: 45 }, { val: 20 }, { val: 50 }];
-const SPARKLINE_DATA_2 = [{ val: 10 }, { val: 25 }, { val: 15 }, { val: 40 }, { val: 35 }];
-const SPARKLINE_DATA_3 = [{ val: 50 }, { val: 45 }, { val: 55 }, { val: 60 }, { val: 40 }];
-const SPARKLINE_DATA_4 = [{ val: 20 }, { val: 35 }, { val: 25 }, { val: 45 }, { val: 50 }];
-
-import { ResponsiveContainer, AreaChart, Area } from 'recharts';
+// Stats compactos de la recepción activa.
 
 export interface ReceiveItem {
     lineId: string;
@@ -63,7 +58,7 @@ export interface ReceiveItem {
     currentStock: number;
     unit: 'UND' | 'KG' | 'LB';
     isWeighted: boolean;
-    actualPhysicalStock?: number;
+    actualPhysicalStock?: number | null;
     productSuppliers?: any[];
     isMatched?: boolean;
     supplierId?: string | number;
@@ -418,6 +413,8 @@ export default function ReceiveInventoryPage() {
 
     // --- SONIDOS ---
     const playScanSound = (type: 'success' | 'error') => {
+        if (typeof window === 'undefined') return;
+        if (isSoundMuted()) return;
         try {
             const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
             const osc = ctx.createOscillator();
@@ -1017,7 +1014,7 @@ export default function ReceiveInventoryPage() {
     // Mantener foco en scanner oculto
     useEffect(() => {
         const interval = setInterval(() => {
-            if (typeof window === 'undefined') return;
+            if (typeof window === 'undefined' || document.visibilityState !== 'visible') return;
             const target = document.activeElement as HTMLElement;
             const isRealInput = (
                 target?.tagName === 'INPUT' ||
@@ -1046,7 +1043,7 @@ export default function ReceiveInventoryPage() {
             }
         }, 2000);
         return () => clearInterval(interval);
-    }, [isScannerOpen, submitting]);
+    }, [isScannerOpen, submitting, isProductModalOpen, isAddSupplierOpen, isSyncConfirmOpen]);
 
     const updateItem = useCallback((lineId: string, updates: Partial<ReceiveItem>) => {
         setReceiveList(prev => prev.map(item => item.lineId === lineId ? { ...item, ...updates } : item));
@@ -1058,58 +1055,54 @@ export default function ReceiveInventoryPage() {
 
     const sumPayments = Object.values(mixedPayments).reduce((a, b) => a + (Number(b) || 0), 0);
 
-    const expectedTotal = useMemo(() => {
-        const total = receiveList.reduce((sum, item) => {
+    const {
+        subtotalOrderValue,
+        taxesOrderValue,
+        totalOrderValue,
+        totalItems,
+        totalUnits,
+        totalDiscountAmount,
+        avgMargin,
+    } = useMemo(() => {
+        const totals = receiveList.reduce((acc, item) => {
             const basePrice = Number(item.newPurchasePrice);
             const ivaPct = Number(item.iva || 0);
             const icuiPct = Number(item.icui || 0);
             const ibuaPct = Number(item.ibua || 0);
             const discountPct = Number(item.discount || 0);
-
-            const totalUnit = basePrice 
-                * (1 + (ivaPct / 100) + (icuiPct / 100) + (ibuaPct / 100));
-            
             const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
-            const effectiveQty = item.addedQuantity * quantityModifier;
-            const lineTotal = totalUnit * effectiveQty;
-
-            if (item.entryType === 'purchase') return sum + lineTotal;
-            if (item.entryType === 'return') return sum - lineTotal;
-            if (item.entryType === 'gift') return sum;
-            return sum;
-        }, 0);
-        return total + freightCost;
-    }, [receiveList, freightCost]);
-    
-    const isPaymentsValid = Math.abs(sumPayments - expectedTotal) < 1;
-
-    const { subtotalOrderValue, taxesOrderValue, totalOrderValue } = useMemo(() => {
-        return receiveList.reduce((acc, item) => {
-            const basePrice = Number(item.newPurchasePrice);
-            const ivaPct = Number(item.iva || 0);
-            const icuiPct = Number(item.icui || 0);
-            const ibuaPct = Number(item.ibua || 0);
-            const discountPct = Number(item.discount || 0);
-
-            const quantityModifier = item.unit === 'LB' ? 0.5 : 1;
-            const effectiveQty = item.addedQuantity * quantityModifier;
-
+            const effectiveQty = Number(item.addedQuantity || 0) * quantityModifier;
             const itemSubtotal = basePrice * effectiveQty;
             const itemTaxes = basePrice * ((ivaPct + icuiPct + ibuaPct) / 100) * effectiveQty;
             const itemTotal = itemSubtotal + itemTaxes;
+            const sign = item.entryType === 'purchase' ? 1 : item.entryType === 'return' ? -1 : 0;
 
-            if (item.entryType === 'purchase') {
-                acc.subtotalOrderValue += itemSubtotal;
-                acc.taxesOrderValue += itemTaxes;
-                acc.totalOrderValue += itemTotal;
-            } else if (item.entryType === 'return') {
-                acc.subtotalOrderValue -= itemSubtotal;
-                acc.taxesOrderValue -= itemTaxes;
-                acc.totalOrderValue -= itemTotal;
-            }
+            acc.subtotalOrderValue += sign * itemSubtotal;
+            acc.taxesOrderValue += sign * itemTaxes;
+            acc.totalOrderValue += sign * itemTotal;
+            acc.totalUnits += Number(item.addedQuantity || 0);
+            acc.totalDiscountAmount += basePrice * Number(item.addedQuantity || 0) * (discountPct / 100);
+            acc.marginTotal += Number(item.marginPercentage || 0);
             return acc;
-        }, { subtotalOrderValue: 0, taxesOrderValue: 0, totalOrderValue: 0 });
+        }, {
+            subtotalOrderValue: 0,
+            taxesOrderValue: 0,
+            totalOrderValue: 0,
+            totalUnits: 0,
+            totalDiscountAmount: 0,
+            marginTotal: 0,
+        });
+
+        const totalItems = receiveList.length;
+        return {
+            ...totals,
+            totalItems,
+            avgMargin: totalItems > 0 ? totals.marginTotal / totalItems : 0,
+        };
     }, [receiveList]);
+
+    const expectedTotal = totalOrderValue + freightCost;
+    const isPaymentsValid = Math.abs(sumPayments - expectedTotal) < 1;
 
     const handleConfirmReceive = async (payments?: any) => {
         console.log("🛠️ INICIANDO PROCESO DE SINCRONIZACION...");
@@ -1226,7 +1219,8 @@ export default function ReceiveInventoryPage() {
             setSelectedOrderRefs([]);
 
             // Reproducir sonido de exito (Beep alegre)
-            try {
+            if (!isSoundMuted()) {
+              try {
                 const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
                 const oscillator = audioCtx.createOscillator();
                 const gainNode = audioCtx.createGain();
@@ -1244,8 +1238,9 @@ export default function ReceiveInventoryPage() {
                 
                 oscillator.start(audioCtx.currentTime);
                 oscillator.stop(audioCtx.currentTime + 0.3);
-            } catch (e) {
+              } catch (e) {
                 console.error("Audio no soportado");
+              }
             }
 
             // SINCRONIZACION GLOBAL: Notificar que productos y dashboard cambiaron
@@ -1306,25 +1301,17 @@ export default function ReceiveInventoryPage() {
 
     if (loading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-[#09090b]">
+            <div className="min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-[#09090b]">
                 <Loader2 className="h-10 w-10 animate-spin text-zinc-900 dark:text-zinc-100" />
             </div>
         );
     }
 
-    const totalItems = receiveList.length;
-    const totalUnits = receiveList.reduce((sum, item) => sum + (item.addedQuantity || 0), 0);
-    const totalDiscountAmount = receiveList.reduce((sum, item) => {
-        const base = Number(item.newPurchasePrice) * item.addedQuantity;
-        return sum + (base * (Number(item.discount || 0) / 100));
-    }, 0);
-    const avgMargin = totalItems > 0 ? receiveList.reduce((sum, item) => sum + (item.marginPercentage || 0), 0) / totalItems : 0;
-
     const stats = [
-        { label: "INVERSION", val: `$${formatCurrency(totalOrderValue)}`, color: "#0ea5e9", icon: TrendingDown, desc: "Total orden", data: SPARKLINE_DATA_1 },
-        { label: "UNIDADES", val: totalUnits % 1 === 0 ? totalUnits : totalUnits.toFixed(2), color: "#10b981", icon: Package, desc: "Total de carga", data: SPARKLINE_DATA_2 },
-        { label: "DESCUENTOS", val: `$${formatCurrency(totalDiscountAmount)}`, color: "#8b5cf6", icon: Zap, desc: "Ahorro total", data: SPARKLINE_DATA_3 },
-        { label: "MARGEN", val: `${avgMargin.toFixed(0)}%`, color: "#f43f5e", icon: AlertTriangle, desc: "Ganancia promedio", data: SPARKLINE_DATA_4 }
+        { label: "INVERSION", val: `$${formatCurrency(totalOrderValue)}`, color: "#0ea5e9", icon: TrendingDown },
+        { label: "UNIDADES", val: totalUnits % 1 === 0 ? totalUnits : totalUnits.toFixed(2), color: "#10b981", icon: Package },
+        { label: "DESCUENTOS", val: `$${formatCurrency(totalDiscountAmount)}`, color: "#8b5cf6", icon: Zap },
+        { label: "MARGEN", val: `${avgMargin.toFixed(0)}%`, color: "#f43f5e", icon: AlertTriangle }
     ];
 
     return (
@@ -1395,7 +1382,7 @@ export default function ReceiveInventoryPage() {
                     {viewMode === 'active' && (
                         <Button
                             onPress={() => setIsScannerOpen(true)}
-                            className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center gap-2 hidden md:flex"
+                            className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center gap-2 hidden md:flex"
                         >
                             <Barcode className="text-zinc-900 dark:text-white" size={16} />
                             <span className="font-medium text-[10px] tracking-tight text-zinc-900 dark:text-zinc-300 uppercase hidden md:inline">ESCANEAR CODIGO</span>
@@ -1606,7 +1593,7 @@ export default function ReceiveInventoryPage() {
                         </div>
                         <Button
                             onPress={() => setIsScannerOpen(true)}
-                            className="h-10 w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center justify-center gap-2 md:hidden"
+                            className="h-10 w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 flex items-center justify-center gap-2 md:hidden"
                         >
                             <Camera size={16} />
                             <span className="font-medium uppercase text-[10px] tracking-tight">Escanear</span>
@@ -1671,7 +1658,7 @@ export default function ReceiveInventoryPage() {
                             <Button 
                                 onPress={() => setIsSyncConfirmOpen(true)} 
                                 isDisabled={receiveList.length === 0 || !selectedGlobalSupplier || submitting} 
-                                className={`h-14 px-8 rounded-2xl font-medium uppercase text-xs tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-95 flex items-center gap-2 ${receiveList.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' : 'bg-gray-200 dark:bg-zinc-800 text-gray-400'}`}
+                                className={`h-14 px-8 rounded-2xl font-medium uppercase text-xs tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-95 flex items-center gap-2 ${receiveList.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' : 'bg-gray-200 dark:bg-zinc-800 text-gray-400'}`}
                             >
                                 {submitting ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
                                 SINCRONIZAR CARGA {receiveList.length > 0 && `(${receiveList.length})`}
@@ -1697,7 +1684,7 @@ export default function ReceiveInventoryPage() {
                     <Button 
                         onPress={() => setIsSyncConfirmOpen(true)} 
                         isDisabled={receiveList.length === 0 || !selectedGlobalSupplier || submitting} 
-                        className={`h-10 px-6 rounded-2xl font-medium uppercase text-[10px] tracking-tight ${receiveList.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-200 dark:bg-zinc-800 text-gray-500'}`}
+                        className={`h-10 px-6 rounded-2xl font-medium uppercase text-[10px] tracking-tight ${receiveList.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-200 dark:bg-zinc-800 text-gray-500'}`}
                     >
                         {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={16} />}
                         SINCRONIZAR
@@ -1745,7 +1732,7 @@ export default function ReceiveInventoryPage() {
                 backdrop="blur"
                 classNames={{
                     base: "m-0 sm:m-2 bg-white dark:bg-zinc-950 border-t border-gray-200 dark:border-white/10 rounded-t-3xl sm:rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] max-h-[90vh]",
-                    backdrop: "bg-[#18181b] ",
+                    backdrop: "bg-black/50 backdrop-blur-sm",
                     closeButton: "top-4 right-4 bg-gray-100 dark:bg-zinc-800 p-2 rounded-2xl active:scale-90 transition-all"
                 }}
             >
@@ -1879,7 +1866,7 @@ export default function ReceiveInventoryPage() {
                 size="4xl"
                 classNames={{
                     base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
-                    backdrop: "bg-[#18181b] ",
+                    backdrop: "bg-black/50 backdrop-blur-sm",
                     closeButton: "absolute right-5 top-5 text-gray-400 hover:text-emerald-500 transition-colors z-[100] rounded-2xl"
                 }}
             >
@@ -2170,7 +2157,7 @@ export default function ReceiveInventoryPage() {
                                     onClose(); 
                                     setIsProductModalOpen(true);
                                     setNewProduct(prev => ({ ...prev, barcode: scannedNotFoundCode }));
-                                }} className="h-12 flex-1 rounded-2xl font-medium uppercase text-xs tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]">Crear Producto</Button>
+                                }} className="h-12 flex-1 rounded-2xl font-medium uppercase text-xs tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">Crear Producto</Button>
                             </ModalFooter>
                         </>
                     )}

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState } from 'react';
 import {
@@ -220,7 +220,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                             onChange={(e) => setFormat(e.target.value)}
                                                             className="peer sr-only"
                                                         />
-                                                        <div className="w-5 h-5 rounded-2xl border border-zinc-700 bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
+                                                        <div className="w-5 h-5 rounded-2xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
                                                             <div className="w-2 h-2 rounded-2xl bg-white opacity-0 peer-checked:opacity-100" />
                                                         </div>
                                                         <span className="text-sm text-gray-600 dark:text-zinc-400 font-medium peer-checked:text-zinc-900 dark:text-zinc-100 dark:peer-checked:text-white transition-colors">
@@ -250,7 +250,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                             onChange={() => toggleDataSource(opt.id)}
                                                             className="peer sr-only"
                                                         />
-                                                        <div className="w-5 h-5 rounded border border-zinc-700 bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
+                                                        <div className="w-5 h-5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
                                                             <Check size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                                         </div>
                                                         <span className="text-sm text-gray-600 dark:text-zinc-400 font-medium peer-checked:text-zinc-900 dark:text-zinc-100 dark:peer-checked:text-white transition-colors">
@@ -287,7 +287,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 onChange={(e) => setSaveToCloud(e.target.checked)}
                                                 className="peer sr-only"
                                             />
-                                            <div className="w-5 h-5 rounded border border-zinc-700 bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
+                                            <div className="w-5 h-5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-[#18181b] peer-checked:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 peer-checked:border-emerald-500 flex items-center justify-center transition-all">
                                                 <Cloud size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                             </div>
                                             <span className="text-sm text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium peer-checked:text-gray-600 dark:text-zinc-300 transition-colors flex items-center gap-2">
@@ -303,7 +303,7 @@ export default function GenerateReportModal({ isOpen, onOpenChange, onGenerate }
                                                 onChange={(e) => setSendToTelegram(e.target.checked)}
                                                 className="peer sr-only"
                                             />
-                                            <div className="w-5 h-5 rounded border border-zinc-700 bg-[#18181b] peer-checked:bg-blue-500 peer-checked:border-blue-500 flex items-center justify-center transition-all">
+                                            <div className="w-5 h-5 rounded border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-[#18181b] peer-checked:bg-blue-500 peer-checked:border-blue-500 flex items-center justify-center transition-all">
                                                 <Send size={12} className="text-white opacity-0 peer-checked:opacity-100" />
                                             </div>
                                             <span className="text-sm text-gray-500 dark:text-zinc-500 dark:text-zinc-400 font-medium peer-checked:text-blue-400 transition-colors flex items-center gap-2">

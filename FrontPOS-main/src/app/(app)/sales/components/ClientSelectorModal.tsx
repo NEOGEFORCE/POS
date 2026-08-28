@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
     Modal, ModalContent, ModalHeader, ModalBody,
@@ -95,7 +95,7 @@ export default function ClientSelectorModal({
                                     }`}
                                 >
                                     <div className={`h-10 w-10 rounded-2xl flex items-center justify-center transition-all duration-300 ${
-                                        String(selectedClientDni) === '0' || !selectedClientDni ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white' : 'bg-sky-100 dark:bg-sky-500/10 text-sky-500'
+                                        String(selectedClientDni) === '0' || !selectedClientDni ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100' : 'bg-sky-100 dark:bg-sky-500/10 text-sky-500'
                                     }`}>
                                         <User size={20} />
                                     </div>
@@ -127,7 +127,7 @@ export default function ClientSelectorModal({
                                             >
                                                 <div className={`h-10 w-10 rounded-2xl flex items-center justify-center transition-all duration-300 ${
                                                     isActive 
-                                                        ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' 
+                                                        ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' 
                                                         : 'bg-gray-100 dark:bg-zinc-800 text-gray-500 dark:text-zinc-500 group-hover:bg-white dark:group-hover:bg-zinc-700 shadow-inner'
                                                 }`}>
                                                     <User size={20} />

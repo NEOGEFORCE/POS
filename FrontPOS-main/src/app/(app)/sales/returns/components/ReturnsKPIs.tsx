@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Card, CardBody } from "@heroui/react";
 import { TrendingDown, Clock, RotateCcw, Package, LucideIcon } from 'lucide-react';

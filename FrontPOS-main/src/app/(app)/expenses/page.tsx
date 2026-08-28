@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
@@ -415,19 +415,25 @@ export default function ExpensesPage() {
       const method = addDialogOpen ? 'POST' : 'PUT';
 
       // Preparar payload base
+      const isPending = data.status === 'PENDING' || data.paymentSource === 'PRESTAMO';
+      const expenseAmount = Math.abs(parseFloat(String(data.amount)) || 0);
+
       const payload: any = {
         description: data.description.toUpperCase(),
-        amount: Math.abs(parseFloat(String(data.amount)) || 0),
+        amount: expenseAmount,
         taxAmount: data.taxAmount || 0,
-        cashAmount: data.cashAmount || 0,
-        nequiAmount: data.nequiAmount || 0,
-        daviplataAmount: data.daviplataAmount || 0,
-        fondoAmount: data.fondoAmount || 0,
-        date: currentDate,
-        paymentSource: data.paymentSource || 'EFECTIVO',
+        cashAmount: isPending ? 0 : (data.cashAmount || 0),
+        nequiAmount: isPending ? 0 : (data.nequiAmount || 0),
+        daviplataAmount: isPending ? 0 : (data.daviplataAmount || 0),
+        fondoAmount: isPending ? 0 : (data.fondoAmount || 0),
+        coinsAmount: isPending ? 0 : (data.coinsAmount || 0),
+        paidAmount: isPending ? 0 : expenseAmount,
+        remainingAmount: isPending ? expenseAmount : 0,
+        date: addDialogOpen ? currentDate : (editingExpense?.date || currentDate),
+        paymentSource: data.paymentSource || (isPending ? 'PRESTAMO' : 'EFECTIVO'),
         category: data.category,
         lenderName: data.paymentSource === 'PRESTAMO' ? data.lenderName : null,
-        status: data.status,
+        status: isPending ? 'PENDING' : 'PAID',
         supplierId: data.category === 'Proveedores' && data.supplierId ? Number(data.supplierId) : null,
         newSupplierName: data.category === 'Proveedores' && !data.supplierId ? data.newSupplierName : null
       };
@@ -475,7 +481,7 @@ export default function ExpensesPage() {
 
   const handleDeleteExpense = async () => {
     if (!deletingId) return;
-    const token = Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token');
+    const token = Cookies.get('org-pos-token');
     try {
       await apiFetch(`/expenses/delete/${deletingId}`, {
         method: 'DELETE',
@@ -569,7 +575,7 @@ export default function ExpensesPage() {
     }
   };
 
-  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b]"><Spinner color="danger" size="lg" /></div>;
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-zinc-50 dark:bg-[#09090b]"><Spinner color="danger" size="lg" /></div>;
 
   return (
     <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-hidden bg-transparent text-zinc-900 dark:text-zinc-50 transition-all duration-500 relative">

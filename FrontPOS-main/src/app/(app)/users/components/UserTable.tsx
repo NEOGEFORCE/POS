@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -109,7 +109,7 @@ const UserTable = memo(({
             case "actions":
                 return (
                     <div className="flex items-center justify-end gap-1 px-1">
-                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button isIconOnly size="sm" variant="flat" className="bg-emerald-500/5 text-zinc-900 dark:text-zinc-100 hover:bg-emerald-500 hover:text-white transition-all rounded-2xl" onPress={() => onEdit(u)}>
                                 <Edit size={14} />
                             </Button>

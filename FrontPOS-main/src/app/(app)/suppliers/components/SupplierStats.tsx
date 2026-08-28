@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import { Zap, Phone, Sparkles, Building2 } from 'lucide-react';

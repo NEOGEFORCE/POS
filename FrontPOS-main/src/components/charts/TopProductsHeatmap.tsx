@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * TopProductsHeatmap — #10 Catalogo

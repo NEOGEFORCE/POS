@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * SalesAnalyticsChart — #9 Catalogo

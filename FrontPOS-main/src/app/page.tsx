@@ -1,9 +1,10 @@
-"use client";
+﻿"use client";
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Spinner } from "@heroui/react";
 import { ShoppingCart } from 'lucide-react';
+import { readSession } from '@/lib/session';
 
 export default function Home() {
   const router = useRouter();
@@ -32,18 +33,13 @@ export default function Home() {
         return;
       }
 
-      const userStr = localStorage.getItem('org-pos-user');
-      if (userStr) {
-        try {
-          const user = JSON.parse(userStr);
-          const role = (user.role || user.Role || "").toLowerCase();
-          if (role === 'admin' || role === 'administrador' || role === 'superadmin') {
-            router.replace('/dashboard');
-          } else {
-            router.replace('/sales/new');
-          }
-        } catch (e) {
-          router.replace('/login');
+      const session = readSession();
+      if (session) {
+        const role = (session.user.role || session.user.Role || "").toLowerCase();
+        if (role === 'admin' || role === 'administrador' || role === 'superadmin') {
+          router.replace('/dashboard');
+        } else {
+          router.replace('/sales/new');
         }
       } else {
         router.replace('/login');

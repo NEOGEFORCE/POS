@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Card, CardBody, Button, Badge, Chip, Skeleton, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Input } from "@heroui/react";
 import { 
@@ -339,16 +339,23 @@ export default function InventoryHub() {
       const salePrice = Number(p.salePrice ?? 0) || 0;
       const quantity = Number(p.quantity ?? 0) || 0;
       const minStock = Number(p.minStock ?? 0) || 0;
-      
-      // Skip weighted products (like cheese sold by weight) from ALL calculations
-      // They have infinite/placeholder stock that skews valuation
+
+      // Los productos por peso (queso, carne, verdura) SI cuentan como valor.
+      // El dueno verifica la mercancia al recibirla y digita los kilos reales,
+      // asi que su cantidad es un dato valido.
+      //
+      // Antes se excluian aqui y no en el dashboard, y esa era toda la
+      // diferencia entre el valor de inventario de esta pagina y el de
+      // /dashboard y /products.
+      totalCostValue += purchasePrice * quantity;
+      totalSaleValue += salePrice * quantity;
+
+      // Del semaforo de stock si se excluyen: su cantidad es un peso continuo,
+      // no unidades, y el umbral de minStock no aplica igual.
       if (isProductWeighted(p)) {
         healthyCount++;
         return;
       }
-      
-      totalCostValue += purchasePrice * quantity;
-      totalSaleValue += salePrice * quantity;
 
       const status = calculateStockHealth(quantity, minStock);
       if (status === 'CRITICAL') {
@@ -430,7 +437,7 @@ export default function InventoryHub() {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
                 <div className="flex flex-col">
                     <div className="flex items-center gap-2 mb-1">
-                        <div className="h-8 w-8 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
+                        <div className="h-8 w-8 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
                             <Package size={16} />
                         </div>
                         <h1 className="text-xl md:text-2xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tighter tracking-tight uppercase">
@@ -452,7 +459,7 @@ export default function InventoryHub() {
                 {/* Valorizacion Costo */}
                 <Card className="bg-zinc-50 dark:bg-[#18181b]/50 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                     <CardBody className="p-3 flex flex-row items-center gap-2">
-                        <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
+                        <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] rotate-3">
                             <DollarSign size={16} />
                         </div>
                         <div className="flex flex-col min-w-0">

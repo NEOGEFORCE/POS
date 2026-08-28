@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
@@ -6,7 +6,7 @@ import {
 } from "@heroui/react";
 import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
-import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP } from '@/lib/utils';
+import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP, roundToNearestFifty, normalizeSalePrice } from '@/lib/utils';
 import { validateProduct, FieldError } from '@/lib/formValidation';
 import ValidationErrors from '@/components/ValidationErrors';
 import { useState, useCallback, useMemo, memo, useEffect } from 'react';
@@ -475,7 +475,7 @@ const ProductFormModal = memo(function ProductFormModal({
         base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden max-h-[95vh] flex flex-col mx-2 md:mx-0",
         wrapper: "items-center justify-center p-8 md:p-12",
         closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
-        backdrop: "bg-[#18181b] "
+        backdrop: "bg-black/50 backdrop-blur-sm"
       }}
     >
       <ModalContent>
@@ -513,7 +513,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       </div>
                     )}
                   </div>
-                  <div className="absolute -bottom-1 -right-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-white dark:border-zinc-950 cursor-pointer active:scale-90 transition-all hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5">
+                  <div className="absolute -bottom-1 -right-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 p-1.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-white dark:border-zinc-950 cursor-pointer active:scale-90 transition-all hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5">
                     <Camera size={10} />
                     <input
                       type="file"
@@ -659,14 +659,14 @@ const ProductFormModal = memo(function ProductFormModal({
                       const marginRaw = addDialogOpen ? newProduct.marginPercentage : editingProduct?.marginPercentage;
                       const hasMargin = marginRaw !== undefined && marginRaw !== null && marginRaw !== ("" as any);
                       const margin = Number(marginRaw) || 0;
-                      let currentPvpRaw = addDialogOpen ? newProduct.salePrice : editingProduct?.salePrice;
-                      let currentPvp = typeof currentPvpRaw === 'string' ? parseCOP(currentPvpRaw) : (parseFloat(String(currentPvpRaw)) || 0);
+                      const currentPvpRaw = addDialogOpen ? newProduct.salePrice : editingProduct?.salePrice;
+                      const currentPvp = typeof currentPvpRaw === 'string' ? parseCOP(currentPvpRaw) : (parseFloat(String(currentPvpRaw)) || 0);
 
                       let newPvp = currentPvp;
                       let newMargin = marginRaw;
 
                       if (hasMargin) {
-                          newPvp = applySurtifamiliarRounding(Math.round(val * (1 + margin / 100)));
+                          newPvp = normalizeSalePrice(Math.round(val * (1 + margin / 100)));
                       } else {
                           if (currentPvp > 0 && val > 0) {
                               newMargin = Number((((currentPvp / val) - 1) * 100).toFixed(2));
@@ -714,7 +714,7 @@ const ProductFormModal = memo(function ProductFormModal({
                        const pvpRaw = addDialogOpen ? newProduct.salePrice : editingProduct?.salePrice;
                        const pvp = typeof pvpRaw === 'string' ? parseCOP(pvpRaw) : (parseFloat(String(pvpRaw)) || 0);
 
-                       const newPvp = cost > 0 ? applySurtifamiliarRounding(Math.round(cost * (1 + val / 100))) : pvp;
+                       const newPvp = cost > 0 ? normalizeSalePrice(Math.round(cost * (1 + val / 100))) : pvp;
                        const formattedMargin = Number(val.toFixed(2));
 
                        if (addDialogOpen) {
@@ -782,10 +782,46 @@ const ProductFormModal = memo(function ProductFormModal({
                     }}
                   />
                   {!hasFieldError('salePrice') && (
-                    <div className="absolute -right-1 -top-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white text-[6px] font-medium px-1.5 py-0.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-10">
+                    <div className="absolute -right-1 -top-1 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 text-[6px] font-medium px-1.5 py-0.5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] z-10">
                       +{formatCOP((addDialogOpen ? (newProduct.salePrice || 0) - (newProduct.purchasePrice || 0) : (editingProduct?.salePrice || 0) - (editingProduct?.purchasePrice || 0)))}
                     </div>
                   )}
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const priceRaw = addDialogOpen ? newProduct.salePrice : editingProduct?.salePrice;
+                      const shown = typeof priceRaw === 'number' ? Math.round(priceRaw) : parseCOP(String(priceRaw ?? ''));
+
+                      const costRaw = addDialogOpen ? newProduct.purchasePrice : editingProduct?.purchasePrice;
+                      const currentCost = typeof costRaw === 'string' ? parseCOP(costRaw) : (parseFloat(String(costRaw)) || 0);
+                      const marginRaw = addDialogOpen ? newProduct.marginPercentage : editingProduct?.marginPercentage;
+                      const margin = Number(marginRaw) || 0;
+
+                      // Si el precio visible es el que dejo la regla automatica, se
+                      // ajusta sobre el precio real (540 -> 550) y no sobre el inflado.
+                      const projected = currentCost > 0 && margin > 0 ? currentCost * (1 + margin / 100) : 0;
+                      const base = (projected > 0 && applySurtifamiliarRounding(projected) === shown) ? projected : shown;
+
+                      const snapped = roundToNearestFifty(base);
+                      if (snapped <= 0) return;
+
+                      const newMargin = currentCost > 0
+                        ? Number((((snapped / currentCost) - 1) * 100).toFixed(2))
+                        : marginRaw;
+
+                      if (addDialogOpen) {
+                        setNewProduct((p: any) => ({ ...p, salePrice: formatInputCOP(String(snapped)), marginPercentage: newMargin }));
+                      } else {
+                        setEditingProduct((p: any) => p ? { ...p, salePrice: formatInputCOP(String(snapped)), marginPercentage: newMargin } : null);
+                      }
+                    }}
+                    title="Ajustar al múltiplo de 50 más cercano"
+                    aria-label="Ajustar precio de venta al múltiplo de 50 más cercano"
+                    className="mt-1 self-start h-6 px-2 rounded-lg text-[9px] font-bold uppercase tracking-wider bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/30 hover:bg-amber-500/20 active:scale-95 transition-all"
+                  >
+                    →50
+                  </button>
                   {getFieldError('salePrice') && (
                     <span className="text-[9px] font-medium text-rose-500 tracking-tight">{getFieldError('salePrice')}</span>
                   )}
@@ -856,7 +892,7 @@ const ProductFormModal = memo(function ProductFormModal({
                   <motion.div 
                     initial={{ opacity: 0, height: 0 }}
                     animate={{ opacity: 1, height: 'auto' }}
-                    className="flex flex-col gap-3 p-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5/[0.02] rounded-2xl border border-emerald-500/10 shadow-inner overflow-hidden mb-1"
+                    className="flex flex-col gap-3 p-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-zinc-800 border border-zinc-200 dark:border-white/[0.05] rounded-2xl border border-emerald-500/10 shadow-inner overflow-hidden mb-1"
                   >
                     <div className="flex items-center justify-between px-1">
                       <div className="flex items-center gap-2">
@@ -1120,7 +1156,7 @@ const ProductFormModal = memo(function ProductFormModal({
                 <div className="flex-1 flex flex-col gap-2 p-3 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl border border-gray-100 dark:border-white/5">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <div className={`h-6 w-6 rounded-2xl flex items-center justify-center transition-all duration-500 ${isProductWeighted(addDialogOpen ? newProduct : editingProduct) ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
+                      <div className={`h-6 w-6 rounded-2xl flex items-center justify-center transition-all duration-500 ${isProductWeighted(addDialogOpen ? newProduct : editingProduct) ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
                         <Info size={12} />
                       </div>
                       <span className="text-[8px] font-medium text-gray-500 uppercase tracking-widest tracking-tight">Pesable</span>
@@ -1139,7 +1175,7 @@ const ProductFormModal = memo(function ProductFormModal({
 
                 <div className="flex-1 flex items-center justify-between px-3 h-10 bg-gray-50/50 dark:bg-[#18181b] rounded-2xl border border-gray-100 dark:border-white/5">
                   <div className="flex items-center gap-2">
-                    <div className={`h-6 w-6 rounded-2xl flex items-center justify-center transition-all duration-500 ${isPack ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
+                    <div className={`h-6 w-6 rounded-2xl flex items-center justify-center transition-all duration-500 ${isPack ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-100 dark:bg-zinc-800 text-gray-400'}`}>
                       <Box size={12} />
                     </div>
                     <span className="text-[8px] font-medium text-gray-500 uppercase tracking-widest tracking-tight">Modo Pack</span>
@@ -1209,7 +1245,7 @@ const ProductFormModal = memo(function ProductFormModal({
                           <Button 
                             isIconOnly 
                             variant="flat" 
-                            className="h-11 w-11 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl flex-shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+                            className="h-11 w-11 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl flex-shrink-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                             onPress={onScanBase}
                             title="Escanear Producto Base"
                           >
@@ -1269,7 +1305,7 @@ const ProductFormModal = memo(function ProductFormModal({
                     className={`flex-[2] h-10 font-medium uppercase tracking-widest rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all active:scale-[0.98] tracking-tight text-[10px] ${
                       duplicateFound 
                         ? "bg-amber-500 text-white shadow-amber-500/20 hover:bg-amber-600" 
-                        : "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white  hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5"
+                        : "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100  hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5"
                     }`}
                     onPress={() => {
                       if (addDialogOpen && duplicateFound) {

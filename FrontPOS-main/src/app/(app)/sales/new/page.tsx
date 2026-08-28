@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -8,16 +8,14 @@ import {
 
 import {
     Plus, Trash2, User, Grid, Camera, Search, Scale, Barcode,
-    Wifi, WifiOff, Edit2, Package, Zap
+    Wifi, WifiOff, Edit2, Package, Zap, AlertTriangle
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
 
 import dynamic from 'next/dynamic';
 
-import { formatCurrency, applyRounding } from "@/lib/utils";
-import { ScannerOverlay } from '@/components/ScannerOverlay';
-import { SplitBillDialog } from '@/components/SplitBillDialog';
+import { formatCurrency, applyRounding, roundSaleLineSubtotal } from "@/lib/utils";
 import { useNewSale } from './hooks/useNewSale';
 import ProductGrid from './components/ProductGrid';
 import { useAuth } from '@/lib/auth';
@@ -30,9 +28,11 @@ const UniversalPaymentModal = dynamic(() => import('@/components/shared/Universa
 const ClientSelectionModal = dynamic(() => import('./components/ClientSelectionModal'), { ssr: false });
 const ManualWeightModal = dynamic(() => import('./components/ManualWeightModal'), { ssr: false });
 const MissingItemModal = dynamic(() => import('./components/MissingItemModal'), { ssr: false });
-const AlertTriangleIcon = dynamic(() => import('lucide-react').then(m => m.AlertTriangle), { ssr: false });
-import { EditCartItemModal } from './components/EditCartItemModal';
-import ProductSearchModal from './components/ProductSearchModal';
+const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(module => module.ScannerOverlay), { ssr: false });
+const SplitBillDialog = dynamic(() => import('@/components/SplitBillDialog').then(module => module.SplitBillDialog), { ssr: false });
+const EditCartItemModal = dynamic(() => import('./components/EditCartItemModal').then(module => module.EditCartItemModal), { ssr: false });
+const ProductSearchModal = dynamic(() => import('./components/ProductSearchModal'), { ssr: false });
+
 
 export default function NewSalePage() {
     const {
@@ -52,7 +52,7 @@ export default function NewSalePage() {
         isSplitDialogOpen, setIsSplitDialogOpen,
         isMissingItemOpen, setIsMissingItemOpen,
         showSuccessScreen, setShowSuccessScreen,
-        lastChange, hiddenScannerRef, returnFocusToScanner,
+        lastChange, lastReceipt, hiddenScannerRef, returnFocusToScanner,
         scaleWeight, isScaleOnline, isScaleReloading, isOffline, syncQueueCount, syncOfflineQueue,
         scannerBuffer, setScannerBuffer, playBeep, feedbackCode, isFeedbackError,
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart, confirmDeleteCart,
@@ -322,23 +322,9 @@ export default function NewSalePage() {
         };
     }, [handleCodeSubmit, addMiscItem, updateQuantity, setCartItemQuantity, removeFromCart, currentCart.length, showSuccessScreen, returnFocusToScanner, setIsPaymentDialogOpen, setShowSuccessScreen, setIsClientDialogOpen, setIsScannerOpen, setIsManualWeightOpen, setIsSplitDialogOpen, setIsMissingItemOpen, searchQuery]);
 
-    // --- MOTOR DE RECUPERACIÃƒâ€œN DE FOCO (V9.5) ---
-    useEffect(() => {
-        const interval = setInterval(() => {
-            const isModalOpen = isModalOpenRef.current;
-            const isSearchFocused = document.activeElement === searchRef.current;
-            
-            // Si no hay modal, ni busqueda, y perdimos el foco del "gate"
-            if (!isModalOpen && !isSearchFocused && document.activeElement !== hiddenScannerRef.current) {
-                returnFocusToScanner();
-            }
-        }, 1500);
-        return () => clearInterval(interval);
-    }, [returnFocusToScanner]);
-
     if (loading) {
         return (
-            <div className="flex h-full w-full items-center justify-center bg-[#09090b]">
+            <div className="flex h-full w-full items-center justify-center bg-zinc-50 dark:bg-[#09090b]">
                 <Spinner size="lg" color="success" />
             </div>
         );
@@ -495,7 +481,7 @@ export default function NewSalePage() {
                                                         {item.cartQuantity}
                                                     </span>
                                                 </TableCell>
-                                                <TableCell className="text-right font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 text-xs tabular-nums">${formatCurrency(applyRounding(Number(item.salePrice) * item.cartQuantity))}</TableCell>
+                                                <TableCell className="text-right font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 text-xs tabular-nums">${formatCurrency(roundSaleLineSubtotal(Number(item.salePrice), item.cartQuantity))}</TableCell>
                                                 <TableCell className="text-center p-0">
                                                     <div onClick={(e) => e.stopPropagation()} className="flex items-center justify-center gap-1">
                                                         <Button isIconOnly color="primary" variant="light" size="sm" className="h-6 w-6 min-w-6 hover:bg-emerald-100" onPress={() => setEditingCartItem(item)}>
@@ -574,7 +560,7 @@ export default function NewSalePage() {
                                     <Camera className="h-3.5 w-3.5" />
                                 </Button>
                                 <Button isIconOnly size="sm" variant="flat" className="h-7 w-7 min-w-7 rounded bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-500 hover:bg-rose-500 hover:text-white transition-colors" onPress={() => { setIsMissingItemOpen(true); returnFocusToScanner(); }}>
-                                    <AlertTriangleIcon className="h-3.5 w-3.5" />
+                                    <AlertTriangle className="h-3.5 w-3.5" />
                                 </Button>
                             </div>
 
@@ -632,7 +618,7 @@ export default function NewSalePage() {
                 </div>
             </div>
 
-            {/* MODALES DINÃƒÂ MICOS */}
+            {/* MODALES DINÁMICOS */}
             <UniversalPaymentModal 
                 isOpen={isPaymentDialogOpen}
                 onOpenChange={(open) => { if (!open && submitting) return; setIsPaymentDialogOpen(open); }}
@@ -644,6 +630,7 @@ export default function NewSalePage() {
                 showSuccessScreen={showSuccessScreen} 
                 submittingPayment={submitting} 
                 lastChange={lastChange} 
+                lastReceipt={lastReceipt}
                 onPay={async (paymentData) => {
                     await handleConfirmSale(paymentData, pendingReturn);
                 }} 
@@ -701,7 +688,7 @@ export default function NewSalePage() {
                         <>
                             <ModalHeader className="flex flex-col gap-1 text-rose-500 font-medium tracking-tight">
                                 <div className="flex items-center gap-2">
-                                    <AlertTriangleIcon size={24} />
+                                    <AlertTriangle size={24} />
                                     ¿ELIMINAR FACTURA?
                                 </div>
                             </ModalHeader>

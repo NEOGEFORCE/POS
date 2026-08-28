@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import React from 'react'
 import { Card, CardHeader, CardBody, Button, Chip } from "@heroui/react"
@@ -110,7 +110,7 @@ export default function IncomingOrdersWidget() {
                     <div 
                         key={order.id} 
                         onClick={() => window.location.href = `/inventory/receive?orderId=${order.id}`}
-                        className="group flex flex-col sm:flex-row items-start sm:items-center justify-between p-5 bg-white dark:bg-zinc-950/40 border border-gray-100 dark:border-white/5 rounded-[1.5rem] hover:border-emerald-500/50 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5/[0.02] transition-all cursor-pointer shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
+                        className="group flex flex-col sm:flex-row items-start sm:items-center justify-between p-5 bg-white dark:bg-zinc-950/40 border border-gray-100 dark:border-white/5 rounded-[1.5rem] hover:border-emerald-500/50 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/[0.05] transition-all cursor-pointer shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                     >
                         <div className="flex items-center gap-5 w-full sm:w-auto">
                             <div className={`h-14 w-14 rounded-2xl bg-gray-100 dark:bg-[#18181b] flex items-center justify-center group-hover:bg-black/5 dark:bg-white/5 group-hover:text-zinc-900 dark:text-zinc-100 transition-all shadow-inner`}>

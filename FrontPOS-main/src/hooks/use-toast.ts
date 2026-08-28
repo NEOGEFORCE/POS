@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { toast as sonnerToast } from "sonner";
 import { playNotificationSound } from "@/lib/audio-utils";
@@ -14,6 +14,7 @@ type ToastProps = {
   variant?: 'default' | 'destructive' | 'success';
   duration?: number;
   action?: React.ReactNode;
+  className?: string;
 };
 
 // Funcion auxiliar para formatear los mensajes
@@ -35,28 +36,31 @@ function formatMessage(title?: string, description?: string) {
   return { mainMessage, subMessage };
 }
 
-function toast({ title, description, variant, duration, action }: ToastProps) {
-  // SILENCIAR NOTIFICACIONES QUE NO SEAN ERRORES (A peticion del usuario)
-  if (variant !== 'destructive') {
-    return;
-  }
-
+function toast({ title, description, variant = 'default', duration, action, className }: ToastProps) {
   const options = {
     duration: duration || 4500,
   };
 
-  playNotificationSound('error');
-
   const { mainMessage, subMessage } = formatMessage(title, description);
-
-  // Configuracion de estilo premium
   const premiumStyles = {
     description: subMessage,
     duration: options.duration,
-    className: 'group',
+    className: className || 'group',
+    action,
   };
 
-  return sonnerToast.error(mainMessage, premiumStyles);
+  if (variant === 'destructive') {
+    playNotificationSound('error');
+    return sonnerToast.error(mainMessage, premiumStyles);
+  }
+
+  if (variant === 'success') {
+    playNotificationSound('success');
+    return sonnerToast.success(mainMessage, premiumStyles);
+  }
+
+  playNotificationSound('info');
+  return sonnerToast(mainMessage, premiumStyles);
 }
 
 function useToast() {

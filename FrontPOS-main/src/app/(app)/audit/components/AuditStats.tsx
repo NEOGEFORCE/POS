@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { Card, CardBody } from "@heroui/react";
 import { ShieldAlert, Activity, Users, Globe, Fingerprint, Zap } from 'lucide-react';
 import { AuditLog } from '@/lib/definitions';

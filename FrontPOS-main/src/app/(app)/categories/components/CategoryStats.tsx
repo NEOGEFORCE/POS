@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import { Shapes, Zap, FolderTree, Sparkles } from 'lucide-react';

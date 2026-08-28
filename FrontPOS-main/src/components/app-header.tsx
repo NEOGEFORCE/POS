@@ -12,6 +12,7 @@ import {
 } from "@heroui/react"
 import { LogOut } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
+import { SoundToggle } from "@/components/sound-toggle"
 import { BackButton } from "@/components/back-button"
 import { NotificationDot } from "@/components/ui/notification-dot"
 import { SidebarTrigger } from "@/components/ui/sidebar"
@@ -39,6 +40,7 @@ export function AppHeader() {
   }, [])
 
   const timeStr = now.toLocaleTimeString('es-CO', {
+    timeZone: 'America/Bogota',
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -46,6 +48,7 @@ export function AppHeader() {
   }).toUpperCase()
 
   const dateStr = now.toLocaleDateString('es-CO', {
+    timeZone: 'America/Bogota',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -77,12 +80,13 @@ export function AppHeader() {
         </span>
       </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2 sm:gap-3">
         {/* Indicador de conexion: NotificationDot pulsante (verde online / amarillo offline) */}
-        <div className="hidden sm:flex items-center gap-2 mr-2">
+        <div className="hidden sm:flex items-center gap-2 mr-1">
            <NotificationDot tone={isOnline ? 'accent' : 'warning'} ping />
         </div>
 
+        <SoundToggle />
         <ThemeToggle />
 
         <div className="hidden lg:flex flex-col items-end mr-2">

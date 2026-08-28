@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * Mini charts — Catalogo #5–#8

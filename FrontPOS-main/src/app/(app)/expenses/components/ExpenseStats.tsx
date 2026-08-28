@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import { TrendingDown, CreditCard, Activity, DollarSign, HandCoins, ChevronRight } from 'lucide-react';

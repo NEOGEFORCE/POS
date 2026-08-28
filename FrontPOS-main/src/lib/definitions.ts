@@ -1,4 +1,4 @@
-
+﻿
 export type User = {
   id?: string;
   dni: string;
@@ -57,6 +57,7 @@ export type Product = {
   isActive?: boolean;
   netProfit?: number;
   alternateCodes?: string;
+  updatedAt?: string;
   
   // Logica de Empaques
   isPack?: boolean;
@@ -72,17 +73,25 @@ export type Product = {
 export type ExpenseCategory = 'Proveedores' | 'Servicios Publicos' | 'Danos y Arreglos' | 'Otros';
 
 export type Expense = {
-  id: string;
+  id: string | number;
   description: string;
-  category: ExpenseCategory;
+  category: ExpenseCategory | string;
   amount: number;
   date: string;
   paymentSource?: string;
-  supplierId?: string | number;
+  supplierId?: string | number | null;
+  supplier?: { id?: string | number; name: string };
   lenderName?: string;
-  status?: 'PAID' | 'PENDING';
+  status?: 'PAID' | 'PENDING' | 'SETTLED';
+  remainingAmount: number;
   taxAmount?: number;
-  creator?: User; // El usuario que registro el gasto
+  linkedOrderId?: number;
+  cashAmount?: number;
+  nequiAmount?: number;
+  daviplataAmount?: number;
+  fondoAmount?: number;
+  coinsAmount?: number;
+  creator?: User;
 };
 
 export type Sale = {
@@ -129,6 +138,7 @@ export type Supplier = {
   address?: string;
   vendorName?: string;
   status?: 'Activo' | 'Inactivo';
+  isActive?: boolean;
   imageUrl?: string;
   // Campos legacy (compatibilidad)
   visitDay?: string;
@@ -225,6 +235,7 @@ export type StockMovement = {
   reason: string;
   employeeDni?: string;
   employeeName?: string;
+  employee?: string;
   referenceId?: string;
   ref?: string; // Alias usado en algunos reportes
   metadata?: string;

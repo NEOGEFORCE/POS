@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import { Input, Button, Card, CardBody } from "@heroui/react";
@@ -59,7 +59,7 @@ const LabelSearch = memo(({ filter, onFilterChange, filteredProducts, onAddToQue
                                         </span>
                                     </div>
                                 </div>
-                                <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white h-8 w-8 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/40">
+                                <div className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 h-8 w-8 rounded-2xl flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-emerald-500/40">
                                     <PlusCircle size={18} />
                                 </div>
                             </div>

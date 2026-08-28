@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * AuthShell — #25 Catalogo (cortinas)

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * AnimatedSidebar — Catalogo #19, #20, #21

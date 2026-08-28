@@ -2,6 +2,7 @@ import { clsx, type ClassValue } from "clsx"
 import { twMerge } from "tailwind-merge"
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { normalizeSalePrice } from "@/lib/pricing-helpers.mjs";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -86,6 +87,13 @@ export const applySurtifamiliarRounding = (val: number): number => {
 
 // Alias para mantener compatibilidad con otras partes del sistema
 export const applyRounding = applySurtifamiliarRounding;
+
+export { normalizeSalePrice };
+export {
+    isHalfHundredPrice,
+    roundSaleLineSubtotal,
+    roundToNearestFifty,
+} from '@/lib/pricing-helpers.mjs';
 
 // Formato para Costo (Hasta 2 decimales): 1540.81 -> "1.540,81"
 export const formatCost = (val: number): string => {
@@ -199,8 +207,8 @@ export const sanitizeProductPayload = (product: any): any => {
         ...product,
         // Costo: Entero exacto (Math.round)
         purchasePrice: Math.round(sanitizeNumber(product.purchasePrice)),
-        // PVP: Regla Surtifamiliar
-        salePrice: applySurtifamiliarRounding(Math.round(sanitizeNumber(product.salePrice))),
+        // PVP: regla Surtifamiliar, respetando precios fijados en terminación 50
+        salePrice: normalizeSalePrice(Math.round(sanitizeNumber(product.salePrice))),
         quantity: sanitizeNumber(product.quantity),
         minStock: sanitizeNumber(product.minStock),
         marginPercentage: sanitizeNumber(product.marginPercentage),
@@ -257,11 +265,7 @@ export const formatTime = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    try {
-        return format(d, 'hh:mm:ss a', { locale: es });
-    } catch {
-        return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-    }
+    return d.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 };
 
 /**
@@ -272,11 +276,7 @@ export const formatDate = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    try {
-        return format(d, 'dd/MM/yyyy', { locale: es });
-    } catch {
-        return d.toLocaleDateString('es-CO');
-    }
+    return d.toLocaleDateString('es-CO', { timeZone: 'America/Bogota' });
 };
 
 /**
@@ -287,11 +287,7 @@ export const formatDateTime = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    try {
-        return format(d, 'dd/MM/yyyy, hh:mm:ss a', { locale: es });
-    } catch {
-        return d.toLocaleString('es-CO', { hour12: true });
-    }
+    return d.toLocaleString('es-CO', { timeZone: 'America/Bogota', hour12: true });
 };
 
 /**
@@ -302,11 +298,7 @@ export const formatShortDateTime = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    try {
-        return format(d, 'dd/MM hh:mm a', { locale: es });
-    } catch {
-        return d.toLocaleString('es-CO', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
-    }
+    return d.toLocaleString('es-CO', { timeZone: 'America/Bogota', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: true });
 };
 
 /**
@@ -317,11 +309,7 @@ export const formatTimeWithSeconds = (date: string | Date): string => {
     if (!date) return '---';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '---';
-    try {
-        return format(d, 'hh:mm:ss a', { locale: es });
-    } catch {
-        return d.toLocaleTimeString('es-CO', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
-    }
+    return d.toLocaleTimeString('es-CO', { timeZone: 'America/Bogota', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
 };
 
 /**

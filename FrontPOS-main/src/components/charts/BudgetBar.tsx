@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * BudgetBar — #11 Catalogo

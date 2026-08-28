@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * Animated Table — #26 Catalogo

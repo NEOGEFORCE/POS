@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import {
     Modal, ModalContent, ModalHeader, ModalBody, Button, Input
@@ -35,7 +35,7 @@ export default function ManualWeightModal({
             backdrop="blur" 
             classNames={{ 
                 base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[2rem]", 
-                backdrop: "bg-[#18181b] " 
+                backdrop: "bg-black/50 backdrop-blur-sm" 
             }}
         >
             <ModalContent>

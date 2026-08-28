@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import React, { useState, useEffect } from 'react';
 import { 
@@ -36,7 +36,7 @@ interface SupplierFormModalProps {
   onLookupName?: (name: string) => void;
 }
 
-// Dias de la semana para seleccion multiple
+// Dias de la semana para seleccion multiple (Estandarizados)
 const DAYS_OF_WEEK = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado', 'Domingo'];
 const DAY_SHORT_NAMES: Record<string, string> = {
   'Lunes': 'LU',
@@ -46,6 +46,46 @@ const DAY_SHORT_NAMES: Record<string, string> = {
   'Viernes': 'VI',
   'Sabado': 'SA',
   'Domingo': 'DO'
+};
+
+// Funcion para normalizar cualquier dia (con/sin tilde, mayuscula/minuscula)
+const normalizeDay = (d: string): string => {
+  if (!d) return '';
+  const clean = d.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  const map: Record<string, string> = {
+    lunes: 'Lunes',
+    martes: 'Martes',
+    miercoles: 'Miercoles',
+    jueves: 'Jueves',
+    viernes: 'Viernes',
+    sabado: 'Sabado',
+    domingo: 'Domingo'
+  };
+  return map[clean] || d.trim();
+};
+
+const parseDaysList = (daysArray?: string[], daysString?: string): string[] => {
+  const result: string[] = [];
+  if (Array.isArray(daysArray) && daysArray.length > 0) {
+    daysArray.forEach(item => {
+      if (typeof item === 'string') {
+        item.split(',').forEach(sub => {
+          const norm = normalizeDay(sub);
+          if (norm && DAYS_OF_WEEK.includes(norm) && !result.includes(norm)) {
+            result.push(norm);
+          }
+        });
+      }
+    });
+  } else if (daysString && typeof daysString === 'string') {
+    daysString.split(',').forEach(sub => {
+      const norm = normalizeDay(sub);
+      if (norm && DAYS_OF_WEEK.includes(norm) && !result.includes(norm)) {
+        result.push(norm);
+      }
+    });
+  }
+  return result;
 };
 
 const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, supplier, onLookupName }: SupplierFormModalProps) => {
@@ -63,14 +103,16 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
 
   useEffect(() => {
     if (supplier) {
+      const visitDays = parseDaysList(supplier.visitDays, supplier.visitDay);
+      const deliveryDays = parseDaysList(supplier.deliveryDays, supplier.deliveryDay);
+
       setLocalSupplier({
         ...supplier,
         name: supplier.name || '',
         phone: supplier.phone || '',
         vendorName: supplier.vendorName || '',
-        // Usar nuevos campos multi-dias, fallback a legacy si no existen
-        visitDays: supplier.visitDays || (supplier.visitDay ? [supplier.visitDay] : []),
-        deliveryDays: supplier.deliveryDays || (supplier.deliveryDay ? [supplier.deliveryDay] : []),
+        visitDays,
+        deliveryDays,
         restockMethod: supplier.restockMethod || '',
       });
     } else {
@@ -87,22 +129,24 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
 
   // Toggle para dias de visita (multi-select)
   const toggleVisitDay = (day: string) => {
+    const target = normalizeDay(day);
     setLocalSupplier(prev => {
-      const current = prev.visitDays || [];
-      const updated = current.includes(day)
-        ? current.filter(d => d !== day)
-        : [...current, day];
+      const current = (prev.visitDays || []).map(normalizeDay);
+      const updated = current.includes(target)
+        ? current.filter(d => d !== target)
+        : [...current, target];
       return { ...prev, visitDays: updated };
     });
   };
 
   // Toggle para dias de entrega (multi-select)
   const toggleDeliveryDay = (day: string) => {
+    const target = normalizeDay(day);
     setLocalSupplier(prev => {
-      const current = prev.deliveryDays || [];
-      const updated = current.includes(day)
-        ? current.filter(d => d !== day)
-        : [...current, day];
+      const current = (prev.deliveryDays || []).map(normalizeDay);
+      const updated = current.includes(target)
+        ? current.filter(d => d !== target)
+        : [...current, target];
       return { ...prev, deliveryDays: updated };
     });
   };
@@ -120,11 +164,18 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
     setValidationErrors([]);
     setIsSaving(true);
     try {
-      // Sanitizacion final antes de enviar
+      const visitDays = (localSupplier.visitDays || []).map(normalizeDay).filter(Boolean);
+      const deliveryDays = (localSupplier.deliveryDays || []).map(normalizeDay).filter(Boolean);
+
+      // Sanitizacion final antes de enviar con soporte tanto de arrays como de strings legacy
       const dataToSave = {
         ...localSupplier,
         name: normalizeText(localSupplier.name),
         phone: localSupplier.phone?.trim(),
+        visitDays,
+        deliveryDays,
+        visitDay: visitDays.join(', '),
+        deliveryDay: deliveryDays.join(', '),
       };
       await onSave(dataToSave);
     } catch (error: any) {
@@ -189,7 +240,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
       classNames={{
         base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0 translate-y-2 md:translate-y-4",
         wrapper: "items-center justify-center p-8 md:p-12",
-        backdrop: "bg-[#18181b] ",
+        backdrop: "bg-black/50 backdrop-blur-sm",
         closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
       }}
     >
@@ -322,8 +373,8 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                         trigger: `${commonInputClasses.inputWrapper} mt-1 flex-row items-center justify-between px-3`,
                         innerWrapper: "flex-1 flex items-center",
                         value: "font-medium text-xs uppercase tracking-tight text-zinc-900 dark:text-zinc-50 truncate",
-                        listbox: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
-                        popoverContent: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+                        listbox: "bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+                        popoverContent: "bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
                       }}
                       listboxProps={{
                         itemClasses: {
@@ -358,7 +409,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
                 <Button
                   type="submit"
                   isLoading={isSaving}
-                  className="flex-[2] h-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[10px] tracking-widest rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 tracking-tight"
+                  className="flex-[2] h-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium uppercase text-[10px] tracking-widest rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 tracking-tight"
                 >
                   <ShieldCheck size={14} className="mr-2" />
                   {isEdit ? "GUARDAR CAMBIOS" : "CONFIRMAR"}

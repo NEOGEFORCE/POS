@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * RollingDigits — #4 Catalogo

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -72,13 +72,13 @@ export const UserFormModal = memo(({ isOpen, onOpenChange, isEdit, initialUser, 
                 base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0",
                 wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
                 closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
-                backdrop: "bg-[#18181b] "
+                backdrop: "bg-black/50 backdrop-blur-sm"
             }}
         >
             <ModalContent>
                 {(onClose) => (
                     <form onSubmit={handleSubmit}>
-                        <ModalHeader className="flex flex-col gap-1 px-5 md:px-12 py-3 md:py-4 border-b border-gray-100 dark:border-white/5 bg-[#18181b] dark:bg-[#18181b]/50 rounded-t-2xl md:rounded-t-[2rem]">
+                        <ModalHeader className="flex flex-col gap-1 px-5 md:px-12 py-3 md:py-4 border-b border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-[#18181b]/50 rounded-t-2xl md:rounded-t-[2rem]">
                             <h2 className="text-lg md:text-2xl font-medium text-zinc-900 dark:text-zinc-50 tracking-tight tracking-tighter uppercase leading-none flex items-center gap-3 md:gap-4">
                                 <div className="h-8 w-8 md:h-14 md:w-14 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center rounded-2xl md:rounded-2xl border border-emerald-500/20"><ShieldCheck size={16} className="md:size-7" /></div>
                                 <div className="flex flex-col gap-0.5 md:gap-1">
@@ -281,7 +281,7 @@ export const DeleteUserModal = memo(({ isOpen, onOpenChange, onConfirm }: Delete
                 base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] mx-2 md:mx-0",
                 wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
                 closeButton: "absolute right-5 top-5 text-gray-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
-                backdrop: "bg-[#18181b] "
+                backdrop: "bg-black/50 backdrop-blur-sm"
             }}
         >
             <ModalContent>
@@ -352,7 +352,7 @@ export const ResetPasswordModal = memo(({ isOpen, onOpenChange, user, onConfirm 
                 base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] mx-2 md:mx-0",
                 wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
                 closeButton: "absolute right-5 top-5 text-gray-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
-                backdrop: "bg-[#18181b] "
+                backdrop: "bg-black/50 backdrop-blur-sm"
             }}
         >
             <ModalContent>

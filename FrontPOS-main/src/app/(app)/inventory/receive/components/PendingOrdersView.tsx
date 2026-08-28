@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
@@ -26,6 +26,7 @@ interface UnifiedOrderItem {
 interface UnifiedOrder {
     id: number;
     source: string;
+    status?: string;
     supplierId: number;
     supplierName: string;
     expectedDate: string;
@@ -168,7 +169,7 @@ export default function PendingOrdersView({ onLoadOrder, onGoToFreeMode }: Pendi
                     <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-50">Pedidos Pendientes</h2>
                     <p className="text-muted-foreground">Selecciona un pedido consolidado para iniciar la recepcion.</p>
                 </div>
-                <Button className="bg-gray-50 dark:bg-zinc-900 text-white dark:bg-white dark:text-zinc-900 shadow-md gap-2" onClick={onGoToFreeMode}>
+                <Button className="bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 shadow-md gap-2" onClick={onGoToFreeMode}>
                     <Plus className="h-4 w-4" />
                     Recepcion Libre (Sin Pedido)
                 </Button>

@@ -1,4 +1,14 @@
-const WS_URL = process.env.NEXT_PUBLIC_SCALE_WS_URL || 'ws://localhost:9876';
+function getWsUrl(): string {
+    if (typeof window !== 'undefined') {
+        if (process.env.NEXT_PUBLIC_SCALE_WS_URL) {
+            return process.env.NEXT_PUBLIC_SCALE_WS_URL;
+        }
+        const host = window.location.hostname || 'localhost';
+        return `ws://${host}:9876`;
+    }
+    return process.env.NEXT_PUBLIC_SCALE_WS_URL || 'ws://localhost:9876';
+}
+
 const RECONNECT_DELAY = 1000; // 1 segundo para reconexion ultra-rapida
 
 interface ScaleState {
@@ -67,7 +77,8 @@ class ScaleBridge {
         }
 
         try {
-            const ws = new WebSocket(WS_URL);
+            const url = getWsUrl();
+            const ws = new WebSocket(url);
             this.ws = ws;
 
             if (!this.watchdogInterval) {

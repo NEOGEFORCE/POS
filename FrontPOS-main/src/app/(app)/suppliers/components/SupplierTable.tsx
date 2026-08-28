@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -7,12 +7,11 @@ import {
 } from "@heroui/react";
 import {
     Building2, Phone, MapPin, Edit, Trash2,
-    ChevronLeft, ChevronRight, Info, Calendar, Truck, User
+    ChevronLeft, ChevronRight, Info, Calendar, Truck, User, Users
 } from 'lucide-react';
 import { Supplier } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconUsers } from '@tabler/icons-react';
 
 interface TableProps {
     suppliers: Supplier[];
@@ -99,15 +98,43 @@ const SupplierTable = memo(({
                     'Lunes': 'LU', 'Martes': 'MA', 'Miercoles': 'MI', 'Jueves': 'JU',
                     'Viernes': 'VI', 'Sabado': 'SA', 'Domingo': 'DO'
                 };
-                // Usar nuevos campos multi-dias o fallback a legacy
-                const visitDays = s.visitDays || (s.visitDay ? [s.visitDay] : []);
-                const deliveryDays = s.deliveryDays || (s.deliveryDay ? [s.deliveryDay] : []);
+                const normalizeDayName = (d: string): string => {
+                    if (!d) return '';
+                    const clean = d.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+                    const map: Record<string, string> = {
+                        lunes: 'Lunes', martes: 'Martes', miercoles: 'Miercoles',
+                        jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sabado', domingo: 'Domingo'
+                    };
+                    return map[clean] || d.trim();
+                };
+                const parseDays = (daysArray?: string[], daysString?: string): string[] => {
+                    const res: string[] = [];
+                    if (Array.isArray(daysArray) && daysArray.length > 0) {
+                        daysArray.forEach(item => {
+                            if (typeof item === 'string') {
+                                item.split(',').forEach(sub => {
+                                    const n = normalizeDayName(sub);
+                                    if (n && !res.includes(n)) res.push(n);
+                                });
+                            }
+                        });
+                    } else if (daysString && typeof daysString === 'string') {
+                        daysString.split(',').forEach(sub => {
+                            const n = normalizeDayName(sub);
+                            if (n && !res.includes(n)) res.push(n);
+                        });
+                    }
+                    return res;
+                };
+
+                const visitDays = parseDays(s.visitDays, s.visitDay);
+                const deliveryDays = parseDays(s.deliveryDays, s.deliveryDay);
 
                 return (
                     <div className="flex items-center justify-center gap-3">
                         {/* VISITA - Chips con iniciales */}
                         <div className="flex flex-col items-center gap-1">
-                            <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 uppercase tracking-widest">VISITA</span>
+                            <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">VISITA</span>
                             <div className="flex items-center gap-1">
                                 {visitDays.length > 0 ? (
                                     visitDays.map((day, idx) => (
@@ -163,7 +190,7 @@ const SupplierTable = memo(({
                 if (!isAdmin) return <div className="flex justify-end pr-4"><span className="text-[7px] font-medium text-gray-400 uppercase tracking-widest tracking-tight opacity-50">Solo Lectura</span></div>;
                 return (
                     <div className="flex items-center justify-end gap-1 px-1">
-                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button isIconOnly size="sm" variant="flat" className="bg-emerald-500/5 text-zinc-900 dark:text-zinc-100 hover:bg-emerald-500 hover:text-white transition-all rounded-2xl" onPress={() => onEdit(s)}>
                                 <Edit size={14} />
                             </Button>
@@ -214,7 +241,7 @@ const SupplierTable = memo(({
                                 <EmptyState
                                     title="Sin proveedores registrados"
                                     description="No hemos encontrado proveedores en este directorio. Intenta ajustar los filtros o registra uno nuevo."
-                                    icon={<IconUsers size={48} className="text-gray-300" />}
+                                    icon={<Users size={48} className="text-gray-300" />}
                                 />
                             }
                         >

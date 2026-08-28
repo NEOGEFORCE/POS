@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -65,6 +65,18 @@ export function ScannerOverlay({
     }, [torchOn, uniqueId]);
 
     const isProcessingRef = useRef(false);
+    const lastCodeRef = useRef('');
+    const lastCodeAtRef = useRef(0);
+    const matchCountRef = useRef(0);
+    const REQUIRED_MATCHES = 2;
+
+    // El callback del padre suele venir como funcion inline. Guardarlo en una ref
+    // evita que la camara se reinicie en cada render del componente contenedor.
+    const onResultRef = useRef(onResult);
+    useEffect(() => { onResultRef.current = onResult; }, [onResult]);
+
+    const onCloseRef = useRef(onClose);
+    useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
 
     useEffect(() => {
         if (!isOpen || !mounted) {
@@ -85,14 +97,26 @@ export function ScannerOverlay({
             return;
         }
 
-        // CONFIGURACION OPTIMIZADA PARA MAXIMA VELOCIDAD Y PRECISION
+        // CONFIGURACION EQUILIBRADA: rapida pero con lectura confirmada.
+        //
+        // fps 25 saturaba el decodificador y aceptaba la primera lectura, lo que
+        // provocaba confusiones de codigo. Con 12 fps hay margen para exigir dos
+        // lecturas identicas consecutivas antes de aceptar, sin perder agilidad.
         const config = {
-            fps: 25,
+            fps: 12,
             qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-                const size = Math.min(viewfinderWidth, viewfinderHeight) * 0.95;
-                return { width: size, height: size };
+                // Los codigos de barras son anchos y bajos: una ventana rectangular
+                // acelera el decodificado frente a un cuadrado.
+                const width = Math.min(viewfinderWidth * 0.92, 520);
+                const height = Math.max(Math.min(viewfinderHeight * 0.45, 260), 140);
+                return { width, height };
             },
-            aspectRatio: 1.0,
+            disableFlip: true,
+            experimentalFeatures: {
+                // Usa el decodificador nativo del navegador cuando existe:
+                // es notablemente mas rapido y preciso que el fallback JS.
+                useBarCodeDetectorIfSupported: true
+            },
             formatsToSupport: [
                 Html5QrcodeSupportedFormats.EAN_13,
                 Html5QrcodeSupportedFormats.EAN_8,
@@ -100,33 +124,53 @@ export function ScannerOverlay({
                 Html5QrcodeSupportedFormats.CODE_39,
                 Html5QrcodeSupportedFormats.UPC_A,
                 Html5QrcodeSupportedFormats.UPC_E,
+                Html5QrcodeSupportedFormats.ITF,
+                Html5QrcodeSupportedFormats.QR_CODE,
             ]
         };
 
         const onScanSuccess = (decodedText: string) => {
             // EVITAR SATURACION: Si ya estamos procesando un codigo, ignorar el resto
             if (isProcessingRef.current) return;
-            
+
+            const code = decodedText.trim();
+            if (!code) return;
+
+            // CONFIRMACION DE LECTURA: se exigen dos lecturas identicas seguidas.
+            // Con 12 fps eso son ~170 ms extra, imperceptible para el cajero, pero
+            // descarta los decodificados dudosos de un solo fotograma.
+            const now = Date.now();
+            if (code !== lastCodeRef.current || (now - lastCodeAtRef.current) > 1200) {
+                lastCodeRef.current = code;
+                lastCodeAtRef.current = now;
+                matchCountRef.current = 1;
+                return;
+            }
+
+            lastCodeAtRef.current = now;
+            matchCountRef.current += 1;
+            if (matchCountRef.current < REQUIRED_MATCHES) return;
+
             isProcessingRef.current = true;
-            
+
             // Feedback visual y tactil inmediato
             setFlashActive(true);
             if (navigator.vibrate) navigator.vibrate(80);
             setTimeout(() => setFlashActive(false), 300);
-            
+
             // Enviar resultado
-            onResult(decodedText);
+            onResultRef.current(code);
 
             // MASTER SPRINT 1.1: Anti-Bucle (One-Shot Scan)
             // Detenemos el stream de inmediato y cerramos el componente
             if (html5QrCode && html5QrCode.isScanning) {
                 html5QrCode.stop().then(() => {
-                    onClose();
+                    onCloseRef.current();
                 }).catch(() => {
-                    onClose(); // Cerrar de todos modos si falla el stop
+                    onCloseRef.current(); // Cerrar de todos modos si falla el stop
                 });
             } else {
-                onClose();
+                onCloseRef.current();
             }
         };
 
@@ -134,18 +178,45 @@ export function ScannerOverlay({
             setTimeout(() => {
                 try {
                     const videoEl = (elementRef.current?.querySelector('video') || document.querySelector(`#${uniqueId} video`)) as HTMLVideoElement | null;
-                    if (videoEl?.srcObject) {
-                        const stream = videoEl.srcObject as MediaStream;
-                        const track = stream.getVideoTracks()[0];
-                        if (track) {
-                            setTorchSupported(true);
-                        }
+                    if (!videoEl?.srcObject) return;
+                    const track = (videoEl.srcObject as MediaStream).getVideoTracks()[0];
+                    if (!track) return;
+
+                    // Preguntar por la capacidad real de linterna en vez de asumirla.
+                    const capabilities = typeof track.getCapabilities === 'function'
+                        ? (track.getCapabilities() as MediaTrackCapabilities & { torch?: boolean })
+                        : undefined;
+
+                    if (capabilities && typeof capabilities.torch === 'boolean') {
+                        setTorchSupported(capabilities.torch);
+                        return;
                     }
+
+                    // Navegadores que no exponen capabilities: se ofrece el boton y
+                    // se desactiva solo si al usarlo falla.
+                    setTorchSupported(true);
                 } catch (e) {
                     console.warn("Could not check torch capabilities:", e);
-                    setTorchSupported(true);
+                    setTorchSupported(false);
                 }
-            }, 300);
+            }, 400);
+        };
+
+        // Las mejoras de resolucion y enfoque se aplican DESPUES de arrancar.
+        // Pasarlas como restriccion inicial hacia fallar getUserMedia en algunos
+        // navegadores y el reintento rompia el escaner con
+        // "Cannot transition to a new state, already under transition".
+        const enhanceVideoTrack = async () => {
+            try {
+                const videoEl = (elementRef.current?.querySelector('video') || document.querySelector(`#${uniqueId} video`)) as HTMLVideoElement | null;
+                const track = (videoEl?.srcObject as MediaStream | null)?.getVideoTracks()[0];
+                if (!track) return;
+                await track.applyConstraints({
+                    advanced: [{ focusMode: 'continuous' } as unknown as MediaTrackConstraintSet],
+                });
+            } catch {
+                // El dispositivo no soporta enfoque continuo: se sigue sin él.
+            }
         };
 
         const startScanner = async () => {
@@ -157,19 +228,29 @@ export function ScannerOverlay({
                     () => {}
                 );
                 checkTorch();
+                void enhanceVideoTrack();
             } catch (err) {
                 console.warn("Failed with facingMode, trying getCameras...", err);
                 try {
                     const devices = await Html5Qrcode.getCameras();
                     if (devices && devices.length > 0) {
                         const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('trasera')) || devices[devices.length - 1];
-                        await html5QrCode.start(
+
+                        // El primer intento pudo dejar la instancia en transición.
+                        // Se reintenta con una instancia limpia para no chocar con
+                        // "already under transition".
+                        try { await html5QrCode.clear(); } catch { /* nada que limpiar */ }
+                        const retryScanner = new Html5Qrcode(uniqueId);
+                        scannerRef.current = retryScanner;
+
+                        await retryScanner.start(
                             backCamera.id,
                             config,
                             onScanSuccess,
                             () => {}
                         );
                         checkTorch();
+                        void enhanceVideoTrack();
                     } else {
                         throw new Error("No cameras found");
                     }
@@ -184,6 +265,9 @@ export function ScannerOverlay({
 
         return () => {
             isProcessingRef.current = false;
+            lastCodeRef.current = '';
+            lastCodeAtRef.current = 0;
+            matchCountRef.current = 0;
             const scanner = scannerRef.current;
             scannerRef.current = null;
             if (scanner) {
@@ -202,7 +286,7 @@ export function ScannerOverlay({
                 videoEl.srcObject = null;
             }
         };
-    }, [isOpen, onResult, mounted]);
+    }, [isOpen, mounted, uniqueId]);
 
     if (!isOpen || !mounted) return null;
 
@@ -221,11 +305,11 @@ export function ScannerOverlay({
                         <div className="h-16 w-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mb-4 border border-amber-500/20">
                             <AlertCircle className="h-8 w-8 text-amber-500" />
                         </div>
-                        <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">CAMARA BLOQUEADA POR SEGURIDAD</h3>
+                        <h3 className="text-xl font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter mb-4">CAMARA BLOQUEADA POR SEGURIDAD</h3>
                         <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
                             El navegador bloquea la camara en conexiones <span className="text-amber-500 font-medium">HTTP</span>.
                             <br/><br/>
-                            Para usar la camara desde esta IP (<span className="text-white underline">{typeof window !== 'undefined' ? window.location.hostname : ''}</span>), necesitas configurar <span className="text-zinc-100 font-medium tracking-tight text-[11px]">HTTPS</span> o acceder via <span className="text-sky-400 font-medium tracking-tight text-[11px]">localhost</span>.
+                            Para usar la camara desde esta IP (<span className="text-zinc-900 dark:text-white underline">{typeof window !== 'undefined' ? window.location.hostname : ''}</span>), necesitas configurar <span className="text-zinc-100 font-medium tracking-tight text-[11px]">HTTPS</span> o acceder via <span className="text-sky-400 font-medium tracking-tight text-[11px]">localhost</span>.
                         </p>
                         <button onClick={onClose} className="px-8 h-12 bg-white text-black rounded-2xl font-medium uppercase text-xs active:scale-95 transition-all"> ENTENDIDO </button>
                     </div>
@@ -237,7 +321,7 @@ export function ScannerOverlay({
                         <div className="h-16 w-16 rounded-2xl bg-rose-500/10 flex items-center justify-center mb-4 border border-rose-500/20">
                             <AlertCircle className="h-8 w-8 text-rose-500" />
                         </div>
-                        <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-4">ERROR DE CAMARA</h3>
+                        <h3 className="text-xl font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter mb-4">ERROR DE CAMARA</h3>
                         <p className="text-[10px] font-bold text-gray-500 dark:text-zinc-400 mb-6 uppercase tracking-widest leading-relaxed">
                             No se pudo acceder a la camara. Asegurate de haber concedido los permisos necesarios.
                             <br/><br/>
@@ -307,7 +391,7 @@ export function ScannerOverlay({
                                 <div className="h-16 w-16 rounded-2xl bg-amber-500/10 flex items-center justify-center mx-auto mb-4 border border-amber-500/20">
                                     <AlertTriangle className="h-8 w-8 text-amber-500" />
                                 </div>
-                                <h3 className="text-xl font-medium text-white uppercase tracking-tight tracking-tighter mb-2">{errorTitle}</h3>
+                                <h3 className="text-xl font-medium text-zinc-900 dark:text-white uppercase tracking-tight tracking-tighter mb-2">{errorTitle}</h3>
                                 
                                 {scannedBarcode && (
                                     <div className="mb-4">

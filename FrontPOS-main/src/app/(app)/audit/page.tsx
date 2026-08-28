@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
@@ -10,9 +10,9 @@ import dynamic from 'next/dynamic';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { AuditLog } from '@/lib/definitions';
 
-const AuditTable = dynamic(() => import('./components/AuditTable'), { ssr: false });
-const AuditStats = dynamic(() => import('./components/AuditStats'), { ssr: false });
-const MaintenancePanel = dynamic(() => import('./components/MaintenancePanel'), { ssr: false });
+import AuditTable from './components/AuditTable';
+import AuditStats from './components/AuditStats';
+import MaintenancePanel from './components/MaintenancePanel';
 
 async function fetchAuditLogs(token: string): Promise<AuditLog[]> {
   const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/admin/audit-logs`, {
@@ -105,7 +105,7 @@ export default function AuditPage() {
                   variant: "default"
                 });
               }}
-              className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all"
+              className="h-10 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all"
             >
               <Download size={14} className="mr-1.5" /> EXPORTAR
             </Button>

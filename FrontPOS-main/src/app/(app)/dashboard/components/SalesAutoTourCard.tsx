@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React from "react";
 import { SalesAnalyticsChart, type SalesPoint } from "@/components/charts/SalesAnalyticsChart";

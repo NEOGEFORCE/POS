@@ -1,22 +1,26 @@
-﻿"use client";
+"use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
-import Cookies from 'js-cookie';
+import React, { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 
-import { User } from './definitions';
+import { API_URL } from "@/lib/constants";
+import type { User } from "@/lib/definitions";
+import {
+  clearSession,
+  migrateLegacySession,
+  readSession,
+  subscribeAuthMessages,
+  writeSession,
+} from "@/lib/session";
 
 interface AuthContextType {
   user: User | null;
-  login: (credentials: { username: string, password?: string }) => Promise<void>;
+  login: (credentials: { username: string; password?: string }) => Promise<void>;
   logout: () => void;
   loading: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// Claves sensibles identificadas para purga
-const SENSITIVE_KEYS = ['accessToken', 'last-sale', 'org-pos-token', 'org-pos-user'];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
@@ -24,108 +28,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
-    const recoverSession = async () => {
-      try {
-        // 1. Migracion de localStorage a Cookies (Transicion segura)
-        const legacyToken = localStorage.getItem('org-pos-token');
-        const legacyUser = localStorage.getItem('org-pos-user');
+    const session = migrateLegacySession() ?? readSession();
+    setUser(session?.user ?? null);
+    setLoading(false);
 
-        let currentToken = Cookies.get('org-pos-token');
-        let currentUserStr = Cookies.get('org-pos-user');
-
-        if (legacyToken && !currentToken) {
-          Cookies.set('org-pos-token', legacyToken, { expires: 7, secure: true, sameSite: 'strict' });
-          currentToken = legacyToken;
-        }
-        if (legacyUser && !currentUserStr) {
-          Cookies.set('org-pos-user', legacyUser, { expires: 7, secure: true, sameSite: 'strict' });
-          currentUserStr = legacyUser;
-        }
-
-        // Limpieza de localStorage (Post-migracion)
-        if (legacyToken || legacyUser) {
-          localStorage.removeItem('org-pos-token');
-          localStorage.removeItem('org-pos-user');
-          localStorage.removeItem('accessToken');
-          localStorage.removeItem('last-sale');
-        }
-
-        // 2. Sincronizacion de Estado
-        if (currentToken && currentUserStr) {
-          try {
-            const userData = JSON.parse(currentUserStr);
-            setUser({ ...userData, token: currentToken });
-          } catch (e) {
-            console.error("Malformed user data in cookies", e);
-          }
-        }
-      } catch (error) {
-        console.error("Critical Auth recovery failure", error);
-      } finally {
-        // Aseguramos un pequeño respiro para que el estado de React se asiente
-        setLoading(false);
+    return subscribeAuthMessages((message) => {
+      if (message.type === "logout") {
+        setUser(null);
+        router.replace("/login");
+        return;
       }
-    };
+      const refreshed = readSession();
+      setUser(refreshed?.user ?? null);
+    });
+  }, [router]);
 
-    recoverSession();
-  }, []);
-
-  const login = async (credentials: { username: string, password?: string }) => {
-    const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/login`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(credentials),
+  const login = async (credentials: { username: string; password?: string }) => {
+    const response = await fetch(`${API_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(credentials),
     });
 
     if (!response.ok) {
-        const text = await response.text();
-        let errorMsg = 'Error de inicio de sesion';
-        try {
-            const errorData = JSON.parse(text);
-            if (errorData.error && typeof errorData.error === 'object') {
-              errorMsg = errorData.error.message || errorMsg;
-            } else {
-              errorMsg = errorData.error || errorMsg;
-            }
-        } catch (e) {}
-        throw new Error(errorMsg);
+      const text = await response.text();
+      let errorMsg = "Error de inicio de sesión";
+      try {
+        const errorData = JSON.parse(text) as { error?: string | { message?: string } };
+        errorMsg = typeof errorData.error === "object"
+          ? errorData.error?.message || errorMsg
+          : errorData.error || errorMsg;
+      } catch {
+        // Mantener mensaje seguro por defecto.
+      }
+      throw new Error(errorMsg);
     }
 
-    const data = await response.json();
-    const { token, user: userData } = data;
-    
-    if (userData && token) {
-      // Guardar en Cookies (Seguro y Volatil) en lugar de localStorage
-      Cookies.set('org-pos-user', JSON.stringify(userData), { expires: 0.5, secure: true, sameSite: 'strict' });
-      Cookies.set('org-pos-token', token, { expires: 0.5, secure: true, sameSite: 'strict' });
-      
-      setUser({ ...userData, token });
-      
-      const role = userData.role?.toLowerCase() || userData.Role?.toLowerCase() || "";
-      if (role === "admin" || role === "administrador" || role === "superadmin") {
-        router.push('/dashboard');
-      } else {
-        router.push('/sales/new');
-      }
-    } else {
-        throw new Error('Invalid response from server');
-    }
+    const data = await response.json() as { token?: string; user?: User };
+    if (!data.user || !data.token) throw new Error("Respuesta inválida del servidor");
+
+    writeSession(data.token, data.user, { broadcast: false });
+    setUser({ ...data.user, token: data.token });
+
+    const role = (data.user.role ?? data.user.Role ?? "").toLowerCase();
+    router.push(["admin", "administrador", "superadmin"].includes(role) ? "/dashboard" : "/sales/new");
   };
 
   const logout = () => {
-    // Limpieza profunda de sesion
-    Cookies.remove('org-pos-user');
-    Cookies.remove('org-pos-token');
-    
-    if (typeof window !== 'undefined') {
-      localStorage.clear();
-      sessionStorage.clear();
-    }
-
+    clearSession("manual");
     setUser(null);
-    router.replace('/login');
+    router.replace("/login");
   };
 
   return (
@@ -137,9 +89,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth() {
   const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (context === undefined) throw new Error("useAuth must be used within an AuthProvider");
   return context;
 }
-

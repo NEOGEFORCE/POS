@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
@@ -217,7 +217,7 @@ export default function CategoriesPage() {
     } catch (err: any) { toast({ variant: 'destructive', title: 'ERROR', description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
-  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b] flex-col gap-4">
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-zinc-50 dark:bg-[#09090b] flex-col gap-4">
     <Spinner color="success" size="lg" />
     <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse">Sincronizando Categorias...</p>
   </div>;
@@ -255,7 +255,7 @@ export default function CategoriesPage() {
             </Button>
             <Button
               onPress={() => setAddDialogOpen(true)}
-              className="h-8 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all shrink-0"
+              className="h-8 px-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all shrink-0"
             >
               <PlusCircle size={14} className="mr-2" /> NUEVO
             </Button>

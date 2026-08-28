@@ -1,4 +1,4 @@
-import Dexie, { Table } from 'dexie';
+﻿import Dexie, { Table } from 'dexie';
 
 export interface LocalProduct {
   barcode: string;

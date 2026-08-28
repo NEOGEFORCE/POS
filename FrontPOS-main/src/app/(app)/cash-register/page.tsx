@@ -158,15 +158,15 @@ export default function CashRegisterPage() {
   const salidasTotales = (closure?.totalExpenses || 0) + (closure?.totalReturns || 0);
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto custom-scrollbar bg-white dark:bg-zinc-950 text-white p-3 md:p-6 gap-6 relative">
+    <div className="flex flex-col flex-1 min-h-0 h-full w-full max-w-[1600px] mx-auto overflow-y-auto custom-scrollbar bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 p-3 md:p-6 gap-6 relative">
 
       {/* HEADER */}
       <div className="flex items-center gap-3 shrink-0">
-        <div className="h-10 w-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-3">
+        <div className="h-10 w-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] transform -rotate-3">
           <Lock size={20} />
         </div>
         <div className="flex flex-col">
-          <h1 className="text-2xl md:text-3xl font-medium text-white tracking-tighter uppercase tracking-tight leading-none">
+          <h1 className="text-2xl md:text-3xl font-medium text-zinc-900 dark:text-white tracking-tighter uppercase tracking-tight leading-none">
             Cierre de <span className="text-zinc-900 dark:text-zinc-100">Caja</span>
           </h1>
           <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-[0.4em] tracking-tight mt-1">Procedimiento de Cuadre</p>
@@ -176,7 +176,7 @@ export default function CashRegisterPage() {
       {/* TOP CARDS KPI */}
       <div className="grid grid-cols-3 gap-3 md:gap-4 shrink-0">
         {/* Entradas/Ventas */}
-        <div className="bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl p-4 md:p-5 flex flex-col relative overflow-hidden group hover:border-emerald-500/30 transition-colors">
+        <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl p-4 md:p-5 flex flex-col relative overflow-hidden group hover:border-emerald-500/30 transition-colors">
           <div className="absolute -right-6 -top-6 w-24 h-24 bg-black/5 dark:bg-white/5 rounded-2xl blur-2xl" />
           <span className="text-gray-600 dark:text-zinc-300 text-[10px] font-medium tracking-widest uppercase mb-1 flex items-center gap-2">
             <TrendingUp size={12} /> Entradas Efectivo
@@ -189,7 +189,7 @@ export default function CashRegisterPage() {
         </div>
 
         {/* Salidas/Gastos */}
-        <div className="bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl p-4 md:p-5 flex flex-col relative overflow-hidden group hover:border-rose-500/30 transition-colors">
+        <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl p-4 md:p-5 flex flex-col relative overflow-hidden group hover:border-rose-500/30 transition-colors">
           <div className="absolute -right-6 -top-6 w-24 h-24 bg-rose-500/10 rounded-2xl blur-2xl" />
           <span className="text-rose-400 text-[10px] font-medium tracking-widest uppercase mb-1 flex items-center gap-2">
             <TrendingDown size={12} /> Salidas Efectivo
@@ -202,7 +202,7 @@ export default function CashRegisterPage() {
         </div>
 
         {/* Total Esperado */}
-        <div className="bg-[#18181b] border border-blue-500/20 rounded-2xl p-4 md:p-5 flex flex-col relative overflow-hidden group shadow-[0_0_30px_rgba(59,130,246,0.1)]">
+        <div className="bg-white dark:bg-[#18181b] border border-blue-500/20 rounded-2xl p-4 md:p-5 flex flex-col relative overflow-hidden group shadow-[0_0_30px_rgba(59,130,246,0.1)]">
           <div className="absolute -right-6 -top-6 w-32 h-32 bg-blue-500/20 rounded-2xl blur-3xl" />
           <span className="text-blue-400 text-[10px] font-medium tracking-widest uppercase mb-1 flex items-center gap-2">
             <Calculator size={12} /> Total Esperado
@@ -219,7 +219,7 @@ export default function CashRegisterPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-4 md:gap-6 flex-1">
 
         {/* BLOQUE IZQUIERDO: RESUMEN INTOCABLE */}
-        <div className="bg-[#18181b] border border-zinc-200 dark:border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col relative overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+        <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col relative overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
           <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-zinc-800 via-zinc-700 to-zinc-800 opacity-50" />
 
           <div className="flex items-center gap-3 mb-8">
@@ -250,7 +250,7 @@ export default function CashRegisterPage() {
         </div>
 
         {/* BLOQUE DERECHO: INTERACCION CAJERO */}
-        <div className="bg-[#18181b] border border-zinc-200 dark:border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col gap-6 md:gap-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative">
+        <div className="bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/5 rounded-[2rem] p-6 md:p-8 flex flex-col gap-6 md:gap-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative">
 
           {/* Input Gigante */}
           <div className="flex flex-col gap-2 relative z-10">

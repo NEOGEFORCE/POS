@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useRef, useMemo, memo } from 'react';
 import { motion } from 'framer-motion';
@@ -103,9 +103,9 @@ function ProductGridBase({ products, addToCart }: ProductGridProps) {
                                 transform: `translateY(${virtualRow.start}px)`,
                             }}
                         >
-                            {rowProducts.map((p) => (
+                            {rowProducts.map((p, productIndex) => (
                                 <ProductItem
-                                    key={p.barcode || Math.random().toString()}
+                                    key={p.barcode || `row-${virtualRow.index}-product-${productIndex}`}
                                     product={p}
                                     onAdd={addToCart}
                                 />

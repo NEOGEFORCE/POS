@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo, useState } from 'react';
 import {
@@ -142,7 +142,7 @@ const CategoryFormModal = memo(({
                 <Button
                   isLoading={isSaving}
                   onPress={handleCustomSave}
-                  className="flex-[2] h-12 md:h-14 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[11px] md:text-base tracking-widest rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-[1.02] active:scale-95 tracking-tight group"
+                  className="flex-[2] h-12 md:h-14 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium uppercase text-[11px] md:text-base tracking-widest rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] hover:scale-[1.02] active:scale-95 tracking-tight group"
                 >
                   <Sparkles size={20} className="md:size-6 mr-2 md:mr-3 group-hover:rotate-12 transition-transform" />
                   {isEdit ? "GUARDAR CAMBIOS" : "ESTABLECER DEP."}

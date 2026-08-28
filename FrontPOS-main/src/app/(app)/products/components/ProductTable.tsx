@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo, useEffect, useState, useCallback } from 'react';
 import {
@@ -12,7 +12,7 @@ import { Product } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
 import { calculateStockHealth, formatStock, isProductWeighted } from '@/lib/utils';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconPackage } from '@tabler/icons-react';
+
 
 interface TableProps {
     products: Product[];
@@ -232,7 +232,7 @@ const ProductTable = memo(({
                                     <EmptyState
                                         title="Sin productos registrados"
                                         description="No hemos encontrado productos en este inventario. Intenta ajustar los filtros o registra uno nuevo."
-                                        icon={<IconPackage size={48} className="text-gray-300" />}
+                                        icon={<Package size={48} className="text-gray-300" />}
                                     />
                                 }
                             >
@@ -311,7 +311,7 @@ const ProductTable = memo(({
                                                             isIconOnly
                                                             radius="lg"
                                                             variant="flat"
-                                                            className="h-8 w-8 min-w-8 shrink-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white border border-emerald-600/30 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
+                                                            className="h-8 w-8 min-w-8 shrink-0 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 border border-emerald-600/30 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-90"
                                                             onPress={() => onQuickUpdate(p.barcode, 1)}
                                                         >
                                                             <Plus size={14} strokeWidth={3} />

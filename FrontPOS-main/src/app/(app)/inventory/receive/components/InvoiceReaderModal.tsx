@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useRef } from 'react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Spinner } from "@heroui/react";
@@ -329,7 +329,7 @@ export default function InvoiceReaderModal({
                       className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
                         expectIVA
                           ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
-                          : 'bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
+                          : 'bg-gray-100 dark:bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
                       }`}
                     >
                       <CheckCircle2
@@ -360,7 +360,7 @@ export default function InvoiceReaderModal({
                       className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
                         expectIBUA
                           ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
-                          : 'bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
+                          : 'bg-gray-100 dark:bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
                       }`}
                     >
                       <CheckCircle2

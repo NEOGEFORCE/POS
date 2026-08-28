@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import * as React from "react";
 import { Calendar as CalendarIcon } from "lucide-react";
@@ -105,7 +105,8 @@ export function PremiumDateInput({
   disabled,
   id,
 }: PremiumDateInputProps) {
-  const inputId = id ?? React.useId();
+  const generatedId = React.useId();
+  const inputId = id ?? generatedId;
 
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { memo } from "react";
 import { TrendingUp, Award, Box } from "lucide-react";

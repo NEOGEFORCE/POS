@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * NotificationDot — #24 + #28 Catalogo

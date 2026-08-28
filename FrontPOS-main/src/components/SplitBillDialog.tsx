@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 
 import { useState, useEffect, useMemo, useRef } from 'react'
 import {
@@ -31,7 +31,7 @@ import {
     Zap
 } from 'lucide-react'
 import { Product } from '@/lib/definitions'
-import { formatCurrency, applyRounding, isProductWeighted } from "@/lib/utils"
+import { formatCurrency, applyRounding, isProductWeighted, roundSaleLineSubtotal } from "@/lib/utils"
 
 interface CartItem extends Product {
     cartQuantity: number;
@@ -172,7 +172,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
     }
 
     const calculateTotal = (items: CartItem[]) => {
-        return items.reduce((sum, item) => sum + applyRounding(Number(item.salePrice) * item.cartQuantity), 0)
+        return items.reduce((sum, item) => sum + roundSaleLineSubtotal(Number(item.salePrice), item.cartQuantity), 0)
     }
 
     const leftTotal = calculateTotal(leftItems)
@@ -208,7 +208,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                     <div className="flex-1 flex flex-col bg-gray-50 dark:bg-black rounded-2xl border border-gray-200 dark:border-white/5 overflow-hidden shadow-inner">
                         <div className="p-2 bg-gray-100 dark:bg-[#18181b] border-b border-gray-200 dark:border-white/5 flex items-center justify-between shrink-0">
                             <span className="text-[8px] font-medium text-gray-900 dark:text-white uppercase tracking-widest">Cuenta Original</span>
-                            <span className="text-[7px] font-medium text-zinc-100 dark:text-zinc-100 uppercase bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 dark:bg-white/5 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-500/20">Pendiente</span>
+                            <span className="text-[7px] font-medium text-zinc-700 dark:text-zinc-200 uppercase bg-gray-100 dark:bg-white/5 border border-black/5 dark:border-white/5 dark:bg-white/5 px-1.5 py-0.5 rounded border border-emerald-200 dark:border-emerald-500/20">Pendiente</span>
                         </div>
                         <ScrollArea className="flex-1">
                             <Table>
@@ -229,7 +229,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                         >
                                             <TableCell className="text-[8px] font-medium uppercase tracking-tight py-1 pl-2 max-w-[120px] truncate">{item.productName}</TableCell>
                                             <TableCell className="text-[8px] font-medium tabular-nums text-center py-1">x{item.cartQuantity.toFixed(isProductWeighted(item) ? 3 : 0)}</TableCell>
-                                            <TableCell className="text-[8px] font-medium tabular-nums text-right py-1 pr-2">${formatCurrency(applyRounding(Number(item.salePrice) * item.cartQuantity))}</TableCell>
+                                            <TableCell className="text-[8px] font-medium tabular-nums text-right py-1 pr-2">${formatCurrency(roundSaleLineSubtotal(Number(item.salePrice), item.cartQuantity))}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>
@@ -267,7 +267,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                 className={`h-9 px-3 min-w-0 rounded-2xl font-medium transition-all duration-300 border shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${
                                     targetCustomer?.dni !== currentCustomerDni 
                                         ? 'bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5 text-white border-emerald-400 animate-in zoom-in-95 ' 
-                                        : 'bg-white dark:bg-[#18181b] text-zinc-100 dark:text-zinc-300 border-emerald-100 dark:border-emerald-500/10'
+                                        : 'bg-white dark:bg-[#18181b] text-zinc-700 dark:text-zinc-300 border-emerald-100 dark:border-emerald-500/10'
                                 }`}
                                 onClick={() => setIsClientModalOpen(true)}
                             >
@@ -301,7 +301,7 @@ export function SplitBillDialog({ isOpen, onClose, originalItems, customers, cur
                                         >
                                             <TableCell className="text-[8px] font-medium uppercase tracking-tight py-1 pl-2 max-w-[120px] truncate">{item.productName}</TableCell>
                                             <TableCell className="text-[8px] font-medium tabular-nums text-center py-1">x{item.cartQuantity.toFixed(isProductWeighted(item) ? 3 : 0)}</TableCell>
-                                            <TableCell className="text-[8px] font-medium tabular-nums text-right py-1 pr-2">${formatCurrency(applyRounding(Number(item.salePrice) * item.cartQuantity))}</TableCell>
+                                            <TableCell className="text-[8px] font-medium tabular-nums text-right py-1 pr-2">${formatCurrency(roundSaleLineSubtotal(Number(item.salePrice), item.cartQuantity))}</TableCell>
                                         </TableRow>
                                     ))}
                                 </TableBody>

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo, useCallback, memo } from 'react';
 import dynamic from 'next/dynamic';
@@ -74,7 +74,7 @@ const CustomerHeader = memo(({ filter, onSearch, onAdd, onReload, isLoading }: {
         <Button
           size="sm"
           onPress={onAdd}
-          className="h-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium uppercase text-[9px] px-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] tracking-tight transition-all active:scale-95 shrink-0"
+          className="h-10 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium uppercase text-[9px] px-4 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] tracking-tight transition-all active:scale-95 shrink-0"
         >
           <PlusCircle size={16} />
           <span className="ml-2 tracking-widest">NUEVO</span>
@@ -299,7 +299,7 @@ export default function CustomersPage() {
     } catch (err: any) { toast({ variant: "destructive", title: "Error al borrar", description: err.message || "FALLO AL ELIMINAR" }); }
   };
 
-  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-[#09090b] flex-col gap-4">
+  if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-zinc-50 dark:bg-[#09090b] flex-col gap-4">
     <Spinner color="success" size="lg" />
     <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-[0.4em] animate-pulse tracking-tight">Sincronizando Directorio...</p>
   </div>;

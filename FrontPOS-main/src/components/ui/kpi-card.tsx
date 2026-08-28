@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 /**
  * KpiCard — #12 Catalogo (hover-lift)

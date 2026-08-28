@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -47,7 +47,7 @@ const formatDescription = (desc: string) => {
   return desc;
 };
 
-const formatPaymentSourceForDisplay = (source: string) => {
+const formatPaymentSourceForDisplay = (source?: string) => {
   if (!source) return 'CAJA';
 
   if (source.startsWith('{') && source.endsWith('}')) {
@@ -81,7 +81,7 @@ const formatPaymentSourceForDisplay = (source: string) => {
   return cleanSource;
 };
 
-const getPaymentSourceStyle = (source: string) => {
+const getPaymentSourceStyle = (source?: string) => {
   const formatted = formatPaymentSourceForDisplay(source);
   const s = formatted?.toUpperCase() || 'CAJA';
   if (s === 'NEQUI') return 'bg-purple-100 text-purple-700 dark:bg-purple-500/20 dark:text-purple-400';
@@ -126,6 +126,7 @@ const ExpenseTable = memo(({
               <TableColumn align="center" className="hidden xl:table-cell">AUDITORIA</TableColumn>
               <TableColumn align="center">CANAL ORIGEN</TableColumn>
               <TableColumn align="end">VALOR TOTAL</TableColumn>
+              <TableColumn align="end">{isAdmin ? 'GESTIÓN' : ''}</TableColumn>
             </TableHeader>
             <TableBody
               emptyContent={
@@ -194,42 +195,34 @@ const ExpenseTable = memo(({
                       )}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <div className="flex justify-end items-center gap-4">
-                      <div className="flex flex-col items-end leading-none">
-                        <span className={`text-[13px] font-medium tracking-tight tabular-nums tracking-tighter ${expense.status === 'PENDING' ? 'text-amber-500' : 'text-zinc-900 dark:text-zinc-50'}`}>
-                          <span className={`${expense.status === 'PENDING' ? 'text-amber-500' : 'text-rose-500'} mr-0.5`}>$</span>
-                          {(Number(expense.amount) + Number(expense.taxAmount || 0)).toLocaleString()}
+                  <TableCell className="text-end">
+                    <div className="flex flex-col items-end leading-none">
+                      <span className={`text-[13px] font-medium tracking-tight tabular-nums tracking-tighter ${expense.status === 'PENDING' ? 'text-amber-500' : 'text-zinc-900 dark:text-zinc-50'}`}>
+                        <span className={`${expense.status === 'PENDING' ? 'text-amber-500' : 'text-rose-500'} mr-0.5`}>$</span>
+                        {(Number(expense.amount) + Number(expense.taxAmount || 0)).toLocaleString()}
+                      </span>
+                      {Number(expense.taxAmount || 0) > 0 && (
+                        <span className="text-[9px] font-medium text-purple-600 dark:text-purple-400 mt-1 uppercase tracking-tight">
+                          Inc. imp. 4x1000: +${Number(expense.taxAmount).toLocaleString()}
                         </span>
-                        {Number(expense.taxAmount || 0) > 0 && (
-                          <span className="text-[9px] font-medium text-purple-600 dark:text-purple-400 mt-1 uppercase tracking-tight">
-                            Inc. imp. 4x1000: +${Number(expense.taxAmount).toLocaleString()}
-                          </span>
-                        )}
-                      </div>
-
-                      {isAdmin && (
-                        <div className="flex gap-1">
-                          <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
-                            <button
-                              className="h-8 w-8 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 hover:text-white border border-emerald-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all flex items-center justify-center active:scale-90"
-                              onClick={() => onEdit(expense)}
-                            >
-                              <Edit size={14} />
-                            </button>
-                          </Tooltip>
-                          <Tooltip content="ELIMINAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }} placement="top-end">
-                            <button
-                              className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-2xl hover:bg-rose-500 hover:text-white border border-rose-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all flex items-center justify-center active:scale-90"
-                              onClick={() => onDelete(expense.id)}
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </Tooltip>
-                        </div>
                       )}
-
                     </div>
+                  </TableCell>
+                  <TableCell className="text-end">
+                    {isAdmin ? (
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-white py-1 px-2 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                          <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-xl border border-emerald-500/20 transition-all hover:bg-emerald-500 hover:text-white" onPress={() => onEdit(expense)}>
+                            <Edit size={13} />
+                          </Button>
+                        </Tooltip>
+                        <Tooltip content="ELIMINAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }} placement="top-end">
+                          <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/10 text-rose-600 dark:text-rose-400 rounded-xl border border-rose-500/20 transition-all hover:bg-rose-500 hover:text-white" onPress={() => onDelete(String(expense.id))}>
+                            <Trash2 size={13} />
+                          </Button>
+                        </Tooltip>
+                      </div>
+                    ) : null}
                   </TableCell>
                 </TableRow>
               ))}
@@ -277,11 +270,11 @@ const ExpenseTable = memo(({
                 </div>
                 {isAdmin && (
                   <div className="flex gap-2">
-                    <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                    <Tooltip content="EDITAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                       <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-emerald-500/5 text-zinc-900 dark:text-zinc-100 rounded-2xl border border-emerald-500/10 transition-all hover:bg-emerald-500 hover:text-white" onPress={() => onEdit(expense)}><Edit size={12} /></Button>
                     </Tooltip>
                     <Tooltip content="ELIMINAR" delay={0} closeDelay={0} showArrow classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-rose-500 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }} placement="top-end">
-                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-2xl border border-rose-500/10 transition-all hover:bg-rose-500 hover:text-white" onPress={() => onDelete(expense.id)}><Trash2 size={12} /></Button>
+                      <Button isIconOnly size="sm" variant="flat" className="h-8 w-8 bg-rose-500/5 text-rose-500 rounded-2xl border border-rose-500/10 transition-all hover:bg-rose-500 hover:text-white" onPress={() => onDelete(String(expense.id))}><Trash2 size={12} /></Button>
                     </Tooltip>
                   </div>
                 )}

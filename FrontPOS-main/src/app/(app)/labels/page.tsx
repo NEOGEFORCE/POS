@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useMemo } from 'react';
 import { Button, Spinner } from "@heroui/react";
@@ -125,7 +125,7 @@ export default function LabelsPage() {
                         size="sm"
                         isDisabled={printQueue.length === 0}
                         onPress={handlePrint}
-                        className={`uppercase tracking-widest text-[9px] font-medium ${printQueue.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-800 text-gray-400'} h-8 px-4 rounded-2xl transition-all active:scale-95 tracking-tight`}
+                        className={`uppercase tracking-widest text-[9px] font-medium ${printQueue.length > 0 ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-800 text-gray-400'} h-8 px-4 rounded-2xl transition-all active:scale-95 tracking-tight`}
                     >
                         <Printer size={14} className="mr-1" /> IMPRIMIR ({totalLabels})
                     </Button>

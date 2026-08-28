@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect } from 'react';
 import {
@@ -14,6 +14,7 @@ import {
   Clock, Package, MapPin
 } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
+import { apiFetch } from "@/lib/api-error";
 
 export default function DebtsControlPage() {
   const { toast } = useToast();
@@ -35,8 +36,7 @@ export default function DebtsControlPage() {
   const fetchDebts = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/sales/debts');
-      const data = await res.json();
+      const data = await apiFetch<any[]>('/sales/debts');
       setDebts(Array.isArray(data) ? data : []);
     } catch (error) {
       toast({ title: "Error", description: "Error al cargar cartera", variant: "destructive" });
@@ -52,22 +52,18 @@ export default function DebtsControlPage() {
     }
 
     try {
-      const res = await fetch(`/api/sales/debts/${selectedDebt.id}/pay`, {
+      await apiFetch(`/sales/debts/${selectedDebt.id}/pay`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           amount: parseFloat(paymentAmount),
           method: paymentMethod
-        })
+        }),
+        fallbackError: 'Error al registrar el pago'
       });
 
-      if (res.ok) {
-        toast({ title: "EXITO", description: "¡Abono registrado con exito!" });
-        onOpenChange();
-        fetchDebts();
-      } else {
-        toast({ title: "Error", description: "Error al registrar el pago", variant: "destructive" });
-      }
+      toast({ variant: 'success', title: "EXITO", description: "¡Abono registrado con exito!" });
+      onOpenChange();
+      fetchDebts();
     } catch (error) {
       toast({ title: "Error", description: "Error de conexion", variant: "destructive" });
     }
@@ -84,8 +80,7 @@ export default function DebtsControlPage() {
     setLoadingStatement(true);
     onStatementOpen();
     try {
-      const res = await fetch(`/api/clients/${dni}/statement`);
-      const data = await res.json();
+      const data = await apiFetch(`/clients/${dni}/statement`);
       setStatementData(data);
     } catch (error) {
       toast({ title: "Error", description: "No se pudo obtener el estado de cuenta", variant: "destructive" });

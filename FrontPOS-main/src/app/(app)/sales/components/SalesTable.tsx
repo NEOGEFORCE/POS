@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useRef } from 'react';
 import { 
@@ -50,7 +50,7 @@ const SaleRow = React.memo(({
 }) => {
     return (
         <div
-            className="absolute top-0 left-0 w-full flex items-center px-4 border-b border-gray-100 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:bg-white/5 group cursor-default"
+            className="absolute top-0 left-0 w-full flex items-center px-4 border-b border-gray-100 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:active:bg-white/10 group cursor-default"
             style={style}
         >
             <div className="flex-1 min-h-0 h-full w-[180px]">
@@ -98,19 +98,19 @@ const SaleRow = React.memo(({
                 </span>
             </div>
             <div className="w-[140px] flex items-center justify-center gap-1">
-                <Tooltip content="AUDITAR DETALLE" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                <Tooltip content="AUDITAR DETALLE" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-zinc-900 dark:bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                     <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-emerald-600 dark:text-zinc-500 dark:hover:text-gray-600 dark:text-zinc-300 transition-colors p-2" onPress={() => onPreview(sale)}>
                         <Eye size={20} strokeWidth={2.5} />
                     </Button>
                 </Tooltip>
                 {isAdmin && (
-                    <Tooltip content="AÑADIR/QUITAR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                    <Tooltip content="AÑADIR/QUITAR PRODUCTOS" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-zinc-900 dark:bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                         <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-indigo-500 dark:text-zinc-500 dark:hover:text-indigo-400 transition-colors p-2" onPress={() => onAddItems(sale)}>
                             <PackagePlus size={20} strokeWidth={2.5} />
                         </Button>
                     </Tooltip>
                 )}
-                <Tooltip content="CORREGIR REGISTRO" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                <Tooltip content="CORREGIR REGISTRO" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-zinc-900 dark:bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                     <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-amber-500 dark:text-zinc-500 dark:hover:text-amber-400 transition-colors p-2" onPress={() => onEdit(sale)}>
                         <Edit3 size={20} strokeWidth={2.5} />
                     </Button>

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 // Dashboard V5.0 - Premium SaaS Expansion
 
@@ -163,7 +163,7 @@ export default function DashboardPage() {
         if (!token) return;
 
         // Buscar la deuda para saber el saldo actual antes de pagar
-        const debtItem = data?.pendingDebts?.find((d: any) => String(d.id) === id);
+        const debtItem = data?.pendingDebts?.items?.find((d: any) => String(d.id) === id);
         const currentRemaining = debtItem ? (debtItem.remainingAmount > 0 ? debtItem.remainingAmount : Number(debtItem.amount)) : amount;
         const isPartial = amount < currentRemaining;
 

@@ -1,15 +1,18 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
-  Modal, ModalContent, Button, Avatar
+  Modal, ModalContent, Button, Avatar, Switch
 } from "@heroui/react";
-import { 
-  Banknote, Zap, Check, Wallet, ArrowRight, X, 
-  Calculator, ShieldCheck, TrendingUp, Grid3X3, Users, AlertTriangle 
+import {
+  Banknote, Zap, Check, Wallet, ArrowRight, X,
+  Calculator, ShieldCheck, TrendingUp, Grid3X3, Users, AlertTriangle,
+  Printer, Send, MessageCircle
 } from 'lucide-react';
 import { Customer } from '@/lib/definitions';
 import { formatCurrency } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+import { apiFetch } from "@/lib/api-error";
 
 interface UniversalPaymentModalProps {
   isOpen: boolean;
@@ -26,6 +29,7 @@ interface UniversalPaymentModalProps {
   showSuccessScreen: boolean;
   submittingPayment: boolean;
   lastChange: number;
+  lastReceipt?: any;
   onPay: (data: {
     cash: number;
     transfer: number;
@@ -47,15 +51,16 @@ interface UniversalPaymentModalProps {
 }
 
 export default function UniversalPaymentModal({
-  isOpen, 
-  onOpenChange, 
+  isOpen,
+  onOpenChange,
   title = "Gestion de Pagos",
-  client, 
+  client,
   totalToPay,
   initialPaidAmounts,
-  showSuccessScreen, 
-  submittingPayment, 
-  lastChange, 
+  showSuccessScreen,
+  submittingPayment,
+  lastChange,
+  lastReceipt,
   onPay,
   onCloseComplete,
   showCreditTab = true,
@@ -68,7 +73,7 @@ export default function UniversalPaymentModal({
   pendingReturnAmount = 0,
   originalPaymentMethod = "EFECTIVO"
 }: UniversalPaymentModalProps) {
-  
+
   const netExchangeBalance = totalToPay - (pendingReturnAmount || 0);
   const isReturnExchange = (pendingReturnAmount || 0) > 0;
   const isTransferReturn = isReturnExchange && !!originalPaymentMethod && (originalPaymentMethod.toUpperCase() !== 'EFECTIVO' && originalPaymentMethod.toUpperCase() !== 'CAJA');
@@ -81,13 +86,13 @@ export default function UniversalPaymentModal({
   const [isMobileNumpadOpen, setIsMobileNumpadOpen] = useState(false);
   const [dialogAmount, setDialogAmount] = useState('');
   const [cashTendered, setCashTendered] = useState<string>('');
-  
+
   // Clases estaticas para evitar problemas con el purgado de Tailwind y errores de referencia
   const isOut = flowType === "out";
   const theme = {
     bg: isOut ? "bg-rose-500" : "bg-gray-100 dark:bg-zinc-800 border border-black/5 dark:border-white/5",
     bgLight: isOut ? "bg-rose-500/10" : "bg-black/5 dark:bg-white/5",
-    bgHover: isOut ? "hover:bg-rose-500/10" : "hover:bg-black/5 dark:bg-white/5",
+    bgHover: isOut ? "hover:bg-rose-500/10" : "hover:bg-black/5 dark:hover:bg-white/5",
     text: isOut ? "text-rose-500" : "text-zinc-100",
     textDark: isOut ? "text-rose-600" : "text-zinc-100",
     border: isOut ? "border-rose-500" : "border-emerald-500",
@@ -95,9 +100,9 @@ export default function UniversalPaymentModal({
     shadow: isOut ? "shadow-rose-500/30" : "",
     ring: isOut ? "ring-rose-500" : "ring-emerald-500"
   };
-  
+
   const themeColor = isOut ? 'rose' : 'emerald';
-  
+
   // Estados internos para pagos acumulados (mixtos)
   const [cashPaid, setCashPaid] = useState<number>(0);
   const [nequiPaid, setNequiPaid] = useState<number>(0);
@@ -105,7 +110,7 @@ export default function UniversalPaymentModal({
   const [creditPaid, setCreditPaid] = useState<number>(0);
 
   const [isReady, setIsReady] = useState(false);
-  
+
   // Inicializar estados cuando se abre el modal
   useEffect(() => {
     if (isOpen) {
@@ -117,7 +122,7 @@ export default function UniversalPaymentModal({
       setCashTendered('');
       setIsMobileNumpadOpen(false);
       setIsReady(false); // No esta listo inmediatamentente
-      
+
       // Determinar tab inicial
       if (initialPaidAmounts?.credit && initialPaidAmounts.credit > 0) setActivePaymentTab('credit');
       else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0) setActivePaymentTab(initialPaidAmounts.transferSource as any);
@@ -133,12 +138,12 @@ export default function UniversalPaymentModal({
   const totalAlreadyPaid = cashPaid + nequiPaid + daviplataPaid + creditPaid;
   const remainingDebt = Math.max(0, effectiveTotal - totalAlreadyPaid);
 
-  const amountToPayRaw = currentDialogVal > 0 
-    ? currentDialogVal 
-    : (Number(cashTendered) > 0 
-        ? Number(cashTendered) 
+  const amountToPayRaw = currentDialogVal > 0
+    ? currentDialogVal
+    : (Number(cashTendered) > 0
+        ? Number(cashTendered)
         : (totalAlreadyPaid > 0 || isAbono ? 0 : remainingDebt));
-        
+
   const actualPayment = Math.min(amountToPayRaw, remainingDebt);
 
   const handleAddPayment = useCallback(() => {
@@ -163,17 +168,17 @@ export default function UniversalPaymentModal({
 
   const isCreditInvalid = !!(activePaymentTab === 'credit' && (!client || client.id === "0" || client.name === "CONSUMIDOR FINAL"));
   const isOverCreditLimit = !!(activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit));
-  
+
   const processPayment = useCallback(async () => {
         if (isProcessingRef.current || submittingPayment || isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund) return;
         isProcessingRef.current = true;
-        
+
         let finalCash = cashPaid;
         let finalNequi = nequiPaid;
         let finalDaviplata = daviplataPaid;
         let finalCredit = creditPaid;
         let finalTendered = Number(cashTendered) || 0;
-  
+
       if (currentDialogVal > 0) {
         if (activePaymentTab === 'cash') {
           finalCash += isAbono ? actualPayment : currentDialogVal;
@@ -210,12 +215,12 @@ export default function UniversalPaymentModal({
           }
         }
       }
-  
+
       const totalPaid = finalCash + finalNequi + finalDaviplata + finalCredit;
       const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
       const extraCashChange = Math.max(0, effectiveCash - finalCash);
       const change = baseReturnRefund + extraCashChange;
-    
+
     let mainTransferSource = "MIXTO";
     if (finalNequi > 0 && finalDaviplata === 0) mainTransferSource = "NEQUI";
     if (finalDaviplata > 0 && finalNequi === 0) mainTransferSource = "DAVIPLATA";
@@ -232,41 +237,138 @@ export default function UniversalPaymentModal({
     } finally {
       isProcessingRef.current = false;
     }
-  }, [isCreditInvalid, isOverCreditLimit, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, effectiveTotal, baseReturnRefund, onPay, isAbono, actualPayment]);
+  }, [isCreditInvalid, isOverCreditLimit, isBlockedTransferRefund, submittingPayment, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, effectiveTotal, baseReturnRefund, onPay, isAbono, actualPayment]);
 
-  const [canPayByEnter, setCanPayByEnter] = useState(false);
+  const keyboardActionsRef = useRef({ processPayment, handleAddPayment, onOpenChange, onCloseComplete });
   useEffect(() => {
-    if (isOpen) {
-      setCanPayByEnter(false);
-      const t = setTimeout(() => setCanPayByEnter(true), 400);
-      return () => clearTimeout(t);
+    keyboardActionsRef.current = { processPayment, handleAddPayment, onOpenChange, onCloseComplete };
+  }, [processPayment, handleAddPayment, onOpenChange, onCloseComplete]);
+
+  const { toast } = useToast();
+  const [isTelegramSending, setIsTelegramSending] = useState(false);
+  const [autoPrint, setAutoPrint] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('pos_auto_print_ticket') === 'true';
     }
-  }, [isOpen]);
+    return false;
+  });
+
+  const generateTicketText = useCallback(() => {
+    const rClient = lastReceipt?.clientName || client?.name || "CONSUMIDOR FINAL";
+    const rDni = lastReceipt?.clientDni || client?.dni || "0";
+    const rDate = lastReceipt?.date || new Date().toLocaleString('es-CO');
+
+    let text = `🧾 *FACTURA DE VENTA N° #${lastReceipt?.saleId || 'POS'}*\n`;
+    text += `🏢 *SUPERMERCADO SURTIFAMILIAR*\n`;
+    text += `📅 *Fecha:* ${rDate}\n`;
+    text += `👤 *Cliente:* ${rClient}\n`;
+    text += `📄 *CC/NIT:* ${rDni}\n`;
+    text += `--------------------------------\n`;
+
+    (lastReceipt?.items || []).forEach((it: any) => {
+      const name = it.product?.productName || it.name || 'Producto';
+      const qty = it.quantity || it.cartQuantity || 1;
+      const price = it.unitPrice || it.salePrice || it.price || 0;
+      const sub = it.subtotal || (qty * price);
+      text += `• *${qty}x* ${name}\n  $${formatCurrency(price)} = *$${formatCurrency(sub)}*\n`;
+    });
+
+    text += `--------------------------------\n`;
+    text += `💰 *TOTAL:* *$${formatCurrency(lastReceipt?.total || totalToPay)}*\n`;
+    text += `💳 *MÉTODO:* ${lastReceipt?.paymentMethod || 'EFECTIVO'}\n`;
+    if (lastReceipt?.cashAmount > 0) text += `💵 *Efectivo:* $${formatCurrency(lastReceipt.cashAmount)}\n`;
+    if (lastReceipt?.transferAmount > 0) text += `📱 *Transferencia:* $${formatCurrency(lastReceipt.transferAmount)}\n`;
+    if (lastReceipt?.creditAmount > 0) text += `👥 *Fiado:* $${formatCurrency(lastReceipt.creditAmount)}\n`;
+    if ((lastReceipt?.change || lastChange || 0) > 0) text += `🪙 *Cambio:* $${formatCurrency(lastReceipt?.change || lastChange)}\n`;
+    text += `\n¡Gracias por su compra! 🙏✨`;
+    return text;
+  }, [lastReceipt, client, totalToPay, lastChange]);
+
+  const handleTelegramShare = useCallback(async (silent = false) => {
+    const text = generateTicketText();
+    if (!text) return;
+    setIsTelegramSending(true);
+    try {
+      await apiFetch('/telegram/ticket', {
+        method: 'POST',
+        body: JSON.stringify({ text }),
+        fallbackError: 'Fallo al enviar comprobante a Telegram'
+      });
+      if (!silent) {
+        toast({ title: "FACTURA ENVIADA", description: "Se envió el ticket a Telegram correctamente." });
+      }
+    } catch (err: any) {
+      if (!silent) {
+        toast({ variant: "destructive", title: "FALLO TELEGRAM", description: err.message || "Error al enviar comprobante" });
+      }
+    } finally {
+      setIsTelegramSending(false);
+    }
+  }, [generateTicketText, toast]);
+
+  const handleWhatsAppShare = useCallback(() => {
+    const text = generateTicketText();
+    if (!text) return;
+    let phone = (lastReceipt?.clientPhone || client?.phone || '').replace(/\D/g, '');
+    if (phone && !phone.startsWith('57') && phone.length === 10) {
+      phone = `57${phone}`;
+    }
+    const url = phone
+      ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
+      : `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(url, '_blank');
+  }, [generateTicketText, lastReceipt, client]);
+
+  const handlePrintTicket = useCallback(() => {
+    window.print();
+  }, []);
+
+  // Efecto de Auto-Impresión persistente
+  useEffect(() => {
+    if (showSuccessScreen && autoPrint) {
+      const timer = setTimeout(() => {
+        window.print();
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [showSuccessScreen, autoPrint]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
 
+      const actions = keyboardActionsRef.current;
       if (showSuccessScreen) {
         if (e.key === 'Enter' || e.key === 'Escape') {
-          onCloseComplete?.();
-          onOpenChange(false);
+          e.preventDefault();
+          actions.onCloseComplete?.();
+          actions.onOpenChange(false);
         }
         return;
       }
-      
-      const target = e.target as HTMLElement;
-      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
-        return;
-      }
 
-      if (target?.tagName === 'BUTTON') {
-        target.blur();
+      const target = e.target as HTMLElement;
+      if (target?.tagName === 'TEXTAREA') {
+        return;
       }
 
       if (isProcessingRef.current && e.key === 'Enter') {
           e.preventDefault();
           return;
+      }
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        void actions.processPayment();
+        return;
+      }
+
+      if (target?.tagName === 'INPUT') {
+        return;
+      }
+
+      if (target?.tagName === 'BUTTON') {
+        target.blur();
       }
 
       if (/^[0-9]$/.test(e.key)) {
@@ -275,65 +377,113 @@ export default function UniversalPaymentModal({
       } else if (e.key === 'Backspace') {
         e.preventDefault();
         setDialogAmount(prev => prev.slice(0, -1));
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        if (isReady && canPayByEnter) processPayment();
       } else if (e.key === '+' || e.key === 'Add') {
         e.preventDefault();
-        handleAddPayment();
+        actions.handleAddPayment();
       } else if (e.key === 'Escape') {
-        onOpenChange(false);
+        actions.onOpenChange(false);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showSuccessScreen, dialogAmount, onOpenChange, processPayment, handleAddPayment, isReady]);
+  }, [isOpen, showSuccessScreen]);
 
   if (!isOpen) return null;
 
   return (
-    <Modal 
-      isOpen={isOpen} 
-      onOpenChange={onOpenChange} 
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={onOpenChange}
       placement="center"
-      backdrop="blur" 
-      size="full" 
+      backdrop="blur"
+      size="full"
       onClose={onCloseComplete}
-    classNames={{ 
-        base: "bg-gray-50 dark:bg-zinc-950 max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none", 
-        closeButton: "hidden", 
-        wrapper: "fixed top-0 left-0 w-screen h-screen bg-[#09090b]/90 z-[9999] flex items-center justify-center" 
+    classNames={{
+        base: "bg-gray-50 dark:bg-zinc-950 max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none",
+        closeButton: "hidden",
+        wrapper: "fixed top-0 left-0 w-screen h-screen bg-black/70 z-[9999] flex items-center justify-center"
       }}
     >
       <ModalContent>
         {() => (
           <div className="flex flex-col md:flex-row h-full overflow-hidden relative">
             {showSuccessScreen && (
-              <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
-                <div className="bg-white dark:bg-[#18181b] p-10 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-sm relative overflow-hidden group">
-                  <div className={`h-20 w-20 rounded-[1.5rem] ${theme.bg} text-white flex items-center justify-center mb-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)] -rotate-3 scale-110 border-4 border-black/10 dark:border-white/20`}>
-                    <Check size={40} strokeWidth={4} />
+              <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center justify-center p-4 md:p-8 animate-in fade-in zoom-in duration-300">
+                <div className="bg-white dark:bg-[#18181b] p-6 md:p-8 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-md relative overflow-hidden group">
+                  <div className={`h-16 w-16 rounded-[1.2rem] ${theme.bg} text-white flex items-center justify-center mb-3 shadow-[0_8px_30px_rgb(0,0,0,0.12)] -rotate-3 scale-105 border-4 border-black/10 dark:border-white/20`}>
+                    <Check size={32} strokeWidth={4} />
                   </div>
-                  <h2 className="text-3xl font-medium text-gray-900 dark:text-white uppercase mb-2 tracking-tight tracking-tighter text-center leading-none">
-                    Operacion <span className={theme.text}>Exitosa</span>
+                  <h2 className="text-2xl md:text-3xl font-medium text-gray-900 dark:text-white uppercase mb-1 tracking-tight tracking-tighter text-center leading-none">
+                    Operación <span className={theme.text}>Exitosa</span>
                   </h2>
-                  <span className={`text-[8px] font-medium opacity-60 ${theme.text} uppercase tracking-[0.4em] mb-6 tracking-tight`}>PROCESADO CON EXITO</span>
-                  
-                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} p-8 rounded-[2rem] text-center w-full relative overflow-hidden group-hover:scale-[1.02] transition-transform`}>
-                    <p className={`text-[9px] font-medium ${theme.text} uppercase mb-3 tracking-[0.3em] tracking-tight`}>CAMBIO A ENTREGAR</p>
-                    <p className="text-5xl font-medium text-gray-900 dark:text-white tabular-nums tracking-tight tracking-tighter">${formatCurrency(lastChange)}</p>
+                  <span className={`text-[8px] font-medium opacity-60 ${theme.text} uppercase tracking-[0.4em] mb-4 tracking-tight`}>PROCESADO CON ÉXITO</span>
+
+                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} p-5 rounded-[1.5rem] text-center w-full relative overflow-hidden group-hover:scale-[1.01] transition-transform mb-4`}>
+                    <p className={`text-[9px] font-medium ${theme.text} uppercase mb-1 tracking-[0.3em] tracking-tight`}>CAMBIO A ENTREGAR</p>
+                    <p className="text-4xl md:text-5xl font-medium text-gray-900 dark:text-white tabular-nums tracking-tight tracking-tighter">${formatCurrency(lastChange)}</p>
                   </div>
-                  
-                  <Button 
-                    className="mt-8 bg-gray-900 dark:bg-white text-white dark:text-black font-medium px-12 h-14 rounded-2xl tracking-tight w-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center gap-4 active:scale-95 transition-all text-[11px] tracking-widest uppercase hover:opacity-90" 
-                    onPress={() => onOpenChange(false)}
+
+                  {/* FACTURA Y COMPARTIR ACCIONES */}
+                  <div className="w-full flex flex-col gap-2.5 pt-2 border-t border-gray-200 dark:border-white/10">
+                    <div className="grid grid-cols-3 gap-2 w-full">
+                      <Button
+                        size="sm"
+                        className="h-10 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-xl font-bold uppercase text-[8.5px] tracking-wider flex items-center justify-center gap-1.5"
+                        onPress={handleWhatsAppShare}
+                      >
+                        <MessageCircle size={14} /> WhatsApp
+                      </Button>
+                      <Button
+                        size="sm"
+                        isLoading={isTelegramSending}
+                        className="h-10 bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 rounded-xl font-bold uppercase text-[8.5px] tracking-wider flex items-center justify-center gap-1.5"
+                        onPress={() => handleTelegramShare(false)}
+                      >
+                        <Send size={14} /> Telegram
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-10 bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-700 dark:text-zinc-300 border border-zinc-500/30 rounded-xl font-bold uppercase text-[8.5px] tracking-wider flex items-center justify-center gap-1.5"
+                        onPress={handlePrintTicket}
+                      >
+                        <Printer size={14} /> Imprimir
+                      </Button>
+                    </div>
+
+                    {/* INTERRUPTOR DE IMPRESION AUTOMATICA PERSISTENTE */}
+                    <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-zinc-900/60 rounded-xl border border-gray-200 dark:border-white/5">
+                      <div className="flex items-center gap-2.5">
+                        <Printer size={16} className={autoPrint ? "text-emerald-500" : "text-zinc-400"} />
+                        <div className="flex flex-col text-left">
+                          <span className="text-[9.5px] font-bold text-gray-800 dark:text-zinc-200 uppercase tracking-wider">Impresión Automática</span>
+                          <span className="text-[7.5px] font-medium text-gray-400 uppercase tracking-tight">{autoPrint ? "Activa (Imprime al cobrar)" : "Inactiva (Manual)"}</span>
+                        </div>
+                      </div>
+                      <Switch
+                        size="sm"
+                        color="success"
+                        isSelected={autoPrint}
+                        onValueChange={(val) => {
+                          setAutoPrint(val);
+                          localStorage.setItem('pos_auto_print_ticket', String(val));
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  <Button
+                    className="mt-4 bg-gray-900 dark:bg-white text-white dark:text-black font-medium px-8 h-12 rounded-2xl tracking-tight w-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-3 active:scale-95 transition-all text-[11px] tracking-widest uppercase hover:opacity-90"
+                    onPress={() => {
+                      onCloseComplete?.();
+                      onOpenChange(false);
+                    }}
                   >
-                    CONTINUAR [ENTER] <ArrowRight size={18} />
+                    CONTINUAR [ENTER] <ArrowRight size={16} />
                   </Button>
                 </div>
               </div>
             )}
-            
+
             <div className="w-full md:w-[220px] bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
               <div className="hidden md:flex flex-col mb-8 px-2">
                 <div className="flex items-center gap-2 mb-2">
@@ -342,7 +492,7 @@ export default function UniversalPaymentModal({
                 </div>
                 <h3 className={`text-[10px] font-medium ${theme.text} uppercase tracking-[0.2em] tracking-tight`}>METODO PAGO</h3>
               </div>
-              
+
               <div className="grid grid-cols-2 md:grid-cols-1 gap-1.5 md:gap-3">
                 {[
                   { id: 'cash', label: 'Efec.', icon: <Banknote size={14} className="md:w-5 md:h-5" /> },
@@ -352,20 +502,20 @@ export default function UniversalPaymentModal({
                 ].filter(tab => tab.id !== 'credit' || showCreditTab)
                  .filter(tab => !isRefund || tab.id === 'cash')
                  .map(tab => (
-                  <button 
-                    key={tab.id} 
+                  <button
+                    key={tab.id}
                     tabIndex={-1}
                     onMouseDown={(e) => e.preventDefault()}
-                    onClick={(e) => { 
-                      setActivePaymentTab(tab.id as any); 
-                      setDialogAmount(''); 
-                      setCashTendered(''); 
+                    onClick={(e) => {
+                      setActivePaymentTab(tab.id as any);
+                      setDialogAmount('');
+                      setCashTendered('');
                       (e.currentTarget as HTMLElement)?.blur();
                       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
-                    }} 
+                    }}
                     className={`h-10 md:h-14 px-2 md:px-5 rounded-2xl md:rounded-2xl flex items-center justify-center md:justify-start gap-1.5 md:gap-4 border transition-all group ${
-                      activePaymentTab === tab.id 
-                        ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white tracking-tight` 
+                      activePaymentTab === tab.id
+                        ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white tracking-tight`
                         : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 ' + theme.bgHover
                     }`}
                   >
@@ -373,9 +523,9 @@ export default function UniversalPaymentModal({
                       {tab.icon ? (
                         tab.icon
                       ) : (
-                        <img 
-                          src={tab.logo} 
-                          className={`h-3.5 w-3.5 md:h-7 md:w-7 object-contain ${activePaymentTab === tab.id ? 'brightness-200' : 'opacity-70 group-hover:opacity-100'}`} 
+                        <img
+                          src={tab.logo}
+                          className={`h-3.5 w-3.5 md:h-7 md:w-7 object-contain ${activePaymentTab === tab.id ? 'brightness-200' : 'opacity-70 group-hover:opacity-100'}`}
                           alt={tab.label}
                         />
                       )}
@@ -383,8 +533,8 @@ export default function UniversalPaymentModal({
                     <span className="text-[7.5px] md:text-[10px] font-medium uppercase tracking-tight whitespace-nowrap tracking-wider md:tracking-widest leading-none">{tab.label}</span>
                   </button>
                 ))}
-                
-                <button 
+
+                <button
                   onClick={() => onOpenChange(false)}
                   className="h-10 md:hidden px-2 rounded-2xl flex items-center justify-center gap-1.5 border border-rose-500/20 bg-rose-500/5 text-rose-500 active:scale-95 transition-all group"
                 >
@@ -411,7 +561,7 @@ export default function UniversalPaymentModal({
                     <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-500 uppercase tracking-widest tracking-tight">{client?.name || 'CONSUMIDOR FINAL'} {client?.dni ? `/ CC: ${client.dni}` : ''}</p>
                   </div>
                 </div>
-                
+
                 <div className="flex items-center gap-2">
                   {nequiPaid > 0 && (
                     <div className="px-3 py-1 bg-[#23004C]/10 border border-[#23004C]/20 rounded-2xl flex items-center gap-2">
@@ -471,7 +621,7 @@ export default function UniversalPaymentModal({
                 </div>
                 <div className={`bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center ${baseReturnRefund > 0 ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-emerald-500/30'}`}>
                   <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1">
-                    <TrendingUp size={6} className={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'} /> 
+                    <TrendingUp size={6} className={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'} />
                     {baseReturnRefund > 0 ? 'CAMBIO ENTREGAR' : 'RESTANTE'}
                   </p>
                   <p className={`text-sm md:text-2xl font-medium tracking-tight tabular-nums leading-none ${baseReturnRefund > 0 ? 'text-emerald-500 font-bold' : 'text-sky-500'}`}>
@@ -483,33 +633,33 @@ export default function UniversalPaymentModal({
               {activePaymentTab === 'cash' ? (
                 <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                   <div className={`p-2 md:p-4 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden group transition-all duration-500 ${
-                    baseReturnRefund > 0 || amountToPayRaw > remainingDebt 
-                      ? 'bg-emerald-500/10 border-emerald-500/40' 
+                    baseReturnRefund > 0 || amountToPayRaw > remainingDebt
+                      ? 'bg-emerald-500/10 border-emerald-500/40'
                       : 'bg-white dark:bg-[#18181b] border-gray-200 dark:border-white/10'
                   }`}>
                     <div className={`absolute top-0 right-0 p-2 opacity-10 ${baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500' : theme.text} group-hover:scale-125 transition-transform`}>
                       {baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? <Zap size={28} /> : <Banknote size={28} />}
                     </div>
-                    
+
                     <p className={`text-[7px] md:text-[8px] font-medium uppercase mb-0 tracking-[0.2em] tracking-tight transition-colors ${
                       baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500 font-bold' : 'text-gray-400'
                     }`}>
-                      {baseReturnRefund > 0 
-                        ? 'DEVOLUCIÓN A FAVOR DEL CLIENTE (VUELTAS)' 
+                      {baseReturnRefund > 0
+                        ? 'DEVOLUCIÓN A FAVOR DEL CLIENTE (VUELTAS)'
                         : (amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO')}
                     </p>
-                    
+
                     <p className={`text-xl md:text-4xl font-medium tabular-nums tracking-tight tracking-tighter transition-all ${
                       baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500 font-bold animate-pulse' : 'dark:text-white'
                     }`}>
                       ${formatCurrency(
-                        baseReturnRefund > 0 
+                        baseReturnRefund > 0
                           ? baseReturnRefund + Math.max(0, (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : 0))
                           : (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : amountToPayRaw)
                       )}
                     </p>
                   </div>
-                  
+
                    {!isMobileNumpadOpen ? (
                      <>
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-2 content-start">
@@ -525,29 +675,29 @@ export default function UniversalPaymentModal({
                           { v: 200, img: '200.jpg' },
                           { v: 100, img: '100.jpg' }
                         ].map(({ v, img }) => (
-                          <Button 
-                            key={v} 
+                          <Button
+                            key={v}
                             tabIndex={-1}
                             onMouseDown={(e) => e.preventDefault()}
-                            className="aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border-[1px] border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-2xl md:rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-auto" 
-                            onPress={() => { 
-                              setCashTendered(prev => String(Number(prev || 0) + v)); 
-                              setDialogAmount(''); 
-                              if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); 
+                            className="aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border-[1px] border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-2xl md:rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-auto"
+                            onPress={() => {
+                              setCashTendered(prev => String(Number(prev || 0) + v));
+                              setDialogAmount('');
+                              if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                               setTimeout(() => {
                                 if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                               }, 0);
                             }}
                           >
-                            <img 
-                              src={`/logos/${img}`} 
-                              className="h-full w-full object-cover grayscale-0 opacity-100 group-hover:scale-110 transition-transform duration-700" 
+                            <img
+                              src={`/logos/${img}`}
+                              className="h-full w-full object-cover grayscale-0 opacity-100 group-hover:scale-110 transition-transform duration-700"
                               alt={`${v}`}
                             />
                           </Button>
                         ))}
-                        <Button 
-                          className={`aspect-[2.2/1] w-full lg:col-span-2 bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`} 
+                        <Button
+                          className={`aspect-[2.2/1] w-full lg:col-span-2 bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`}
                           onPress={() => setIsMobileNumpadOpen(true)}
                         >
                           <Calculator size={14} />
@@ -562,13 +712,13 @@ export default function UniversalPaymentModal({
                     <>
                       <div className="grid grid-cols-3 gap-2 mt-2">
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
-                          <Button 
-                            key={n} 
+                          <Button
+                            key={n}
                             tabIndex={-1}
                             onMouseDown={(e) => e.preventDefault()}
                             className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
                               n === 'CE' ? 'text-rose-500 bg-rose-500/10' : 'bg-white dark:bg-zinc-800 dark:text-white'
-                            }`} 
+                            }`}
                             onPress={() => {
                                 if (n === 'CE') setDialogAmount('');
                                 else setDialogAmount((p: string) => p + String(n));
@@ -598,7 +748,7 @@ export default function UniversalPaymentModal({
                       <p className="text-sm font-medium dark:text-white tracking-tight uppercase tracking-tighter mb-1">{activePaymentTab === 'credit' ? 'CARTERA FIADO' : `TRANSACCION ${activePaymentTab}`}</p>
                       <div className="flex items-center justify-center gap-1">
                         <span className={`${theme.text} font-medium tracking-tight text-2xl md:text-4xl tracking-tighter`}>$</span>
-                        <input 
+                        <input
                           type="text"
                           inputMode="numeric"
                           value={(activePaymentTab === 'credit' && !dialogAmount) ? '' : (dialogAmount ? formatCurrency(Number(dialogAmount)) : formatCurrency(Number(amountToPayRaw)))}
@@ -610,6 +760,12 @@ export default function UniversalPaymentModal({
                           onChange={(e) => {
                             const val = e.target.value.replace(/\D/g, '');
                             setDialogAmount(val);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              processPayment();
+                            }
                           }}
                           className={`w-full max-w-[280px] font-medium text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent tabular-nums text-center focus:outline-none tracking-tighter leading-none`}
                         />
@@ -628,9 +784,9 @@ export default function UniversalPaymentModal({
                                     No se puede fiar a Consumidor Final. Por favor, cancela y selecciona un cliente registrado para asignar la deuda, o pulsa el boton debajo.
                                 </p>
                                 {onClientSelectorOpen && (
-                                    <Button 
-                                        color="warning" 
-                                        size="sm" 
+                                    <Button
+                                        color="warning"
+                                        size="sm"
                                         className="font-bold text-[10px] uppercase tracking-widest rounded-xl"
                                         onPress={onClientSelectorOpen}
                                     >
@@ -654,7 +810,7 @@ export default function UniversalPaymentModal({
                                     </p>
                                     <Users size={14} className={ amountToPayRaw > (client.creditLimit - client.currentCredit) ? 'text-rose-500' : 'text-blue-500'} />
                                 </div>
-                                
+
                                 <div className="grid grid-cols-3 gap-2">
                                     <div className="flex flex-col">
                                         <span className="text-[7px] font-bold text-gray-400 uppercase tracking-tighter">Deuda Actual</span>
@@ -688,13 +844,13 @@ export default function UniversalPaymentModal({
 
                   <div className="grid grid-cols-3 gap-2">
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
-                      <Button 
-                        key={n} 
+                      <Button
+                        key={n}
                         tabIndex={-1}
                         onMouseDown={(e) => e.preventDefault()}
                         className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
                           n === 'CE' ? 'text-rose-500 bg-rose-500/10' : 'bg-white dark:bg-zinc-800 dark:text-white'
-                        }`} 
+                        }`}
                         onPress={() => {
                             if (n === 'CE') setDialogAmount('');
                             else setDialogAmount((p: string) => p + String(n));
@@ -711,7 +867,7 @@ export default function UniversalPaymentModal({
                       <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1 tracking-tight flex items-center gap-2">
                         <div className={`h-1 w-1 rounded-2xl ${theme.bg}`} /> JUSTIFICACION / NOTA
                       </p>
-                      <input 
+                      <input
                         type="text"
                         value={reason || ''}
                         onFocus={(e) => e.target.select()}
@@ -722,18 +878,18 @@ export default function UniversalPaymentModal({
                     </div>
                   )}
 
-                  <Button 
+                  <Button
                     className={`md:hidden h-14 w-full font-medium uppercase rounded-2xl mt-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-xs tracking-widest active:scale-95 transition-all tracking-tight ${
                         isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30 cursor-not-allowed' : `${theme.bg} text-white`
-                    }`} 
-                    onPress={processPayment} 
+                    }`}
+                    onPress={processPayment}
                     isLoading={submittingPayment}
                     isDisabled={isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund}
                   >
-                    {isCreditInvalid 
-                      ? "CLIENTE REQUERIDO" 
-                      : isOverCreditLimit 
-                      ? "CUPO EXCEDIDO" 
+                    {isCreditInvalid
+                      ? "CLIENTE REQUERIDO"
+                      : isOverCreditLimit
+                      ? "CUPO EXCEDIDO"
                       : isBlockedTransferRefund
                       ? `LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
                       : (flowType === "out" ? "CONFIRMAR REEMBOLSO" : "COMPLETAR VENTA")} <Check size={18} className="ml-2" />
@@ -749,7 +905,7 @@ export default function UniversalPaymentModal({
                 <p className={`text-[10px] font-medium ${theme.text} uppercase tracking-[0.2em] tracking-tight flex items-center justify-end gap-2 relative z-10`}><Calculator size={12} /> DIGITANDO MONTO</p>
                 <div className="flex items-center justify-end gap-1 relative z-10">
                   <span className={`${theme.text} font-medium tracking-tight text-2xl md:text-4xl tracking-tighter`}>$</span>
-                    <input 
+                    <input
                       type="text"
                       inputMode="numeric"
                       value={dialogAmount ? formatCurrency(Number(dialogAmount)) : formatCurrency(Number(amountToPayRaw))}
@@ -762,6 +918,12 @@ export default function UniversalPaymentModal({
                         const val = e.target.value.replace(/\D/g, '');
                         setDialogAmount(val);
                       }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          processPayment();
+                        }
+                      }}
                     className={`w-full font-medium text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent border-none text-right focus:outline-none tracking-tighter tabular-nums leading-none`}
                   />
                 </div>
@@ -772,7 +934,7 @@ export default function UniversalPaymentModal({
                   <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1 tracking-tight flex items-center gap-2">
                     <div className={`h-1 w-1 rounded-2xl ${theme.bg}`} /> JUSTIFICACION / NOTA
                   </p>
-                  <input 
+                  <input
                     type="text"
                     value={reason || ''}
                     onFocus={(e) => e.target.select()}
@@ -784,17 +946,17 @@ export default function UniversalPaymentModal({
               )}
               <div className="grid grid-cols-3 gap-3 flex-1 pb-4">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
-                  <Button 
-                    key={n} 
+                  <Button
+                    key={n}
                     tabIndex={-1}
                     onMouseDown={(e) => e.preventDefault()}
                     className={`h-full text-2xl font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
-                      n === 'CE' 
-                        ? 'text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-50 active:text-white' 
+                      n === 'CE'
+                        ? 'text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-50 active:text-white'
                         : n === '+'
                         ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]'
                         : 'bg-gray-50 dark:bg-zinc-800 dark:text-white active:bg-gray-200 border border-transparent'
-                    }`} 
+                    }`}
                     onPress={() => {
                         if (n === 'CE') setDialogAmount('');
                         else if (n === '+') handleAddPayment();
@@ -806,20 +968,20 @@ export default function UniversalPaymentModal({
                   </Button>
                 ))}
               </div>
-              <Button 
+              <Button
                 className={`h-20 font-medium uppercase rounded-2xl tracking-tight tracking-[0.2em] shadow-[0_20px_50px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[11px] border-b-4 ${
-                    isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund 
-                        ? 'bg-amber-500/20 text-amber-500 border-amber-500/40 cursor-not-allowed' 
+                    isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund
+                        ? 'bg-amber-500/20 text-amber-500 border-amber-500/40 cursor-not-allowed'
                         : 'bg-gray-900 dark:bg-white text-white dark:text-black border-gray-600 dark:border-gray-300'
-                }`} 
-                onPress={processPayment} 
+                }`}
+                onPress={processPayment}
                 isLoading={submittingPayment}
                 isDisabled={isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund}
               >
-                {isCreditInvalid 
-                  ? "⛔ CLIENTE NO SELECCIONADO" 
-                  : isOverCreditLimit 
-                  ? "❌ CUPO EXCEDIDO" 
+                {isCreditInvalid
+                  ? "⛔ CLIENTE NO SELECCIONADO"
+                  : isOverCreditLimit
+                  ? "❌ CUPO EXCEDIDO"
                   : isBlockedTransferRefund
                   ? `⚠️ LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
                   : (flowType === "out" ? "ENTREGAR EFECTIVO" : "COMPLETAR VENTA")} <ShieldCheck size={20} className="ml-2" />
@@ -828,7 +990,7 @@ export default function UniversalPaymentModal({
           </div>
         )}
         </ModalContent>
-        
+
         {/* OVERLAY DE SEGURIDAD ANTIDUPLICADO */}
         {!showSuccessScreen && (submittingPayment || isProcessingRef.current) && (
           <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-white dark:bg-zinc-950/95 animate-in fade-in duration-300">

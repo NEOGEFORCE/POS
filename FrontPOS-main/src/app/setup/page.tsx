@@ -230,7 +230,7 @@ export default function SetupPage() {
               size="lg"
               radius="lg"
               isLoading={loading}
-              className="w-full h-14 text-sm font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all uppercase"
+              className="w-full h-14 text-sm font-medium bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 dark:text-black shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all uppercase"
             >
               Finalizar Configuracion e Instalar
             </Button>

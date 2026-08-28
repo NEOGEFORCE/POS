@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import {
@@ -118,13 +118,13 @@ const CustomerTable = memo(({
                             <Button
                                 size="md"
                                 onPress={() => onPay(c)}
-                                className="h-11 px-6 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all animate-pulse flex items-center gap-3 border-2 border-black/10 dark:border-white/20"
+                                className="h-11 px-6 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all animate-pulse flex items-center gap-3 border-2 border-black/10 dark:border-white/20"
                             >
                                 <DollarSign size={18} strokeWidth={4} />
                                 <span className="text-[12px] tracking-[0.15em] mb-0.5">ABONAR</span>
                             </Button>
                         )}
-                        <Tooltip content="EDITAR" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
+                        <Tooltip content="EDITAR" delay={0} placement="top" classNames={{ content: "font-medium text-[9px] uppercase tracking-widest bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 py-1 px-2 rounded-none shadow-[0_8px_30px_rgb(0,0,0,0.12)]" }}>
                             <Button
                                 isIconOnly
                                 size="sm"
@@ -202,7 +202,7 @@ const CustomerTable = memo(({
                                         {onAdd && (
                                             <Button
                                                 onPress={onAdd}
-                                                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl px-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all"
+                                                className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[9px] uppercase tracking-widest tracking-tight rounded-2xl px-8 shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all"
                                             >
                                                 <PlusCircle size={14} className="mr-2" /> REGISTRAR PRIMER CLIENTE
                                             </Button>
@@ -230,7 +230,7 @@ const CustomerTable = memo(({
                                 {onAdd && (
                                     <Button
                                         onPress={onAdd}
-                                        className="mt-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white font-medium text-[8px] uppercase tracking-widest tracking-tight rounded-2xl px-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
+                                        className="mt-4 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 font-medium text-[8px] uppercase tracking-widest tracking-tight rounded-2xl px-6 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                                     >
                                         <PlusCircle size={12} className="mr-2" /> CREAR NUEVO
                                     </Button>

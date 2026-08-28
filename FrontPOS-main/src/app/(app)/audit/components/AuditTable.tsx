@@ -205,7 +205,7 @@ export default function AuditTable({ logs }: AuditTableProps) {
         </div>
       );
     } catch {
-      return <pre className="text-[10px] p-2 bg-[#18181b] text-gray-600 dark:text-zinc-300 rounded overflow-auto overscroll-contain">{changesStr}</pre>;
+      return <pre className="text-[10px] p-2 bg-zinc-100 dark:bg-[#18181b] text-gray-600 dark:text-zinc-300 rounded overflow-auto overscroll-contain">{changesStr}</pre>;
     }
   };
 

@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next';
 import { AuthProvider } from '@/lib/auth';
-import { Toaster } from 'sonner';
 import { DM_Sans, DM_Mono } from 'next/font/google';
 
 // IMPORTANTE: Importamos el archivo puente que acabamos de crear
@@ -9,8 +8,8 @@ import './globals.css';
 import SWRegister from './sw-register';
 import { GlobalSyncProvider } from "@/components/shared/GlobalSyncProvider";
 import { NetworkMonitor } from "@/components/shared/NetworkMonitor";
-import PWAInstallPrompt from "@/components/shared/PWAInstallPrompt";
 import ReLoginModal from "@/components/ReLoginModal";
+import { ThemedToaster } from "@/components/shared/ThemedToaster";
 
 const dmSans = DM_Sans({
   subsets: ['latin'],
@@ -61,7 +60,7 @@ export default function RootLayout({
         <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
       </head>
-      <body suppressHydrationWarning className="min-h-screen bg-[#09090b] text-zinc-100 flex flex-col antialiased overflow-x-hidden">
+      <body suppressHydrationWarning className="min-h-screen bg-gray-50 dark:bg-[#09090b] text-zinc-900 dark:text-zinc-100 flex flex-col antialiased overflow-x-hidden">
 
         {/* Envolvemos toda la app en nuestro Provider de Cliente */}
         <Providers>
@@ -71,8 +70,7 @@ export default function RootLayout({
             <NetworkMonitor />
             <ReLoginModal />
             {children}
-            <PWAInstallPrompt />
-            <Toaster position="top-left" richColors expand={false} theme="system" closeButton />
+            <ThemedToaster />
           </AuthProvider>
         </Providers>
 

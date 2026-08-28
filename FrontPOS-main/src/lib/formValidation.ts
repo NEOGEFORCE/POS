@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Utilidad centralizada de validacion de formularios POS.
  * Principio Fail-Fast: rechazar datos invalidos en el borde (frontend)
  * antes de que lleguen al backend.

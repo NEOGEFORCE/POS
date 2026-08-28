@@ -1,16 +1,18 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+﻿import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
 import { Product, Customer, Category } from '@/lib/definitions';
-import { applyRounding, isProductWeighted, formatDateTime, normalizeText } from "@/lib/utils";
+import { applyRounding, isProductWeighted, formatDateTime, normalizeText, roundSaleLineSubtotal } from "@/lib/utils";
 import { ScaleBridge } from '@/lib/scaleBridge';
 import { useScale } from '@/hooks/useScale';
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
-import { extractApiError } from '@/lib/api-error';
+import { ApiError, apiFetch } from '@/lib/api-error';
 import { useApi } from '@/hooks/use-api';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { registerAuditLog } from '@/lib/audit-service';
+import { syncOfflineSalesQueue } from '@/lib/offline-sync';
+import { isSoundMuted } from '@/lib/audio-utils';
+import { useAuth } from '@/lib/auth';
 
 export interface CartItem extends Product {
     cartQuantity: number;
@@ -22,16 +24,20 @@ export interface CartItem extends Product {
 export function useNewSale() {
     const router = useRouter();
     const { toast } = useToast();
+    const { user } = useAuth();
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
 
     // Core Data (Auto-refreshing via SWR)
+    // Los cambios reales llegan por SSE (PRODUCT_UPDATE, STOCK_UPDATE...), asi que
+    // el sondeo periodico solo es una red de seguridad. Bajarlo evita descargar el
+    // catalogo completo cada minuto, que en celular se sentia lento.
     const { data: productsData, mutate: mutateProducts, isLoading: productsLoading, error: productsError } = useApi<Product[]>('/products/all-products', { 
-        refreshInterval: 60000, // 60s - SSE handles real-time sync
+        refreshInterval: 300000, // 5 min
         revalidateOnFocus: true 
     });
-    const { data: customersData, mutate: mutateCustomers, isLoading: customersLoading } = useApi<Customer[]>('/clients/all-clients', { refreshInterval: 60000 });
-    const { data: categoriesData, mutate: mutateCategories, isLoading: categoriesLoading } = useApi<Category[]>('/categories/all-categories', { refreshInterval: 120000 });
+    const { data: customersData, mutate: mutateCustomers, isLoading: customersLoading } = useApi<Customer[]>('/clients/all-clients', { refreshInterval: 300000 });
+    const { data: categoriesData, mutate: mutateCategories, isLoading: categoriesLoading } = useApi<Category[]>('/categories/all-categories', { refreshInterval: 600000 });
 
     const [products, setProducts] = useState<Product[]>([]);
     const [customers, setCustomers] = useState<Customer[]>([]);
@@ -106,6 +112,7 @@ export function useNewSale() {
 
     const playBeep = useCallback((type: 'success' | 'error' = 'success') => {
         if (typeof window === 'undefined') return;
+        if (isSoundMuted()) return;
         try {
             const AudioContext = (window as any).AudioContext || (window as any).webkitAudioContext;
             if (!AudioContext) return;
@@ -154,9 +161,11 @@ export function useNewSale() {
         lastWeightRef.current = scaleWeight;
     }, [scaleWeight, isScaleOnline, reloadScale]);
 
-    // 2. Refresco proactivo cada 30 segundos si esta en cero
+    // 2. Refresco proactivo cada 30 segundos si esta en cero.
+    // Las pestañas ocultas no deben mantener activo el bridge de la bascula.
     useEffect(() => {
         const interval = setInterval(() => {
+            if (document.visibilityState !== 'visible') return;
             if (isScaleOnline && scaleWeight <= 0.001 && !isScaleReloading) {
                 reloadScale();
             }
@@ -166,12 +175,10 @@ export function useNewSale() {
     
     // --- GUARDIAN DE FOCO (SCANNER GUARDIAN) ---
     // Asegura que el foco siempre regrese al escaner oculto si no hay un modal abierto.
-    // Esto resuelve el problema de tener que recargar cuando se pierde el foco por error.
     useEffect(() => {
         const interval = setInterval(() => {
-            if (typeof window === 'undefined') return;
+            if (typeof window === 'undefined' || document.visibilityState !== 'visible') return;
             
-            // Verificamos si hay algun modal o input real abierto
             const target = document.activeElement as HTMLElement;
             const isRealInput = (
                 target?.tagName === 'INPUT' || 
@@ -186,7 +193,7 @@ export function useNewSale() {
             if (!isRealInput && !isAnyModalOpen && hiddenScannerRef.current) {
                 hiddenScannerRef.current.focus();
             }
-        }, 500); // Vigila el foco cada medio segundo para respuesta inmediata
+        }, 500);
         
         return () => clearInterval(interval);
     }, [isPaymentDialogOpen, isClientDialogOpen, isScannerOpen, isManualWeightOpen, isSplitDialogOpen, isMissingItemOpen]);
@@ -196,26 +203,29 @@ export function useNewSale() {
     
     // 1. Cargar al montar
     useEffect(() => {
-        loadCartsFromIndexedDB().then((data) => {
-            if (data) {
-                // Solo restaurar si hay algo guardado
-                if (Object.keys(data.carts).length > 0) {
-                    setCarts(data.carts);
-                    setCartKeys(Object.keys(data.carts));
-                    setActiveCartKey(data.activeKey);
-                    setCartCustomers(data.cartCustomers || { 'Factura 1': '0' });
-                    setSelectedCustomerDni(data.customerDni);
-                    setSelectedItemId(data.selectedItemId);
-                }
+        if (!user?.dni) return;
+        let cancelled = false;
+        isInitialMount.current = true;
+        loadCartsFromIndexedDB(user.dni).then((data) => {
+            if (cancelled) return;
+            if (data && Object.keys(data.carts).length > 0) {
+                setCarts(data.carts);
+                setCartKeys(Object.keys(data.carts));
+                setActiveCartKey(data.activeKey);
+                setCartCustomers(data.cartCustomers || { 'Factura 1': '0' });
+                setSelectedCustomerDni(data.customerDni);
+                setSelectedItemId(data.selectedItemId);
             }
             setLoading(false);
             isInitialMount.current = false;
         }).catch(err => {
+            if (cancelled) return;
             console.error("Error cargando persistencia:", err);
             setLoading(false);
             isInitialMount.current = false;
         });
-    }, []);
+        return () => { cancelled = true; };
+    }, [user?.dni]);
 
     // --- SINCRONIZACION EN TIEMPO REAL ---
     // Escuchar actualizaciones de otros paneles (Productos, Categorias, etc)
@@ -239,14 +249,14 @@ export function useNewSale() {
 
     // 2. Guardar cambios (Debounced para performance)
     useEffect(() => {
-        if (isInitialMount.current || loading) return;
+        if (isInitialMount.current || loading || !user?.dni) return;
         
         const timer = setTimeout(() => {
-            saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId);
+            void saveCartsToIndexedDB(carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId, user.dni);
         }, 1000);
         
         return () => clearTimeout(timer);
-    }, [carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId, loading]);
+    }, [carts, activeCartKey, selectedCustomerDni, cartCustomers, selectedItemId, loading, user?.dni]);
     // Auto-select last item in cart if nothing is selected
     useEffect(() => {
         const currentCart = carts[activeCartKey] || [];
@@ -266,9 +276,10 @@ export function useNewSale() {
             }
         };
 
-        const handleOnline = () => { setIsOffline(false); syncOfflineQueue(); };
+        const handleOnline = () => { setIsOffline(false); void syncOfflineQueue(); };
         const handleOffline = () => { setIsOffline(true); };
 
+        setIsOffline(!navigator.onLine);
         window.addEventListener('online', handleOnline);
         window.addEventListener('offline', handleOffline);
 
@@ -336,7 +347,7 @@ export function useNewSale() {
                             // BLINDAJE: Ignorar productos de Venta Rapida (Codigo 0000)
                             if (item.barcode === '0000') return item;
 
-                            const latest = products.find(p => p.barcode === item.barcode);
+                            const latest = productMap.get(item.barcode);
                             if (latest) {
                                 const priceChanged = Number(latest.salePrice) !== Number(item.salePrice);
                                 const stockChanged = latest.quantity !== item.quantity;
@@ -358,41 +369,19 @@ export function useNewSale() {
                 return totalCartsChanged ? next : prev;
             });
         }
-    }, [products]);
-
-    // Ultra-Instinto: Offload search to worker whenever inputs change
-    useEffect(() => {
-        workerRef.current?.postMessage({ 
-            type: 'UPDATE_SEARCH', 
-            payload: { query: searchQuery, category: selectedCategory } 
-        });
-    }, [searchQuery, selectedCategory]);
+    }, [products, productMap]);
 
     const syncOfflineQueue = async () => {
-        const { getSyncQueue, removeFromSyncQueue } = await import('@/lib/offline-db');
-        const queue = await getSyncQueue();
-        setSyncQueueCount(queue.length);
-        if (queue.length === 0) return;
+        const result = await syncOfflineSalesQueue();
+        setSyncQueueCount(result.remaining);
 
-        toast({ title: "SINCRONIZANDO", description: `SUBIENDO ${queue.length} VENTAS PENDIENTES...` });
-        
-        for (const sale of queue) {
-            try {
-                const token = Cookies.get('org-pos-token');
-                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`, {
-                    method: 'POST', 
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, 
-                    body: JSON.stringify(sale.payload) // Nota: payload es donde esta la data de la venta
-                });
-                if (res.ok) {
-                    await removeFromSyncQueue(sale.id);
-                    setSyncQueueCount(prev => Math.max(0, prev - 1));
-                }
-            } catch (err) {
-                console.error("Sync failed for", sale.id, err);
-            }
+        if (result.succeeded > 0) {
+            toast({
+                variant: "success",
+                title: "SINCRO COMPLETA",
+                description: `${result.succeeded} VENTAS SUBIDAS AL SERVIDOR`,
+            });
         }
-        // toast({ variant: "success", title: "SINCRO COMPLETA", description: "TODO AL DIA" });
     };
 
     // Actualizar conteo de cola al montar y cada vez que cambia el estado offline
@@ -404,30 +393,6 @@ export function useNewSale() {
         };
         updateCount();
     }, [isOffline]);
-
-    // NUEVO: Servicio de fondo para auto-reintento de cola offline
-    useEffect(() => {
-        if (typeof window === 'undefined') return;
-
-        const handleOnline = () => {
-            setIsOffline(false);
-            syncOfflineQueue(); // Auto-sincronizar al volver la red
-        };
-
-        const handleOffline = () => {
-            setIsOffline(true);
-        };
-
-        setIsOffline(!navigator.onLine);
-
-        window.addEventListener('online', handleOnline);
-        window.addEventListener('offline', handleOffline);
-
-        return () => {
-            window.removeEventListener('online', handleOnline);
-            window.removeEventListener('offline', handleOffline);
-        };
-    }, []);
 
     // Computed Values (Optimized via useMemo)
     const currentCart = useMemo(() => carts[activeCartKey] || [], [carts, activeCartKey]);
@@ -459,7 +424,7 @@ export function useNewSale() {
         return items.reduce((sum, item) => {
             const qty = item.isPreexisting ? Math.max(0, item.cartQuantity - (item.originalQuantity || 0)) : item.cartQuantity;
             const price = Number(item.salePrice) || 0;
-            return sum + applyRounding(price * qty);
+            return sum + roundSaleLineSubtotal(price, qty);
         }, 0);
     }, [splitItemsToPay, currentCart, isEditMode]);
 
@@ -468,7 +433,7 @@ export function useNewSale() {
         if (!Array.isArray(items) || items.length === 0) return 0;
         return items.reduce((sum, item) => {
             const price = Number(item.salePrice) || 0;
-            return sum + applyRounding(price * item.cartQuantity);
+            return sum + roundSaleLineSubtotal(price, item.cartQuantity);
         }, 0);
     }, [splitItemsToPay, currentCart]);
 
@@ -1003,9 +968,8 @@ export function useNewSale() {
             setSubmitting(true);
             submittingRef.current = true;
             try {
-                const token = Cookies.get('org-pos-token');
-                let payloadItems = [];
-                let totalDeductionsForState = new Map<string, number>();
+                const payloadItems = [];
+                const totalDeductionsForState = new Map<string, number>();
 
                 for (const item of itemsToPay) {
                     const qty = item.isPreexisting ? Math.max(0, item.cartQuantity - (item.originalQuantity || 0)) : item.cartQuantity;
@@ -1026,42 +990,39 @@ export function useNewSale() {
                 }
                 
                 const saleId = currentKey.split('-')[1];
-                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/add-items/${saleId}`, {
+                await apiFetch(`/sales/add-items/${saleId}`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({ items: payloadItems })
+                    body: JSON.stringify({ items: payloadItems }),
+                    fallbackError: 'ERROR AL ACTUALIZAR',
                 });
-                
-                if (res.ok) {
-                    toast({ variant: 'success', title: 'VENTA ACTUALIZADA', description: 'SE AGREGARON LOS PRODUCTOS CON EXITO' });
-                    setLastChange(paymentData.change);
-                    setShowSuccessScreen(true);
-                    
-                    // actualizamos inventario
-                    setProducts(prev => prev.map(p => {
-                        const deduction = totalDeductionsForState.get(p.barcode);
-                        if (deduction !== undefined) {
-                            return { ...p, quantity: Math.max(0, p.quantity - deduction) };
-                        }
-                        return p;
-                    }));
-                    mutateProducts();
-                    
-                    // clean cart
-                    const updatedCarts = { ...carts };
-                    delete updatedCarts[currentKey];
-                    setCarts(updatedCarts);
-                    const newKeys = cartKeys.filter(k => k !== currentKey);
-                    setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
-                    setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
-                    
-                    broadcastRevalidate('SALE_MADE');
-                } else {
-                    const errorMsg = await extractApiError(res, "ERROR AL ACTUALIZAR");
-                    toast({ variant: "destructive", title: "ERROR DEL SERVIDOR", description: errorMsg });
-                }
+
+                toast({ variant: 'success', title: 'VENTA ACTUALIZADA', description: 'SE AGREGARON LOS PRODUCTOS CON EXITO' });
+                setLastChange(paymentData.change);
+                setShowSuccessScreen(true);
+
+                setProducts(prev => prev.map(p => {
+                    const deduction = totalDeductionsForState.get(p.barcode);
+                    if (deduction !== undefined) {
+                        return { ...p, quantity: Math.max(0, p.quantity - deduction) };
+                    }
+                    return p;
+                }));
+                mutateProducts();
+
+                const updatedCarts = { ...carts };
+                delete updatedCarts[currentKey];
+                setCarts(updatedCarts);
+                const newKeys = cartKeys.filter(k => k !== currentKey);
+                setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
+                setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
+
+                broadcastRevalidate('SALE_MADE');
             } catch (err) {
-                 toast({ variant: "destructive", title: "ERROR INESPERADO", description: "Ocurrio un error de red" });
+                toast({
+                    variant: "destructive",
+                    title: err instanceof ApiError ? "ERROR DEL SERVIDOR" : "ERROR INESPERADO",
+                    description: err instanceof Error ? err.message : "Ocurrio un error de red",
+                });
             } finally {
                 setSubmitting(false);
                 submittingRef.current = false;
@@ -1107,7 +1068,6 @@ export function useNewSale() {
 
         submittingRef.current = true;
         setSubmitting(true);
-        const token = Cookies.get('org-pos-token');
         const { cash, transfer, transferSource, transferNequi = 0, transferDaviplata = 0, credit, totalPaid, change } = paymentData;
 
         // Si hay devolucion pendiente, llama a /sales/returns
@@ -1126,41 +1086,39 @@ export function useNewSale() {
                     chargeMethod: totalPaid > 0 ? (transfer > 0 ? transferSource : "EFECTIVO") : ""
                 };
 
-                const res = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/returns`, {
+                await apiFetch('/sales/returns', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload),
+                    fallbackError: 'Error procesando cambio',
                 });
 
-                if (res.ok) {
-                    toast({ variant: 'success', title: 'CAMBIO PROCESADO', description: 'SE COMPLETÓ LA DEVOLUCIÓN Y LA NUEVA VENTA' });
-                    localStorage.removeItem("pos-pending-return");
-                    
-                    if (typeof window !== 'undefined') {
-                        const event = new CustomEvent('return-completed');
-                        window.dispatchEvent(event);
-                    }
+                toast({ variant: 'success', title: 'CAMBIO PROCESADO', description: 'SE COMPLETÓ LA DEVOLUCIÓN Y LA NUEVA VENTA' });
+                localStorage.removeItem("pos-pending-return");
 
-                    setLastChange(change);
-                    setShowSuccessScreen(true);
-                    mutateProducts();
-                    
-                    // clean cart
-                    const updatedCarts = { ...carts };
-                    delete updatedCarts[currentKey];
-                    setCarts(updatedCarts);
-                    const newKeys = cartKeys.filter(k => k !== currentKey);
-                    setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
-                    setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
-                    if (newKeys.length === 0) addNewCart();
-                    
-                    broadcastRevalidate('SALE_MADE');
-                } else {
-                    const err = await res.json();
-                    toast({ variant: 'destructive', title: 'ERROR', description: err.message || 'Error procesando cambio' });
+                if (typeof window !== 'undefined') {
+                    const event = new CustomEvent('return-completed');
+                    window.dispatchEvent(event);
                 }
+
+                setLastChange(change);
+                setShowSuccessScreen(true);
+                mutateProducts();
+
+                const updatedCarts = { ...carts };
+                delete updatedCarts[currentKey];
+                setCarts(updatedCarts);
+                const newKeys = cartKeys.filter(k => k !== currentKey);
+                setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
+                setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
+                if (newKeys.length === 0) addNewCart();
+
+                broadcastRevalidate('SALE_MADE');
             } catch (err) {
-                 toast({ variant: "destructive", title: "ERROR INESPERADO", description: "Ocurrió un error de red" });
+                toast({
+                    variant: "destructive",
+                    title: "ERROR",
+                    description: err instanceof Error ? err.message : "Error procesando cambio",
+                });
             } finally {
                 setSubmitting(false);
                 submittingRef.current = false;
@@ -1179,11 +1137,12 @@ export function useNewSale() {
         // Si no hay montos (error?), default a EFECTIVO
         const paymentMethod = paymentMethods.length > 0 ? paymentMethods.join(" + ") : "EFECTIVO";
 
-        const localTotal = itemsToPay.reduce((acc, item) => acc + applyRounding(Number(item.salePrice) * item.cartQuantity), 0);
+        const localTotal = itemsToPay.reduce((acc, item) => acc + roundSaleLineSubtotal(Number(item.salePrice), item.cartQuantity), 0);
 
         if (localTotal > 100000000 || totalPaid > 100000000) {
             toast({ variant: "destructive", title: "ERROR DE MONTO", description: "EL VALOR ES DEMASIADO GRANDE" });
             setSubmitting(false);
+            submittingRef.current = false;
             return;
         }
 
@@ -1212,7 +1171,7 @@ export function useNewSale() {
                     quantity: qty, 
                     unitPrice: price, 
                     costPrice: cost,
-                    subtotal: applyRounding(price * qty)
+                    subtotal: roundSaleLineSubtotal(price, qty)
                 };
             })
         };
@@ -1224,39 +1183,33 @@ export function useNewSale() {
                 return;
             }
 
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos de espera max.
-
             const isEditMode = activeCartKey.startsWith("Factura EDIT-");
-            let endpointUrl = `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/register`;
+            let endpointPath = '/sales/register';
             let reqMethod = 'POST';
-            
+
             if (isEditMode) {
                 const saleId = activeCartKey.split('-')[1];
-                endpointUrl = `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/sales/update/${saleId}`;
+                endpointPath = `/sales/update/${saleId}`;
                 reqMethod = 'PUT';
             }
 
-            const res = await fetch(endpointUrl, {
-                method: reqMethod, 
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }, 
+            await apiFetch(endpointPath, {
+                method: reqMethod,
                 body: JSON.stringify(saleData),
-                signal: controller.signal
+                fallbackError: 'ERROR AL REGISTRAR VENTA',
+                timeoutMs: 30000,
             });
-            clearTimeout(timeoutId);
 
-            if (res.ok) {
-                toast({ variant: 'success', title: 'VENTA REGISTRADA', description: 'TRANSACCION COMPLETADA CON EXITO' });
-                finalizeLocalSale(itemsToPay, saleData, change);
-            } else {
-                const errorMsg = await extractApiError(res, "ERROR AL REGISTRAR VENTA");
-                toast({ variant: "destructive", title: "ERROR DEL SERVIDOR", description: errorMsg, duration: 10000 });
-                setSubmitting(false);
-                return;
-            }
+            toast({ variant: 'success', title: 'VENTA REGISTRADA', description: 'TRANSACCION COMPLETADA CON EXITO' });
+            finalizeLocalSale(itemsToPay, saleData, change);
         } catch (err: any) {
-            const isTimeout = err.name === 'AbortError';
-            const isNetworkError = err instanceof TypeError || err.name === 'TypeError' || err.message?.includes('fetch') || isTimeout;
+            const isNetworkError = !(err instanceof ApiError) && (
+                err instanceof TypeError ||
+                err?.name === 'TypeError' ||
+                err?.name === 'AbortError' ||
+                err?.message?.includes('fetch') ||
+                err?.message?.includes('SIN CONEXION')
+            );
             
             if (isNetworkError) {
                 try {

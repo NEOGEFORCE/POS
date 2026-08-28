@@ -1,4 +1,4 @@
-import React, { memo, useState, useEffect } from 'react';
+﻿import React, { memo, useState, useEffect } from 'react';
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   Button, Input, Autocomplete, AutocompleteItem, Card, CardBody, Switch, cn
@@ -22,9 +22,14 @@ interface ExpenseFormModalProps {
   isOpen: boolean;
   onOpenChange?: (open: boolean) => void;
   onClose?: () => void;
+  onSave: (expense: Partial<Expense>) => Promise<void>;
   isEdit?: boolean;
-  initialExpense?: Partial<Expense> | null;
-  onSave: (data: any) => Promise<void>;
+  initialExpense?: Expense | null;
+  suppliers?: Supplier[];
+  onQuickCreateSupplier?: (supplier: Partial<Supplier>) => Promise<Supplier>;
+  onSettle?: (id: string, paymentSource: string, amount: number) => Promise<void>;
+  onDelete?: (id: string) => void;
+  isAdmin?: boolean;
 }
 
 interface LocalExpenseState {
@@ -36,7 +41,7 @@ interface LocalExpenseState {
   category: string;
   supplierId: number | string | null;
   lenderName: string;
-  status: 'PAID' | 'PENDING';
+  status: 'PAID' | 'PENDING' | 'SETTLED';
   isManualDescription: boolean;
   linkedOrderId?: number;
   creator?: any;
@@ -45,6 +50,7 @@ interface LocalExpenseState {
   nequiAmount: number;
   daviplataAmount: number;
   fondoAmount: number;
+  coinsAmount: number;
 }
 
 interface PurchaseOrder {
@@ -71,21 +77,18 @@ const CATEGORIES = [
 const ExpenseFormModal = memo(({
   isOpen,
   onOpenChange,
-  onClose: customOnClose,
+  onClose,
+  onSave,
   isEdit = false,
-  initialExpense = null,
-  onSave
+  initialExpense,
+  suppliers = [],
+  onQuickCreateSupplier,
+  onSettle,
+  onDelete,
+  isAdmin = false
 }: ExpenseFormModalProps) => {
-  const { data: suppliers, mutate: mutateSuppliers } = useApi<Supplier[]>('/suppliers/all-suppliers');
-  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
-  const [validationErrors, setValidationErrors] = useState<FieldError[]>([]);
-  const [pendingOrders, setPendingOrders] = useState<PurchaseOrder[]>([]);
-  const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
-  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const { toast } = useToast();
-
-  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const { data: fetchedSuppliers, mutate: mutateSuppliers } = useApi<Supplier[]>('/suppliers/all-suppliers');
+  const activeSuppliers = (suppliers && suppliers.length > 0) ? suppliers : (fetchedSuppliers || []);
 
   const [localExpense, setLocalExpense] = useState<LocalExpenseState>({
     description: '',
@@ -96,27 +99,28 @@ const ExpenseFormModal = memo(({
     lenderName: '',
     status: 'PAID',
     isManualDescription: false,
-    taxAmount: 0
+    taxAmount: 0,
+    cashAmount: 0,
+    nequiAmount: 0,
+    daviplataAmount: 0,
+    fondoAmount: 0,
+    coinsAmount: 0
   });
 
   const [supplierInputValue, setSupplierInputValue] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
 
-  // --- PERSISTENCIA DE BORRADORES (Tarea 4) ---
-  useEffect(() => {
-    if (isEdit) return;
-    const saved = localStorage.getItem('expense-form-draft');
-    if (saved && isOpen) {
-      try {
-        const draft = JSON.parse(saved);
-        setLocalExpense(prev => ({ ...prev, ...draft }));
-      } catch (e) {
-        console.error("Error loading expense draft", e);
-      }
-    }
-  }, [isOpen, isEdit]);
+  // Ordenes de compra pendientes
+  const [pendingOrders, setPendingOrders] = useState<PurchaseOrder[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState<number | undefined>(undefined);
+  const [loadingOrders, setLoadingOrders] = useState(false);
+  const { toast } = useToast();
 
+  // Guardar borrador en localStorage para evitar perdida accidental
   useEffect(() => {
-    if (isOpen && !isEdit) {
+    if (isOpen && !isEdit && localExpense.description) {
       localStorage.setItem('expense-form-draft', JSON.stringify(localExpense));
     }
   }, [localExpense, isOpen, isEdit]);
@@ -126,10 +130,12 @@ const ExpenseFormModal = memo(({
       cashAmount: 0,
       nequiAmount: 0,
       daviplataAmount: 0,
-      fondoAmount: 0
+      fondoAmount: 0,
+      coinsAmount: 0
     };
 
     if (isOpen && initialExpense) {
+      const activeSupplierId = initialExpense.supplierId || (initialExpense as any).supplier_id || null;
       setLocalExpense({
         ...initialExpense,
         ...defaultMixed,
@@ -137,7 +143,7 @@ const ExpenseFormModal = memo(({
         amount: initialExpense.amount || '',
         paymentSource: initialExpense.paymentSource || 'EFECTIVO',
         category: initialExpense.category || 'Otros Gastos',
-        supplierId: initialExpense.supplierId || null,
+        supplierId: activeSupplierId,
         lenderName: initialExpense.lenderName || '',
         status: initialExpense.status || 'PAID',
         isManualDescription: true,
@@ -145,13 +151,15 @@ const ExpenseFormModal = memo(({
         cashAmount: (initialExpense as any).cashAmount || 0,
         nequiAmount: (initialExpense as any).nequiAmount || 0,
         daviplataAmount: (initialExpense as any).daviplataAmount || 0,
-        fondoAmount: (initialExpense as any).fondoAmount || 0
+        fondoAmount: (initialExpense as any).fondoAmount || 0,
+        coinsAmount: (initialExpense as any).coinsAmount || 0
       });
       // Sincronizar el input con el nombre del proveedor si existe
-      const sName = suppliers?.find((s: any) => s.id === initialExpense.supplierId)?.name || '';
+      const sName = activeSuppliers?.find((s: any) => s.id === activeSupplierId)?.name || '';
       setSupplierInputValue(sName);
     } else if (isOpen) {
       setLocalExpense({
+        ...defaultMixed,
         description: '',
         amount: '',
         paymentSource: 'EFECTIVO',
@@ -159,19 +167,21 @@ const ExpenseFormModal = memo(({
         supplierId: null,
         lenderName: '',
         status: 'PAID',
+        isManualDescription: false,
+        taxAmount: 0,
       });
       setSupplierInputValue('');
     }
     // Resetear estado de envio al abrir/cerrar
     setIsSubmitting(false);
     setIsPaymentModalOpen(false);
-  }, [isOpen, initialExpense, suppliers]);
+  }, [isOpen, initialExpense, activeSuppliers]);
 
   // FILTRO MANUAL BLINDADO
   const filteredSuppliers = React.useMemo(() => {
-    if (!suppliers) return [];
+    if (!activeSuppliers || activeSuppliers.length === 0) return [];
     // FILTRAR "SIN PROVEEDOR" POR SEGURIDAD
-    const cleanSuppliers = suppliers.filter(s => s.name && !s.name.toUpperCase().includes('SIN PROVEEDOR'));
+    const cleanSuppliers = activeSuppliers.filter(s => s.name && !s.name.toUpperCase().includes('SIN PROVEEDOR'));
     
     const search = (supplierInputValue || '').toLowerCase().trim();
     if (!search) return cleanSuppliers;
@@ -192,7 +202,7 @@ const ExpenseFormModal = memo(({
     );
     
     return [...startsWithName, ...containsName, ...matchesId];
-  }, [suppliers, supplierInputValue]);
+  }, [activeSuppliers, supplierInputValue]);
 
   // Logica de Autocompletado y Bloqueo
   useEffect(() => {
@@ -200,7 +210,7 @@ const ExpenseFormModal = memo(({
 
     if (localExpense.category === 'Proveedores') {
       // Intentamos buscar por ID, y si no (como en creaciones nuevas), usamos el valor que ya tenemos en el input
-      const supplierName = suppliers?.find((s: any) => s.id === localExpense.supplierId)?.name || supplierInputValue || '';
+      const supplierName = activeSuppliers?.find((s: any) => s.id === localExpense.supplierId)?.name || supplierInputValue || '';
       
       if (supplierName && !localExpense.isManualDescription) {
         setLocalExpense((prev: LocalExpenseState) => ({
@@ -221,14 +231,14 @@ const ExpenseFormModal = memo(({
         setLocalExpense((prev: LocalExpenseState) => ({ ...prev, description: '' }));
       }
     }
-  }, [localExpense.category, localExpense.supplierId, suppliers, isEdit]);
+  }, [localExpense.category, localExpense.supplierId, activeSuppliers, isEdit]);
 
   useEffect(() => {
-    if (localExpense.supplierId && suppliers) {
-      const supplier = suppliers.find(s => String(s.id) === String(localExpense.supplierId));
+    if (localExpense.supplierId && activeSuppliers) {
+      const supplier = activeSuppliers.find(s => String(s.id) === String(localExpense.supplierId));
       if (supplier) setSupplierInputValue(supplier.name);
     }
-  }, [localExpense.supplierId, suppliers]);
+  }, [localExpense.supplierId, activeSuppliers]);
 
   const updateField = (field: string, value: any) => {
     setLocalExpense((prev: LocalExpenseState) => {
@@ -301,7 +311,7 @@ const ExpenseFormModal = memo(({
   useEffect(() => {
     const fetchPendingOrders = async () => {
       if (localExpense.category === 'Proveedores' && localExpense.supplierId) {
-        setIsLoadingOrders(true);
+        setLoadingOrders(true);
         try {
           const token = Cookies.get('org-pos-token');
           const response = await fetch(
@@ -316,11 +326,11 @@ const ExpenseFormModal = memo(({
         } catch (error) {
           console.error('Error fetching orders:', error);
         } finally {
-          setIsLoadingOrders(false);
+          setLoadingOrders(false);
         }
       } else {
         setPendingOrders([]);
-        setSelectedOrderId(null);
+        setSelectedOrderId(undefined);
       }
     };
     fetchPendingOrders();
@@ -335,7 +345,7 @@ const ExpenseFormModal = memo(({
   async function handleProcessDebt() {
       setIsSubmitting(true);
       try {
-        const payload = {
+        const payload: Partial<Expense> = {
             ...localExpense,
             paymentSource: 'PRESTAMO',
             amount: Number(localExpense.amount) || 0,
@@ -358,13 +368,13 @@ const ExpenseFormModal = memo(({
     <>
       <Modal
         isOpen={isOpen}
-        onOpenChange={onOpenChange || customOnClose}
+        onOpenChange={onOpenChange || ((open) => { if (!open && onClose) onClose(); })}
         backdrop="blur"
         size="4xl"
         classNames={{
           base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
           closeButton: "absolute right-5 top-5 text-gray-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
-          backdrop: "bg-[#18181b] "
+          backdrop: "bg-black/50 backdrop-blur-sm"
         }}
       >
         <ModalContent>
@@ -585,9 +595,8 @@ const ExpenseFormModal = memo(({
                         value={localExpense.description}
                         onFocus={(e) => e.target.select()}
                         onValueChange={(v) => updateField('description', v.toUpperCase())}
-                        readOnly={localExpense.category === 'Proveedores'}
                         classNames={{
-                          inputWrapper: `h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl px-4 ${localExpense.category === 'Proveedores' ? 'opacity-70 cursor-not-allowed bg-gray-100' : ''}`,
+                          inputWrapper: "h-12 bg-gray-50 dark:bg-[#18181b] border border-gray-200 dark:border-white/5 rounded-2xl px-4",
                           input: "font-bold text-[11px] uppercase text-zinc-900 dark:text-zinc-50"
                         }}
                       />
@@ -623,16 +632,23 @@ const ExpenseFormModal = memo(({
         isOpen={isPaymentModalOpen}
         onOpenChange={setIsPaymentModalOpen}
         totalToPay={Number(localExpense.amount) || 0}
+        initialCash={Number(localExpense.cashAmount) || 0}
+        initialNequi={Number(localExpense.nequiAmount) || 0}
+        initialDaviplata={Number(localExpense.daviplataAmount) || 0}
+        initialFondo={Number(localExpense.fondoAmount) || 0}
+        initialCoins={Number(localExpense.coinsAmount) || 0}
+        initialPaymentSource={localExpense.paymentSource}
         onPay={async (data) => {
             // Este onPay se llama desde el Modal Multi-Pago cuando autorizan el dinero
             const baseAmount = Number(localExpense.amount) || 0;
-            const payload = {
+            const payload: Partial<Expense> = {
                 ...localExpense,
                 paymentSource: data.paymentSourceString,
                 cashAmount: data.cash,
                 nequiAmount: data.nequi,
                 daviplataAmount: data.daviplata,
                 fondoAmount: data.fondo,
+                coinsAmount: data.coins,
                 amount: baseAmount,
                 taxAmount: data.taxAmount || 0,
                 linkedOrderId: selectedOrderId,

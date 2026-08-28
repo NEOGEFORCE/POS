@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
@@ -6,10 +6,8 @@ import { useAuth } from '@/lib/auth';
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AppHeader } from '@/components/app-header';
-import { Spinner } from "@heroui/react"; // Usamos el Spinner premium
 import SyncBackground from '@/components/shared/SyncBackground';
 import SessionGuardian from '@/components/SessionGuardian';
-import { MotionPage } from '@/components/ui/motion';
 import { LogoutCurtain } from '@/components/layout/LogoutCurtain';
 import { RouteCurtain } from '@/components/layout/RouteCurtain';
 
@@ -51,15 +49,6 @@ export default function AppLayout({
     }, [user, loading, router]);
 
     useEffect(() => {
-        // DESTROY OLD SERVICE WORKERS THAT MIGHT BE CACHING TURBOPACK CHUNKS
-        if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
-            navigator.serviceWorker.getRegistrations().then(function(registrations) {
-                for(let registration of registrations) {
-                    registration.unregister();
-                }
-            });
-        }
-
         if (!loading && user) {
             const role = user.role?.toLowerCase() || user.Role?.toLowerCase() || "";
             const isAdmin = role === "admin" || role === "administrador" || role === "superadmin" || role === "auditor";
@@ -107,16 +96,17 @@ export default function AppLayout({
     // Pantalla de carga con soporte Claro/Oscuro y animacion premium
     if (loading) {
         return (
-            <div className="flex min-h-screen items-center justify-center bg-[#09090b]">
-                <div className="flex flex-col flex-1 bg-[#09090b] relative min-w-0 w-full max-w-full">
-                    <Spinner color="success" size="lg" label="Cargando interfaz" />
+            <div className="flex min-h-screen items-center justify-center bg-zinc-50 dark:bg-[#09090b]">
+                <div className="flex flex-col flex-1 items-center justify-center gap-3 bg-zinc-50 dark:bg-[#09090b] relative min-w-0 w-full max-w-full" role="status" aria-live="polite">
+                    <div className="h-10 w-10 animate-spin rounded-full border-4 border-zinc-700 border-t-emerald-500" aria-hidden="true" />
+                    <span className="text-xs font-medium uppercase tracking-widest text-zinc-400">Cargando interfaz</span>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="flex h-[100dvh] md:h-screen w-screen overflow-hidden bg-[#09090b]">
+        <div className="flex h-[100dvh] md:h-screen w-screen overflow-hidden bg-zinc-50 dark:bg-[#09090b]">
             <SidebarProvider defaultOpen={false}>
                 <AppSidebar />
                 <SidebarInset className="max-w-[100vw] min-w-0 min-h-0 w-full flex-1 md:h-full flex flex-col relative overflow-hidden">

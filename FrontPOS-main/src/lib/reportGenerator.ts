@@ -1,13 +1,6 @@
 ﻿import jsPDF from 'jspdf';
-import 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { formatCurrency } from './utils';
-
-// Extending jsPDF with autotable types for TypeScript
-declare module 'jspdf' {
-  interface jsPDF {
-    autoTable: (options: any) => jsPDF;
-  }
-}
 
 interface ReportOptions {
   title: string;
@@ -125,7 +118,7 @@ export const generatePDFReport = async ({
     })
   );
 
-  doc.autoTable({
+  autoTable(doc, {
     startY: currentY,
     theme: 'grid',
     head: [columns.map(c => c.header.toUpperCase())],
@@ -166,8 +159,8 @@ export const generatePDFReport = async ({
   });
 
   // --- Bloque de Firmas (Fase 3) ---
-  // @ts-ignore
-  const finalY = (doc.lastAutoTable?.finalY || currentY + 50) + 25;
+  const tableState = doc as jsPDF & { lastAutoTable?: { finalY: number } };
+  const finalY = (tableState.lastAutoTable?.finalY || currentY + 50) + 25;
   const signatureWidth = 60;
   
   // Firma 1

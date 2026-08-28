@@ -1,4 +1,4 @@
-import { Sale } from "./definitions";
+﻿import { Sale } from "./definitions";
 
 /**
  * Retorna una descripcion amigable del metodo de pago de una venta.

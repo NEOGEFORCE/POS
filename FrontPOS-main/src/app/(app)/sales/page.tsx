@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
@@ -12,8 +12,8 @@ import dynamic from 'next/dynamic';
 import { useToast } from '@/hooks/use-toast';
 import { Sale } from '@/lib/definitions';
 import { useApiWithPagination, useApi } from '@/hooks/use-api';
-import Cookies from 'js-cookie';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { useAuth } from '@/lib/auth';
 
 // COMPONENTES MODULARIADOS
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
@@ -29,6 +29,7 @@ import { Customer } from '@/lib/definitions';
 
 export default function SalesHistoryPage() {
     const { toast } = useToast();
+    const { user } = useAuth();
     const [page, setPage] = useState(1);
     const pageSize = 12;
 
@@ -62,7 +63,8 @@ export default function SalesHistoryPage() {
         }));
         
         try {
-            const currentData = await loadCartsFromIndexedDB();
+            if (!user?.dni) throw new Error('No hay una sesión autenticada para guardar el carrito');
+            const currentData = await loadCartsFromIndexedDB(user.dni);
             const carts = currentData ? currentData.carts : { 'Factura 1': [] };
             const cartCustomers = currentData ? currentData.cartCustomers : { 'Factura 1': '0' };
             
@@ -79,14 +81,17 @@ export default function SalesHistoryPage() {
                 cartKey,
                 customerDni,
                 cartCustomers,
-                null
+                null,
+                user.dni
             );
             window.location.href = '/sales/new';
         } catch (error) {
             console.error("Error setting cart data:", error);
-            localStorage.setItem(`pos_cart_${cartKey}`, JSON.stringify(cartItems));
-            localStorage.setItem('pos_active_cart', cartKey);
-            window.location.href = '/sales/new';
+            toast({
+                variant: "destructive",
+                title: "NO SE PUDO PREPARAR LA EDICIÓN",
+                description: error instanceof Error ? error.message : "No fue posible guardar el carrito.",
+            });
         }
     };
 

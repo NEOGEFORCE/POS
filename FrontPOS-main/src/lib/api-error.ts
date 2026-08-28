@@ -1,8 +1,9 @@
-/**
+﻿/**
  * Error personalizado de API que conserva status HTTP y datos del backend
  */
 import { API_URL } from './constants';
-import Cookies from 'js-cookie';
+import { requestSessionRecovery } from './session-recovery';
+import { getSessionToken } from './session';
 export class ApiError extends Error {
   status: number;
   data?: any;
@@ -149,7 +150,7 @@ export async function extractApiError(res: Response, fallback: string): Promise<
     
     // Prioridad 1: Nueva estructura global {"success": false, "message": "..."}
     if (data?.success === false && typeof data.message === 'string') {
-      let baseMsg = translateError(data.message) || data.message;
+      const baseMsg = translateError(data.message) || data.message;
       let extraDetail = "";
       
       if (data?.error && typeof data.error === 'object' && typeof data.error.details === 'string' && data.error.details !== '') {
@@ -244,55 +245,67 @@ export async function extractApiError(res: Response, fallback: string): Promise<
  * El usuario NUNCA pierde su trabajo.
  */
 export async function apiFetch<T = any>(
-  path: string, 
-  options: RequestInit & { fallbackError?: string; skipSessionRecovery?: boolean } = {},
+  path: string,
+  options: RequestInit & { fallbackError?: string; skipSessionRecovery?: boolean; timeoutMs?: number } = {},
   token?: string
 ): Promise<T> {
-  const { fallbackError = 'OPERACION FALLIDA', skipSessionRecovery, ...fetchOptions } = options;
-  
-  const makeRequest = async (authToken?: string): Promise<T> => {
+  const {
+    fallbackError = 'OPERACION FALLIDA',
+    skipSessionRecovery = false,
+    timeoutMs,
+    ...fetchOptions
+  } = options;
+
+  const makeRequest = async (authToken: string | null, allowRecovery: boolean): Promise<T> => {
     const headers: Record<string, string> = {
       ...(fetchOptions.headers as Record<string, string> || {}),
     };
-    
-    const activeToken = authToken || token || (typeof window !== 'undefined' ? (Cookies.get('org-pos-token') || localStorage.getItem('org-pos-token')) : null);
+
+    const activeToken = authToken || token || getSessionToken();
     if (activeToken && !headers['Authorization']) {
       headers['Authorization'] = `Bearer ${activeToken}`;
     }
-    
-    if (fetchOptions.body && !headers['Content-Type']) {
+
+    if (fetchOptions.body && !(fetchOptions.body instanceof FormData) && !headers['Content-Type']) {
       headers['Content-Type'] = 'application/json';
     }
 
     let res: Response;
+    const timeoutController = timeoutMs ? new AbortController() : null;
+    const timeoutId = timeoutController
+      ? globalThis.setTimeout(() => timeoutController.abort(), timeoutMs)
+      : null;
+    const externalSignal = fetchOptions.signal;
+    const abortFromExternal = () => timeoutController?.abort();
+    if (externalSignal && timeoutController) {
+      if (externalSignal.aborted) timeoutController.abort();
+      else externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+    }
     try {
       res = await fetch(`${API_URL}${path}`, {
         ...fetchOptions,
         headers,
+        signal: timeoutController?.signal ?? externalSignal,
       });
-    } catch (networkError) {
+    } catch {
       throw new Error('SIN CONEXION: No se pudo comunicar con el servidor. Verifica tu red.');
+    } finally {
+      if (timeoutId !== null) globalThis.clearTimeout(timeoutId);
+      externalSignal?.removeEventListener('abort', abortFromExternal);
     }
-    
+
     if (!res.ok) {
-      if (res.status === 401 && typeof window !== 'undefined') {
-        import('js-cookie').then((Cookies) => {
-          Cookies.default.remove('org-pos-token');
-          Cookies.default.remove('org-pos-user');
-          window.location.href = '/login?expired=true';
-        });
-        throw new ApiError('Sesión expirada', 401);
+      if (res.status === 401 && allowRecovery && !skipSessionRecovery && typeof window !== 'undefined') {
+        const renewedToken = await requestSessionRecovery();
+        return makeRequest(renewedToken, false);
       }
-      
-      // Clonar la respuesta antes de consumirla para evitar el error "body is already used"
+
       const clonedRes = res.clone();
       const errorMsg = await extractApiError(res, fallbackError);
       const errorData = await clonedRes.json().catch(() => null);
-      
       throw new ApiError(errorMsg, res.status, errorData);
     }
-    
-    // Intentar parsear como JSON, si no se puede, devolver vacio
+
     try {
       return await res.json();
     } catch {
@@ -300,5 +313,5 @@ export async function apiFetch<T = any>(
     }
   };
 
-  return makeRequest(token);
+  return makeRequest(token || getSessionToken(), true);
 }

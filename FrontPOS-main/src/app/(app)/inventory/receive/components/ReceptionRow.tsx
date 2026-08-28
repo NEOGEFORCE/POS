@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo, useState, useEffect, useMemo } from 'react';
 import { Button, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
@@ -7,7 +7,7 @@ import {
     Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles, Camera 
 } from 'lucide-react';
 import { ReceiveItem } from '../page';
-import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText } from "@/lib/utils";
+import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText, normalizeSalePrice, roundToNearestFifty } from "@/lib/utils";
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api-error';
 import { broadcastRevalidate } from '@/lib/revalidate';
@@ -52,13 +52,17 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     // 2. Calculo de PVP Sugerido: Se calcula sobre el Costo Bruto, y sube el PVP proporcionalmente al descuento para dar beneficio
-    const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number, discount: number = 0) => {
+    const calculateRawPVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number, discount: number = 0) => {
         const grossCost = calculateGrossCost(basePrice, iva, icui, ibua);
         const discountDec = Number(discount || 0) / 100;
         // Evitar division por cero si el descuento es 100%
         const baseForPvp = discountDec >= 1 ? grossCost : (grossCost / (1 - discountDec));
         // El precio de venta sube respecto al descuento para aumentar el margen de ganancia real
-        return applyRounding(baseForPvp * (1 + (Number(marginPct || 0) / 100)));
+        return baseForPvp * (1 + (Number(marginPct || 0) / 100));
+    };
+
+    const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number, discount: number = 0) => {
+        return normalizeSalePrice(calculateRawPVP(basePrice, iva, icui, ibua, marginPct, discount));
     };
 
     const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
@@ -236,7 +240,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleSalePriceBlur = (val: string) => {
-        const sale = applyRounding(parseCOP(val) || 0);
+        const sale = normalizeSalePrice(parseCOP(val) || 0);
         
         // Recalcular MARGEN basado en el Costo Bruto
         const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
@@ -249,6 +253,31 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         onUpdate(item.lineId, { 
             newSalePrice: sale, 
             marginPercentage: margin 
+        });
+    };
+
+    const handleSnapSalePriceToFifty = () => {
+        const shown = parseCOP(localSalePrice) || item.newSalePrice || 0;
+
+        // Si el valor visible es el que produjo la regla automatica, se ajusta
+        // sobre el precio real (por ejemplo 540 -> 550), no sobre el ya inflado
+        // (600 -> 600, que no cambiaria nada).
+        const raw = calculateRawPVP(item.newPurchasePrice, item.iva, item.icui, item.ibua, item.marginPercentage, item.discount);
+        const base = (raw > 0 && applyRounding(raw) === shown) ? raw : shown;
+
+        const sale = roundToNearestFifty(base);
+        if (sale <= 0) return;
+
+        const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
+        const margin = bruto > 0 ? ((sale / bruto) - 1) * 100 : item.marginPercentage;
+
+        setLocalMargin(String(margin));
+        setLocalSalePrice(formatCOP(sale));
+        setSuggestionDismissed(true);
+
+        onUpdate(item.lineId, {
+            newSalePrice: sale,
+            marginPercentage: margin
         });
     };
 
@@ -405,7 +434,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
         projectedWac = ((oldStock * oldPurchasePrice) + (addedQuantity * newPurchasePrice)) / (oldStock + addedQuantity);
     }
     
-    let targetMargin = item.marginPercentage;
+    const targetMargin = item.marginPercentage;
     let projectedSalePrice = item.newSalePrice;
     if (projectedWac !== newPurchasePrice && projectedWac > 0 && targetMargin > 0 && addedQuantity > 0) {
         const suggestedSalePrice = projectedWac * (1 + (targetMargin / 100));
@@ -429,7 +458,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                     label="Nombre del Producto"
                                     value={editName}
                                     onValueChange={setEditName}
-                                    classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
+                                    classNames={{ inputWrapper: "bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl" }}
                                 />
                                 <Input
                                     label="Codigo de Barras"
@@ -446,7 +475,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                                             <span>Cámara</span>
                                         </button>
                                     }
-                                    classNames={{ inputWrapper: "bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl pr-1.5" }}
+                                    classNames={{ inputWrapper: "bg-white dark:bg-[#18181b] border border-zinc-200 dark:border-white/10 rounded-2xl pr-1.5" }}
                                 />
                             </ModalBody>
                             <ModalFooter>
@@ -649,7 +678,19 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         </div>
                     </div>
                     <div className="flex flex-col gap-0.5">
-                        <label className="text-[10px] font-medium text-gray-400 uppercase ml-1">PVP</label>
+                        <div className="flex items-center justify-between gap-1 ml-1 pr-0.5">
+                            <label className="text-[10px] font-medium text-gray-400 uppercase">PVP</label>
+                            <button
+                                type="button"
+                                onMouseDown={(e) => e.preventDefault()}
+                                onClick={handleSnapSalePriceToFifty}
+                                title="Ajustar al múltiplo de 50 más cercano"
+                                aria-label="Ajustar precio de venta al múltiplo de 50 más cercano"
+                                className="shrink-0 h-4 px-1 rounded text-[8px] font-bold leading-none uppercase tracking-wide text-amber-600 dark:text-amber-400 bg-amber-500/10 border border-amber-500/25 hover:bg-amber-500/20 active:scale-95 transition-all"
+                            >
+                                →50
+                            </button>
+                        </div>
                         <div className="flex items-center bg-[var(--bg-elevated)] rounded-2xl h-10 px-2 gap-1 border border-[var(--border)] shadow-sm focus-within:border-[var(--accent)] transition-all">
                             <span className="text-[10px] text-zinc-900 dark:text-zinc-100 font-medium">$</span>
                             <input 

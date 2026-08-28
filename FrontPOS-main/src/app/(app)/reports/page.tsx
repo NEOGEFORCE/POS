@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import React, { useState, useMemo, memo, useEffect } from 'react';
+import React, { useState, memo } from 'react';
 import {
   Card, CardHeader, CardBody, Button, Chip,
   Divider, Tab, Tabs, Spinner, Table, TableHeader,
@@ -15,11 +15,11 @@ import {
   Clock, Mail, ChevronRight, Filter, MoreHorizontal, Trash2, Loader2
 } from "lucide-react";
 import { formatCurrency, formatDateTime } from "@/lib/utils";
-import { generatePDFReport } from "@/lib/reportGenerator";
+
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 import nextDynamic from "next/dynamic";
-import { ResponsiveContainer, AreaChart, Area } from 'recharts';
+
 
 import { useApi } from "@/hooks/use-api";
 
@@ -30,19 +30,12 @@ const ClosuresHistory = nextDynamic(() => import("./components/ClosuresHistory")
 const ProfitabilityReportView = nextDynamic(() => import("./components/ProfitabilityReportView"));
 
 const MetricCard = memo(({ label, value, subValue, trend }: any) => {
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
   return (
     <div className="card-base p-6 relative group hover:border-zinc-200 dark:border-white/10 transition-all duration-150">
-      {mounted && (
-        <div className="absolute inset-x-0 bottom-0 h-10 opacity-10 pointer-events-none">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={[{ val: 10 }, { val: 25 }, { val: 15 }, { val: 35 }, { val: 20 }, { val: 45 }, { val: 30 }]}>
-              <Area type="monotone" dataKey="val" stroke="#3f3f46" fill="#3f3f46" fillOpacity={0.2} strokeWidth={2} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      <svg className="absolute inset-x-0 bottom-0 h-10 w-full opacity-10 pointer-events-none" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+        <path d="M0 32 L16 21 L32 27 L49 14 L65 23 L82 7 L100 16 L100 40 L0 40 Z" fill="#3f3f46" fillOpacity="0.2" />
+        <polyline points="0,32 16,21 32,27 49,14 65,23 82,7 100,16" fill="none" stroke="#3f3f46" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+      </svg>
       <div className="relative z-10">
         <span className="text-[11px] font-medium tracking-widest uppercase text-gray-500 dark:text-zinc-500 block mb-2">{label}</span>
         <div className="flex items-baseline gap-2">
@@ -105,6 +98,7 @@ export default function ReportsPage() {
           const data = await res.json();
           if (!res.ok) throw new Error(data.error || "Fallo al generar reporte");
 
+          const { generatePDFReport } = await import("@/lib/reportGenerator");
           generatePDFReport({
             title,
             subtitle: 'Generado hoy',

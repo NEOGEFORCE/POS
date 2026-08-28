@@ -1,4 +1,4 @@
-"use client"
+﻿"use client"
 import UniversalPaymentModal from "@/components/shared/UniversalPaymentModal"
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
@@ -622,7 +622,7 @@ export default function DevolucionesPage() {
                             <div className="flex items-center gap-2">
                               {(userRole?.toUpperCase() === "ADMIN" || userRole?.toUpperCase() === "SUPERADMIN") && (
                                 <button 
-                                  onClick={() => deleteReturn(item.id)}
+                                  onClick={() => confirmDelete(item.id)}
                                   className="text-white bg-rose-500 hover:bg-rose-600 p-1.5 rounded-lg shadow-sm transition-colors"
                                   title="Anular Devolución"
                                 >

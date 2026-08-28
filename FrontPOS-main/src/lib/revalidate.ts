@@ -1,4 +1,4 @@
-import { mutate } from 'swr';
+﻿import { mutate } from 'swr';
 
 const CHANNEL_NAME = 'pos-sync-channel';
 
@@ -15,7 +15,9 @@ type SyncEvent =
   | 'INVENTORY_UPDATE'
   | 'REPORT_UPDATE'
   | 'AUDIT_UPDATE'
-  | 'CLOSURE_MADE';
+  | 'CLOSURE_MADE'
+  | 'ORDER_UPDATE'
+  | 'USER_UPDATE';
 
 let channel: BroadcastChannel | null = null;
 

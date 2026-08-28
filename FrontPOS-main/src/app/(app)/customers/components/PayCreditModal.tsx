@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useState } from "react";
 import {
@@ -81,7 +81,7 @@ export default function PayCreditModal({
             {showSuccessScreen && (
               <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/40 flex flex-col items-center justify-center p-8 animate-in fade-in zoom-in duration-300">
                 <div className="card-base border-none p-10 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-zinc-200 dark:border-white/10 w-full max-w-sm relative overflow-hidden group">
-                  <div className="h-20 w-20 rounded-[1.5rem] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center mb-6 shadow-[0_20px_50px_rgba(16,185,129,0.3)] -rotate-3 scale-110 border-4 border-black/10 dark:border-white/20">
+                  <div className="h-20 w-20 rounded-[1.5rem] bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center mb-6 shadow-[0_20px_50px_rgba(16,185,129,0.3)] -rotate-3 scale-110 border-4 border-black/10 dark:border-white/20">
                     <Check size={40} strokeWidth={4} />
                   </div>
                   <h2 className="text-3xl font-medium text-zinc-900 dark:text-zinc-50 uppercase mb-2 tracking-tight tracking-tighter text-center leading-none">
@@ -125,7 +125,7 @@ export default function PayCreditModal({
                           : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 hover:bg-black/5 dark:bg-white/5'
                       }`}
                     >
-                      <div className={`p-1 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:bg-black/5 dark:bg-white/5'}`}>
+                      <div className={`p-1 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:bg-black/5 dark:bg-white/5'}`}>
                         {tab === 'cash' ? (
                           <Banknote size={14} className="md:w-5 md:h-5" />
                         ) : (
@@ -246,7 +246,7 @@ export default function PayCreditModal({
                           </Button>
                         ))}
                         <Button 
-                          className="aspect-[2.2/1] w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]" 
+                          className="aspect-[2.2/1] w-full bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)]" 
                           onPress={() => setIsMobileNumpadOpen(true)}
                         >
                           <Calculator size={14} />
@@ -264,7 +264,7 @@ export default function PayCreditModal({
                           <Button 
                             key={n} 
                             className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
-                              n === 'CE' ? 'text-rose-500 bg-rose-500/10' : n === '+' ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white ' : 'bg-white dark:bg-zinc-800 dark:text-white'
+                              n === 'CE' ? 'text-rose-500 bg-rose-500/10' : n === '+' ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 ' : 'bg-white dark:bg-zinc-800 dark:text-white'
                             }`} 
                             onPress={() => {
                                 if (n === 'CE') setDialogAmount('');
@@ -308,7 +308,7 @@ export default function PayCreditModal({
                       <Button 
                         key={n} 
                         className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
-                          n === 'CE' ? 'text-rose-500 bg-rose-500/10' : n === '+' ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white ' : 'bg-white dark:bg-zinc-800 dark:text-white'
+                          n === 'CE' ? 'text-rose-500 bg-rose-500/10' : n === '+' ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 ' : 'bg-white dark:bg-zinc-800 dark:text-white'
                         }`} 
                         onPress={() => {
                             if (n === 'CE') setDialogAmount('');
@@ -346,7 +346,7 @@ export default function PayCreditModal({
                       n === 'CE' 
                         ? 'text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-50 active:text-white' 
                         : n === '+'
-                        ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] '
+                        ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)] '
                         : 'bg-gray-50 dark:bg-zinc-800 dark:text-white active:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 active:text-white border border-transparent'
                     }`} 
                     onPress={() => {

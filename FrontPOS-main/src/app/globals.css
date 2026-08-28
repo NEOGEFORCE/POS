@@ -66,6 +66,8 @@
     --danger:        #ef4444;
     --warning:       #f59e0b;
     --shadow-card:   0 1px 3px rgba(0,0,0,0.5), 0 8px 32px rgba(0,0,0,0.35);
+    /* Radio base consumido por tailwind.config (rounded-lg/md/sm). */
+    --radius:        0.75rem;
   }
 
   /* ── MODO CLARO ── */
@@ -138,11 +140,17 @@
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { 
-    background: rgba(255,255,255,0.08); 
+    background: rgba(0,0,0,0.18); 
     border-radius: 99px; 
   }
   ::-webkit-scrollbar-thumb:hover { 
-    background: rgba(255,255,255,0.15); 
+    background: rgba(0,0,0,0.30); 
+  }
+  .dark ::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.08);
+  }
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.15);
   }
 
   /* SCROLLBAR OCULTA (Zero Friction - Sin barra visible) */
@@ -156,11 +164,11 @@
 
   /* EFECTO NEON (Para botones principales como "COBRAR") */
   .glow-primary {
-    box-shadow: 0 0 20px -5px hsl(var(--primary) / 0.5);
+    box-shadow: 0 0 20px -5px var(--accent);
   }
 
   .glow-primary:hover {
-    box-shadow: 0 0 30px -2px hsl(var(--primary) / 0.7);
+    box-shadow: 0 0 30px -2px var(--accent);
   }
 
   /* EFECTO DE ESCANER LASER */
@@ -201,15 +209,15 @@
   /* Tarjetas Premium */
   .premium-card {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    box-shadow: var(--card-shadow);
-    border: 1px solid hsl(var(--border) / 0.5);
-    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    border: 1px solid var(--border);
+    border-radius: 1rem;
   }
 
   .premium-card:hover {
     transform: translateY(-2px);
-    box-shadow: var(--card-shadow-hover);
-    border-color: hsl(var(--primary) / 0.3);
+    box-shadow: var(--shadow-card);
+    border-color: var(--accent-border);
   }
 
   /* Transición global para todos los elementos interactivos */
@@ -283,9 +291,9 @@
   /* Estilo Global para el contenedor de Input de HeroUI */
   [data-slot="input-wrapper"],
   .heroui-input-wrapper {
-    background-color: hsl(var(--card)) !important;
+    background-color: var(--bg-card) !important;
     transition: all 0.3s ease;
-    border: 1px solid hsl(var(--border) / 0.5) !important;
+    border: 1px solid var(--border) !important;
   }
 
   /* LEY DE MAYUSCULAS ESTRICTA */
@@ -306,7 +314,7 @@
   [data-slot="input-wrapper"][data-focus-visible="true"] {
     outline: none !important;
     box-shadow: none !important;
-    border-color: hsl(var(--border) / 1) !important;
+    border-color: var(--border-strong) !important;
   }
 
   .dark [data-slot="input-wrapper"][data-focus="true"],
@@ -323,7 +331,7 @@
     font-weight: 900 !important;
     letter-spacing: 0.05em !important;
     text-transform: uppercase !important;
-    color: hsl(var(--foreground)) !important;
+    color: var(--text-primary) !important;
     font-size: 0.7rem !important;
     pointer-events: auto !important;
   }
@@ -426,6 +434,38 @@
   flex-direction: column !important;
   width: 100% !important;
   background-color: transparent !important;
+}
+
+/* ============================================================
+   ESTILOS DE IMPRESIÓN DE TICKETS TÉRMICOS (80mm / 58mm)
+   ============================================================ */
+@media print {
+  @page {
+    margin: 0;
+    size: 80mm auto;
+  }
+  body * {
+    visibility: hidden !important;
+  }
+  #pos-thermal-ticket, #pos-thermal-ticket * {
+    visibility: visible !important;
+  }
+  #pos-thermal-ticket {
+    display: block !important;
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    padding: 3mm 4mm !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-family: 'Courier New', Courier, monospace !important;
+    font-size: 12px !important;
+    line-height: 1.25 !important;
+    z-index: 99999 !important;
+  }
 }
 
 

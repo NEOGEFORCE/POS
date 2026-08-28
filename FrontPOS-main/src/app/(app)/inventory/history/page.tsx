@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useState, useMemo } from 'react';
 import { 
@@ -181,7 +181,7 @@ export default function ReceptionHistoryPage() {
                                     <div className="p-4 md:w-64 bg-zinc-50 dark:bg-zinc-800/50 border-b md:border-b-0 md:border-r border-zinc-200 dark:border-white/5 flex flex-col justify-between gap-4">
                                         <div className="flex flex-col gap-2">
                                             <div className="flex items-center gap-2">
-                                                <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                                <div className="h-8 w-8 rounded-2xl bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 flex items-center justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                                     <FileText size={16} />
                                                 </div>
                                                 <div className="flex flex-col min-w-0">

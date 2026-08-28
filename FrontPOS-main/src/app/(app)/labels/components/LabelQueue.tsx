@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { memo } from 'react';
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Button, Card, CardBody, Chip } from "@heroui/react";
@@ -105,7 +105,7 @@ const LabelQueue = memo(({ printQueue, onAddAll, onClearAll, onUpdateQuantity, o
                                                 isIconOnly 
                                                 size="sm" 
                                                 variant="light" 
-                                                className="h-7 w-7 min-w-0 rounded-2xl text-zinc-900 dark:text-zinc-100 hover:bg-black/5 dark:bg-white/5" 
+                                                className="h-7 w-7 min-w-0 rounded-2xl text-zinc-900 dark:text-zinc-100 hover:bg-black/5 dark:hover:bg-white/5" 
                                                 onPress={() => onUpdateQuantity(item.product.barcode, 1)}
                                             >
                                                 <Plus size={14} />

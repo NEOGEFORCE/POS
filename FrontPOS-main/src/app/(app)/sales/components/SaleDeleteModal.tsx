@@ -60,7 +60,7 @@ export default function SaleDeleteModal({ isOpen, onOpenChange, sale, onSuccess 
             toast({
                 title: "VENTA ANULADA",
                 description: "La venta ha sido eliminada y el stock restaurado.",
-                className: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-white border-none font-bold"
+                className: "bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 border-none font-bold"
             });
             
             const { broadcastRevalidate } = await import('@/lib/revalidate');

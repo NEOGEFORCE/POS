@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
@@ -49,9 +49,12 @@ import ExpenseFormModal from '@/app/(app)/expenses/components/ExpenseFormModal';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { RollingDigits } from '@/components/charts/RollingDigits';
+import { useApi } from '@/hooks/use-api';
+import { Supplier } from '@/lib/definitions';
 
 interface CashierClosure {
     id: string;
+    date?: string;
     expectedCash: number;
     totalSales: number;
     totalCash: number;
@@ -86,7 +89,7 @@ interface CashierClosure {
     coins100: number;
 }
 
-export default function CashierClosurePage() {
+function CashierClosureContent() {
     const { user, logout } = useAuth();
     const isAdmin = useMemo(() => {
         const role = (user?.role || user?.Role || '').toLowerCase();
@@ -115,6 +118,7 @@ export default function CashierClosurePage() {
     const [showDetailedAudit, setShowDetailedAudit] = useState(false);
     const [isRealExpenseModalOpen, setIsRealExpenseModalOpen] = useState(false);
     const [isExpensesOpen, setIsExpensesOpen] = useState(false);
+    const { data: suppliers } = useApi<Supplier[]>('/suppliers/all-suppliers');
 
     // --- ESTADO CONFIRMACION EGRESOS ---
     const [isDeleteExpenseConfirmOpen, setIsDeleteExpenseConfirmOpen] = useState(false);
@@ -241,7 +245,7 @@ export default function CashierClosurePage() {
                 // Intento principal: endpoint nuevo /full-detail (incluye ventas y egresos del turno)
                 try {
                     const data = await apiFetch(`/dashboard/cashier-history/${editId}/full-detail`, { method: 'GET' }, token);
-                    c = data?.closure || data;
+                    c = data?.closure ? { ...data.closure, expenses: data.expenses || data.closure.expenses || [] } : data;
                 } catch (errFull) {
                     // Fallback: backend antiguo sin esa ruta. Cargamos toda la lista
                     // y filtramos el id en el cliente para no bloquear la edicion.
@@ -397,58 +401,57 @@ export default function CashierClosurePage() {
     const efectivoEnCaja = (currentClosure?.totalCash ?? 0) + 
                           (currentClosure?.openingCash ?? 0);
 
-    let dbCashExpensesPure = 0;
-    let dbCashExpensesReturns = 0;
-    
-    (currentClosure?.expenses || []).forEach((e: any) => {
-        if (String(e.status).toUpperCase() !== 'PENDING') {
-            const rawCash = Number(e.cashAmount ?? e.cash_amount ?? 0);
-            const rawNequi = Number(e.nequiAmount ?? e.nequi_amount ?? 0);
-            const rawDavi = Number(e.daviplataAmount ?? e.daviplata_amount ?? 0);
-            const rawFondo = Number(e.fondoAmount ?? e.fondo_amount ?? 0);
-            const tax = Number(e.taxAmount ?? e.tax_amount ?? 0);
-            const base = Number(e.amount ?? 0);
-            const total = base + tax;
-            const sumChannels = rawCash + rawNequi + rawDavi + rawFondo;
-            
-            let finalCash = 0;
+    const { dbCashExpensesPure, dbCashExpensesReturns } = useMemo(() => {
+        let cashExpenses = 0;
+        let cashReturns = 0;
 
-            if (sumChannels > 0) {
-                finalCash = rawCash;
-                if (rawCash > 0 && tax > 0 && (rawNequi === 0 && rawDavi === 0 && rawFondo === 0)) {
-                    finalCash += tax;
-                }
-            } else {
+        (currentClosure?.expenses || []).forEach((e: any) => {
+            if (String(e.status).toUpperCase() !== 'PENDING') {
+                const rawCash = Number(e.cashAmount ?? e.cash_amount ?? 0);
+                const rawNequi = Number(e.nequiAmount ?? e.nequi_amount ?? 0);
+                const rawDavi = Number(e.daviplataAmount ?? e.daviplata_amount ?? 0);
+                const rawFondo = Number(e.fondoAmount ?? e.fondo_amount ?? 0);
+                const tax = Number(e.taxAmount ?? e.tax_amount ?? 0);
+                const base = Number(e.amount ?? 0);
+                const total = base + tax;
+                const sumChannels = rawCash + rawNequi + rawDavi + rawFondo;
+
+                let finalCash = 0;
                 const src = (e.paymentSource || '').toUpperCase();
-                const isDigitalOnly = (
-                    (src.includes('NEQUI') || src.includes('DAVIPLATA') || src.includes('DAVI') || src.includes('FONDO') || src.includes('BOVEDA') || src.includes('BÓVEDA') || src.includes('FOND') || src.includes('PREST') || src.includes('DEUDA') || src.includes('BANCOLOMBIA') || src.includes('TARJETA') || src.includes('TRANSFER')) &&
-                    !src.includes('CAJA') && !src.includes('EFECTIVO')
-                );
 
-                if (!isDigitalOnly) {
-                    if (src.includes('/')) {
-                        src.split('/').forEach((part: string) => {
-                            const p = part.trim();
-                            if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH')) {
-                                const m = p.match(/\$?([\d.,]+)/);
-                                if (m) {
-                                    finalCash += parseFloat(m[1].replace(/\./g, '').replace(/,/g, '.'));
-                                }
+                if (src.includes('/')) {
+                    src.split('/').forEach((part: string) => {
+                        const p = part.trim();
+                        if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH') || p.includes('EFEC')) {
+                            const m = p.match(/\$?([\d.,]+)/);
+                            if (m) {
+                                finalCash += parseFloat(m[1].replace(/\./g, '').replace(/,/g, '.'));
                             }
-                        });
-                    } else if (src === '' || src === 'CAJA' || src === 'EFECTIVO' || src === 'CASH') {
+                        }
+                    });
+                } else if (sumChannels > 0) {
+                    finalCash = rawCash;
+                    if (rawCash > 0 && tax > 0 && rawNequi === 0 && rawDavi === 0 && rawFondo === 0) {
+                        finalCash += tax;
+                    }
+                } else {
+                    const isDigitalOnly = (
+                        (src.includes('NEQUI') || src.includes('DAVIPLATA') || src.includes('DAVI') || src.includes('FONDO') || src.includes('BOVEDA') || src.includes('BÓVEDA') || src.includes('FOND') || src.includes('PREST') || src.includes('DEUDA') || src.includes('BANCOLOMBIA') || src.includes('TARJETA') || src.includes('TRANSFER')) &&
+                        !src.includes('CAJA') && !src.includes('EFECTIVO')
+                    );
+
+                    if (!isDigitalOnly && (src === '' || src === 'CAJA' || src === 'EFECTIVO' || src === 'CASH')) {
                         finalCash = total > 0 ? total : base;
                     }
                 }
+
+                if (String(e.category).toUpperCase() === 'DEVOLUCIONES') cashReturns += finalCash;
+                else cashExpenses += finalCash;
             }
-            
-            if (String(e.category).toUpperCase() === 'DEVOLUCIONES') {
-                dbCashExpensesReturns += finalCash;
-            } else {
-                dbCashExpensesPure += finalCash;
-            }
-        }
-    });
+        });
+
+        return { dbCashExpensesPure: cashExpenses, dbCashExpensesReturns: cashReturns };
+    }, [currentClosure?.expenses]);
 
     // 3. EGRESOS EN EFECTIVO (Solo lo que sale de la caja fisica)
     const totalEgresosEfectivo = dbCashExpensesPure;
@@ -549,7 +552,7 @@ export default function CashierClosurePage() {
 
                 const updatePayload: any = {
                     physical_cash: actualCash,
-                    expected_cash: currentClosure?.expectedCash || 0,
+                    expected_cash: expectedCash,
                     total_expenses: totalSalidasEfectivo,
                     total_nequi_real: currentClosure?.totalNequi || 0,
                     total_daviplata_real: currentClosure?.totalDaviplata || 0,
@@ -558,6 +561,7 @@ export default function CashierClosurePage() {
                     coins200: c200,
                     coins1000: cCombined,
                     cash_bills: totalBills,
+                    cash_breakdown: JSON.stringify({ bills, coins }),
                     authorized_by: closureData.authorizedBy,
                 };
                 
@@ -833,11 +837,11 @@ export default function CashierClosurePage() {
                             {currentClosure ? (
                                 <>
                                     <span className="text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 flex items-center gap-1">
-                                        <TrendingUp size={10} /> INICIO: {formatShortDateTime(currentClosure.startDate)}
+                                        <TrendingUp size={10} /> INICIO: {currentClosure?.startDate ? formatShortDateTime(currentClosure.startDate) : '---'}
                                     </span>
                                     <span className="text-gray-300 dark:text-zinc-700">|</span>
                                     <span className="text-rose-700 dark:text-rose-500 flex items-center gap-1">
-                                        <TrendingDown size={10} /> CIERRE: {formatShortDateTime(currentClosure.endDate)}
+                                        <TrendingDown size={10} /> CIERRE: {currentClosure?.endDate ? formatShortDateTime(currentClosure.endDate) : (currentClosure?.date ? formatShortDateTime(currentClosure.date) : '---')}
                                     </span>
                                 </>
                             ) : 'Auditoria en Tiempo Real'}
@@ -1308,7 +1312,7 @@ export default function CashierClosurePage() {
                 placement="center"
                 hideCloseButton={false}
                 classNames={{
-                    base: "bg-[#18181b]/60  border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/40 max-w-md mx-4",
+                    base: "bg-white/90 dark:bg-[#18181b]/60 border border-zinc-200 dark:border-white/10 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-black/40 max-w-md mx-4",
                     header: "border-none pt-8 px-8",
                     body: "py-2 px-8",
                     footer: "border-none pb-8 px-8 gap-4",
@@ -1363,6 +1367,7 @@ export default function CashierClosurePage() {
                 }}
                 isEdit={!!expenseToEdit}
                 initialExpense={expenseToEdit}
+                suppliers={suppliers || []}
                 onSave={handleSaveRealExpense}
             />
 
@@ -1472,5 +1477,15 @@ export default function CashierClosurePage() {
     );
 }
 
-
-
+export default function CashierClosurePage() {
+    return (
+        <React.Suspense fallback={
+            <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 bg-gray-50 dark:bg-zinc-950 text-zinc-900 dark:text-white rounded-[2rem] border border-black/5 dark:border-white/5 m-2 md:m-4">
+                <Skeleton className="h-12 w-12 rounded-2xl bg-zinc-200 dark:bg-zinc-800" />
+                <p className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest animate-pulse">Cargando Cierre...</p>
+            </div>
+        }>
+            <CashierClosureContent />
+        </React.Suspense>
+    );
+}

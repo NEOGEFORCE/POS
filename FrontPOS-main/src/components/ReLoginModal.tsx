@@ -1,11 +1,10 @@
-"use client";
+﻿"use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
-import Cookies from "js-cookie";
 import { ShieldAlert, LogIn, LogOut, Loader2, Lock, User } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { API_URL } from "@/lib/constants";
+import { writeSession } from "@/lib/session";
 import {
   onSessionRecoveryChange,
   resolveSessionRecovery,
@@ -27,7 +26,6 @@ export default function ReLoginModal() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const { user, logout } = useAuth();
-  const router = useRouter();
 
   // Pre-llenar el usuario si lo conocemos
   useEffect(() => {
@@ -96,17 +94,7 @@ export default function ReLoginModal() {
       const { token, user: userData } = data;
 
       if (userData && token) {
-        // Guardar nuevo token en cookies
-        Cookies.set("org-pos-user", JSON.stringify(userData), {
-          expires: 0.5,
-          secure: true,
-          sameSite: "strict",
-        });
-        Cookies.set("org-pos-token", token, {
-          expires: 0.5,
-          secure: true,
-          sameSite: "strict",
-        });
+        writeSession(token, userData);
 
         // Resolver todas las operaciones pendientes con el nuevo token
         resolveSessionRecovery(token);
@@ -197,10 +185,7 @@ export default function ReLoginModal() {
                     type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleReLogin();
-                      e.stopPropagation();
-                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
                     className="w-full bg-zinc-800/80 border border-zinc-700/50 rounded-xl pl-10 pr-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500/50 transition-all"
                     placeholder="Tu contraseña"
                     autoComplete="current-password"

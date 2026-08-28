@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 import React from 'react';
 import { Card, CardHeader, CardBody, Chip } from "@heroui/react";
 import { AlertCircle } from "lucide-react";
 import { calculateStockHealth } from "@/lib/utils";
 
-type StockStatus = 'CRITICAL' | 'REORDER' | 'STABLE';
+type StockStatus = 'CRITICAL' | 'WARNING' | 'STABLE';
 
 interface LowStockItem {
     barcode: string;
@@ -28,11 +28,11 @@ export default function LowStockPanel({ items }: LowStockPanelProps) {
 
     // Contadores reales para el titulo
     const criticalCount = safeItems.filter(i => i.currentStatus === 'CRITICAL').length;
-    const warningCount = safeItems.filter(i => i.currentStatus === 'REORDER').length;
+    const warningCount = safeItems.filter(i => i.currentStatus === 'WARNING').length;
 
     // FILTRO DE RENDIMIENTO (TOP 18): Ordena poniendo los criticos arriba
     const priorityItems = safeItems
-        .filter(item => item.currentStatus === 'CRITICAL' || item.currentStatus === 'REORDER')
+        .filter(item => item.currentStatus === 'CRITICAL' || item.currentStatus === 'WARNING')
         .sort((a, b) => (a.currentStatus === 'CRITICAL' ? -1 : 1))
         .slice(0, 18);
 
