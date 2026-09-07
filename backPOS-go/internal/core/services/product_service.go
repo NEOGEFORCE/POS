@@ -302,7 +302,18 @@ func (s *ProductService) MergeHistoricalMarker(realBarcode, markerBarcode, autho
 	return nil
 }
 
-func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, newPurchasePrice float64, newSalePrice float64, supplierID *uint, iva, icui, ibua float64) error {
+// ReceiveStock registra la entrada de UN producto.
+//
+// Los parámetros ivaAmount/icuiAmount/ibuaAmount son MONTOS absolutos por
+// unidad, igual que el campo `iva` de bulk-receive. Los porcentajes que se
+// guardan en el producto se derivan de ellos.
+//
+// Antes esta función recibía tres valores y los usaba de las DOS formas a la
+// vez: los sumaba al costo (tratándolos como monto) y los escribía en
+// product.Iva (que todo el sistema lee como porcentaje, dividiendo por 100).
+// Una de las dos lecturas estaba mal por definición: con $190 de IVA el
+// producto quedaba con "190%" y la facturación electrónica declaraba esa tasa.
+func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, newPurchasePrice float64, newSalePrice float64, supplierID *uint, ivaAmount, icuiAmount, ibuaAmount float64) error {
 	if addedQuantity <= 0 {
 		return fmt.Errorf("la cantidad recibida debe ser positiva")
 	}
@@ -344,7 +355,11 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 			product.Quantity += addedQuantity
 		}
 
-		entryTotalCost := newPurchasePrice + iva + icui + ibua
+		// Los montos recibidos se convierten a porcentajes UNA vez, y de ahí
+		// sale tanto el costo con impuestos como lo que se guarda en el
+		// producto. Así el monto y el porcentaje no pueden contradecirse.
+		rates := models.RatesFromAmounts(newPurchasePrice, ivaAmount, icuiAmount, ibuaAmount)
+		entryTotalCost := models.GrossFromNet(newPurchasePrice, rates)
 		if entryTotalCost > 0 {
 			totalLogicalStock := previousStock + addedQuantity
 			if totalLogicalStock > 0 {
@@ -352,7 +367,7 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 			} else {
 				product.PurchasePrice = entryTotalCost
 			}
-			product.Iva, product.Icui, product.Ibua = iva, icui, ibua
+			product.Iva, product.Icui, product.Ibua = rates.IvaPct, rates.IcuiPct, rates.IbuaPct
 			if supplierID != nil {
 				link := models.ProductSupplier{ProductID: barcode, SupplierID: *supplierID, PurchasePrice: entryTotalCost}
 				if err := tx.Clauses(clause.OnConflict{
@@ -673,20 +688,38 @@ func (s *ProductService) calculateItemDetails(product *models.Product, extracted
 		unitPrice = extracted.TotalPrice / extracted.Quantity
 	}
 
-	if params != nil && params.PriceIncludesIVA && product.Iva > 0 {
-		unitPrice = unitPrice / (1 + product.Iva/100)
-	}
-	if params != nil && params.PriceIncludesICUI && product.Icui > 0 {
-		unitPrice = unitPrice / (1 + product.Icui/100)
-	}
-	if params != nil && params.PriceIncludesIBUA && product.Ibua > 0 {
-		unitPrice = unitPrice / (1 + product.Ibua/100)
+	// Los porcentajes del producto son la tasa de cada impuesto.
+	productRates := models.TaxRates{
+		IvaPct:  product.Iva,
+		IcuiPct: product.Icui,
+		IbuaPct: product.Ibua,
 	}
 
-	costoReal := unitPrice
-	costoReal *= (1 + product.Iva/100)
-	costoReal *= (1 + product.Icui/100)
-	costoReal *= (1 + product.Ibua/100)
+	// Si la factura del proveedor ya trae los impuestos incluidos, se quitan
+	// para llegar a la base. Sólo se descuentan los que el proveedor realmente
+	// incluye, por eso se arma un TaxRates parcial en vez de usar productRates.
+	//
+	// Antes esto se hacía dividiendo impuesto por impuesto —multiplicativo—
+	// mientras la recepción sumaba los porcentajes —aditivo—. Con dos impuestos
+	// las dos cuentas se separaban y el costo del lector nunca cuadraba con el
+	// de la recepción. Ahora ambas salen de models.NetFromGross/GrossFromNet.
+	if params != nil {
+		included := models.TaxRates{}
+		if params.PriceIncludesIVA {
+			included.IvaPct = product.Iva
+		}
+		if params.PriceIncludesICUI {
+			included.IcuiPct = product.Icui
+		}
+		if params.PriceIncludesIBUA {
+			included.IbuaPct = product.Ibua
+		}
+		if !included.IsZero() {
+			unitPrice = models.NetFromGross(unitPrice, included)
+		}
+	}
+
+	costoReal := models.GrossFromNet(unitPrice, productRates)
 
 	var margin float64
 	var marginSource string

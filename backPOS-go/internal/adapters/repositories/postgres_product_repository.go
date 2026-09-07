@@ -571,10 +571,13 @@ func (r *PostgresProductRepository) EditReception(ref string, dniStr string, rea
 			oldStock := product.Quantity - movement.Quantity
 			newStock := oldStock + item.Quantity
 
-			costoConImpuestos := item.CostUnit * (1 + item.IVA/100 + item.ICUI/100 + item.IBUA/100)
-			// REGLA DEL NEGOCIO: el costo capturado ya es el NETO pagado en
-			// factura. El DTO % no lo disminuye; se traslada al PVP.
-			costoFinal := costoConImpuestos
+			// Costo con impuestos desde la fuente única (models.GrossFromNet).
+			// REGLA DEL NEGOCIO: el DTO % no lo disminuye; se traslada al PVP.
+			costoFinal := models.GrossFromNet(item.CostUnit, models.TaxRates{
+				IvaPct:  item.IVA,
+				IcuiPct: item.ICUI,
+				IbuaPct: item.IBUA,
+			})
 
 			var nuevoWAC float64
 			if newStock > 0 {

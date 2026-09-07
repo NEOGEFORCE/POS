@@ -513,26 +513,46 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				currentStock = 0
 			}
 
-			// REGLA DEL NEGOCIO: el COSTO capturado es el precio NETO ya
-			// pagado en la factura, así que el DTO % NO se le resta. El
-			// descuento del proveedor es un beneficio que se traslada al
-			// PVP (sube el margen), no una rebaja del costo registrado.
-			totalEntryCost := entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua
+			// REGLA DEL NEGOCIO: el DTO % del proveedor NO se le resta al costo.
+			// El descuento es un beneficio que se traslada al PVP (sube el
+			// margen), no una rebaja del costo registrado.
+			// Ver reception_discount_test.go.
+			//
+			// Los impuestos SÍ suman. El costo con impuestos se calcula con
+			// models.GrossFromNet (fuente única, aditiva) en vez de sumar los
+			// montos a mano: así esta cuenta no puede volver a divergir de la
+			// que muestra la pantalla ni de la de EditReception.
+			entryRates := models.TaxRates{
+				IvaPct:  entry.IvaPct,
+				IcuiPct: entry.IcuiPct,
+				IbuaPct: entry.IbuaPct,
+			}
+			totalEntryCost := models.GrossFromNet(entry.NewPurchasePrice, entryRates)
 
 			oldPurchasePrice := product.PurchasePrice
 
 			if entry.NewPurchasePrice > 0 {
 				// WAC (Promedio Ponderado) para suavizar cambios bruscos ("precio moderado")
+				//
+				// Se pondera sobre totalEntryCost (CON impuestos), no sobre la
+				// base. Antes se usaba entry.NewPurchasePrice pelado: la
+				// pantalla mostraba al operador "COSTO $1.190" para una base de
+				// $1.000 con IVA 19%, y en la base de datos quedaba $1.000. El
+				// costo del producto salía 19% por debajo de lo realmente
+				// pagado, lo que inflaba el margen y subvaloraba el inventario.
+				// EditReception y ReceiveStock ya guardaban el costo con
+				// impuestos, así que esta ruta era además la única distinta de
+				// las tres.
 				if currentStock > 0 && entry.AddedQuantity > 0 {
 					totalOldValue := currentStock * oldPurchasePrice
-					totalNewValue := entry.AddedQuantity * entry.NewPurchasePrice
+					totalNewValue := entry.AddedQuantity * totalEntryCost
 					newWAC := (totalOldValue + totalNewValue) / (currentStock + entry.AddedQuantity)
 
 					// Redondear a 2 decimales
 					product.PurchasePrice = math.Round(newWAC*100) / 100
 				} else {
 					// Si no había stock, el costo asume el nuevo completo
-					product.PurchasePrice = entry.NewPurchasePrice
+					product.PurchasePrice = math.Round(totalEntryCost*100) / 100
 				}
 
 				product.Iva = entry.IvaPct
@@ -639,7 +659,13 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			//   - RETURN:  AddedQuantity < 0 con precio > 0          → lineTotal < 0 (resta)
 			// Sin el filtro `> 0` anterior, las devoluciones reducen el monto
 			// real a pagar al proveedor al cerrar el egreso de recepción.
-			lineTotal := (entry.NewPurchasePrice + entry.Iva + entry.Icui + entry.Ibua) * entry.AddedQuantity
+			// Mismo cálculo que el costo del producto (models.GrossFromNet):
+			// lo que se le debe al proveedor es la base con impuestos.
+			lineTotal := models.GrossFromNet(entry.NewPurchasePrice, models.TaxRates{
+				IvaPct:  entry.IvaPct,
+				IcuiPct: entry.IcuiPct,
+				IbuaPct: entry.IbuaPct,
+			}) * entry.AddedQuantity
 			totalAmount += lineTotal
 			if mainSupplierID == nil && entry.SupplierID != nil {
 				mainSupplierID = entry.SupplierID

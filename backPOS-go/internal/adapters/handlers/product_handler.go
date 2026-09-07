@@ -409,6 +409,8 @@ func (h *ProductHandler) Delete(c *gin.Context) {
 }
 
 func (h *ProductHandler) ReceiveStock(c *gin.Context) {
+	// iva/icui/ibua son MONTOS por unidad, igual que en bulk-receive.
+	// Los porcentajes que se guardan en el producto se derivan de ellos.
 	var body struct {
 		Barcode          string  `json:"barcode" binding:"required"`
 		AddedQuantity    float64 `json:"addedQuantity" binding:"required"`
@@ -421,7 +423,7 @@ func (h *ProductHandler) ReceiveStock(c *gin.Context) {
 	}
 
 	if err := c.ShouldBindJSON(&body); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos invÃ¡lido", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
