@@ -62,8 +62,14 @@ function Resolve-Tool {
 
 function Get-PendingMigrations {
     param([string[]]$StatusOutput)
+    # OJO: nada de "return ,$pending". Ese prefijo de coma envuelve el arreglo
+    # para evitar que PowerShell lo desenrolle, pero rompe el caso VACIO: con
+    # cero pendientes el llamador recibia un arreglo de 1 elemento (el arreglo
+    # vacio adentro), asi que .Count daba 1 y el script concluia "todavia hay
+    # migraciones pendientes" aunque estuvieran todas aplicadas. Se devuelve
+    # el conteo, que no tiene ambiguedad posible.
     $pending = @($StatusOutput | Where-Object { $_ -match '^\s*PENDIENTE\s+' } | ForEach-Object { $_.Trim() })
-    return ,$pending
+    return [pscustomobject]@{ Count = $pending.Count; Lines = $pending }
 }
 
 if (-not $ConfirmApply -and -not $BackupOnly -and -not $StatusOnly) {
@@ -112,7 +118,7 @@ if ($StatusOnly) {
         $status = Invoke-Native -FilePath $migrateExe -Arguments @('status')
         $status.Output | ForEach-Object { Write-Host "    $_" }
         if ($status.ExitCode -ne 0) { throw "migrate status fallo con codigo $($status.ExitCode)" }
-        $pending = @(Get-PendingMigrations -StatusOutput $status.Output)
+        $pending = Get-PendingMigrations -StatusOutput $status.Output
         Write-Host ''
         if ($pending.Count -eq 0) {
             Write-Host 'No hay migraciones pendientes.' -ForegroundColor Green
@@ -201,16 +207,27 @@ try {
         $before.Output | ForEach-Object { Write-Host "    $_" }
         if ($before.ExitCode -ne 0) { throw "migrate status fallo con codigo $($before.ExitCode)" }
 
-        $pending = @(Get-PendingMigrations -StatusOutput $before.Output)
+        $pending = Get-PendingMigrations -StatusOutput $before.Output
         if ($pending.Count -eq 0) {
             Write-Host '    No hay migraciones pendientes. Solo se hizo el respaldo.' -ForegroundColor Green
             'Resultado: SIN PENDIENTES' | Add-Content -LiteralPath $logFile -Encoding UTF8
             return
         }
 
+        # Detecta migraciones antiguas (001-009) pendientes, que son las que
+        # normalizan datos historicos.
+        #
+        # Se usa [regex]::Match en lugar de el operador -match con $Matches:
+        # con Set-StrictMode -Version Latest, leer $Matches[1] dentro de la
+        # misma expresion -and revienta con "La variable '$Matches' no se
+        # puede recuperar porque no se ha establecido", y el script abortaba
+        # despues del respaldo sin aplicar nada. Con [regex]::Match el grupo
+        # se lee del objeto devuelto y no depende de ninguna variable global.
         $legacy = @()
-        foreach ($line in $pending) {
-            if ($line -match '^\s*PENDIENTE\s+(\d{3})_' -and [int]$Matches[1] -le 9) {
+        foreach ($line in $pending.Lines) {
+            $m = [regex]::Match($line, '^\s*PENDIENTE\s+(\d{3})_')
+            if (-not $m.Success) { continue }
+            if ([int]$m.Groups[1].Value -le 9) {
                 $legacy += $line
             }
         }
@@ -237,7 +254,7 @@ try {
         $after.Output | Add-Content -LiteralPath $logFile -Encoding UTF8
         $after.Output | ForEach-Object { Write-Host "    $_" }
         if ($after.ExitCode -ne 0) { throw "migrate status final fallo con codigo $($after.ExitCode)" }
-        if (@(Get-PendingMigrations -StatusOutput $after.Output).Count -gt 0) {
+        if ((Get-PendingMigrations -StatusOutput $after.Output).Count -gt 0) {
             throw 'Todavia hay migraciones pendientes.'
         }
     } finally {

@@ -64,9 +64,17 @@ export const initDB = () => {
 export const saveProductsToCache = async (products: Product[]) => {
   const db = await initDB();
   if (!db) return;
+  // Una unica transaccion en lote: emitimos todos los `put` en paralelo dentro
+  // de la misma transaccion (el motor de IndexedDB los ejecuta secuencialmente
+  // pero sin que nosotros nos bloqueemos entre cada uno). Con ~2168 productos
+  // esto pasa de 2168 awaits secuenciales a un solo await sobre `tx.done`.
   const tx = db.transaction('catalog', 'readwrite');
-  await tx.objectStore('catalog').clear();
-  for (const product of products) await tx.store.put(product);
+  const store = tx.objectStore('catalog');
+  store.clear();
+  for (const product of products) {
+    // No await: cada put encola en la transaccion; los errores emergen en tx.done.
+    void store.put(product);
+  }
   await tx.done;
   console.log('[SurvivalDB] Catalogo cacheado:', products.length, 'productos.');
 };

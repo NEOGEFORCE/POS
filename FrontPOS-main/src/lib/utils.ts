@@ -3,6 +3,7 @@ import { twMerge } from "tailwind-merge"
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { normalizeSalePrice } from "@/lib/pricing-helpers.mjs";
+import { STOCK_HEALTH, getStockHealth } from "@/lib/stock-health.mjs";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -126,25 +127,43 @@ export const parseCOP = (val: string): number => {
 };
 
 /**
- * Logica de Semaforo Proporcional POS Pro v3.0 (Global)
- * Calcula la salud del stock basada en el porcentaje vs la meta (minStock).
+ * Semáforo de stock para las pantallas de catálogo (productos, dashboard,
+ * grilla de venta, alertas de inventario).
+ *
+ * Los CORTES no viven acá: se delegan en getStockHealth de
+ * @/lib/stock-health.mjs, que es la fuente única de la regla del dueño
+ * (rojo bajo 25 % del mínimo, amarillo 25–75 %, verde 75 % o más).
+ * Antes esta función tenía sus propios cortes 25/60, y eso hacía que un
+ * producto al 65 % del mínimo saliera VERDE en /products y AMARILLO en
+ * /inventory/orders. Un mismo producto no puede tener dos colores.
+ *
+ * Lo que sí es propio de estas pantallas y se conserva a propósito:
+ *
+ *   - stock === -1 es el centinela de "no se controla existencia" → OPTIMAL.
+ *   - Sin mínimo configurado (minStock <= 0), un stock en 0 se considera
+ *     INTENCIÓN del dueño (producto descontinuado que no quiere reponer) y
+ *     se pinta OPTIMAL, no rojo. Solo el stock negativo, que es un dato
+ *     imposible, sale CRITICAL.
+ *     Ojo: acá divergimos a propósito de getStockHealth, que en ese caso
+ *     devuelve CRITICO/Agotado. La pantalla de pedidos SÍ quiere ver los
+ *     agotados sin mínimo; el catálogo y el dashboard NO, porque son miles
+ *     de productos descontinuados y ahogarían la vista.
  */
 export const calculateStockHealth = (stock: number, minStock: number): 'CRITICAL' | 'WARNING' | 'OPTIMAL' => {
     const s = Number(stock) || 0;
     const m = Number(minStock) || 0;
 
     if (s === -1) return 'OPTIMAL';
-    
-    // Si minStock es 0 o no está configurado, stock 0 es la meta/intención del usuario: OPTIMAL.
-    // Solo se marca CRITICAL si el stock es negativo (s < 0).
+
+    // Sin mínimo configurado: ver el bloque de arriba. Divergencia deliberada.
     if (m <= 0) {
         return s < 0 ? 'CRITICAL' : 'OPTIMAL';
     }
 
-    const percentage = (s / m) * 100;
-
-    if (s <= 0 || percentage <= 25) return 'CRITICAL';
-    if (percentage <= 60) return 'WARNING';
+    // Con mínimo configurado, mandan los cortes canónicos del dueño.
+    const { level } = getStockHealth(s, m);
+    if (level === STOCK_HEALTH.CRITICAL) return 'CRITICAL';
+    if (level === STOCK_HEALTH.WARNING) return 'WARNING';
     return 'OPTIMAL';
 };
 

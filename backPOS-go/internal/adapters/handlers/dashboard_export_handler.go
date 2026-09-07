@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -79,7 +80,7 @@ func (h *DashboardExportHandler) ExportReport(c *gin.Context) {
 
 	from, to, err := parseDateRange(c)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato 'from'/'to' invÃ¡lido (YYYY-MM-DD)", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato 'from'/'to' inválido (YYYY-MM-DD)", err)
 		return
 	}
 
@@ -279,13 +280,13 @@ func (h *DashboardExportHandler) buildPayload(reportType string, c *gin.Context,
 		}
 		day, err := time.ParseInLocation("2006-01-02", dayStr, loc)
 		if err != nil {
-			return services.ReportPayload{}, fmt.Errorf("day invÃ¡lido: %w", err)
+			return services.ReportPayload{}, fmt.Errorf("day inválido: %w", err)
 		}
 		rep, err := h.exportService.GetRealCashReportByDay(day)
 		if err != nil {
 			return services.ReportPayload{}, err
 		}
-		return realCashToPayload(rep, fmt.Sprintf("Cuadre Real DÃ­a %s", day.Format("02/01/2006"))), nil
+		return realCashToPayload(rep, fmt.Sprintf("Cuadre Real Día %s", day.Format("02/01/2006"))), nil
 
 	case "box-closure":
 		// Reporte de cierres de caja del rango (consolidado)
@@ -345,12 +346,14 @@ func (h *DashboardExportHandler) buildPayload(reportType string, c *gin.Context,
 		return paymentsToPayload(sales, from, to), nil
 
 	case "inventory":
-		// Snapshot del inventario actual
-		var products []models.Product
-		if err := h.db.Where(`"isActive" = true`).Order(`"productName" ASC`).Find(&products).Error; err != nil {
+		// Snapshot del inventario activo con valorización.
+		// La consulta vive en ExportService, igual que mermas y rotación: el
+		// handler no arma SQL de reportes.
+		rep, err := h.exportService.GetInventoryReport()
+		if err != nil {
 			return services.ReportPayload{}, err
 		}
-		return inventoryToPayload(products), nil
+		return inventoryToPayload(rep), nil
 
 	case "expenses":
 		concept := c.Query("concept")
@@ -442,7 +445,7 @@ func (h *DashboardExportHandler) SendTicketToTelegram(c *gin.Context) {
 func (h *DashboardExportHandler) GetCuadreRealRange(c *gin.Context) {
 	from, to, err := parseDateRange(c)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas invÃ¡lidas", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas inválidas", err)
 		return
 	}
 	rep, err := h.exportService.GetRealCashReportByRange(from, to)
@@ -465,12 +468,12 @@ func (h *DashboardExportHandler) GetCuadreRealDay(c *gin.Context) {
 	}
 	day, err := time.ParseInLocation("2006-01-02", dayStr, loc)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fecha invÃ¡lida", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fecha inválida", err)
 		return
 	}
 	rep, err := h.exportService.GetRealCashReportByDay(day)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al calcular cuadre real del dÃ­a", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al calcular cuadre real del día", err)
 		return
 	}
 	c.JSON(http.StatusOK, rep)
@@ -480,7 +483,7 @@ func (h *DashboardExportHandler) GetCuadreRealDay(c *gin.Context) {
 func (h *DashboardExportHandler) GetProfitability(c *gin.Context) {
 	from, to, err := parseDateRange(c)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas invÃ¡lidas", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas inválidas", err)
 		return
 	}
 	target := 0.17
@@ -501,7 +504,7 @@ func (h *DashboardExportHandler) GetProfitability(c *gin.Context) {
 func (h *DashboardExportHandler) GetShrinkage(c *gin.Context) {
 	from, to, err := parseDateRange(c)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas invÃ¡lidas", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas inválidas", err)
 		return
 	}
 	rep, err := h.exportService.GetShrinkageReport(from, to)
@@ -516,12 +519,12 @@ func (h *DashboardExportHandler) GetShrinkage(c *gin.Context) {
 func (h *DashboardExportHandler) GetRotation(c *gin.Context) {
 	from, to, err := parseDateRange(c)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas invÃ¡lidas", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Fechas inválidas", err)
 		return
 	}
 	rep, err := h.exportService.GetRotationReport(from, to)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo en reporte de rotaciÃ³n", err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo en reporte de rotación", err)
 		return
 	}
 	c.JSON(http.StatusOK, rep)
@@ -532,7 +535,7 @@ func (h *DashboardExportHandler) GetClosureFullDetail(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID invÃ¡lido", err)
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID inválido", err)
 		return
 	}
 
@@ -628,7 +631,7 @@ func parseDateRange(c *gin.Context) (time.Time, time.Time, error) {
 		if t, err := time.ParseInLocation("2006-01-02", s, loc); err == nil {
 			return t, nil
 		}
-		return time.Time{}, fmt.Errorf("formato invÃ¡lido: %s", s)
+		return time.Time{}, fmt.Errorf("formato inválido: %s", s)
 	}
 
 	fromDate, err := parseFlexible(from)
@@ -674,6 +677,19 @@ func reverse(s string) string {
 
 func fmtPct(v float64) string {
 	return strings.Replace(fmt.Sprintf("%.1f%%", v*100), ".", ",", 1)
+}
+
+// fmtQty formatea una cantidad de stock.
+//
+// Los productos pesables llevan decimales (1,5 kg) pero la gran mayoría son
+// unidades enteras, y "12,00" en cada fila de un inventario de miles de líneas
+// es ruido. Se imprimen decimales sólo cuando existen, con coma decimal como
+// se escribe en Colombia.
+func fmtQty(v float64) string {
+	if v == math.Trunc(v) {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return strings.Replace(fmt.Sprintf("%.2f", v), ".", ",", 1)
 }
 
 // safeRatio evita divisiones por cero al calcular márgenes.
@@ -875,10 +891,10 @@ func profitabilityToPayload(r *services.ProfitabilityReport) services.ReportPayl
 
 func shrinkageToPayload(r *services.ShrinkageReport) services.ReportPayload {
 	p := services.ReportPayload{
-		Title:    "Mermas y AverÃ­as",
-		Subtitle: "Productos dados de baja, vencidos o daÃ±ados",
+		Title:    "Mermas y Averías",
+		Subtitle: "Productos dados de baja, vencidos o dañados",
 		From:     r.From, To: r.To,
-		Headers: []string{"Fecha", "Producto", "Motivo", "Cantidad", "Costo Unit.", "PÃ©rdida"},
+		Headers: []string{"Fecha", "Producto", "Motivo", "Cantidad", "Costo Unit.", "Pérdida"},
 	}
 	for _, row := range r.Rows {
 		p.Rows = append(p.Rows, []string{
@@ -906,10 +922,10 @@ func shrinkageToPayload(r *services.ShrinkageReport) services.ReportPayload {
 
 func rotationToPayload(r *services.RotationReport) services.ReportPayload {
 	p := services.ReportPayload{
-		Title:    "RotaciÃ³n de Inventario",
-		Subtitle: "ClasificaciÃ³n de productos segÃºn velocidad de rotaciÃ³n",
+		Title:    "Rotación de Inventario",
+		Subtitle: "Clasificación de productos según velocidad de rotación",
 		From:     r.From, To: r.To,
-		Headers: []string{"Producto", "Stock Actual", "Vendidos", "Valor Vta", "Vta/DÃ­a", "Cobertura (dÃ­as)", "Clasif."},
+		Headers: []string{"Producto", "Stock Actual", "Vendidos", "Valor Vta", "Vta/Día", "Cobertura (días)", "Clasif."},
 	}
 	for _, row := range r.Rows {
 		coverage := fmt.Sprintf("%.1f", row.DaysCovered)
@@ -927,7 +943,7 @@ func rotationToPayload(r *services.RotationReport) services.ReportPayload {
 		})
 	}
 	p.Footer = fmt.Sprintf(
-		"Total productos: %d â€¢ Estancados: %d â€¢ Alta rotaciÃ³n: %d",
+		"Total productos: %d  •  Estancados: %d  •  Alta rotación: %d",
 		r.TotalProducts, r.StagnantCount, r.HighRotationCount,
 	)
 	return p
@@ -1057,35 +1073,109 @@ func paymentsToPayload(sales []models.Sale, from, to time.Time) services.ReportP
 	return p
 }
 
-func inventoryToPayload(products []models.Product) services.ReportPayload {
+// inventoryToPayload arma el reporte de inventario: listado valorizado línea
+// por línea más el VALOR TOTAL del inventario.
+//
+// Antes mostraba sólo precios unitarios (costo y venta) y no totalizaba nada,
+// así que el reporte no respondía la pregunta por la que se pide: cuánta plata
+// hay en la bodega. Ahora cada línea trae su valorización (stock × precio) y la
+// fila de totales cierra con el valor a costo, a venta y la utilidad potencial.
+func inventoryToPayload(r *services.InventoryReport) services.ReportPayload {
 	p := services.ReportPayload{
 		Title:    "Inventario Actual",
-		Subtitle: "Snapshot del stock activo",
-		Headers:  []string{"CÃ³digo", "Producto", "Stock", "Costo", "Venta", "Margen"},
+		Subtitle: "Existencias activas y valorización del stock",
+		Headers: []string{
+			"Código", "Producto", "Categoría", "Stock", "Stock Mín.",
+			"Costo Unit.", "Valor Costo", "Venta Unit.", "Valor Venta", "Margen",
+		},
 	}
-	for _, pr := range products {
-		margin := 0.0
-		if pr.SalePrice > 0 {
-			margin = (pr.SalePrice - pr.PurchasePrice) / pr.SalePrice
-		}
+	if r == nil {
+		return p
+	}
+
+	for _, row := range r.Rows {
 		p.Rows = append(p.Rows, []string{
-			pr.Barcode,
-			pr.ProductName,
-			fmt.Sprintf("%.2f", pr.Quantity),
-			fmtMoney(pr.PurchasePrice),
-			fmtMoney(pr.SalePrice),
-			fmtPct(margin),
+			row.Barcode,
+			row.ProductName,
+			row.CategoryName,
+			fmtQty(row.Stock),
+			fmtQty(row.MinStock),
+			fmtMoney(row.PurchasePrice),
+			fmtMoney(row.CostValue),
+			fmtMoney(row.SalePrice),
+			fmtMoney(row.RetailValue),
+			fmtPct(row.MarginPct),
 		})
 	}
+
+	// La fila de totales tiene que tener exactamente el mismo número de celdas
+	// que Headers; si no, las cifras se imprimen bajo la columna equivocada.
+	p.Totals = []string{
+		"TOTAL",
+		fmt.Sprintf("%d productos", r.TotalProducts),
+		"",
+		fmtQty(r.TotalUnits),
+		"",
+		"",
+		fmtMoney(r.TotalCostValue),
+		"",
+		fmtMoney(r.TotalRetailValue),
+		fmtPct(r.GlobalMarginPct),
+	}
+
+	p.Footer = buildInventoryFooter(r)
 	return p
+}
+
+// buildInventoryFooter explica el número grande y advierte de lo que lo puede
+// distorsionar. Un total sin explicación es el que termina en una discusión.
+func buildInventoryFooter(r *services.InventoryReport) string {
+	var b strings.Builder
+
+	fmt.Fprintf(&b,
+		"VALOR DEL INVENTARIO A COSTO: %s   |   A PRECIO DE VENTA: %s   |   UTILIDAD POTENCIAL: %s (margen %s).",
+		fmtMoney(r.TotalCostValue),
+		fmtMoney(r.TotalRetailValue),
+		fmtMoney(r.PotentialProfit),
+		fmtPct(r.GlobalMarginPct),
+	)
+
+	b.WriteString(" El valor a costo es la suma de stock x precio de compra de cada producto activo:")
+	b.WriteString(" es la misma cifra que muestra el indicador \"Valor del inventario\" del dashboard.")
+
+	// Avisos sólo si aplican: un footer que siempre dice lo mismo se deja de leer.
+	var avisos []string
+	if r.NegativeStockCount > 0 {
+		avisos = append(avisos, fmt.Sprintf(
+			"%d producto(s) con stock NEGATIVO (restan del total; revisar recepciones sin registrar)",
+			r.NegativeStockCount))
+	}
+	if r.ZeroCostCount > 0 {
+		avisos = append(avisos, fmt.Sprintf(
+			"%d producto(s) sin precio de compra, que por lo tanto valorizan en cero",
+			r.ZeroCostCount))
+	}
+	if r.OutOfStockCount > 0 {
+		avisos = append(avisos, fmt.Sprintf("%d producto(s) agotados", r.OutOfStockCount))
+	}
+	if r.BelowMinStockCount > 0 {
+		avisos = append(avisos, fmt.Sprintf(
+			"%d producto(s) en o por debajo del stock minimo", r.BelowMinStockCount))
+	}
+	if len(avisos) > 0 {
+		b.WriteString(" AVISOS: " + strings.Join(avisos, "; ") + ".")
+	}
+
+	fmt.Fprintf(&b, " Generado el %s.", r.GeneratedAt.Format("02/01/2006 03:04 PM"))
+	return b.String()
 }
 
 func rankingToPayload(items []ports.ProductRankingItem, from, to time.Time) services.ReportPayload {
 	p := services.ReportPayload{
 		Title:    "Ranking de Productos",
-		Subtitle: "Productos mÃ¡s vendidos en el rango",
+		Subtitle: "Productos más vendidos en el rango",
 		From:     from, To: to,
-		Headers: []string{"PosiciÃ³n", "CÃ³digo", "Producto", "Cantidad", "Total"},
+		Headers: []string{"Posición", "Código", "Producto", "Cantidad", "Total"},
 	}
 	var total float64
 	for i, r := range items {
@@ -1132,7 +1222,7 @@ func expensesToPayload(expenses []models.Expense, from, to time.Time, concept st
 		Title:    "Reporte de Egresos",
 		Subtitle: subtitle,
 		From:     from, To: to,
-		Headers: []string{"Fecha", "Concepto", "CategorÃ­a", "MÃ©todo", "Monto"},
+		Headers: []string{"Fecha", "Concepto", "Categoría", "Método", "Monto"},
 	}
 	var total float64
 	for _, e := range expenses {
@@ -1156,7 +1246,7 @@ func expensesToPayload(expenses []models.Expense, from, to time.Time, concept st
 func cashflowToPayload(r *services.CashFlowReport, from, to time.Time) services.ReportPayload {
 	p := services.ReportPayload{
 		Title:    "Flujo de Caja",
-		Subtitle: "Ingresos vs Egresos por dÃ­a",
+		Subtitle: "Ingresos vs Egresos por día",
 		From:     from, To: to,
 		Headers: []string{"Fecha", "Ingresos", "Egresos", "Balance"},
 	}
@@ -1196,7 +1286,7 @@ func cashflowToPayload(r *services.CashFlowReport, from, to time.Time) services.
 
 func voidsToPayload(items []services.VoidReportItem, from, to time.Time) services.ReportPayload {
 	p := services.ReportPayload{
-		Title:    "AuditorÃ­a de Anulaciones",
+		Title:    "Auditoría de Anulaciones",
 		Subtitle: "Ventas anuladas en el rango",
 		From:     from, To: to,
 		Headers: []string{"Fecha", "ID", "Empleado", "Total", "Anulado en"},

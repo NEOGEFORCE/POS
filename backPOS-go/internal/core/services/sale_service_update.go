@@ -237,7 +237,8 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 		return err
 	}
 
-	cache.InvalidateCache(cache.CacheKeyProducts)
+	// Arreglo 2: editar una venta sólo mueve cantidades entre movimientos y
+	// productos; el catálogo cacheado no depende de esto.
 	cache.InvalidateCache(cache.CacheKeyClients)
 	if oldSale.ClientDNI != "" {
 		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", oldSale.ClientDNI))

@@ -13,8 +13,8 @@ func TestCatalogIsCompleteOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Catalog() error = %v", err)
 	}
-	if len(catalog) != 11 {
-		t.Fatalf("len(Catalog()) = %d, want 11", len(catalog))
+	if len(catalog) != 15 {
+		t.Fatalf("len(Catalog()) = %d, want 15", len(catalog))
 	}
 	for i, migration := range catalog {
 		wantVersion := int64(i + 1)
@@ -27,7 +27,7 @@ func TestCatalogIsCompleteOrderedAndChecksummed(t *testing.T) {
 		if migration.Version == 2 && migration.Apply == nil {
 			t.Error("model schema migration must use explicit Go callback")
 		}
-		wantTransactional := migration.Version != 8 && migration.Version != 9 && migration.Version != 11
+		wantTransactional := migration.Version != 8 && migration.Version != 9 && migration.Version != 11 && migration.Version != 13 && migration.Version != 14 && migration.Version != 15
 		if migration.Transactional != wantTransactional {
 			t.Errorf("migration %03d transactional = %t, want %t", migration.Version, migration.Transactional, wantTransactional)
 		}
@@ -153,5 +153,63 @@ func TestOperationalIndexesMigrationUsesPhysicalColumnsConcurrently(t *testing.T
 	}
 	if count := strings.Count(migration.Source, "CREATE INDEX CONCURRENTLY IF NOT EXISTS"); count != 4 {
 		t.Errorf("migration 011 concurrent index count = %d, want 4", count)
+	}
+}
+
+func TestReceptionSnapshotMigrationUsesPhysicalColumnsConcurrently(t *testing.T) {
+	catalog, err := Catalog()
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	migration := catalog[14]
+	if migration.Version != 15 || migration.Transactional {
+		t.Fatalf("migration 015 = version %d transactional=%t", migration.Version, migration.Transactional)
+	}
+	// Índices con su tabla y columnas físicas reales; si algún índice se
+	// renombra o cambia de tabla, este test se rompe a propósito.
+	for _, expected := range []string{
+		`idx_clients_credit_debtors`,
+		`ON clients ("currentCredit" DESC)`,
+		`idx_sales_debt_pending_date`,
+		`ON sales ("saleDate" DESC)`,
+		`idx_expenses_pending_debts_date`,
+		`ON expenses (date DESC)`,
+		`idx_missing_items_pendiente_created`,
+		`ON missing_items (created_at DESC)`,
+		`idx_shrinkages_date`,
+		`ON shrinkages (date DESC)`,
+		`idx_price_logs_created_at`,
+		`ON price_logs (created_at DESC)`,
+	} {
+		if !strings.Contains(migration.Source, expected) {
+			t.Errorf("migration 015 missing %q", expected)
+		}
+	}
+	if count := strings.Count(migration.Source, "CREATE INDEX CONCURRENTLY IF NOT EXISTS"); count != 6 {
+		t.Errorf("migration 015 concurrent index count = %d, want 6", count)
+	}
+	// Columnas de porcentajes de recepción sobre stock_movements: tienen que
+	// aparecer con ADD COLUMN IF NOT EXISTS y su COMMENT explicativo.
+	for _, column := range []string{"discount_pct", "iva_pct", "icui_pct", "ibua_pct"} {
+		addColumn := "ADD COLUMN IF NOT EXISTS " + column + " NUMERIC(6,3)"
+		if !strings.Contains(migration.Source, addColumn) {
+			t.Errorf("migration 015 missing %q", addColumn)
+		}
+		commentOn := "COMMENT ON COLUMN stock_movements." + column
+		if !strings.Contains(migration.Source, commentOn) {
+			t.Errorf("migration 015 missing %q", commentOn)
+		}
+	}
+	if count := strings.Count(migration.Source, "NUMERIC(6,3) NULL;"); count != 4 {
+		t.Errorf("migration 015 NUMERIC(6,3) NULL column count = %d, want 4", count)
+	}
+	if count := strings.Count(migration.Source, "ALTER TABLE stock_movements"); count != 4 {
+		t.Errorf("migration 015 ALTER TABLE stock_movements count = %d, want 4", count)
+	}
+	// Blindaje contra mutación de datos: la migración es puramente DDL.
+	for _, forbidden := range []string{"UPDATE stock_movements", "DELETE FROM ", "INSERT INTO "} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 015 must not mutate data, found %q", forbidden)
+		}
 	}
 }

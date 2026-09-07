@@ -19,14 +19,20 @@ import (
 	"golang.org/x/sync/singleflight"
 )
 
-// GetCriticalThreshold calcula el umbral crÃ­tico basado en minStock
-// minStock >= 12 -> 3, minStock >= 4 -> 2, minStock <= 3 -> 1
-// Esta es la ÃšNICA fuente de verdad para el semÃ¡foro de stock en todo el sistema
+// GetCriticalThreshold calcula el umbral entero por debajo del cual el stock
+// entra en la banda ROJA del semaforo. Con la regla del dueno (agosto 2026)
+// el corte es ratio < 25% del minimo. Esta funcion existe solo para exponer
+// el numero como campo `threshold` en las respuestas JSON de suggested
+// orders y del dashboard; la clasificacion real vive en models.ClassifyStockBand.
+//
+// El resultado se usa como referencia visual ("stock critico por debajo de
+// N"), no como fuente de la banda. Sigue devolviendo un entero para no
+// romper el contrato con el frontend historico.
 func GetCriticalThreshold(minStock int) int {
 	if minStock <= 0 {
-		return 0 // Changed from 1: if minStock is 0, threshold is 0 (so quantity <= 0 is critical)
+		return 0
 	}
-	return int(math.Ceil(float64(minStock) * 0.20))
+	return int(math.Ceil(float64(minStock) * models.StockBandRedRatio))
 }
 
 type DashboardService struct {
@@ -234,7 +240,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 	// El TTL es corto a propósito: el dashboard tiene que sentirse en vivo. Se
 	// invalida de inmediato al guardar una venta, un cierre o un egreso, así que
 	// una cifra recién registrada no espera el vencimiento.
-	cacheKey := cache.CacheKeyDashboardOverview + "_" + startDateStr + "_" + endDateStr
+	cacheKey := cache.DashboardOverviewKey(startDateStr, endDateStr)
 	if cached, found := cache.CacheManager.Get(cacheKey); found {
 		if ov, ok := cached.(*DashboardOverview); ok {
 			return ov, nil
@@ -327,7 +333,6 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		var todayPaymentsRaw []models.CreditPayment
 		var todaySalesAmount, shiftSalesAmount float64
 		var todaySalesCount, shiftSalesCount int64
-		var todayExpensesCount int64
 		var clientCount int64
 		var categories []models.Category
 		var totalProducts, activeProducts int64
@@ -665,55 +670,20 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		posSalesBase := totalSalesAmount
 
 		totalExpensesAmount = monthlyExpenses
-		todayExpensesByMethod := make(map[string]float64)
-		for _, e := range todayExpensesRaw {
-			status := strings.ToUpper(e.Status)
-			source := strings.ToUpper(e.PaymentSource)
-			isPending := status == "PENDING" || source == "PRESTAMO" || source == "PREST."
+		// FUENTE ÚNICA de clasificación por canal: parseExpenseChannels (SSOT).
+		// Antes esta función tenía una copia inline con reglas distintas —
+		// específicamente, no excluía DEVOLUCIONES, no reconocía fuentes
+		// mixtas "CAJA: $X/FONDO: $Y" y clasificaba MONEDA/ALCANCIA como
+		// efectivo de caja. El resultado eran diferencias entre el
+		// dashboard, el detalle del cierre y los PDFs.
+		//
+		// ExpenseChannelBuckets también aplica los mismos filtros que
+		// alimentan el arqueo (PENDING, PRESTAMO/DEUDA, DEVOLUCIONES) para
+		// que las tarjetas del dashboard sean coherentes con lo que sale
+		// en /reports.
+		todayExpensesByMethod := ExpenseChannelBuckets(todayExpensesRaw)
 
-			if !isPending && status == "PAID" {
-				todayExpensesCount++
-				if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 {
-					todayExpensesByMethod["EFECTIVO"] += e.CashAmount
-					todayExpensesByMethod["NEQUI"] += e.NequiAmount
-					todayExpensesByMethod["DAVIPLATA"] += e.DaviplataAmount
-					todayExpensesByMethod["FONDO"] += e.FondoAmount
-					if e.TaxAmount > 0 && e.NequiAmount > 0 {
-						todayExpensesByMethod["NEQUI"] += e.TaxAmount
-					}
-				} else {
-					method := strings.ToUpper(e.PaymentSource)
-					if method == "CAJA" {
-						method = "EFECTIVO"
-					}
-					todayExpensesByMethod[method] += (e.Amount + e.TaxAmount)
-				}
-			}
-		}
-
-		dayExpensesByMethod := make(map[string]float64)
-		for _, e := range dayExpensesRaw {
-			status := strings.ToUpper(e.Status)
-			source := strings.ToUpper(e.PaymentSource)
-			isPending := status == "PENDING" || source == "PRESTAMO" || source == "PREST."
-			if !isPending && status == "PAID" {
-				if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 {
-					dayExpensesByMethod["EFECTIVO"] += e.CashAmount
-					dayExpensesByMethod["NEQUI"] += e.NequiAmount
-					dayExpensesByMethod["DAVIPLATA"] += e.DaviplataAmount
-					dayExpensesByMethod["FONDO"] += e.FondoAmount
-					if e.TaxAmount > 0 && e.NequiAmount > 0 {
-						dayExpensesByMethod["NEQUI"] += e.TaxAmount
-					}
-				} else {
-					method := strings.ToUpper(e.PaymentSource)
-					if method == "CAJA" {
-						method = "EFECTIVO"
-					}
-					dayExpensesByMethod[method] += (e.Amount + e.TaxAmount)
-				}
-			}
-		}
+		dayExpensesByMethod := ExpenseChannelBuckets(dayExpensesRaw)
 
 		// Categorize Abonos (Collected Debts) by Payment Method
 		todayCollectedByMethod := make(map[string]float64)
@@ -762,8 +732,18 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			normalizedShiftSales["MIXTO"] = shiftClosure.TotalMixed
 
 			shiftSalesAmount = shiftClosure.TotalSales
-			shiftExpensesCount = int64(len(shiftClosure.Expenses))
-			shiftExpensesAmount = shiftClosure.TotalExpenses
+			// TARJETA "EGRESOS DEL TURNO" en el dashboard:
+			//   amount = ComputeClosureMetrics(shiftClosure).EgresosTotales
+			//   count  = líneas que aportaron a ese total canónico
+			//
+			// TotalExpenses del cierre queda igual (solo efectivo de caja,
+			// que alimenta el arqueo y ExpectedCash), pero el usuario ve el
+			// gasto operativo completo del turno, multicanal: caja + Nequi +
+			// Daviplata + fondo + alcancía. Excluye pendientes, préstamos y
+			// devoluciones porque no forman parte del gasto operativo real.
+			shiftEgresosTotal, shiftEgresosCount := ComputeShiftExpenseTotals(shiftClosure.Expenses)
+			shiftExpensesAmount = shiftEgresosTotal
+			shiftExpensesCount = int64(shiftEgresosCount)
 		}
 
 		// Reconstruir mapas históricos iterando los cierres reales para la Venta Real
@@ -801,6 +781,17 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		} else if shiftSalesAmount > 0 {
 			salesByMonth[currentMonthStr] += shiftSalesAmount
 			dailySalesMap[todayStr] += shiftSalesAmount
+		}
+
+		// VENTA FIJADA EN MESES CERRADOS (decisión del dueño, 2026-08-31).
+		// Ver closed_month_overrides.go para el motivo, los límites y cómo se
+		// quita. Se aplica ACÁ, después de sumar el turno en curso y ANTES de
+		// calcular profitByMonth, para que la ganancia del mes fijado sea
+		// coherente con la venta fijada.
+		//
+		// El mes en curso NUNCA se pisa: el candado está dentro de la función.
+		if pinnedMonths := applyClosedMonthSalesOverrides(salesByMonth, currentMonthStr); len(pinnedMonths) > 0 {
+			log.Printf("[DASHBOARD] venta fijada por el dueño en meses cerrados: %v", pinnedMonths)
 		}
 
 		if startDateStr == "" && endDateStr == "" && salesByMonth[currentMonthStr] > 0 {
@@ -849,17 +840,27 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		for _, p := range lowStockRaw {
 			minStock := int(p.MinStock)
 			threshold := GetCriticalThreshold(minStock)
-			warningThreshold := int(math.Ceil(float64(minStock) * 0.50))
 
 			if int(p.Quantity) == -1 {
 				continue
 			}
-			if int(p.Quantity) <= threshold {
+
+			// Regla del dueno (agosto 2026): la banda es ROJO/AMARILLO/VERDE
+			// contra el minimo configurado, no el 20/50 anterior. Usamos la
+			// funcion canonica del paquete models para que el dashboard, el
+			// stats y el pedido inteligente cuenten con el mismo criterio.
+			//
+			// OJO: como la banda AMARILLA crece (25%–75% en vez de 20%–50%),
+			// el contador warningCount va a subir respecto a la version anterior.
+			// Es un cambio buscado por el dueno.
+			band := models.ClassifyStockBand(p.Quantity, p.MinStock)
+			switch band {
+			case models.StockBandRed:
 				criticalCount++
 				lowStockProducts = append(lowStockProducts, LowStockItem{
 					Barcode: p.Barcode, Name: p.ProductName, Stock: p.Quantity, MinStock: float64(minStock), Threshold: threshold, Status: StockCritical,
 				})
-			} else if int(p.Quantity) <= warningThreshold {
+			case models.StockBandYellow:
 				warningCount++
 				lowStockProducts = append(lowStockProducts, LowStockItem{
 					Barcode: p.Barcode, Name: p.ProductName, Stock: p.Quantity, MinStock: float64(minStock), Threshold: threshold, Status: StockWarning,
@@ -1140,28 +1141,15 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 				e.NequiAmount = 0
 				e.DaviplataAmount = 0
 				e.FondoAmount = 0
-				continue
+				e.CoinsAmount = 0
 			}
-			sum := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
-			src := strings.ToUpper(strings.TrimSpace(e.PaymentSource))
-			if src == "FONDO" || src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
-				e.FondoAmount = e.Amount + e.TaxAmount
-				e.CashAmount = 0
-				e.NequiAmount = 0
-				e.DaviplataAmount = 0
-				e.PaymentSource = "FONDO"
-			} else if sum == 0 {
-				switch {
-				case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
-					e.NequiAmount = e.Amount + e.TaxAmount
-				case strings.Contains(src, "DAVIPLATA"):
-					e.DaviplataAmount = e.Amount + e.TaxAmount
-				case strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") || strings.Contains(src, "PENDING"):
-					// Deudas no afectan caja
-				default:
-					e.CashAmount = e.Amount + e.TaxAmount
-				}
-			}
+		}
+		// Se reutiliza el mismo parser del cierre en lugar de una copia ad-hoc.
+		// La copia anterior forzaba el 100% a FONDO cuando el texto contenía
+		// "FOND", así que un egreso mixto CAJA/FONDO/ALCANCIA perdía el resto
+		// del desglose y la alcancía nunca se descontaba.
+		if err := normalizeClosureExpenses(expenses); err != nil {
+			log.Printf("⚠️ No se pudo normalizar los canales de egreso del cierre %d: %v", closure.ID, err)
 		}
 		if len(expenses) > 0 {
 			eb, _ := json.Marshal(expenses)
@@ -1251,7 +1239,12 @@ func (s *DashboardService) getSavingsOpportunitiesCached() ([]ports.SavingsOppor
 	}
 	savings, err := s.productRepo.GetSavingsOpportunities()
 	if err == nil {
-		cache.CacheManager.Set(cache.CacheKeySavingsOpportunities, savings, 1*time.Hour)
+		// TTL corto + invalidación explícita. La invalidación vive en
+		// cache.InvalidateSavingsOpportunities() y la disparan las escrituras de
+		// productos, las recepciones y UpdateSupplierPrice. El TTL de 10 minutos
+		// es el cinturón de seguridad para cualquier ruta de escritura que se nos
+		// haya pasado; antes era de 1 hora y NADIE invalidaba esta clave.
+		cache.CacheManager.Set(cache.CacheKeySavingsOpportunities, savings, cache.SavingsOpportunitiesTTL)
 	}
 	return savings, err
 }
@@ -1624,7 +1617,7 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	var cashExpenses float64
 	for i := range expenses {
 		expense := expenses[i]
-		cash, _, _, _ := parseExpenseChannels(&expense)
+		cash, _, _, _, _ := parseExpenseChannels(&expense)
 		if !strings.EqualFold(strings.TrimSpace(expense.Category), "DEVOLUCIONES") {
 			cashExpenses += cash
 		}
@@ -1721,7 +1714,7 @@ func normalizeClosureExpenses(expenses []models.Expense) error {
 		if strings.EqualFold(expense.Status, "PENDING") {
 			continue
 		}
-		if expense.CashAmount+expense.NequiAmount+expense.DaviplataAmount+expense.FondoAmount != 0 {
+		if expense.CashAmount+expense.NequiAmount+expense.DaviplataAmount+expense.FondoAmount+expense.CoinsAmount != 0 {
 			continue
 		}
 		total := expense.Amount + expense.TaxAmount
@@ -1749,13 +1742,20 @@ func normalizeClosureExpenses(expenses []models.Expense) error {
 
 func assignExpenseChannel(expense *models.Expense, source string, value float64) {
 	switch {
-	case strings.Contains(source, "NEQUI"):
-		expense.NequiAmount += value
+	// DAVIPLATA se evalúa primero: contiene "DAVI" y también es un canal digital.
 	case strings.Contains(source, "DAVIPLATA"), strings.Contains(source, "DAVI"):
 		expense.DaviplataAmount += value
+	case strings.Contains(source, "NEQUI"), strings.Contains(source, "BANCOLOMBIA"),
+		strings.Contains(source, "TRANSFERENCIA"), strings.Contains(source, "BANCO"),
+		strings.Contains(source, "DIGITAL"):
+		expense.NequiAmount += value
+	// La alcancía se evalúa antes que el fondo: sin este caso, un egreso pagado
+	// con monedas caía en el default y se descontaba del efectivo de caja.
+	case strings.Contains(source, "MONEDA"), strings.Contains(source, "ALCANCIA"), strings.Contains(source, "ALCANCÍA"):
+		expense.CoinsAmount += value
 	case strings.Contains(source, "FONDO"), strings.Contains(source, "BOVEDA"), strings.Contains(source, "BÓVEDA"), strings.Contains(source, "FOND"):
 		expense.FondoAmount += value
-	case strings.Contains(source, "PREST"), strings.Contains(source, "DEUDA"):
+	case strings.Contains(source, "PREST"), strings.Contains(source, "DEUDA"), strings.Contains(source, "PENDING"):
 		return
 	default:
 		expense.CashAmount += value
@@ -2209,16 +2209,14 @@ func (s *DashboardService) GetVaultAudit() (*VaultAuditReport, error) {
 	}, nil
 }
 
+// GetGlobalDebt devuelve la cartera total por cobrar.
+//
+// Antes traía TODOS los clientes con GetAll() (que además los deja cacheados en
+// RAM 24h) y sumaba en Go. Ahora es un SUM en SQL. La definición de deuda viva
+// no cambia: es la de working_capital.go y export_service.go, sólo saldos
+// positivos de "currentCredit".
 func (s *DashboardService) GetGlobalDebt() (float64, error) {
-	clients, err := s.clientRepo.GetAll()
-	if err != nil {
-		return 0, err
-	}
-	totalDebt := 0.0
-	for _, c := range clients {
-		totalDebt += c.CurrentCredit
-	}
-	return totalDebt, nil
+	return s.clientRepo.SumLiveDebt()
 }
 
 func (s *DashboardService) GetInventoryMovementsReport(from, to time.Time) ([]StockMovementReportItem, error) {
@@ -2322,7 +2320,7 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 				Description: exp.Description,
 			})
 			if strings.ToUpper(exp.Status) != "PENDING" {
-				sumChannels := exp.CashAmount + exp.NequiAmount + exp.DaviplataAmount + exp.FondoAmount
+				sumChannels := exp.CashAmount + exp.NequiAmount + exp.DaviplataAmount + exp.FondoAmount + exp.CoinsAmount
 				if sumChannels > 0 {
 					if exp.CashAmount > 0 {
 						totals["EFECTIVO"] -= exp.CashAmount
@@ -2335,6 +2333,9 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 					}
 					if exp.FondoAmount > 0 {
 						totals["FONDO"] -= exp.FondoAmount
+					}
+					if exp.CoinsAmount > 0 {
+						totals["MONEDAS"] -= exp.CoinsAmount
 					}
 				} else if strings.Contains(method, "/") || strings.Contains(method, ":") {
 					parts := strings.Split(method, "/")
@@ -2470,6 +2471,10 @@ func (s *DashboardService) GetCashFlowReport(from, to time.Time) (*CashFlowRepor
 		c := &closures[i]
 		m := allMetrics[i]
 
+		// El turno se agrupa por el DIA DEL NEGOCIO (c.Date), el mismo campo con
+		// el que agrupa el historial visual de /reports (ClosuresHistory.tsx usa
+		// c.date). NO cambiar a EndDate: un turno que cierra a las 7 a.m.
+		// pertenece al día anterior porque casi toda su venta es de ese día.
 		ref := c.Date
 		if ref.IsZero() {
 			ref = c.EndDate
@@ -2520,6 +2525,21 @@ type CashFlowDetailedReport struct {
 	TotalExpense float64               `json:"totalExpense"`
 	TotalBalance float64               `json:"totalBalance"`
 	Days         []CashFlowDetailedDay `json:"days"`
+
+	// DESGLOSE DEL EGRESO POR TIPO DE GASTO (pedido del dueño, 2026-09-04).
+	//
+	// El gran total ya trae el egreso repartido por CANAL (caja, fondo,
+	// digital), que responde "por dónde salió la plata". Estos dos campos
+	// responden la otra pregunta, la que el dueño usa para decidir: "en QUÉ se
+	// gastó". Cada uno suma TODOS los canales.
+	//
+	// INVARIANTE: ExpenseSuppliers + ExpenseOthers == TotalExpense. Ambos
+	// recorren el mismo universo de egresos operativos que alimenta
+	// EgresosTotales, con las mismas exclusiones (pendientes, préstamos y
+	// devoluciones). Si dejaran de sumar, el reporte no se podría cuadrar a
+	// mano y perdería su razón de ser.
+	ExpenseSuppliers float64 `json:"expenseSuppliers"`
+	ExpenseOthers    float64 `json:"expenseOthers"`
 }
 
 type CashFlowDetailedDay struct {
@@ -2621,6 +2641,9 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 	}
 
 	var overallIncome, overallExpense float64
+	// Desglose del egreso por TIPO de gasto para el gran total. Se acumula en el
+	// mismo recorrido de cierres para no volver a consultar nada.
+	var overallSuppliers, overallOthers float64
 
 	// Zona horaria de Colombia: la pantalla de historial agrupa los cierres en
 	// hora local del navegador, así que el reporte debe agrupar igual o los
@@ -2631,6 +2654,15 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 	for i := range closures {
 		c := &closures[i]
 
+		// El turno se agrupa por el DIA DEL NEGOCIO (c.Date), el mismo campo con
+		// el que agrupa el historial visual de /reports (ClosuresHistory.tsx usa
+		// c.date || c.startDate). El dueño lo pidió explícitamente así.
+		//
+		// EJEMPLO REAL (cierre CC-166): cerró el 29/08 a las 07:38 a.m. pero casi
+		// toda su venta es del 28, y la pantalla lo muestra bajo el viernes 28.
+		//
+		// NO cambiar a EndDate. Se probó el 2026-09-04 asumiendo que la pantalla
+		// agrupaba por fecha de cierre y quedó al revés.
 		ref := c.Date
 		if ref.IsZero() {
 			ref = c.EndDate
@@ -2655,8 +2687,11 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 		expectedCash := c.OpeningCash + c.TotalCash - m.EgresosCaja - c.TotalReturns
 
 		d.Events = append(d.Events, CashFlowDetailedEvent{
-			Type:           "CIERRE",
-			Concept:        fmt.Sprintf("Turno #%d - %s (%s a %s)", c.ID, cashierName, c.StartDate.In(loc).Format("15:04"), c.EndDate.In(loc).Format("15:04")),
+			Type: "CIERRE",
+			// Sin rango de horas: mostrar "22:00 a 01:00" hacía parecer que el
+			// movimiento pertenece a dos días. El turno se identifica por su
+			// número y su cajero, y la fecha de la fila ya dice el día.
+			Concept:        fmt.Sprintf("Turno #%d - %s", c.ID, cashierName),
 			IncomeCash:     m.PhysicalCash,
 			IncomeNequi:    c.TotalNequi,
 			IncomeDavi:     c.TotalDaviplata,
@@ -2690,6 +2725,12 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 		d.ClosureCount++
 		overallIncome += m.VentasCajero
 		overallExpense += m.EgresosTotales
+
+		// Mismo universo de egresos que EgresosTotales, partido por tipo de
+		// gasto. Las dos bolsas suman exactamente EgresosTotales.
+		supplierPart, otherPart := SplitExpensesByKind(c.Expenses)
+		overallSuppliers += supplierPart
+		overallOthers += otherPart
 	}
 
 	var daysList []CashFlowDetailedDay
@@ -2702,11 +2743,13 @@ func (s *DashboardService) GetCashFlowDetailedReport(from, to time.Time) (*CashF
 	})
 
 	return &CashFlowDetailedReport{
-		From:         from,
-		To:           to,
-		TotalIncome:  overallIncome,
-		TotalExpense: overallExpense,
-		TotalBalance: overallIncome - overallExpense,
-		Days:         daysList,
+		From:             from,
+		To:               to,
+		TotalIncome:      overallIncome,
+		TotalExpense:     overallExpense,
+		TotalBalance:     overallIncome - overallExpense,
+		ExpenseSuppliers: overallSuppliers,
+		ExpenseOthers:    overallOthers,
+		Days:             daysList,
 	}, nil
 }

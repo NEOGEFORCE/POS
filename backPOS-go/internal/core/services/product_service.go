@@ -291,6 +291,17 @@ func (s *ProductService) DeleteProduct(barcode string) error {
 	return s.repo.Delete(barcode)
 }
 
+// MergeHistoricalMarker (arreglo 5) delega la fusión al repositorio y limpia
+// los cachés de catálogo (esta operación SÍ cambia la forma del catálogo:
+// desaparece el marcador y el producto real cambia de barcode).
+func (s *ProductService) MergeHistoricalMarker(realBarcode, markerBarcode, authorDNI, authorName string) error {
+	if err := s.repo.MergeHistoricalMarker(realBarcode, markerBarcode, authorDNI, authorName); err != nil {
+		return err
+	}
+	s.repo.InvalidateCatalogAfterMerge(realBarcode, markerBarcode)
+	return nil
+}
+
 func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, newPurchasePrice float64, newSalePrice float64, supplierID *uint, iva, icui, ibua float64) error {
 	if addedQuantity <= 0 {
 		return fmt.Errorf("la cantidad recibida debe ser positiva")
@@ -386,6 +397,25 @@ func (s *ProductService) ReceiveStock(barcode string, addedQuantity float64, new
 	return nil
 }
 
+// validateStockAdjustment devuelve un error si el ajuste dejaría el stock
+// físicamente imposible.
+//
+// La guarda SÓLO aplica cuando el ajuste es hacia abajo (delta < 0). Un ajuste
+// positivo siempre pasa: el operador debe poder recuperar existencias en
+// productos que hoy están en negativo (bug del botón "+" reportado por caja).
+// La política de permitir stock negativo en ventas ya está aceptada por el
+// negocio (ver sale_service.go:168 "Validación eliminada a petición del
+// usuario"); esta función preserva esa política sin bloquear las correcciones.
+func validateStockAdjustment(currentQuantity, delta float64) error {
+	if delta >= 0 {
+		return nil
+	}
+	if currentQuantity+delta < 0 {
+		return fmt.Errorf("stock insuficiente: disponible %.3f", currentQuantity)
+	}
+	return nil
+}
+
 func (s *ProductService) AdjustStock(barcode string, amount float64, employeeDNI string, employeeName string) error {
 	if amount == 0 {
 		return fmt.Errorf("el ajuste no puede ser cero")
@@ -413,8 +443,8 @@ func (s *ProductService) AdjustStock(barcode string, amount float64, employeeDNI
 				return fmt.Errorf("obteniendo producto base: %w", err)
 			}
 			baseAdjustment := amount * float64(product.PackMultiplier)
-			if base.Quantity+baseAdjustment < 0 {
-				return fmt.Errorf("stock insuficiente: disponible %.3f", base.Quantity)
+			if err := validateStockAdjustment(base.Quantity, baseAdjustment); err != nil {
+				return err
 			}
 			base.Quantity += baseAdjustment
 			if err := tx.Save(&base).Error; err != nil {
@@ -431,8 +461,8 @@ func (s *ProductService) AdjustStock(barcode string, amount float64, employeeDNI
 			})
 			affected = append(affected, base.Barcode)
 		} else {
-			if product.Quantity+amount < 0 {
-				return fmt.Errorf("stock insuficiente: disponible %.3f", product.Quantity)
+			if err := validateStockAdjustment(product.Quantity, amount); err != nil {
+				return err
 			}
 			product.Quantity += amount
 			if err := tx.Save(&product).Error; err != nil {

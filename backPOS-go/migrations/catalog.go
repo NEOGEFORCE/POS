@@ -111,7 +111,17 @@ func Catalog() ([]Migration, error) {
 		if err != nil {
 			return nil, fmt.Errorf("leyendo %s: %w", entry.Name(), err)
 		}
-		transactional := version != 8 && version != 9 && version != 11
+		// Migraciones no transaccionales: 008, 009 y 011 usan CREATE INDEX
+		// CONCURRENTLY, la 013 hace lo mismo para el índice parcial sobre
+		// stock_movements (reason='RECEPTION'), la 014 para el índice parcial
+		// sobre confirmed_orders(supplier_id, received_at) usado por el batch
+		// de aprendizaje de agenda, y la 015 agrega seis índices parciales
+		// más (clients con saldo vivo, sales con deuda viva, expenses en
+		// mora, missing_items PENDIENTE, shrinkages por fecha, price_logs
+		// por created_at) junto con las columnas de porcentajes de recepción
+		// en stock_movements. PostgreSQL prohíbe CONCURRENTLY dentro de una
+		// transacción, así que estas seis corren en autocommit.
+		transactional := version != 8 && version != 9 && version != 11 && version != 13 && version != 14 && version != 15
 		migration := Migration{
 			Version:       version,
 			Name:          matches[2],

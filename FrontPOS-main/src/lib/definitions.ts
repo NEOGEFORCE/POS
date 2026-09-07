@@ -103,6 +103,11 @@ export type Sale = {
   cashAmount: number;
   transferAmount: number;
   transferSource?: string;
+  // Desglose por canal digital. Se envía por separado además de
+  // `transferAmount` (que es la suma) para que la conciliación de caja
+  // pueda cuadrar contra el saldo real de Nequi y Daviplata.
+  transferNequi?: number;
+  transferDaviplata?: number;
   creditAmount: number;
   change: number;
   client?: Customer;
@@ -146,8 +151,20 @@ export type Supplier = {
   // Nuevos campos multi-dias
   visitDays?: string[];
   deliveryDays?: string[];
+  leadTimeDays?: number | null;
   restockMethod?: string;
   orderMethods?: OrderMethod[];
+
+  // Agenda APRENDIDA por el batch nocturno a partir de EGRESOS (para dias de
+  // entrega) y confirmed_orders (para dias de visita). Estas columnas viven en
+  // paralelo a visitDays/deliveryDays y NUNCA las sobreescriben: el dueno
+  // manda sobre lo configurado, el sistema solo escribe aqui.
+  // Ver backend: internal/core/services/scheduling/learn.go
+  learnedVisitDays?: string[];
+  learnedDeliveryDays?: string[];
+  learnedLeadTimeDays?: number | null;
+  learnedSampleCount?: number;
+  learnedAt?: string | null;
 };
 
 export type CreditPayment = {

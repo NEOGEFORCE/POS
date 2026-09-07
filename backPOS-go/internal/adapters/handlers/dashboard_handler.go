@@ -667,9 +667,12 @@ func FormatTelegramClosureMessage(closure models.CashierClosure, isPartial bool)
 			egresosAgrupados["FONDO"] = append(egresosAgrupados["FONDO"], splitExpense{Desc: e.Description, Amount: e.FondoAmount})
 			totalFondo += e.FondoAmount
 		}
+		if e.CoinsAmount > 0 {
+			egresosAgrupados["ALCANCIA"] = append(egresosAgrupados["ALCANCIA"], splitExpense{Desc: e.Description, Amount: e.CoinsAmount})
+		}
 	}
 
-	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO"}
+	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "ALCANCIA"}
 	for k := range egresosAgrupados {
 		found := false
 		for _, c := range canalesOrder {

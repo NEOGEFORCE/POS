@@ -115,6 +115,17 @@ func (r *PostgresExpectedOrderRepository) GetSupplierByID(id uint) (*models.Supp
 	return &supplier, nil
 }
 
+// UpdateSupplierDeliveryDays — DESACTIVADO.
+//
+// Regla del dueño: la agenda manual (suppliers.delivery_days) es
+// SAGRADA. Ningún flujo automático puede modificarla. El aprendizaje
+// real vive en scheduling.LearnSupplierSchedule y se persiste
+// EXCLUSIVAMENTE en learned_* (migración 014).
+//
+// Se conserva la firma para no romper llamadores heredados, pero el
+// cuerpo es un no-op deliberado.
 func (r *PostgresExpectedOrderRepository) UpdateSupplierDeliveryDays(id uint, days models.StringArray) error {
-	return r.db.Model(&models.Supplier{}).Where("id = ?", id).Update("delivery_days", days).Error
+	_ = id
+	_ = days
+	return nil
 }

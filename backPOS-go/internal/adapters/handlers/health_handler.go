@@ -1,4 +1,4 @@
-﻿package handlers
+package handlers
 
 import (
 	"net/http"
@@ -22,20 +22,52 @@ func NewHealthHandler(db *gorm.DB) *HealthHandler {
 	}
 }
 
-func (h *HealthHandler) Check(c *gin.Context) {
-	// 1. Verificar base de datos
-	dbStatus := "UP"
+// dbStatus hace ping a la base y devuelve el estado en el formato que el
+// procedimiento de despliegue espera leer.
+func (h *HealthHandler) dbStatus() string {
+	if h.db == nil {
+		return "DOWN (DB Not Configured)"
+	}
 	sqlDB, err := h.db.DB()
 	if err != nil {
-		dbStatus = "DOWN (DB Connection Error)"
-	} else {
-		err = sqlDB.Ping()
-		if err != nil {
-			dbStatus = "DOWN (Ping Failed)"
-		}
+		return "DOWN (DB Connection Error)"
 	}
+	if err := sqlDB.Ping(); err != nil {
+		return "DOWN (Ping Failed)"
+	}
+	return "UP"
+}
 
-	// 2. Estadísticas de memoria
+// Check es el healthcheck PÚBLICO (sin autenticación).
+//
+// Expone lo mínimo que necesita un monitor externo: si el servicio responde y si
+// la base contesta. Nada más.
+//
+// Antes publicaba hostname, versión de Go, sistema operativo, uso de memoria y
+// número de goroutines a cualquiera que llegara al puerto. Eso es material de
+// reconocimiento gratis: la versión de Go dice qué CVEs aplican, y las
+// goroutines y la memoria delatan si un ataque de carga está funcionando.
+// El detalle se movió a CheckDetailed, detrás de admin.
+//
+// CONTRATO: la clave "database.status" conserva EXACTAMENTE ese nombre y esos
+// valores porque el procedimiento de despliegue (desplegar_a_produccion.ps1) los
+// lee para decidir si promueve el release o hace rollback.
+func (h *HealthHandler) Check(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"status": "online",
+		"database": gin.H{
+			"status": h.dbStatus(),
+		},
+	})
+}
+
+// CheckDetailed es el healthcheck de diagnóstico. Va montado bajo el grupo de
+// administración, así que exige token y rol admin.
+//
+// Mantiene la forma completa de la respuesta vieja (incluyendo "database.status")
+// para que cualquier herramienta interna que la consumiera siga funcionando con
+// sólo agregar las credenciales.
+func (h *HealthHandler) CheckDetailed(c *gin.Context) {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
 
@@ -52,7 +84,7 @@ func (h *HealthHandler) Check(c *gin.Context) {
 			"os":         runtime.GOOS,
 		},
 		"database": gin.H{
-			"status": dbStatus,
+			"status": h.dbStatus(),
 		},
 		"resources": gin.H{
 			"memoryUsed":      m.Alloc / 1024 / 1024,

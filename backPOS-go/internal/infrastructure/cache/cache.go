@@ -28,8 +28,33 @@ const (
 	CacheKeySavingsOpportunities = "savings_opportunities"
 )
 
-// InvalidateCache elimina una entrada de la caché por su clave
+// SavingsOpportunitiesTTL acota la vida del cálculo de ahorros.
+//
+// Es corto a propósito: sirve de red por si alguna ruta de escritura de precios
+// olvida invalidar. La invalidación explícita
+// (InvalidateSavingsOpportunities) sigue siendo el mecanismo principal.
+const SavingsOpportunitiesTTL = 10 * time.Minute
+
+// DashboardOverviewKey construye la clave real con la que se cachea un overview.
+//
+// Existe para que la escritura y la invalidación no puedan divergir: quien
+// escribe usa esta función y InvalidateDashboard borra por el prefijo
+// CacheKeyDashboardOverview, que es justamente lo que esta función anteponen.
+func DashboardOverviewKey(startDate, endDate string) string {
+	return CacheKeyDashboardOverview + "_" + startDate + "_" + endDate
+}
+
+// InvalidateCache elimina una entrada de la caché por su clave.
+//
+// Guardia: la clave del dashboard NUNCA se escribe tal cual (siempre lleva el
+// sufijo del rango de fechas), así que un Delete literal sobre ella no borraba
+// nada y el dashboard quedaba mostrando cifras viejas. Ese fue un bug real
+// repetido en 9 lugares. Redirigir aquí hace imposible reintroducirlo.
 func InvalidateCache(key string) {
+	if key == CacheKeyDashboardOverview {
+		InvalidateDashboard()
+		return
+	}
 	CacheManager.Delete(key)
 }
 
@@ -45,6 +70,17 @@ func InvalidateDashboard() {
 			CacheManager.Delete(key)
 		}
 	}
+}
+
+// InvalidateSavingsOpportunities purga el cálculo de "podrías ahorrar comprándole
+// a otro proveedor".
+//
+// Depende de precios de compra y de las recepciones de mercancía, así que
+// cualquier escritura sobre productos o inventario lo deja obsoleto. Antes nunca
+// se invalidaba: sólo se escribía con TTL de 1 hora, y durante esa hora el
+// dashboard recomendaba comprarle al proveedor que ya había subido el precio.
+func InvalidateSavingsOpportunities() {
+	CacheManager.Delete(CacheKeySavingsOpportunities)
 }
 
 // InvalidateAllMasterData purga todos los catálogos maestros y sus conteos

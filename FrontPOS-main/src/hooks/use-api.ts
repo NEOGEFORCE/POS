@@ -17,7 +17,13 @@ const fetcher = async (url: string): Promise<any> => {
   const execute = async (token: string | null, allowRecovery: boolean): Promise<any> => {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
-    const response = await fetch(`${API_URL}${url}`, { headers, cache: "no-store" });
+    // Nota: NO forzamos `cache: "no-store"` aqui. La frescura la controla SWR
+    // (revalidateOnMount + revalidateOnFocus con focusThrottleInterval de 60s
+    // + dedupingInterval + revalidateOnReconnect), y los cambios reales
+    // llegan por SSE/BroadcastChannel. Si algun endpoint concreto necesita
+    // saltar el cache del navegador, debe pasar su propio `cache: 'no-store'`
+    // en el fetch directo, no en este fetcher global.
+    const response = await fetch(`${API_URL}${url}`, { headers });
 
     if (response.status === 401) {
       if (!allowRecovery || typeof window === "undefined") {

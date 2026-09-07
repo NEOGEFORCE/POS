@@ -1,18 +1,27 @@
-﻿"use client";
+"use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import {
   Modal, ModalContent, Button, Avatar, Switch
 } from "@heroui/react";
 import {
   Banknote, Zap, Check, Wallet, ArrowRight, X,
   Calculator, ShieldCheck, TrendingUp, Grid3X3, Users, AlertTriangle,
-  Printer, Send, MessageCircle
+  Printer, Send, MessageCircle, Trash2
 } from 'lucide-react';
 import { Customer } from '@/lib/definitions';
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/api-error";
+
+/* ============================================================================
+ * TIPOGRAFÍA — REGLA DE ORO PARA UNA CAJA REGISTRADORA
+ * Etiquetas   >= 11px   (uppercase tracking-wider)
+ * Datos       >= 13px   (tabular-nums)
+ * Dinero KPI  >= 24px md:30px  (tabular-nums tracking-tight)
+ * Dinero HERO >= 30px md:48px  (tabular-nums tracking-tight)
+ * Un solo tracking por elemento (nunca 'tracking-tight tracking-tighter').
+ * ========================================================================== */
 
 interface UniversalPaymentModalProps {
   isOpen: boolean;
@@ -34,6 +43,15 @@ interface UniversalPaymentModalProps {
     cash: number;
     transfer: number;
     transferSource: string;
+    /**
+     * Desglose de la transferencia por canal. Se propagan por separado ademas
+     * de `transfer` (total) para que el cuadre del turno pueda conciliar
+     * contra los saldos reales de Nequi y Daviplata cuando el cliente paga
+     * mitad y mitad. `transfer` sigue siendo la suma para no romper a los
+     * consumidores existentes.
+     */
+    transferNequi?: number;
+    transferDaviplata?: number;
     credit: number;
     totalPaid: number;
     change: number;
@@ -49,6 +67,90 @@ interface UniversalPaymentModalProps {
   pendingReturnAmount?: number;
   originalPaymentMethod?: string;
 }
+
+/* ---------------------------------------------------------------------------
+ * Sub-componentes de presentación (mismo archivo para no dispersar la lógica).
+ * Ninguno toca math ni callbacks; solo pintan.
+ * ------------------------------------------------------------------------- */
+
+interface SummaryTileProps {
+  label: string;
+  icon: ReactNode;
+  value: number;
+  valueClassName?: string;
+  containerClassName?: string;
+  prefix?: string;
+}
+
+function SummaryTile({ label, icon, value, valueClassName = "", containerClassName = "", prefix = "$" }: SummaryTileProps) {
+  return (
+    <div className={`bg-white dark:bg-[#18181b] px-3 py-2 md:px-4 md:py-3 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center ${containerClassName}`}>
+      <p className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1.5">
+        {icon}
+        <span>{label}</span>
+      </p>
+      <p className={`text-2xl md:text-3xl font-semibold tabular-nums tracking-tight leading-none ${valueClassName}`}>
+        {prefix}{formatCurrency(value)}
+      </p>
+    </div>
+  );
+}
+
+interface AccumulatedPillProps {
+  label: string;
+  icon: ReactNode;
+  amount: number;
+  colorClass: string;
+  bgClass: string;
+  borderClass: string;
+}
+
+function AccumulatedPill({ label, icon, amount, colorClass, bgClass, borderClass }: AccumulatedPillProps) {
+  return (
+    <div className={`px-3 py-1.5 ${bgClass} border ${borderClass} rounded-xl flex items-center gap-2`} title={`${label}: $${formatCurrency(amount)}`}>
+      {icon}
+      <span className={`text-[13px] font-semibold ${colorClass} tabular-nums leading-none`}>
+        ${formatCurrency(amount)}
+      </span>
+    </div>
+  );
+}
+
+interface NumpadKeyProps {
+  value: string | number;
+  onPress: () => void;
+  variant?: "digit" | "clear" | "add";
+  fullHeight?: boolean;
+  themeBgClass?: string;
+}
+
+function NumpadKey({ value, onPress, variant = "digit", fullHeight = false, themeBgClass = "" }: NumpadKeyProps) {
+  const base = "font-semibold rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95";
+  const sizing = fullHeight ? "h-full text-2xl" : "h-12 text-lg";
+  const tone =
+    variant === "clear"
+      ? "text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-500/20"
+      : variant === "add"
+        ? `${themeBgClass} text-white`
+        : "bg-white dark:bg-zinc-800 text-gray-900 dark:text-white active:bg-gray-200 dark:active:bg-zinc-700 border border-transparent";
+  return (
+    <Button
+      tabIndex={-1}
+      onMouseDown={(e) => e.preventDefault()}
+      className={`${base} ${sizing} ${tone}`}
+      onPress={() => {
+        onPress();
+        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      }}
+    >
+      {value}
+    </Button>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * Componente principal
+ * ------------------------------------------------------------------------- */
 
 export default function UniversalPaymentModal({
   isOpen,
@@ -166,6 +268,17 @@ export default function UniversalPaymentModal({
     }
   }, [currentDialogVal, remainingDebt, activePaymentTab]);
 
+  // LIMPIAR PAGOS: Resetear todos los pagos parciales acumulados para empezar de cero
+  const handleClearPayments = useCallback(() => {
+    setCashPaid(0);
+    setNequiPaid(0);
+    setDaviplataPaid(0);
+    setCreditPaid(0);
+    setCashTendered('');
+    setDialogAmount('');
+    setActivePaymentTab('cash');
+  }, []);
+
   const isCreditInvalid = !!(activePaymentTab === 'credit' && (!client || client.id === "0" || client.name === "CONSUMIDOR FINAL"));
   const isOverCreditLimit = !!(activePaymentTab === 'credit' && client && (currentDialogVal > 0 ? currentDialogVal : remainingDebt) > (client.creditLimit - client.currentCredit));
 
@@ -230,6 +343,12 @@ export default function UniversalPaymentModal({
         cash: finalCash,
         transfer: finalNequi + finalDaviplata,
         transferSource: mainTransferSource,
+        // Se manda el desglose por canal para que el backend registre por
+        // separado Nequi y Daviplata. Sin esto, un pago mixto (parte Nequi,
+        // parte Daviplata) se sumaba en un solo balde "otras transferencias"
+        // y el dueno no podia conciliar contra los saldos de los celulares.
+        transferNequi: finalNequi,
+        transferDaviplata: finalDaviplata,
         credit: finalCredit,
         totalPaid: totalPaid,
         change: change
@@ -390,6 +509,40 @@ export default function UniversalPaymentModal({
 
   if (!isOpen) return null;
 
+  // Derivados de presentación (no de math): qué mostrar en el hero del efectivo.
+  const showChangeHero = baseReturnRefund > 0 || amountToPayRaw > remainingDebt;
+  const cashHeroValue = baseReturnRefund > 0
+    ? baseReturnRefund + Math.max(0, (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : 0))
+    : (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : amountToPayRaw);
+  const cashHeroLabel = baseReturnRefund > 0
+    ? 'DEVOLUCIÓN AL CLIENTE (VUELTAS)'
+    : (amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO');
+
+  const primaryActionLabel = isCreditInvalid
+    ? "CLIENTE REQUERIDO"
+    : isOverCreditLimit
+      ? "CUPO EXCEDIDO"
+      : isBlockedTransferRefund
+        ? `LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
+        : (flowType === "out" ? "CONFIRMAR REEMBOLSO" : "COMPLETAR VENTA");
+
+  const desktopActionLabel = isCreditInvalid
+    ? "CLIENTE NO SELECCIONADO"
+    : isOverCreditLimit
+      ? "CUPO EXCEDIDO"
+      : isBlockedTransferRefund
+        ? `LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
+        : (flowType === "out" ? "ENTREGAR EFECTIVO" : "COMPLETAR VENTA");
+
+  const paymentTabs = [
+    { id: 'cash' as const, label: 'Efectivo', icon: <Banknote size={18} className="md:w-6 md:h-6" /> },
+    { id: 'NEQUI' as const, label: 'Nequi', logo: '/logos/nequi.png' },
+    { id: 'DAVIPLATA' as const, label: 'Daviplata', logo: '/logos/daviplata.png' },
+    { id: 'credit' as const, label: 'Fiado', icon: <Users size={18} className="md:w-6 md:h-6" /> }
+  ]
+    .filter(tab => tab.id !== 'credit' || showCreditTab)
+    .filter(tab => !isRefund || tab.id === 'cash');
+
   return (
     <Modal
       isOpen={isOpen}
@@ -410,53 +563,52 @@ export default function UniversalPaymentModal({
             {showSuccessScreen && (
               <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center justify-center p-4 md:p-8 animate-in fade-in zoom-in duration-300">
                 <div className="bg-white dark:bg-[#18181b] p-6 md:p-8 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-md relative overflow-hidden group">
-                  <div className={`h-16 w-16 rounded-[1.2rem] ${theme.bg} text-white flex items-center justify-center mb-3 shadow-[0_8px_30px_rgb(0,0,0,0.12)] -rotate-3 scale-105 border-4 border-black/10 dark:border-white/20`}>
-                    <Check size={32} strokeWidth={4} />
+                  <div className={`h-16 w-16 rounded-2xl ${theme.bg} text-white flex items-center justify-center mb-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}>
+                    <Check size={36} strokeWidth={3.5} />
                   </div>
-                  <h2 className="text-2xl md:text-3xl font-medium text-gray-900 dark:text-white uppercase mb-1 tracking-tight tracking-tighter text-center leading-none">
+                  <h2 className="text-2xl md:text-3xl font-semibold text-gray-900 dark:text-white uppercase mb-5 tracking-tight text-center leading-tight">
                     Operación <span className={theme.text}>Exitosa</span>
                   </h2>
-                  <span className={`text-[8px] font-medium opacity-60 ${theme.text} uppercase tracking-[0.4em] mb-4 tracking-tight`}>PROCESADO CON ÉXITO</span>
 
-                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} p-5 rounded-[1.5rem] text-center w-full relative overflow-hidden group-hover:scale-[1.01] transition-transform mb-4`}>
-                    <p className={`text-[9px] font-medium ${theme.text} uppercase mb-1 tracking-[0.3em] tracking-tight`}>CAMBIO A ENTREGAR</p>
-                    <p className="text-4xl md:text-5xl font-medium text-gray-900 dark:text-white tabular-nums tracking-tight tracking-tighter">${formatCurrency(lastChange)}</p>
+                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} px-4 py-5 rounded-2xl text-center w-full mb-5`}>
+                    <p className={`text-[11px] font-semibold ${theme.text} uppercase mb-2 tracking-wider`}>CAMBIO A ENTREGAR</p>
+                    <p className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white tabular-nums tracking-tight leading-none">${formatCurrency(lastChange)}</p>
                   </div>
 
                   {/* FACTURA Y COMPARTIR ACCIONES */}
-                  <div className="w-full flex flex-col gap-2.5 pt-2 border-t border-gray-200 dark:border-white/10">
+                  <div className="w-full flex flex-col gap-3 pt-3 border-t border-gray-200 dark:border-white/10">
                     <div className="grid grid-cols-3 gap-2 w-full">
                       <Button
                         size="sm"
-                        className="h-10 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-xl font-bold uppercase text-[8.5px] tracking-wider flex items-center justify-center gap-1.5"
+                        className="h-11 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-xl font-semibold uppercase text-[11px] tracking-wider flex items-center justify-center gap-1.5"
                         onPress={handleWhatsAppShare}
                       >
-                        <MessageCircle size={14} /> WhatsApp
+                        <MessageCircle size={15} /> WhatsApp
                       </Button>
                       <Button
                         size="sm"
                         isLoading={isTelegramSending}
-                        className="h-10 bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 rounded-xl font-bold uppercase text-[8.5px] tracking-wider flex items-center justify-center gap-1.5"
+                        className="h-11 bg-sky-500/10 hover:bg-sky-500/20 text-sky-600 dark:text-sky-400 border border-sky-500/30 rounded-xl font-semibold uppercase text-[11px] tracking-wider flex items-center justify-center gap-1.5"
                         onPress={() => handleTelegramShare(false)}
                       >
-                        <Send size={14} /> Telegram
+                        <Send size={15} /> Telegram
                       </Button>
                       <Button
                         size="sm"
-                        className="h-10 bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-700 dark:text-zinc-300 border border-zinc-500/30 rounded-xl font-bold uppercase text-[8.5px] tracking-wider flex items-center justify-center gap-1.5"
+                        className="h-11 bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-700 dark:text-zinc-300 border border-zinc-500/30 rounded-xl font-semibold uppercase text-[11px] tracking-wider flex items-center justify-center gap-1.5"
                         onPress={handlePrintTicket}
                       >
-                        <Printer size={14} /> Imprimir
+                        <Printer size={15} /> Imprimir
                       </Button>
                     </div>
 
                     {/* INTERRUPTOR DE IMPRESION AUTOMATICA PERSISTENTE */}
                     <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-zinc-900/60 rounded-xl border border-gray-200 dark:border-white/5">
-                      <div className="flex items-center gap-2.5">
-                        <Printer size={16} className={autoPrint ? "text-emerald-500" : "text-zinc-400"} />
+                      <div className="flex items-center gap-3">
+                        <Printer size={18} className={autoPrint ? "text-emerald-500" : "text-zinc-400"} />
                         <div className="flex flex-col text-left">
-                          <span className="text-[9.5px] font-bold text-gray-800 dark:text-zinc-200 uppercase tracking-wider">Impresión Automática</span>
-                          <span className="text-[7.5px] font-medium text-gray-400 uppercase tracking-tight">{autoPrint ? "Activa (Imprime al cobrar)" : "Inactiva (Manual)"}</span>
+                          <span className="text-[12px] font-semibold text-gray-800 dark:text-zinc-200 uppercase tracking-wider">Impresión automática</span>
+                          <span className="text-[11px] font-medium text-gray-500 dark:text-zinc-400">{autoPrint ? "Activa (imprime al cobrar)" : "Inactiva (manual)"}</span>
                         </div>
                       </div>
                       <Switch
@@ -472,7 +624,7 @@ export default function UniversalPaymentModal({
                   </div>
 
                   <Button
-                    className="mt-4 bg-gray-900 dark:bg-white text-white dark:text-black font-medium px-8 h-12 rounded-2xl tracking-tight w-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-3 active:scale-95 transition-all text-[11px] tracking-widest uppercase hover:opacity-90"
+                    className="mt-5 bg-gray-900 dark:bg-white text-white dark:text-black font-semibold px-8 h-12 rounded-2xl w-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-3 active:scale-95 transition-all text-[13px] tracking-wider uppercase hover:opacity-90"
                     onPress={() => {
                       onCloseComplete?.();
                       onOpenChange(false);
@@ -485,184 +637,226 @@ export default function UniversalPaymentModal({
             )}
 
             <div className="w-full md:w-[220px] bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
-              <div className="hidden md:flex flex-col mb-8 px-2">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`h-2 w-2 rounded-2xl ${theme.bg} animate-pulse`} />
-                  <span className="text-[10px] font-medium text-gray-400 uppercase tracking-[0.2em] leading-none">Cajero Seguro</span>
-                </div>
-                <h3 className={`text-[10px] font-medium ${theme.text} uppercase tracking-[0.2em] tracking-tight`}>METODO PAGO</h3>
+              <div className="hidden md:flex flex-col mb-6 px-1">
+                <h3 className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-widest leading-none">
+                  Método de pago
+                </h3>
               </div>
 
               <div className="grid grid-cols-2 md:grid-cols-1 gap-1.5 md:gap-3">
-                {[
-                  { id: 'cash', label: 'Efec.', icon: <Banknote size={14} className="md:w-5 md:h-5" /> },
-                  { id: 'NEQUI', label: 'Nequi', logo: '/logos/nequi.png' },
-                  { id: 'DAVIPLATA', label: 'Daviplata', logo: '/logos/daviplata.png' },
-                  { id: 'credit', label: 'Fiado', icon: <Users size={14} className="md:w-5 md:h-5" /> }
-                ].filter(tab => tab.id !== 'credit' || showCreditTab)
-                 .filter(tab => !isRefund || tab.id === 'cash')
-                 .map(tab => (
+                {paymentTabs.map(tab => (
                   <button
                     key={tab.id}
                     tabIndex={-1}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={(e) => {
-                      setActivePaymentTab(tab.id as any);
+                      setActivePaymentTab(tab.id);
                       setDialogAmount('');
                       setCashTendered('');
                       (e.currentTarget as HTMLElement)?.blur();
                       if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
                     }}
-                    className={`h-10 md:h-14 px-2 md:px-5 rounded-2xl md:rounded-2xl flex items-center justify-center md:justify-start gap-1.5 md:gap-4 border transition-all group ${
+                    className={`h-11 md:h-14 px-2 md:px-4 rounded-2xl flex items-center justify-center md:justify-start gap-2 md:gap-3 border transition-all group ${
                       activePaymentTab === tab.id
-                        ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white tracking-tight`
-                        : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 ' + theme.bgHover
+                        ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white`
+                        : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-600 dark:text-zinc-400 ' + theme.bgHover
                     }`}
                   >
-                    <div className={`p-1 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab.id ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:' + theme.bg + ' group-hover:text-white'}`}>
+                    <div className={`p-1.5 md:p-2 rounded-xl transition-colors ${activePaymentTab === tab.id ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:' + theme.bg + ' group-hover:text-white'}`}>
                       {tab.icon ? (
                         tab.icon
                       ) : (
                         <img
                           src={tab.logo}
-                          className={`h-3.5 w-3.5 md:h-7 md:w-7 object-contain ${activePaymentTab === tab.id ? 'brightness-200' : 'opacity-70 group-hover:opacity-100'}`}
+                          className={`h-5 w-5 md:h-6 md:w-6 object-contain ${activePaymentTab === tab.id ? 'brightness-200' : 'opacity-70 group-hover:opacity-100'}`}
                           alt={tab.label}
                         />
                       )}
                     </div>
-                    <span className="text-[7.5px] md:text-[10px] font-medium uppercase tracking-tight whitespace-nowrap tracking-wider md:tracking-widest leading-none">{tab.label}</span>
+                    <span className="text-[12px] md:text-[13px] font-semibold uppercase tracking-wider whitespace-nowrap leading-none">{tab.label}</span>
                   </button>
                 ))}
 
                 <button
                   onClick={() => onOpenChange(false)}
-                  className="h-10 md:hidden px-2 rounded-2xl flex items-center justify-center gap-1.5 border border-rose-500/20 bg-rose-500/5 text-rose-500 active:scale-95 transition-all group"
+                  className="h-11 md:hidden px-2 rounded-2xl flex items-center justify-center gap-2 border border-rose-500/20 bg-rose-500/5 text-rose-500 active:scale-95 transition-all"
                 >
-                  <div className="p-1 rounded-2xl bg-rose-500/20 text-rose-500">
-                    <X size={14} />
+                  <div className="p-1.5 rounded-xl bg-rose-500/20 text-rose-500">
+                    <X size={16} />
                   </div>
-                  <span className="text-[7.5px] font-medium uppercase tracking-tight tracking-wider leading-none">Cerrar</span>
+                  <span className="text-[12px] font-semibold uppercase tracking-wider leading-none">Cerrar</span>
                 </button>
               </div>
 
-              <Button variant="flat" className="hidden md:flex md:mt-auto h-14 font-medium text-[10px] px-6 rounded-2xl bg-rose-500/10 text-rose-500 tracking-widest uppercase tracking-tight border border-rose-500/20" onPress={() => onOpenChange(false)}>
+              <Button
+                variant="flat"
+                className="hidden md:flex md:mt-auto h-12 font-semibold text-[12px] px-6 rounded-2xl bg-rose-500/10 text-rose-500 tracking-wider uppercase border border-rose-500/20"
+                onPress={() => onOpenChange(false)}
+              >
                 CANCELAR <X size={14} className="ml-1" />
               </Button>
             </div>
 
-            <div className="flex-1 bg-gray-50 dark:bg-zinc-950 pt-2 md:pt-8 px-3 md:px-10 pb-3 flex flex-col relative overflow-hidden z-10">
-              <header className="mb-1 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-1 md:gap-4">
+            <div className="flex-1 bg-gray-50 dark:bg-zinc-950 pt-3 md:pt-6 px-3 md:px-8 pb-3 flex flex-col relative overflow-hidden z-10">
+              <header className="mb-3 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-2 md:gap-4">
                 <div className="flex flex-col min-w-0">
-                  <h1 className="text-lg md:text-3xl font-medium dark:text-white uppercase tracking-tight tracking-tighter leading-none mb-0.5 md:mb-2 text-center md:text-left">
+                  <h1 className="text-xl md:text-3xl font-semibold text-gray-900 dark:text-white uppercase tracking-tight leading-tight mb-1 text-center md:text-left">
                     {title.split(' ')[0]} <span className={theme.text}>{title.split(' ').slice(1).join(' ')}</span>
                   </h1>
-                  <div className="flex items-center justify-center md:justify-start gap-1.5">
-                    <Avatar size="sm" name={client?.name || 'C F'} className={`h-4 w-4 rounded-2xl ${theme.bgLight} ${theme.text} text-[6px]`} />
-                    <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-500 uppercase tracking-widest tracking-tight">{client?.name || 'CONSUMIDOR FINAL'} {client?.dni ? `/ CC: ${client.dni}` : ''}</p>
+                  <div className="flex items-center justify-center md:justify-start gap-2">
+                    <Avatar
+                      size="sm"
+                      name={client?.name || 'CF'}
+                      className={`h-6 w-6 rounded-full ${theme.bgLight} ${theme.text} text-[10px] font-semibold`}
+                    />
+                    <p className="text-[12px] font-semibold text-gray-600 dark:text-zinc-400 uppercase tracking-wide truncate">
+                      {client?.name || 'CONSUMIDOR FINAL'}{client?.dni ? ` · CC ${client.dni}` : ''}
+                    </p>
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-center md:justify-end gap-2">
                   {nequiPaid > 0 && (
-                    <div className="px-3 py-1 bg-[#23004C]/10 border border-[#23004C]/20 rounded-2xl flex items-center gap-2">
-                       <img src="/logos/nequi.png" className="h-4 w-4 object-contain" />
-                       <span className="text-[9px] font-medium text-[#23004C] uppercase tracking-widest">${formatCurrency(nequiPaid)}</span>
-                    </div>
+                    <AccumulatedPill
+                      label="Nequi"
+                      icon={<img src="/logos/nequi.png" className="h-4 w-4 object-contain" alt="Nequi" />}
+                      amount={nequiPaid}
+                      colorClass="text-[#23004C] dark:text-fuchsia-300"
+                      bgClass="bg-[#23004C]/10"
+                      borderClass="border-[#23004C]/20 dark:border-fuchsia-500/30"
+                    />
                   )}
                   {daviplataPaid > 0 && (
-                    <div className="px-3 py-1 bg-red-500/10 border border-red-500/20 rounded-2xl flex items-center gap-2">
-                       <img src="/logos/daviplata.png" className="h-4 w-4 object-contain" />
-                       <span className="text-[9px] font-medium text-red-500 uppercase tracking-widest">${formatCurrency(daviplataPaid)}</span>
-                    </div>
+                    <AccumulatedPill
+                      label="Daviplata"
+                      icon={<img src="/logos/daviplata.png" className="h-4 w-4 object-contain" alt="Daviplata" />}
+                      amount={daviplataPaid}
+                      colorClass="text-red-600 dark:text-red-400"
+                      bgClass="bg-red-500/10"
+                      borderClass="border-red-500/20"
+                    />
                   )}
                   {cashPaid > 0 && (
-                    <div className={`px-3 py-1 ${theme.bgLight} border ${theme.borderLight} rounded-2xl flex items-center gap-2`}>
-                       <Banknote size={12} className={theme.text} />
-                       <span className={`text-[9px] font-medium ${theme.text} uppercase tracking-widest`}>${formatCurrency(cashPaid)}</span>
-                    </div>
+                    <AccumulatedPill
+                      label="Efectivo"
+                      icon={<Banknote size={14} className={theme.text} />}
+                      amount={cashPaid}
+                      colorClass={theme.text}
+                      bgClass={theme.bgLight}
+                      borderClass={theme.borderLight}
+                    />
                   )}
                   {creditPaid > 0 && (
-                    <div className="px-3 py-1 bg-rose-500/10 border border-rose-500/20 rounded-2xl flex items-center gap-2">
-                       <Users size={12} className="text-rose-500" />
-                       <span className="text-[9px] font-medium text-rose-500 uppercase tracking-widest">${formatCurrency(creditPaid)}</span>
-                    </div>
+                    <AccumulatedPill
+                      label="Fiado"
+                      icon={<Users size={14} className="text-rose-500" />}
+                      amount={creditPaid}
+                      colorClass="text-rose-600 dark:text-rose-400"
+                      bgClass="bg-rose-500/10"
+                      borderClass="border-rose-500/20"
+                    />
+                  )}
+                  {(totalAlreadyPaid > 0 || Number(cashTendered) > 0) && (
+                    <button
+                      type="button"
+                      onClick={handleClearPayments}
+                      className="px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full flex items-center gap-1.5 hover:bg-amber-500/20 active:scale-95 transition-all"
+                    >
+                      <Trash2 size={12} className="text-amber-500" />
+                      <span className="text-[11px] font-bold text-amber-500 uppercase tracking-wider">LIMPIAR</span>
+                    </button>
                   )}
                 </div>
               </header>
 
               {isBlockedTransferRefund && (
-                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center gap-3 mb-2 animate-pulse">
-                  <AlertTriangle className="text-amber-500 shrink-0" size={22} />
-                  <div className="flex flex-col">
-                    <span className="text-[10px] font-extrabold text-amber-500 uppercase tracking-wide">
-                      ⚠️ DEVOLUCIÓN EN EFECTIVO NO PERMITIDA (VENTA ORIGINAL EN {originalPaymentMethod.toUpperCase()})
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3 mb-3">
+                  <AlertTriangle className="text-amber-500 shrink-0 mt-0.5" size={22} />
+                  <div className="flex flex-col gap-1">
+                    <span className="text-[12px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-wider leading-tight">
+                      Devolución en efectivo no permitida (venta original en {originalPaymentMethod.toUpperCase()})
                     </span>
-                    <span className="text-[11px] font-medium text-amber-600 dark:text-amber-300 uppercase tracking-tight leading-snug">
-                      No se puede entregar efectivo por caja para devoluciones de compras pagadas por transferencia. El cliente DEBE llevar más productos por al menos <strong className="text-amber-400 font-extrabold">${formatCurrency(Math.abs(netExchangeBalance))}</strong> para cubrir el saldo a favor.
+                    <span className="text-[13px] font-medium text-amber-700 dark:text-amber-300 leading-snug">
+                      No se puede entregar efectivo por caja para devoluciones de compras pagadas por transferencia. El cliente debe llevar más productos por al menos <strong className="text-amber-500 font-bold">${formatCurrency(Math.abs(netExchangeBalance))}</strong> para cubrir el saldo a favor.
                     </span>
                   </div>
                 </div>
               )}
 
-              <div className={`grid ${isReturnExchange ? 'grid-cols-4' : 'grid-cols-3'} gap-1.5 mb-1.5`}>
-                <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
-                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Wallet size={6} className="text-rose-500" /> TOTAL</p>
-                  <p className="text-sm md:text-2xl font-medium text-rose-500 tracking-tight tabular-nums leading-none">${formatCurrency(totalToPay)}</p>
-                </div>
+              <div className={`grid ${isReturnExchange ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'} gap-2 mb-3`}>
+                <SummaryTile
+                  label="Total a pagar"
+                  icon={<Wallet size={12} className="text-rose-500" />}
+                  value={totalToPay}
+                  valueClassName="text-rose-500"
+                  containerClassName="border-gray-100 dark:border-white/5"
+                />
                 {isReturnExchange && (
-                  <div className="bg-emerald-500/10 px-2 py-1 rounded-2xl border border-emerald-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
-                    <p className="text-[6px] md:text-[8px] font-medium text-emerald-500 uppercase mb-0 tracking-widest flex items-center gap-1"><Zap size={6} /> SALDO FAVOR</p>
-                    <p className="text-sm md:text-2xl font-medium text-emerald-500 tracking-tight tabular-nums leading-none">-${formatCurrency(pendingReturnAmount)}</p>
-                  </div>
+                  <SummaryTile
+                    label="Saldo a favor"
+                    icon={<Zap size={12} className="text-emerald-500" />}
+                    value={pendingReturnAmount}
+                    valueClassName="text-emerald-500"
+                    containerClassName="bg-emerald-500/10 border-emerald-500/20"
+                    prefix="-$"
+                  />
                 )}
-                <div className="bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border border-gray-100 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center">
-                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1"><Check size={6} className={theme.text} /> {isRefund ? 'REEMBOLSANDO' : 'ABONANDO'}</p>
-                  <p className={`text-sm md:text-2xl font-medium ${theme.text} tracking-tight tabular-nums leading-none`}>${formatCurrency(totalAlreadyPaid + actualPayment)}</p>
-                </div>
-                <div className={`bg-white dark:bg-[#18181b] px-2 py-1 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center ${baseReturnRefund > 0 ? 'border-emerald-500/50 bg-emerald-500/5' : 'border-emerald-500/30'}`}>
-                  <p className="text-[6px] md:text-[8px] font-medium text-gray-400 uppercase mb-0 tracking-widest flex items-center gap-1">
-                    <TrendingUp size={6} className={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'} />
-                    {baseReturnRefund > 0 ? 'CAMBIO ENTREGAR' : 'RESTANTE'}
-                  </p>
-                  <p className={`text-sm md:text-2xl font-medium tracking-tight tabular-nums leading-none ${baseReturnRefund > 0 ? 'text-emerald-500 font-bold' : 'text-sky-500'}`}>
-                    ${formatCurrency(baseReturnRefund > 0 ? baseReturnRefund : remainingDebt)}
-                  </p>
-                </div>
+                <SummaryTile
+                  label={isRefund ? 'Reembolsando' : 'Ya pagado'}
+                  icon={<Check size={12} className={theme.text} />}
+                  value={totalAlreadyPaid + actualPayment}
+                  valueClassName={theme.text}
+                  containerClassName="border-gray-100 dark:border-white/5"
+                />
+                <SummaryTile
+                  label={baseReturnRefund > 0 ? 'Cambio a entregar' : 'Restante'}
+                  icon={<TrendingUp size={12} className={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'} />}
+                  value={baseReturnRefund > 0 ? baseReturnRefund : remainingDebt}
+                  valueClassName={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'}
+                  containerClassName={baseReturnRefund > 0
+                    ? 'border-emerald-500/50 bg-emerald-500/5'
+                    : 'border-gray-100 dark:border-white/5'}
+                />
               </div>
 
               {activePaymentTab === 'cash' ? (
                 <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
-                  <div className={`p-2 md:p-4 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden group transition-all duration-500 ${
-                    baseReturnRefund > 0 || amountToPayRaw > remainingDebt
+                  <div className={`p-4 md:p-5 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden transition-colors duration-300 ${
+                    showChangeHero
                       ? 'bg-emerald-500/10 border-emerald-500/40'
                       : 'bg-white dark:bg-[#18181b] border-gray-200 dark:border-white/10'
                   }`}>
-                    <div className={`absolute top-0 right-0 p-2 opacity-10 ${baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500' : theme.text} group-hover:scale-125 transition-transform`}>
-                      {baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? <Zap size={28} /> : <Banknote size={28} />}
-                    </div>
+                    {Number(cashTendered) > 0 ? (
+                      <button 
+                        type="button"
+                        onClick={() => { setCashTendered(''); setDialogAmount(''); }}
+                        className="absolute top-2 right-2 z-10 p-1.5 md:p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-500 active:scale-90 transition-all"
+                        title="Limpiar efectivo ingresado"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    ) : (
+                      <div className={`absolute top-2 right-2 opacity-10 ${showChangeHero ? 'text-emerald-500' : theme.text}`}>
+                        {showChangeHero ? <Zap size={32} /> : <Banknote size={32} />}
+                      </div>
+                    )}
 
-                    <p className={`text-[7px] md:text-[8px] font-medium uppercase mb-0 tracking-[0.2em] tracking-tight transition-colors ${
-                      baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500 font-bold' : 'text-gray-400'
+                    <p className={`text-[11px] font-semibold uppercase mb-2 tracking-wider ${
+                      showChangeHero ? 'text-emerald-600 dark:text-emerald-400' : 'text-gray-500 dark:text-zinc-400'
                     }`}>
-                      {baseReturnRefund > 0
-                        ? 'DEVOLUCIÓN A FAVOR DEL CLIENTE (VUELTAS)'
-                        : (amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO')}
+                      {cashHeroLabel}
                     </p>
 
-                    <p className={`text-xl md:text-4xl font-medium tabular-nums tracking-tight tracking-tighter transition-all ${
-                      baseReturnRefund > 0 || amountToPayRaw > remainingDebt ? 'text-emerald-500 font-bold animate-pulse' : 'dark:text-white'
+                    <p className={`text-3xl md:text-5xl font-bold tabular-nums tracking-tight leading-none ${
+                      showChangeHero ? 'text-emerald-500' : 'text-gray-900 dark:text-white'
                     }`}>
-                      ${formatCurrency(
-                        baseReturnRefund > 0
-                          ? baseReturnRefund + Math.max(0, (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : 0))
-                          : (amountToPayRaw > remainingDebt ? amountToPayRaw - remainingDebt : amountToPayRaw)
-                      )}
+                      ${formatCurrency(cashHeroValue)}
                     </p>
                   </div>
 
                    {!isMobileNumpadOpen ? (
                      <>
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-2 content-start">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-3 content-start">
                         {[
                           { v: 100000, img: '100.000.jpg' },
                           { v: 50000, img: '50.000.jpg' },
@@ -679,7 +873,8 @@ export default function UniversalPaymentModal({
                             key={v}
                             tabIndex={-1}
                             onMouseDown={(e) => e.preventDefault()}
-                            className="aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border-[1px] border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-2xl md:rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-auto"
+                            className="aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-auto"
+                            aria-label={`Agregar $${formatCurrency(v)}`}
                             onPress={() => {
                               setCashTendered(prev => String(Number(prev || 0) + v));
                               setDialogAmount('');
@@ -691,66 +886,74 @@ export default function UniversalPaymentModal({
                           >
                             <img
                               src={`/logos/${img}`}
-                              className="h-full w-full object-cover grayscale-0 opacity-100 group-hover:scale-110 transition-transform duration-700"
-                              alt={`${v}`}
+                              className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              alt={`Billete de ${v}`}
                             />
                           </Button>
                         ))}
                         <Button
-                          className={`aspect-[2.2/1] w-full lg:col-span-2 bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-0.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`}
+                          className={`aspect-[2.2/1] w-full lg:col-span-2 bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`}
                           onPress={() => setIsMobileNumpadOpen(true)}
                         >
-                          <Calculator size={14} />
-                          <span className="text-[7px] font-medium uppercase tracking-tighter">TECLADO</span>
+                          <Calculator size={18} />
+                          <span className="text-[11px] font-semibold uppercase tracking-wider">Teclado</span>
                         </Button>
                       </div>
-                        <Button className={`md:hidden h-12 mt-3 ${theme.bg} text-white font-medium uppercase rounded-2xl tracking-tight tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
-                        PROCESAR PAGO <ShieldCheck size={16} className="ml-1" />
+                      <Button
+                        className={`md:hidden h-14 mt-4 ${theme.bg} text-white font-semibold uppercase rounded-2xl tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] active:scale-95 transition-all`}
+                        onPress={processPayment}
+                        isLoading={submittingPayment}
+                      >
+                        PROCESAR PAGO <ShieldCheck size={18} className="ml-2" />
                       </Button>
                     </>
                    ) : (
                     <>
-                      <div className="grid grid-cols-3 gap-2 mt-2">
+                      <div className="grid grid-cols-3 gap-2 mt-3">
                         {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
-                          <Button
+                          <NumpadKey
                             key={n}
-                            tabIndex={-1}
-                            onMouseDown={(e) => e.preventDefault()}
-                            className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
-                              n === 'CE' ? 'text-rose-500 bg-rose-500/10' : 'bg-white dark:bg-zinc-800 dark:text-white'
-                            }`}
+                            value={n}
+                            variant={n === 'CE' ? 'clear' : 'digit'}
                             onPress={() => {
-                                if (n === 'CE') setDialogAmount('');
-                                else setDialogAmount((p: string) => p + String(n));
-                                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                              if (n === 'CE') setDialogAmount('');
+                              else setDialogAmount((p: string) => p + String(n));
                             }}
-                          >
-                            {n}
-                          </Button>
+                          />
                         ))}
                       </div>
                       <div className="flex gap-2 mt-3">
-                        <Button className="flex-1 h-12 bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-medium uppercase rounded-2xl text-[10px] tracking-widest active:scale-95 transition-all flex items-center justify-center gap-2" onPress={() => setIsMobileNumpadOpen(false)}>
-                          <Grid3X3 size={14} /> BILLETES
+                        <Button
+                          className="flex-1 h-12 bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-semibold uppercase rounded-2xl text-[12px] tracking-wider active:scale-95 transition-all flex items-center justify-center gap-2"
+                          onPress={() => setIsMobileNumpadOpen(false)}
+                        >
+                          <Grid3X3 size={16} /> BILLETES
                         </Button>
-                        <Button className={`flex-[2] h-12 ${theme.bg} text-white font-medium uppercase rounded-2xl tracking-tight tracking-widest shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-xs active:scale-95 transition-all`} onPress={processPayment} isLoading={submittingPayment}>
-                          REALIZAR <ShieldCheck size={14} />
+                        <Button
+                          className={`flex-[2] h-12 ${theme.bg} text-white font-semibold uppercase rounded-2xl tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] active:scale-95 transition-all`}
+                          onPress={processPayment}
+                          isLoading={submittingPayment}
+                        >
+                          REALIZAR <ShieldCheck size={16} />
                         </Button>
                       </div>
                     </>
                    )}
                 </div>
               ) : (
-                <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1">
-                  <div className={`bg-white dark:bg-[#18181b] p-4 rounded-2xl border-2 border-${themeColor}-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center justify-center gap-2 mb-3 relative overflow-hidden group`}>
-                    <div className={`absolute inset-0 bg-${themeColor}-500/5 group-hover:bg-${themeColor}-500/10 transition-colors`} />
+                <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1 custom-scrollbar">
+                  <label className={`bg-white dark:bg-[#18181b] p-4 md:p-5 rounded-2xl border-2 border-${themeColor}-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center justify-center gap-2 mb-3 relative overflow-hidden cursor-text`}>
+                    <div className={`absolute inset-0 bg-${themeColor}-500/5`} />
                     <div className="text-center relative z-10 w-full">
-                      <p className="text-sm font-medium dark:text-white tracking-tight uppercase tracking-tighter mb-1">{activePaymentTab === 'credit' ? 'CARTERA FIADO' : `TRANSACCION ${activePaymentTab}`}</p>
+                      <p className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 tracking-wider uppercase mb-2">
+                        {activePaymentTab === 'credit' ? 'MONTO A FIAR' : `MONTO POR ${activePaymentTab}`}
+                      </p>
                       <div className="flex items-center justify-center gap-1">
-                        <span className={`${theme.text} font-medium tracking-tight text-2xl md:text-4xl tracking-tighter`}>$</span>
+                        <span className={`${theme.text} font-semibold text-3xl md:text-5xl tracking-tight`}>$</span>
                         <input
                           type="text"
                           inputMode="numeric"
+                          aria-label={`Monto a pagar por ${activePaymentTab}`}
                           value={(activePaymentTab === 'credit' && !dialogAmount) ? '' : (dialogAmount ? formatCurrency(Number(dialogAmount)) : formatCurrency(Number(amountToPayRaw)))}
                           onFocus={(e) => {
                             const val = e.target.value.replace(/\D/g, '');
@@ -767,63 +970,63 @@ export default function UniversalPaymentModal({
                               processPayment();
                             }
                           }}
-                          className={`w-full max-w-[280px] font-medium text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent tabular-nums text-center focus:outline-none tracking-tighter leading-none`}
+                          className={`w-full max-w-[280px] font-bold text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent tabular-nums text-center focus:outline-none leading-none`}
                         />
                       </div>
                     </div>
-                  </div>
+                  </label>
 
                   {activePaymentTab === 'credit' && (
                     <div className="mb-4 animate-in slide-in-from-top-2 duration-300">
                         {(!client || client.id === "0" || client.name === "CONSUMIDOR FINAL") ? (
-                            <div className="bg-amber-50 border border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/20 rounded-2xl p-4 flex flex-col gap-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
-                                <p className="text-amber-700 dark:text-amber-400 font-medium text-xs flex items-center gap-2 uppercase tracking-tight">
-                                    ⚠️ CLIENTE NO SELECCIONADO
+                            <div className="bg-amber-50 border border-amber-200 dark:bg-amber-500/10 dark:border-amber-500/20 rounded-2xl p-4 flex flex-col gap-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                <p className="text-amber-700 dark:text-amber-400 font-semibold text-[13px] flex items-center gap-2 uppercase tracking-wider">
+                                    ⚠️ Cliente no seleccionado
                                 </p>
-                                <p className="text-[10px] text-amber-600 dark:text-amber-500/70 font-medium leading-relaxed mb-2">
-                                    No se puede fiar a Consumidor Final. Por favor, cancela y selecciona un cliente registrado para asignar la deuda, o pulsa el boton debajo.
+                                <p className="text-[12px] text-amber-700 dark:text-amber-500/80 font-medium leading-relaxed">
+                                    No se puede fiar a Consumidor Final. Cancela y selecciona un cliente registrado para asignar la deuda, o pulsa el botón de abajo.
                                 </p>
                                 {onClientSelectorOpen && (
                                     <Button
                                         color="warning"
                                         size="sm"
-                                        className="font-bold text-[10px] uppercase tracking-widest rounded-xl"
+                                        className="font-semibold text-[12px] uppercase tracking-wider rounded-xl"
                                         onPress={onClientSelectorOpen}
                                     >
-                                        Seleccionar Cliente
+                                        Seleccionar cliente
                                     </Button>
                                 )}
                             </div>
                         ) : (
-                            <div className={`border rounded-2xl p-3 transition-all duration-300 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${
+                            <div className={`border rounded-2xl p-4 transition-all duration-300 shadow-[0_8px_30px_rgb(0,0,0,0.12)] ${
                                 amountToPayRaw > (client.creditLimit - client.currentCredit)
                                     ? 'bg-rose-50 border-rose-200 dark:bg-rose-500/10 dark:border-rose-500/20'
                                     : 'bg-blue-50 border-blue-200 dark:bg-blue-500/10 dark:border-blue-500/20'
                             }`}>
-                                <div className="flex items-center justify-between mb-2">
-                                    <p className={`font-medium text-[10px] uppercase tracking-widest ${
+                                <div className="flex items-center justify-between mb-3">
+                                    <p className={`font-semibold text-[12px] uppercase tracking-wider ${
                                         amountToPayRaw > (client.creditLimit - client.currentCredit)
                                             ? 'text-rose-600 dark:text-rose-400'
                                             : 'text-blue-600 dark:text-blue-400'
                                     }`}>
-                                        Inteligencia Crediticia
+                                        Cupo de crédito
                                     </p>
-                                    <Users size={14} className={ amountToPayRaw > (client.creditLimit - client.currentCredit) ? 'text-rose-500' : 'text-blue-500'} />
+                                    <Users size={16} className={ amountToPayRaw > (client.creditLimit - client.currentCredit) ? 'text-rose-500' : 'text-blue-500'} />
                                 </div>
 
                                 <div className="grid grid-cols-3 gap-2">
-                                    <div className="flex flex-col">
-                                        <span className="text-[7px] font-bold text-gray-400 uppercase tracking-tighter">Deuda Actual</span>
-                                        <span className="text-[11px] font-medium text-gray-700 dark:text-zinc-300 tracking-tight tabular-nums">${formatCurrency(client.currentCredit)}</span>
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">Deuda actual</span>
+                                        <span className="text-[15px] font-semibold text-gray-800 dark:text-zinc-200 tabular-nums tracking-tight">${formatCurrency(client.currentCredit)}</span>
                                     </div>
-                                    <div className="flex flex-col border-x border-gray-200 dark:border-white/5 px-2">
-                                        <span className="text-[7px] font-bold text-gray-400 uppercase tracking-tighter">Cupo Maximo</span>
-                                        <span className="text-[11px] font-medium text-gray-700 dark:text-zinc-300 tracking-tight tabular-nums">${formatCurrency(client.creditLimit)}</span>
+                                    <div className="flex flex-col gap-1 border-x border-gray-200 dark:border-white/5 px-2">
+                                        <span className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">Cupo máximo</span>
+                                        <span className="text-[15px] font-semibold text-gray-800 dark:text-zinc-200 tabular-nums tracking-tight">${formatCurrency(client.creditLimit)}</span>
                                     </div>
-                                    <div className="flex flex-col items-end">
-                                        <span className="text-[7px] font-bold text-gray-400 uppercase tracking-tighter">Cupo Disponible</span>
-                                        <span className={`text-[11px] font-medium tracking-tight tabular-nums ${
-                                            (client.creditLimit - client.currentCredit) <= 0 ? 'text-rose-500' : 'text-zinc-100'
+                                    <div className="flex flex-col gap-1 items-end">
+                                        <span className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider">Disponible</span>
+                                        <span className={`text-[15px] font-semibold tabular-nums tracking-tight ${
+                                            (client.creditLimit - client.currentCredit) <= 0 ? 'text-rose-500' : 'text-emerald-600 dark:text-emerald-400'
                                         }`}>
                                             ${formatCurrency(client.creditLimit - client.currentCredit)}
                                         </span>
@@ -831,9 +1034,9 @@ export default function UniversalPaymentModal({
                                 </div>
 
                                 {amountToPayRaw > (client.creditLimit - client.currentCredit) && (
-                                    <div className="mt-2 pt-2 border-t border-rose-200 dark:border-rose-500/20">
-                                        <p className="text-[10px] font-medium text-rose-600 dark:text-rose-400 uppercase animate-pulse tracking-tight">
-                                            🚨 ESTA VENTA SUPERA EL CUPO DISPONIBLE
+                                    <div className="mt-3 pt-3 border-t border-rose-200 dark:border-rose-500/20">
+                                        <p className="text-[12px] font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
+                                            🚨 Esta venta supera el cupo disponible
                                         </p>
                                     </div>
                                 )}
@@ -844,70 +1047,61 @@ export default function UniversalPaymentModal({
 
                   <div className="grid grid-cols-3 gap-2">
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
-                      <Button
+                      <NumpadKey
                         key={n}
-                        tabIndex={-1}
-                        onMouseDown={(e) => e.preventDefault()}
-                        className={`h-11 text-lg font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
-                          n === 'CE' ? 'text-rose-500 bg-rose-500/10' : 'bg-white dark:bg-zinc-800 dark:text-white'
-                        }`}
+                        value={n}
+                        variant={n === 'CE' ? 'clear' : 'digit'}
                         onPress={() => {
-                            if (n === 'CE') setDialogAmount('');
-                            else setDialogAmount((p: string) => p + String(n));
-                            if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                          if (n === 'CE') setDialogAmount('');
+                          else setDialogAmount((p: string) => p + String(n));
                         }}
-                      >
-                        {n}
-                      </Button>
+                      />
                     ))}
                   </div>
 
                   {onReasonChange && (
                     <div className="mt-4 animate-in slide-in-from-top-2 duration-300">
-                      <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1 tracking-tight flex items-center gap-2">
-                        <div className={`h-1 w-1 rounded-2xl ${theme.bg}`} /> JUSTIFICACION / NOTA
-                      </p>
+                      <label className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2 ml-1 flex items-center gap-2">
+                        <span className={`h-1.5 w-1.5 rounded-full ${theme.bg}`} /> Justificación / nota
+                      </label>
                       <input
                         type="text"
                         value={reason || ''}
                         onFocus={(e) => e.target.select()}
                         onChange={(e) => onReasonChange(e.target.value)}
-                        placeholder="MOTIVO..."
-                        className={`w-full h-12 bg-white dark:bg-[#18181b] border border-gray-200 dark:border-white/10 rounded-2xl px-4 text-[10px] font-medium uppercase tracking-widest focus:outline-none focus:border-${theme.ring} transition-all placeholder:text-gray-300 dark:placeholder:text-zinc-700 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}
+                        placeholder="Motivo..."
+                        className={`w-full h-12 bg-white dark:bg-[#18181b] border border-gray-200 dark:border-white/10 rounded-2xl px-4 text-[13px] font-medium focus:outline-none focus:border-${theme.ring} transition-all placeholder:text-gray-400 dark:placeholder:text-zinc-600 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}
                       />
                     </div>
                   )}
 
                   <Button
-                    className={`md:hidden h-14 w-full font-medium uppercase rounded-2xl mt-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-xs tracking-widest active:scale-95 transition-all tracking-tight ${
+                    className={`md:hidden h-14 w-full font-semibold uppercase rounded-2xl mt-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] tracking-wider active:scale-95 transition-all ${
                         isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30 cursor-not-allowed' : `${theme.bg} text-white`
                     }`}
                     onPress={processPayment}
                     isLoading={submittingPayment}
                     isDisabled={isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund}
                   >
-                    {isCreditInvalid
-                      ? "CLIENTE REQUERIDO"
-                      : isOverCreditLimit
-                      ? "CUPO EXCEDIDO"
-                      : isBlockedTransferRefund
-                      ? `LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
-                      : (flowType === "out" ? "CONFIRMAR REEMBOLSO" : "COMPLETAR VENTA")} <Check size={18} className="ml-2" />
+                    {primaryActionLabel} <Check size={18} className="ml-2" />
                   </Button>
                 </div>
               )}
             </div>
 
             {/* Teclado Pad Derecho Maestro */}
-            <div className="hidden md:flex w-[320px] bg-white dark:bg-[#18181b] border-l border-gray-200 dark:border-white/5 p-8 flex-col gap-6 z-20">
-              <div className="bg-gray-50 dark:bg-zinc-950 p-8 rounded-[2.5rem] border border-gray-200 dark:border-white/10 text-right shadow-inner relative overflow-hidden group">
-                <div className={`absolute top-0 left-0 p-4 opacity-5 ${theme.text} scale-150 -ml-4 -mt-4`}><Calculator size={60} /></div>
-                <p className={`text-[10px] font-medium ${theme.text} uppercase tracking-[0.2em] tracking-tight flex items-center justify-end gap-2 relative z-10`}><Calculator size={12} /> DIGITANDO MONTO</p>
+            <div className="hidden md:flex w-[320px] bg-white dark:bg-[#18181b] border-l border-gray-200 dark:border-white/5 p-6 flex-col gap-4 z-20">
+              <label className="bg-gray-50 dark:bg-zinc-950 p-5 rounded-2xl border border-gray-200 dark:border-white/10 text-right shadow-inner relative overflow-hidden cursor-text">
+                <div className={`absolute top-2 left-2 opacity-5 ${theme.text}`}><Calculator size={44} /></div>
+                <p className={`text-[11px] font-semibold ${theme.text} uppercase tracking-wider flex items-center justify-end gap-2 relative z-10 mb-2`}>
+                  <Calculator size={13} /> Monto ingresado
+                </p>
                 <div className="flex items-center justify-end gap-1 relative z-10">
-                  <span className={`${theme.text} font-medium tracking-tight text-2xl md:text-4xl tracking-tighter`}>$</span>
+                  <span className={`${theme.text} font-semibold text-3xl md:text-5xl tracking-tight`}>$</span>
                     <input
                       type="text"
                       inputMode="numeric"
+                      aria-label="Monto ingresado"
                       value={dialogAmount ? formatCurrency(Number(dialogAmount)) : formatCurrency(Number(amountToPayRaw))}
                       onFocus={(e) => {
                         const val = e.target.value.replace(/\D/g, '');
@@ -924,52 +1118,44 @@ export default function UniversalPaymentModal({
                           processPayment();
                         }
                       }}
-                    className={`w-full font-medium text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent border-none text-right focus:outline-none tracking-tighter tabular-nums leading-none`}
+                    className={`w-full font-bold text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent border-none text-right focus:outline-none tabular-nums leading-none`}
                   />
                 </div>
-              </div>
+              </label>
 
               {onReasonChange && (
                 <div className="animate-in slide-in-from-top-2 duration-300">
-                  <p className="text-[8px] font-medium text-gray-400 dark:text-zinc-500 uppercase tracking-[0.2em] mb-2 ml-1 tracking-tight flex items-center gap-2">
-                    <div className={`h-1 w-1 rounded-2xl ${theme.bg}`} /> JUSTIFICACION / NOTA
-                  </p>
+                  <label className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider mb-2 ml-1 flex items-center gap-2">
+                    <span className={`h-1.5 w-1.5 rounded-full ${theme.bg}`} /> Justificación / nota
+                  </label>
                   <input
                     type="text"
                     value={reason || ''}
                     onFocus={(e) => e.target.select()}
                     onChange={(e) => onReasonChange(e.target.value)}
-                    placeholder="ESCRIBIR MOTIVO..."
-                    className={`w-full h-12 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-[1.2rem] px-5 text-[10px] font-medium uppercase tracking-widest focus:outline-none focus:border-${theme.ring} transition-all placeholder:text-gray-300 dark:placeholder:text-zinc-700 shadow-inner`}
+                    placeholder="Escribir motivo..."
+                    className={`w-full h-11 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/10 rounded-xl px-4 text-[13px] font-medium focus:outline-none focus:border-${theme.ring} transition-all placeholder:text-gray-400 dark:placeholder:text-zinc-600 shadow-inner`}
                   />
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-3 flex-1 pb-4">
+              <div className="grid grid-cols-3 gap-3 flex-1 pb-2">
                 {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
-                  <Button
+                  <NumpadKey
                     key={n}
-                    tabIndex={-1}
-                    onMouseDown={(e) => e.preventDefault()}
-                    className={`h-full text-2xl font-medium rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 ${
-                      n === 'CE'
-                        ? 'text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-50 active:text-white'
-                        : n === '+'
-                        ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]'
-                        : 'bg-gray-50 dark:bg-zinc-800 dark:text-white active:bg-gray-200 border border-transparent'
-                    }`}
+                    value={n}
+                    variant={n === 'CE' ? 'clear' : n === '+' ? 'add' : 'digit'}
+                    themeBgClass={theme.bg}
+                    fullHeight
                     onPress={() => {
-                        if (n === 'CE') setDialogAmount('');
-                        else if (n === '+') handleAddPayment();
-                        else setDialogAmount((p: string) => p + String(n));
-                        if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                      if (n === 'CE') setDialogAmount('');
+                      else if (n === '+') handleAddPayment();
+                      else setDialogAmount((p: string) => p + String(n));
                     }}
-                  >
-                    {n}
-                  </Button>
+                  />
                 ))}
               </div>
               <Button
-                className={`h-20 font-medium uppercase rounded-2xl tracking-tight tracking-[0.2em] shadow-[0_20px_50px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[11px] border-b-4 ${
+                className={`h-20 font-semibold uppercase rounded-2xl tracking-wider shadow-[0_20px_50px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[13px] border-b-4 ${
                     isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund
                         ? 'bg-amber-500/20 text-amber-500 border-amber-500/40 cursor-not-allowed'
                         : 'bg-gray-900 dark:bg-white text-white dark:text-black border-gray-600 dark:border-gray-300'
@@ -978,13 +1164,7 @@ export default function UniversalPaymentModal({
                 isLoading={submittingPayment}
                 isDisabled={isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund}
               >
-                {isCreditInvalid
-                  ? "⛔ CLIENTE NO SELECCIONADO"
-                  : isOverCreditLimit
-                  ? "❌ CUPO EXCEDIDO"
-                  : isBlockedTransferRefund
-                  ? `⚠️ LLEVAR MÁS PRODUCTOS ($${formatCurrency(Math.abs(netExchangeBalance))})`
-                  : (flowType === "out" ? "ENTREGAR EFECTIVO" : "COMPLETAR VENTA")} <ShieldCheck size={20} className="ml-2" />
+                {desktopActionLabel} <ShieldCheck size={20} className="ml-2" />
               </Button>
             </div>
           </div>
@@ -994,19 +1174,19 @@ export default function UniversalPaymentModal({
         {/* OVERLAY DE SEGURIDAD ANTIDUPLICADO */}
         {!showSuccessScreen && (submittingPayment || isProcessingRef.current) && (
           <div className="absolute inset-0 z-[999] flex flex-col items-center justify-center bg-white dark:bg-zinc-950/95 animate-in fade-in duration-300">
-            <div className="bg-white dark:bg-[#18181b] p-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center gap-6 border border-black/5 dark:border-white/10 scale-110">
+            <div className="bg-white dark:bg-[#18181b] p-8 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center gap-5 border border-black/5 dark:border-white/10">
               <div className="relative">
-                <div className={`h-20 w-20 rounded-2xl border-4 ${theme.border} border-t-transparent animate-spin`} />
+                <div className={`h-20 w-20 rounded-full border-4 ${theme.border} border-t-transparent animate-spin`} />
                 <div className="absolute inset-0 flex items-center justify-center">
-                  <ShieldCheck className={`h-8 w-8 ${theme.text} animate-pulse`} />
+                  <ShieldCheck className={`h-8 w-8 ${theme.text}`} />
                 </div>
               </div>
               <div className="flex flex-col items-center text-center">
-                <h3 className="text-xl font-medium text-gray-900 dark:text-white uppercase tracking-tight tracking-tighter">
-                  Procesando <span className={theme.text}>Pago</span>
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white uppercase tracking-tight">
+                  Procesando <span className={theme.text}>pago</span>
                 </h3>
-                <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mt-1">
-                  Protegiendo integridad financiera...
+                <p className="text-[12px] font-medium text-gray-500 dark:text-zinc-400 mt-1">
+                  No cierres esta ventana.
                 </p>
               </div>
             </div>

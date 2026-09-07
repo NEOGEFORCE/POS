@@ -72,13 +72,12 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 
 	err := s.repo.Save(expense)
 	if err == nil {
-		if expense.SupplierID != nil {
-			if err := s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days"); err != nil {
-				log.Printf("[EXPENSE] no se pudo aprender día de entrega del proveedor %d: %v", *expense.SupplierID, err)
-			}
-		}
+		// Aprendizaje de días desactivado en el flujo transaccional.
+		// Todo el aprendizaje corre en el batch nocturno y persiste
+		// SÓLO en las columnas learned_* (regla del dueño: nada
+		// automático toca suppliers.visit_days / delivery_days).
 
-		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		cache.InvalidateDashboard()
 		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
@@ -164,7 +163,7 @@ func (s *ExpenseService) GetByID(id uint) (*models.Expense, error) {
 func (s *ExpenseService) DeleteExpense(id uint) error {
 	err := s.repo.Delete(id)
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		cache.InvalidateDashboard()
 		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
@@ -201,12 +200,11 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 
 	err := s.repo.Update(id, expense)
 	if err == nil {
-		if expense.SupplierID != nil {
-			if err := s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days"); err != nil {
-				log.Printf("[EXPENSE] no se pudo aprender día de entrega del proveedor %d: %v", *expense.SupplierID, err)
-			}
-		}
-		cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+		// Aprendizaje de días desactivado en el flujo transaccional
+		// (regla del dueño). El batch nocturno persiste el aprendizaje
+		// SÓLO en learned_* — visit_days / delivery_days son datos
+		// manuales sagrados.
+		cache.InvalidateDashboard()
 		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
 	return err
@@ -280,7 +278,7 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		return nil, err
 	}
 
-	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
 	sse.GetSSEService().BroadcastDashboardUpdate()
 
 	return expense, nil
@@ -328,10 +326,11 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 			}
 		}
 
-		// Auto-aprendizaje de ruta: día actual = día de entrega (delivery_days).
-		if err := s.supplierRepo.LearnDay(*expense.SupplierID, "delivery_days"); err != nil {
-			log.Printf("[EXPENSE] no se pudo aprender día de entrega del proveedor %d: %v", *expense.SupplierID, err)
-		}
+		// El auto-aprendizaje de delivery_days FUE ELIMINADO de este
+		// flujo. El aprendizaje real corre en el batch nocturno y
+		// persiste SÓLO en las columnas learned_* (regla del dueño:
+		// suppliers.delivery_days es dato manual, nada automático lo
+		// toca).
 	}
 
 	// Preparar entradas de recepción basadas en los items de la orden
@@ -356,7 +355,7 @@ func (s *ExpenseService) CreateLinkedExpense(expense *models.Expense, orderID ui
 	}
 
 	// SINCRONIZACIÓN INMEDIATA
-	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
 	sse.GetSSEService().BroadcastDashboardUpdate()
 
 	return expense, nil

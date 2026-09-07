@@ -1,6 +1,7 @@
-﻿package handlers
+package handlers
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
 	"backPOS-go/internal/core/utils"
 	"backPOS-go/internal/infrastructure/sse"
@@ -31,19 +33,27 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 	}
 
 	supplier.Name = strings.ToUpper(utils.NormalizeString(supplier.Name))
-	
+
 	// Verificar Duplicados
 	if existing, err := h.service.GetSupplierByName(supplier.Name); err == nil && existing != nil {
 		if !existing.IsActive {
 			dni, _ := c.Get("dni")
 			dniStr := fmt.Sprintf("%v", dni)
 			supplier.ID = existing.ID
-			supplier.IsActive = true
 			supplier.UpdatedByDNI = dniStr
+			// El repo.Update NO toca is_active (para no desactivar por
+			// omision desde otros llamadores). La reactivacion se hace por
+			// la ruta EXPLICITA SetActive antes de aplicar los cambios del
+			// formulario.
+			if err := h.service.SetActive(existing.ID, true); err != nil {
+				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar proveedor", err)
+				return
+			}
 			if err := h.service.UpdateSupplier(existing.ID, &supplier); err != nil {
 				SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al reactivar proveedor", err)
 				return
 			}
+			supplier.IsActive = true // reflejo en la respuesta
 			c.JSON(http.StatusOK, gin.H{"message": "Proveedor reactivado exitosamente", "reactivated": true, "supplier": supplier})
 			go sse.GetSSEService().BroadcastSupplierUpdate(supplier)
 			name, _ := c.Get("userName")
@@ -83,7 +93,7 @@ func (h *SupplierHandler) Create(c *gin.Context) {
 
 	// Auditoría de Creación
 	name, _ := c.Get("userName")
-	h.auditService.Log(dniStr, name.(string), "CREATE_SUPPLIER", "DIRECTORY", 
+	h.auditService.Log(dniStr, name.(string), "CREATE_SUPPLIER", "DIRECTORY",
 		fmt.Sprintf("Nuevo proveedor: %s", supplier.Name),
 		fmt.Sprintf("Se registró el proveedor: %s", supplier.Name),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -153,7 +163,7 @@ func (h *SupplierHandler) Update(c *gin.Context) {
 	// Auditoría de Actualización
 	dniEmployee, _ := c.Get("dni")
 	name, _ := c.Get("userName")
-	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), name.(string), "UPDATE_SUPPLIER", "DIRECTORY", 
+	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), name.(string), "UPDATE_SUPPLIER", "DIRECTORY",
 		fmt.Sprintf("Actualizado proveedor ID: %d (%s)", id, supplier.Name),
 		fmt.Sprintf("Se modificó la información del proveedor %s (ID #%d)", supplier.Name, id),
 		"", c.ClientIP(), c.Request.UserAgent(), false)
@@ -179,8 +189,49 @@ func (h *SupplierHandler) Delete(c *gin.Context) {
 	// Auditoría de Eliminación
 	dniEmployee, _ := c.Get("dni")
 	name, _ := c.Get("userName")
-	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), name.(string), "DELETE_SUPPLIER", "DIRECTORY", 
+	h.auditService.Log(fmt.Sprintf("%v", dniEmployee), name.(string), "DELETE_SUPPLIER", "DIRECTORY",
 		fmt.Sprintf("Desactivado proveedor ID: %d", id),
 		fmt.Sprintf("Se desactivó el proveedor con ID #%d", id),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
+}
+
+// SupplierSchedulePatchRequest conserva punteros para distinguir un campo
+// ausente de [] o 0 enviados explícitamente por el administrador.
+type SupplierSchedulePatchRequest struct {
+	VisitDays    *[]string `json:"visitDays"`
+	DeliveryDays *[]string `json:"deliveryDays"`
+	LeadTimeDays *int      `json:"leadTimeDays"`
+}
+
+func (h *SupplierHandler) PatchSchedule(c *gin.Context) {
+	parsedID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil || parsedID == 0 {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de proveedor inválido", err)
+		return
+	}
+
+	var req SupplierSchedulePatchRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de agenda inválido", err)
+		return
+	}
+
+	updated, err := h.service.UpdateSupplierSchedule(uint(parsedID), services.SupplierSchedulePatch{
+		VisitDays:    req.VisitDays,
+		DeliveryDays: req.DeliveryDays,
+		LeadTimeDays: req.LeadTimeDays,
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrInvalidSupplierSchedule):
+			SendError(c, http.StatusBadRequest, ErrBadRequest, err.Error(), err)
+		case errors.Is(err, ports.ErrSupplierNotFound):
+			SendError(c, http.StatusNotFound, ErrNotFound, "Proveedor no encontrado", err)
+		default:
+			SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar agenda", err)
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, updated)
 }

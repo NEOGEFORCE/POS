@@ -1,4 +1,4 @@
-﻿package handlers
+package handlers
 
 import (
 	"fmt"
@@ -58,7 +58,7 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 	}
 
 	loc := time.FixedZone("America/Bogota", -5*60*60)
-	
+
 	var msg strings.Builder
 
 	msg.WriteString(fmt.Sprintf("%s\n", title))
@@ -88,17 +88,17 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 	msg.WriteString(fmt.Sprintf("📲 *TOTAL DIGITAL:*  `$%s`\n\n", formatCOP(ingresosDigitales)))
 
 	msg.WriteString("💸 *3. EGRESOS DETALLADOS POR CANAL*\n")
-	
+
 	type splitExpense struct {
 		Desc   string
 		Amount float64
 	}
 	egresosAgrupados := make(map[string][]splitExpense)
-	
+
 	totalEfectivoCanal := 0.0
 	totalFondo := 0.0
 	totalPrestamos := 0.0
-	
+
 	for _, e := range expenses {
 		if e.CashAmount > 0 {
 			egresosAgrupados["EFECTIVO"] = append(egresosAgrupados["EFECTIVO"], splitExpense{Desc: e.Description, Amount: e.CashAmount})
@@ -114,8 +114,11 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 			egresosAgrupados["FONDO"] = append(egresosAgrupados["FONDO"], splitExpense{Desc: e.Description, Amount: e.FondoAmount})
 			totalFondo += e.FondoAmount
 		}
-		
-		sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount
+		if e.CoinsAmount > 0 {
+			egresosAgrupados["ALCANCIA"] = append(egresosAgrupados["ALCANCIA"], splitExpense{Desc: e.Description, Amount: e.CoinsAmount})
+		}
+
+		sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount + e.CoinsAmount
 		if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
 			diff := e.Amount - sumPaid
 			egresosAgrupados["PRESTAMO"] = append(egresosAgrupados["PRESTAMO"], splitExpense{Desc: e.Description, Amount: diff})
@@ -123,7 +126,7 @@ func (h *DashboardExportHandler) formatAggregatedClosureReport(closures []models
 		}
 	}
 
-	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "PRESTAMO"}
+	canalesOrder := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "ALCANCIA", "PRESTAMO"}
 	for k := range egresosAgrupados {
 		found := false
 		for _, c := range canalesOrder {

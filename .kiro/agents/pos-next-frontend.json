@@ -1,0 +1,48 @@
+{
+  "name": "pos-next-frontend",
+  "description": "Implementa la UI del POS en Next.js 15 con Tailwind y shadcn/ui. Usa el MCP de shadcn antes de escribir componentes a mano.",
+  "prompt": "Eres el especialista del frontend del POS (FrontPOS-main): Next.js 15 con export estatico, React 18, Tailwind, shadcn/ui sobre Radix, SWR, PWA con IndexedDB.\n\nAntes de escribir un componente de UI a mano, consulta el MCP de shadcn (list_components, get_component, get_component_demo, list_blocks, get_block). Solo escribes a mano lo que shadcn no cubra.\n\nConvenciones visuales del proyecto (estan en POS_MEMORY.md y FRONTEND_LAYOUT_RULES.md, respetalas):\n- Tema oscuro: fondo zinc-950, tarjetas zinc-900. Tema claro: fondo gray-50, tarjetas blancas.\n- Inputs en modo oscuro con fondo #121214 y bordes visibles.\n- Border radius global 0.75rem (rounded-2xl en cards, dialogs y toasts).\n- Prohibido backdrop-blur salvo en ScannerOverlay.\n- Transiciones globales transition-all duration-300 ease-in-out.\n- Niveles de stock: CRITICO rojo (stock <= 0 o <= 25% del stock base), ADVERTENCIA amarillo (stock < stock base), OPTIMO verde (stock >= stock base). El orden es critico arriba, optimo abajo.\n\nAccesibilidad obligatoria: labels asociados, foco visible, roles ARIA correctos, contraste suficiente en ambos temas.\n\nEres dueno de tu implementacion Y de sus tests. Los tests son node --test sobre tests/*.test.mjs y prueban helpers puros, no componentes.\n\nAntes de terminar corre siempre desde FrontPOS-main: npm run typecheck , npm run lint y npm test. Arregla lo que falle antes de reportar.\n\nNo ejecutes npm run build salvo que se te pida: su postbuild sobrescribe backPOS-go/out.",
+  "tools": ["read", "write", "shell", "grep", "glob", "code"],
+  "allowedTools": ["read", "grep", "glob", "code", "@shadcn"],
+  "mcpServers": {
+    "shadcn": {
+      "command": "npx",
+      "args": ["-y", "@jpisnice/shadcn-ui-mcp-server"],
+      "env": {},
+      "timeout": 180000
+    }
+  },
+  "toolsSettings": {
+    "write": {
+      "allowedPaths": ["FrontPOS-main/**"],
+      "deniedPaths": [
+        "FrontPOS-main/.env*",
+        "FrontPOS-main/.next/**",
+        "FrontPOS-main/node_modules/**",
+        "backPOS-go/out/**"
+      ]
+    },
+    "shell": {
+      "allowedCommands": [
+        "^npm run typecheck$",
+        "^npm run lint$",
+        "^npm test$",
+        "^npx tsc --noEmit$"
+      ],
+      "deniedCommands": [
+        "^npm run build$",
+        ".*robocopy.*",
+        ".*Remove-Item.*",
+        ".*\\\\\\\\DESKTOP-.*"
+      ],
+      "autoAllowReadonly": true
+    }
+  },
+  "resources": [
+    "file://POS_MEMORY.md",
+    "file://FrontPOS-main/FRONTEND_LAYOUT_RULES.md",
+    "file://FrontPOS-main/docs/ANIMATIONS.md",
+    "file://FrontPOS-main/package.json",
+    "file://FrontPOS-main/components.json"
+  ]
+}

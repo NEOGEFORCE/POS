@@ -202,18 +202,42 @@ func (h *OrderHandler) GetAllOrders(c *gin.Context) {
 	}
 	if err == nil {
 		for _, co := range confirmed {
+			// EL VALOR QUE MANDA ES EL QUE ESCRIBIO EL DUENO.
+			//
+			// Regla suya, repetida tres veces: "el valor de pedido es el que me
+			// tiene que decir en entregas programadas... si no sale el que yo
+			// pongo no va a salir el valor de la factura que va a llegar".
+			//
+			// El motivo es de negocio: el desglose por productos conocidos suma
+			// menos que la factura real cuando el proveedor manda referencias
+			// nuevas que todavia no existen en el catalogo. El valor escrito a
+			// mano es la unica cifra que anticipa la plata que hay que tener.
+			//
+			// real_invoice_total es donde queda ese valor (ver ConfirmOrder);
+			// estimated_total es el calculado. Si el real viene en cero (pedido
+			// viejo o sin valor declarado) se cae al estimado.
+			valorDelPedido := co.RealInvoiceTotal
+			if valorDelPedido <= 0 {
+				valorDelPedido = co.EstimatedTotal
+			}
 			unified = append(unified, map[string]interface{}{
-				"id":            co.ID,
-				"source":        "confirmed",
-				"supplierId":    co.SupplierID,
-				"supplierName":  co.Supplier.Name,
-				"estimatedCost": co.EstimatedTotal,
-				"createdAt":     co.ConfirmedAt,
-				"expectedDate":  co.ExpectedDate,
-				"status":        co.Status,
-				"invoiceRef":    co.InvoiceRef,
-				"itemCount":     len(co.Items),
-				"orderItems":    co.Items,
+				"id":           co.ID,
+				"source":       "confirmed",
+				"supplierId":   co.SupplierID,
+				"supplierName": co.Supplier.Name,
+				// estimatedCost es el campo que consume la pantalla: lleva el
+				// valor autoritativo, no el calculado.
+				"estimatedCost": valorDelPedido,
+				// Se exponen los dos por separado para poder mostrar la
+				// diferencia sin volver a adivinar cual es cual.
+				"declaredValue":  co.RealInvoiceTotal,
+				"estimatedValue": co.EstimatedTotal,
+				"createdAt":      co.ConfirmedAt,
+				"expectedDate":   co.ExpectedDate,
+				"status":         co.Status,
+				"invoiceRef":     co.InvoiceRef,
+				"itemCount":      len(co.Items),
+				"orderItems":     co.Items,
 			})
 		}
 	}

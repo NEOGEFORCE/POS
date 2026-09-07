@@ -1,7 +1,6 @@
 package services
 
 import (
-	"log"
 	"time"
 
 	"backPOS-go/internal/adapters/repositories"
@@ -22,13 +21,11 @@ func (s *PurchaseOrderService) CreateOrder(order *models.PurchaseOrder) error {
 		return err
 	}
 
-	// Auto-aprendizaje de ruta: día actual = día de visita/preventa del
-	// proveedor (visit_days, JSONB anti-duplicados). No-fatal.
-	if s.supplierRepo != nil && order.SupplierID != 0 {
-		if err := s.supplierRepo.LearnDay(order.SupplierID, "visit_days"); err != nil {
-			log.Printf("[PURCHASE-ORDER] no se pudo aprender día de visita del proveedor %d: %v", order.SupplierID, err)
-		}
-	}
+	// Auto-aprendizaje de visit_days ELIMINADO de este flujo. El
+	// aprendizaje real corre en el batch nocturno y persiste SÓLO en
+	// las columnas learned_* (regla del dueño: suppliers.visit_days
+	// es dato manual sagrado).
+	_ = order
 
 	return nil
 }

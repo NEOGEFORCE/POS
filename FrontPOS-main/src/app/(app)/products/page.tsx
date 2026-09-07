@@ -6,7 +6,7 @@ import {
     Package, Search, AlertTriangle, PlusCircle, RefreshCw, Barcode, Warehouse, ShoppingBag, ShieldCheck, Camera, FileUp, FileDown
 } from 'lucide-react';
 import nextDynamic from 'next/dynamic';
-import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
+import { broadcastRevalidate } from '@/lib/revalidate';
 import { useToast } from '@/hooks/use-toast';
 import { useApi } from '@/hooks/use-api';
 import { Product, Category } from '@/lib/definitions';
@@ -14,6 +14,13 @@ import { applyRounding, formatCurrency, parseCurrency, sanitizeProductPayload, g
 import Cookies from 'js-cookie';
 import { apiFetch, ApiError } from '@/lib/api-error';
 import { useAuth } from '@/lib/auth';
+import {
+    isHistoricalMarkerError,
+    extractHistoricalMarkerMetadata,
+    buildMergeRequest,
+    stripStaleTimestamp,
+} from '@/lib/historical-marker.mjs';
+import type { HistoricalMarkerMetadata } from '@/lib/historical-marker.d.mts';
 
 // COMPONENTES DINAMICOS PREMIUM
 const ProductStats = nextDynamic(() => import('./components/ProductStats'), { ssr: false });
@@ -21,6 +28,10 @@ const ProductTable = nextDynamic(() => import('./components/ProductTable'), { ss
 const ProductFormModal = nextDynamic(() => import('./components/ProductFormModal'), { ssr: false });
 const InventoryAlertsModal = nextDynamic(() => import('./components/InventoryAlertsModal'), { ssr: false });
 const DeleteProtocolModal = nextDynamic(() => import('./components/DeleteProtocolModal'), { ssr: false });
+const HistoricalMarkerMergeDialog = nextDynamic(
+    () => import('./components/HistoricalMarkerMergeDialog').then(m => m.HistoricalMarkerMergeDialog),
+    { ssr: false }
+);
 const ScannerOverlay = nextDynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 const ConfirmDialog = nextDynamic(() => import('@/components/ConfirmDialog').then(m => m.ConfirmDialog), { ssr: false });
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -101,6 +112,19 @@ export default function ProductsPage() {
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
     const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
 
+    // --- ESTADO FUSION MARCADOR HISTORICO ---
+    // Cuando el backend responde 409 con code HISTORICAL_MARKER_RESERVED al
+    // renombrar un producto, guardamos la metadata del error y el payload
+    // pendiente para poder reintentar el PUT tras un merge exitoso. El
+    // formulario permanece abierto por debajo del AlertDialog, cancelar deja
+    // todo intacto.
+    const [historicalMarker, setHistoricalMarker] = useState<{
+        metadata: HistoricalMarkerMetadata;
+        pendingPayload: Record<string, unknown>;
+        realProductName: string;
+    } | null>(null);
+    const [isMergingMarker, setIsMergingMarker] = useState(false);
+
     // --- ESTADO CONFIRMACION PERSONALIZADA ---
     const [isBulkConfirmOpen, setIsBulkConfirmOpen] = useState(false);
     const [bulkProductToOpen, setBulkProductToOpen] = useState<Product | null>(null);
@@ -119,23 +143,12 @@ export default function ProductsPage() {
     }, []);
 
     // SINCRONIZACION ZERO-F5
-    useEffect(() => {
-        let timeout: NodeJS.Timeout;
-        const cleanup = setupSyncListener((event) => {
-            if (event === 'PRODUCT_UPDATE' || event === 'SALE_MADE' || event === 'DASHBOARD_UPDATE' || event === 'CATEGORY_UPDATE' || event === 'SUPPLIER_UPDATE' || event === 'STOCK_UPDATE') {
-                clearTimeout(timeout);
-                timeout = setTimeout(() => {
-                    mutateProducts();
-                    mutateAllProducts();
-                    mutateStats();
-                }, 800);
-            }
-        });
-        return () => {
-            cleanup();
-            clearTimeout(timeout);
-        };
-    }, [mutateProducts, mutateAllProducts, mutateStats]);
+    // La revalidacion global vive en SyncBackground: al recibir un evento
+    // dispara `revalidateKeysForEvent`, que ya cubre `/products/paginated`
+    // (pattern), `/products/all-products` y `/products/stats` para este
+    // caso. Aqui NO registramos un segundo listener para evitar disparar la
+    // misma revalidacion dos veces por evento; SWR se encarga de refrescar
+    // estas claves gracias a esa mutacion global.
 
     useEffect(() => {
         if (addDialogOpen) {
@@ -207,13 +220,14 @@ export default function ProductsPage() {
         if (!editingProduct) return;
         const token = Cookies.get('org-pos-token');
         setApiFieldErrors({});
+        let payload: Record<string, any> = {};
         try {
             const payloadToSanitize = {
                 ...editingProduct,
                 productName: normalizeText(editingProduct.productName),
                 barcode: normalizeText(editingProduct.barcode),
             };
-            const payload = sanitizeProductPayload(payloadToSanitize);
+            payload = sanitizeProductPayload(payloadToSanitize);
             const urlBarcode = originalBarcode || editingProduct.barcode;
 
             await apiFetch(`/products/update-products/${urlBarcode}`, {
@@ -227,6 +241,28 @@ export default function ProductsPage() {
             mutateStats();
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
+            if (isHistoricalMarkerError(err)) {
+                // El código está retenido por un marcador '[HISTORICO]'. No
+                // cerramos el formulario: dejamos abierto el AlertDialog para
+                // que el operador decida si fusiona (sólo admin) o cancela.
+                const metadata = extractHistoricalMarkerMetadata(err);
+                if (metadata) {
+                    setHistoricalMarker({
+                        metadata,
+                        pendingPayload: payload,
+                        realProductName: editingProduct.productName || '',
+                    });
+                    return;
+                }
+                // Sin metadata utilizable: caemos a un toast genérico para no
+                // abrir un diálogo vacío que induzca a error.
+                toast({
+                    variant: 'destructive',
+                    title: 'CÓDIGO OCUPADO',
+                    description: 'Un marcador histórico retiene este código. Pide al administrador que ejecute la fusión.',
+                });
+                return;
+            }
             if (err instanceof ApiError && err.status === 400 && err.data?.error?.fields) {
                 setApiFieldErrors(err.data.error.fields);
                 toast({ variant: 'destructive', title: 'ERROR DE VALIDACION', description: 'Revisa los campos marcados en rojo' });
@@ -235,6 +271,113 @@ export default function ProductsPage() {
             }
         }
     };
+
+    // --- FUSION DE MARCADOR HISTORICO (SOLO ADMIN) ---
+    // 1) POST /admin/products/merge-historical con { realBarcode, markerBarcode }.
+    // 2) Tras el merge, el producto real vive bajo el markerBarcode. Reintentamos
+    //    el PUT contra ese código, quitando el updatedAt viejo para evitar la
+    //    validación de optimistic locking.
+    // 3) Si el segundo PUT falla, avisamos con claridad que el merge SÍ ocurrió y
+    //    dejamos el estado listo (originalBarcode = markerBarcode) para que el
+    //    operador reintente guardar sin volver a disparar la fusión.
+    const closeMergeDialog = useCallback(() => {
+        setHistoricalMarker(null);
+    }, []);
+
+    const handleConfirmMergeMarker = useCallback(async () => {
+        if (!historicalMarker || !editingProduct) return;
+        if (!isAdmin) {
+            toast({
+                variant: 'destructive',
+                title: 'SIN PERMISOS',
+                description: 'Solo un administrador puede fusionar códigos históricos.',
+            });
+            return;
+        }
+        const request = buildMergeRequest(historicalMarker.metadata);
+        if (!request) {
+            toast({
+                variant: 'destructive',
+                title: 'DATOS INVALIDOS',
+                description: 'El backend no envió los códigos necesarios para fusionar.',
+            });
+            closeMergeDialog();
+            return;
+        }
+
+        const token = Cookies.get('org-pos-token');
+        const { markerBarcode } = request;
+        const retryPayload = stripStaleTimestamp(historicalMarker.pendingPayload);
+
+        setIsMergingMarker(true);
+        try {
+            // 1) Fusión atómica en el backend.
+            await apiFetch('/admin/products/merge-historical', {
+                method: 'POST',
+                body: JSON.stringify(request),
+                fallbackError: 'FALLO AL FUSIONAR MARCADOR',
+            }, token!);
+
+            // El producto real ya vive bajo markerBarcode. Refrescamos estado
+            // local ANTES del segundo intento para que un fallo posterior no
+            // deje al operador dispuesto a reintentar contra la barcode vieja.
+            setOriginalBarcode(markerBarcode);
+            setEditingProduct((prev) => prev ? { ...prev, barcode: markerBarcode, updatedAt: undefined } : prev);
+
+            // 2) Reintento del PUT contra el nuevo código.
+            try {
+                await apiFetch(`/products/update-products/${markerBarcode}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({ ...retryPayload, barcode: markerBarcode }),
+                    fallbackError: 'FALLO AL GUARDAR TRAS FUSION',
+                }, token!);
+
+                toast({
+                    variant: 'success',
+                    title: 'FUSION Y GUARDADO OK',
+                    description: 'El código quedó liberado y el producto se actualizó.',
+                });
+                setHistoricalMarker(null);
+                setEditDialogOpen(false);
+                setEditingProduct(null);
+                setOriginalBarcode(null);
+                mutateProducts();
+                mutateAllProducts();
+                mutateStats();
+                broadcastRevalidate('PRODUCT_UPDATE');
+                broadcastRevalidate('AUDIT_UPDATE');
+            } catch (retryErr: any) {
+                // La fusión sí ocurrió — el código YA está liberado. Informamos
+                // con claridad y dejamos el formulario abierto contra el nuevo
+                // código para que el operador reintente sin repetir la fusión.
+                mutateProducts();
+                mutateAllProducts();
+                mutateStats();
+                broadcastRevalidate('PRODUCT_UPDATE');
+                broadcastRevalidate('AUDIT_UPDATE');
+                setHistoricalMarker(null);
+                const description = retryErr?.message
+                    ? `Códigos fusionados. Falló el segundo guardado: ${retryErr.message}. Reintenta desde el formulario.`
+                    : 'Códigos fusionados. Falló el segundo guardado — reintenta desde el formulario.';
+                toast({
+                    variant: 'destructive',
+                    title: 'FUSION OK - GUARDADO PENDIENTE',
+                    description,
+                });
+            }
+        } catch (mergeErr: any) {
+            const description = mergeErr instanceof ApiError && mergeErr.status === 403
+                ? 'Tu rol no permite fusionar marcadores. Pide a un administrador.'
+                : mergeErr?.message || 'No se pudo fusionar el marcador. Intenta más tarde.';
+            toast({
+                variant: 'destructive',
+                title: 'FALLO EN FUSION',
+                description,
+            });
+        } finally {
+            setIsMergingMarker(false);
+        }
+    }, [historicalMarker, editingProduct, isAdmin, toast, mutateProducts, mutateAllProducts, mutateStats, closeMergeDialog]);
 
     const handleDelete = async () => {
         if (!deletingBarcode) return;
@@ -587,6 +730,16 @@ export default function ProductsPage() {
             </ErrorBoundary>
 
             <DeleteProtocolModal isOpen={deleteDialogOpen} onOpenChange={setDeleteDialogOpen} deletingBarcode={deletingBarcode} onDelete={handleDelete} />
+            <HistoricalMarkerMergeDialog
+                isOpen={historicalMarker !== null}
+                onOpenChange={(open) => { if (!open) closeMergeDialog(); }}
+                metadata={historicalMarker?.metadata ?? null}
+                realProductName={historicalMarker?.realProductName || editingProduct?.productName}
+                isAdmin={isAdmin}
+                isMerging={isMergingMarker}
+                onConfirm={handleConfirmMergeMarker}
+                onCancel={closeMergeDialog}
+            />
             <InventoryAlertsModal isOpen={alertsDialogOpen} onOpenChange={setAlertsDialogOpen} products={products.filter(p => getStockStatus(p.quantity, p.minStock || 0) === 'CRITICAL')} />
             <ScannerOverlay isOpen={isScannerOpen} onResult={handleScannerResult} onClose={() => setIsScannerOpen(false)} />
             

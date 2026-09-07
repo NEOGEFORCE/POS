@@ -196,7 +196,7 @@ func (s *ExportService) GetAuditedIncome(from, to time.Time) (*AuditedIncome, er
 		// Egresos pagados en efectivo dentro del turno.
 		cashExpenses := 0.0
 		for _, e := range closureExpenses(c, expenses) {
-			cash, _, _, _ := parseExpenseChannels(&e)
+			cash, _, _, _, _ := parseExpenseChannels(&e)
 			cashExpenses += cash
 		}
 

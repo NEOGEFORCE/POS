@@ -1,13 +1,64 @@
-﻿package repositories
+package repositories
 
 import (
-	"fmt"
-	"time"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"fmt"
+	"time"
 )
 
-// GetInventoryStats genera un reporte detallado de rotación, costos y rentabilidad por producto
+// GetProductStatsAggregate calcula en UNA sola consulta el resumen del
+// catálogo activo (costo total, precio de venta total, número de productos y
+// cuántos están en estado crítico / advertencia). Reemplaza el bucle en Go
+// sobre repo.GetAll(), que arrastraba el catálogo completo con Preload y
+// ORDER BY cada vez que la caché estaba fría.
+//
+// IMPORTANTE: las expresiones CASE reproducen EXACTAMENTE la clasificación
+// de models.ClassifyStockBand (ver internal/core/domain/models/stock_health.go
+// y su test de tabla). Regla permanente del dueño (agosto 2026):
+// ROJO < 25% del mínimo, AMARILLO 25%–75%, VERDE >= 75%. Una divergencia
+// daría cifras distintas y sería un bug, no una optimización.
+//
+// El agregado sigue devolviendo solo dos columnas (critical / warning). Bajo
+// la regla nueva "warning" es la banda AMARILLA completa (25%–75%); la banda
+// VERDE se puede derivar en el frontend como (totalItems - critical - warning).
+// No se inventa una columna nueva porque el JSON existente ya sirve.
+func (r *PostgresProductRepository) GetProductStatsAggregate() (float64, float64, int64, int64, int64, error) {
+	type row struct {
+		TotalCost     float64 `gorm:"column:total_cost"`
+		TotalRetail   float64 `gorm:"column:total_retail"`
+		TotalItems    int64   `gorm:"column:total_items"`
+		CriticalStock int64   `gorm:"column:critical_stock"`
+		WarningStock  int64   `gorm:"column:warning_stock"`
+	}
+	var r0 row
+	// COALESCE("minStock", 0) protege contra NULL histórico. NULLIF evita
+	// división por cero en el ratio. FILTER es más legible que SUM(CASE)
+	// para el conteo.
+	err := r.db.Raw(`
+		SELECT
+			COALESCE(SUM(quantity * "purchasePrice"), 0)::numeric AS total_cost,
+			COALESCE(SUM(quantity * "salePrice"), 0)::numeric     AS total_retail,
+			COUNT(*)::bigint                                       AS total_items,
+			COUNT(*) FILTER (
+				WHERE (COALESCE("minStock", 0) <= 0 AND quantity <= 0)
+				   OR (COALESCE("minStock", 0) > 0
+				       AND (quantity / NULLIF("minStock", 0)) < 0.25)
+			)::bigint AS critical_stock,
+			COUNT(*) FILTER (
+				WHERE COALESCE("minStock", 0) > 0
+				  AND (quantity / NULLIF("minStock", 0)) >= 0.25
+				  AND (quantity / NULLIF("minStock", 0)) < 0.75
+			)::bigint AS warning_stock
+		FROM products
+		WHERE COALESCE("isActive", TRUE) = TRUE
+		  AND deleted_at IS NULL
+	`).Scan(&r0).Error
+	if err != nil {
+		return 0, 0, 0, 0, 0, err
+	}
+	return r0.TotalCost, r0.TotalRetail, r0.TotalItems, r0.CriticalStock, r0.WarningStock, nil
+}
 func (r *PostgresProductRepository) GetInventoryStats(from, to time.Time) ([]ports.InventoryStat, error) {
 	var stats []ports.InventoryStat
 

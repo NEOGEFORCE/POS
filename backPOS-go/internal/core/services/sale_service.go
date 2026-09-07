@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -155,18 +156,45 @@ func (s *SaleService) CreateSale(sale *models.Sale) (err error) {
 		deductions[targetBarcode] += effectiveQty
 	}
 
-	// 3. Validar stock total requerido
+	// 3. Resolver los productos BASE que no vinieron en la carga masiva.
+	//
+	// deductions puede apuntar al barcode de un producto base (cuando el ítem
+	// vendido es un pack) que el cliente no escaneó y que por tanto no entró en
+	// uniqueBarcodes. Antes esto se resolvía con un GetByBarcode DENTRO del for:
+	// en una venta de 40 packs eran 40 consultas en la ruta crítica de cobro,
+	// con el cajero y la cola esperando.
+	//
+	// Ahora es una sola consulta con WHERE barcode IN (...). El mensaje de error
+	// ante un producto inexistente se conserva palabra por palabra, y el orden
+	// de sale.SaleDetails no se toca: este bloque sólo llena el mapa.
+	missingBaseBarcodes := make([]string, 0, len(deductions))
 	for barcode := range deductions {
-		_, ok := productCache[barcode]
-		if !ok {
-			base, err := s.productRepo.GetByBarcode(barcode)
-			if err != nil {
+		if _, ok := productCache[barcode]; !ok {
+			missingBaseBarcodes = append(missingBaseBarcodes, barcode)
+		}
+	}
+	if len(missingBaseBarcodes) > 0 {
+		// Orden estable para que el mensaje de error no dependa del recorrido
+		// aleatorio del map de Go: antes, con dos bases faltantes, cada intento
+		// culpaba a un producto distinto.
+		sort.Strings(missingBaseBarcodes)
+
+		baseProducts, baseErr := s.productRepo.GetByBarcodes(missingBaseBarcodes)
+		if baseErr != nil {
+			return fmt.Errorf("error cargando productos base: %v", baseErr)
+		}
+		baseLookup := buildProductLookup(baseProducts)
+
+		for _, barcode := range missingBaseBarcodes {
+			base, ok := baseLookup[barcode]
+			if !ok {
 				return fmt.Errorf("stock insuficiente: producto base %s no existe", barcode)
 			}
 			productCache[barcode] = base
 		}
-		// Validación eliminada a petición del usuario para permitir vender en negativo
 	}
+	// Validación de stock eliminada a petición del usuario para permitir vender
+	// en negativo.
 
 	// 4. Calcular totales
 	for i := range sale.SaleDetails {
@@ -202,18 +230,38 @@ func (s *SaleService) CreateSale(sale *models.Sale) (err error) {
 		typeCount++
 	}
 
-	if sale.TransferAmount > 0 {
-		source := strings.ToUpper(sale.TransferSource)
-		if source == "" {
-			source = "TRANSFERENCIA"
+	// === DESGLOSE Nequi/Daviplata ===
+	//
+	// Contexto: el frontend nuevo manda TransferNequi y TransferDaviplata
+	// explícitos. Los clientes viejos (pestaña sin recargar, cola offline
+	// encolada antes del cambio) siguen mandando el total sumado con
+	// TransferSource="MIXTO" y sin desglose — esa es la venta que rompía
+	// el cierre.
+	//
+	// La reconciliación está aislada en sale_transfer_breakdown.go (con
+	// tests puros). Aquí sólo se llama y se asignan los tres campos que
+	// van a la BD.
+	//
+	// Justificación de "normalizar, nunca rechazar" está en el header de
+	// ese archivo: en un supermercado el cliente ya pagó, la cola avanza;
+	// perder la venta es peor que guardar un desglose con ruido de $3.
+	{
+		reconciled := ReconcileTransferBreakdown(
+			sale.TransferAmount,
+			sale.TransferNequi,
+			sale.TransferDaviplata,
+			sale.TransferSource,
+		)
+		if reconciled.AdjustedByNormalization {
+			log.Printf(
+				"[CreateSale] desglose normalizado: transferAmount=%.2f nequi=%.2f davi=%.2f source=%q -> nequi=%.2f davi=%.2f total=%.2f (%s)",
+				sale.TransferAmount, sale.TransferNequi, sale.TransferDaviplata, sale.TransferSource,
+				reconciled.TransferNequi, reconciled.TransferDaviplata, reconciled.TransferAmount, reconciled.SourceUsed,
+			)
 		}
-		if sale.TransferNequi == 0 && sale.TransferDaviplata == 0 {
-			if strings.Contains(source, "NEQUI") {
-				sale.TransferNequi = sale.TransferAmount
-			} else if strings.Contains(source, "DAVIPLATA") || strings.Contains(source, "DAVI") {
-				sale.TransferDaviplata = sale.TransferAmount
-			}
-		}
+		sale.TransferAmount = reconciled.TransferAmount
+		sale.TransferNequi = reconciled.TransferNequi
+		sale.TransferDaviplata = reconciled.TransferDaviplata
 	}
 
 	if sale.PaymentMethod == "" || strings.ToUpper(sale.PaymentMethod) == "MIXTO" {
@@ -393,7 +441,15 @@ func (s *SaleService) CreateSale(sale *models.Sale) (err error) {
 		s.recentMu.Unlock()
 	}
 
-	cache.InvalidateCache(cache.CacheKeyProducts)
+	// Nota (arreglo 2): NO invalidamos cache.CacheKeyProducts al registrar
+	// una venta. El catálogo cacheado alimenta el endpoint /products/all-products
+	// (fallback offline) y se recorre entero (2168 filas con Preload y ORDER BY)
+	// cuando la caché está fría. Una venta sólo cambia `quantity` de 1 a 3
+	// productos, no la forma del catálogo (alta/baja/nombre/precio/categoría),
+	// así que invalidarlo entero por cada venta lo dejaba permanentemente frío
+	// en un supermercado. Las operaciones críticas (validación de stock,
+	// descuento, kardex) leen cantidades EN VIVO de la BD, así que un desfase
+	// temporal en el catálogo offline es aceptable.
 	if sale.CreditAmount > 0 {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", sale.ClientDNI))
@@ -496,252 +552,6 @@ func (s *SaleService) CreateSale(sale *models.Sale) (err error) {
 		}
 
 		// Notificaciones o Webhooks adicionales podrían ir aquí
-	}()
-
-	return nil
-}
-
-func (s *SaleService) AddItemsToSale(saleID uint, newDetails []models.SaleDetail, cashAmount, transferAmount float64, transferSource, employeeDNI string) error {
-	sale, err := s.saleRepo.GetByID(saleID)
-	if err != nil {
-		return errors.New("venta no encontrada")
-	}
-
-	if sale.Status != "PAID" && sale.Status != "CREDIT" {
-		return errors.New("no se puede editar esta venta")
-	}
-
-	var additionalTotal float64
-	deductions := make(map[string]float64)
-	uniqueBarcodes := make([]string, 0, len(newDetails))
-	seenBarcodes := make(map[string]struct{}, len(newDetails))
-	for _, detail := range newDetails {
-		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
-			continue
-		}
-		if _, seen := seenBarcodes[detail.Barcode]; !seen {
-			seenBarcodes[detail.Barcode] = struct{}{}
-			uniqueBarcodes = append(uniqueBarcodes, detail.Barcode)
-		}
-	}
-
-	var productsDB []models.Product
-	if len(uniqueBarcodes) > 0 {
-		productsDB, err = s.productRepo.GetByBarcodes(uniqueBarcodes)
-		if err != nil {
-			return fmt.Errorf("error cargando productos: %w", err)
-		}
-	}
-	productCache := buildProductLookup(productsDB)
-
-	// Validar stock y preparar deducciones.
-	for i := range newDetails {
-		detail := &newDetails[i]
-		if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
-			additionalTotal += detail.Subtotal
-			continue
-		}
-
-		product, ok := productCache[detail.Barcode]
-		if !ok {
-			return fmt.Errorf("producto no encontrado: %s", detail.Barcode)
-		}
-
-		effectiveQty := detail.Quantity
-		targetBarcode := detail.Barcode
-		if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" {
-			targetBarcode = *product.BaseProductBarcode
-			effectiveQty = detail.Quantity * float64(product.PackMultiplier)
-		}
-
-		deductions[targetBarcode] += effectiveQty
-		detail.UnitPrice = product.SalePrice
-		detail.CostPrice = product.PurchasePrice
-		detail.Subtotal = roundSaleLineSubtotal(product.SalePrice, detail.Quantity)
-		additionalTotal += detail.Subtotal
-	}
-
-	// Validar que los productos base existan; la venta en negativo sigue permitida.
-	for barcode := range deductions {
-		if _, ok := productCache[barcode]; ok {
-			continue
-		}
-		base, err := s.productRepo.GetByBarcode(barcode)
-		if err != nil {
-			return fmt.Errorf("stock insuficiente: producto base %s no existe", barcode)
-		}
-		productCache[barcode] = base
-	}
-
-	// Actualizar los métodos de pago de la venta
-	paidExtra := cashAmount + transferAmount
-	if paidExtra < (additionalTotal - 5.0) {
-		return fmt.Errorf("pago adicional insuficiente: total extra %.2f, pagado extra %.2f", additionalTotal, paidExtra)
-	}
-
-	sale.TotalAmount += additionalTotal
-	sale.CashAmount += cashAmount
-	sale.TransferAmount += transferAmount
-	if transferSource != "" {
-		sale.TransferSource = transferSource
-	}
-
-	sale.AmountPaid += paidExtra
-
-	// Recalcular cambio solo sobre efectivo
-	cashNeeded := sale.TotalAmount - sale.TransferAmount - sale.CreditAmount
-	if cashNeeded < 0 {
-		cashNeeded = 0
-	}
-	sale.Change = sale.CashAmount - cashNeeded
-	if sale.Change < 0 {
-		sale.Change = 0
-	}
-
-	// Recalcular tipo de pago
-	typeCount := 0
-	if sale.CashAmount > 0 {
-		typeCount++
-	}
-	if sale.TransferAmount > 0 {
-		typeCount++
-	}
-	if sale.CreditAmount > 0 {
-		typeCount++
-	}
-
-	if typeCount > 1 {
-		sale.PaymentMethod = "MIXTO"
-	} else if sale.CreditAmount > 0 {
-		sale.PaymentMethod = "FIADO"
-	} else if sale.TransferAmount > 0 {
-		source := strings.ToUpper(sale.TransferSource)
-		if source == "" {
-			source = "TRANSFERENCIA"
-		}
-		sale.PaymentMethod = source
-	} else {
-		sale.PaymentMethod = "EFECTIVO"
-	}
-
-	rawInterface := s.saleRepo.GetDB()
-	rawDB, ok := rawInterface.(*gorm.DB)
-	if !ok {
-		return fmt.Errorf("error obteniendo db: tipo incorrecto")
-	}
-
-	if err := rawDB.Transaction(func(tx *gorm.DB) error {
-		var lockedSale models.Sale
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("\"saleId\" = ?", sale.SaleID).First(&lockedSale).Error; err != nil {
-			return fmt.Errorf("error bloqueando venta: %w", err)
-		}
-		lockedSale.TotalAmount += additionalTotal
-		lockedSale.CashAmount += cashAmount
-		lockedSale.TransferAmount += transferAmount
-		if transferSource != "" {
-			lockedSale.TransferSource = transferSource
-		}
-		lockedSale.AmountPaid += paidExtra
-		cashNeeded := lockedSale.TotalAmount - lockedSale.TransferAmount - lockedSale.CreditAmount
-		if cashNeeded < 0 {
-			cashNeeded = 0
-		}
-		lockedSale.Change = lockedSale.CashAmount - cashNeeded
-		if lockedSale.Change < 0 {
-			lockedSale.Change = 0
-		}
-		lockedSale.PaymentMethod = deriveSalePaymentMethod(&lockedSale)
-		*sale = lockedSale
-
-		if err := tx.Model(&models.Sale{}).Where("\"saleId\" = ?", sale.SaleID).Updates(map[string]interface{}{
-			"totalAmount":    sale.TotalAmount,
-			"cashAmount":     sale.CashAmount,
-			"transferAmount": sale.TransferAmount,
-			"transferSource": sale.TransferSource,
-			"amountPaid":     sale.AmountPaid,
-			"change":         sale.Change,
-			"paymentMethod":  sale.PaymentMethod,
-		}).Error; err != nil {
-			return fmt.Errorf("error actualizando venta: %w", err)
-		}
-
-		for _, detail := range newDetails {
-			var existingDetail models.SaleDetail
-			queryErr := tx.Where("\"saleId\" = ? AND barcode = ?", sale.SaleID, detail.Barcode).First(&existingDetail).Error
-			switch {
-			case queryErr == nil:
-				existingDetail.Quantity += detail.Quantity
-				existingDetail.Subtotal += detail.Subtotal
-				if err := tx.Save(&existingDetail).Error; err != nil {
-					return fmt.Errorf("error acumulando detalle %s: %w", detail.Barcode, err)
-				}
-			case errors.Is(queryErr, gorm.ErrRecordNotFound):
-				detail.SaleID = sale.SaleID
-				if err := tx.Create(&detail).Error; err != nil {
-					return fmt.Errorf("error creando detalle %s: %w", detail.Barcode, err)
-				}
-			default:
-				return fmt.Errorf("error consultando detalle %s: %w", detail.Barcode, queryErr)
-			}
-		}
-
-		if len(deductions) == 0 {
-			return nil
-		}
-		if err := s.productRepo.BatchAdjustQuantitiesWithTx(tx, deductions); err != nil {
-			return fmt.Errorf("error ajustando inventario: %w", err)
-		}
-
-		movements := make([]models.StockMovement, 0, len(newDetails))
-		for _, detail := range newDetails {
-			if strings.HasPrefix(detail.Barcode, "MISC-") || detail.Barcode == "0000" {
-				continue
-			}
-			product, ok := productCache[detail.Barcode]
-			if !ok {
-				return fmt.Errorf("error resolviendo producto %s para kárdex", detail.Barcode)
-			}
-			targetBarcode := detail.Barcode
-			effectiveQty := detail.Quantity
-			if product.IsPack && product.BaseProductBarcode != nil && *product.BaseProductBarcode != "" {
-				targetBarcode = *product.BaseProductBarcode
-				effectiveQty = detail.Quantity * float64(product.PackMultiplier)
-			}
-			movements = append(movements, models.StockMovement{
-				Date:         time.Now(),
-				Barcode:      targetBarcode,
-				Quantity:     effectiveQty,
-				Type:         models.MovementTypeOut,
-				Reason:       models.MovementReasonEditApply,
-				ReferenceID:  fmt.Sprintf("SALE-%d", sale.SaleID),
-				EmployeeDNI:  employeeDNI,
-				EmployeeName: "CAJERO",
-			})
-		}
-		if len(movements) > 0 {
-			if err := s.movementRepo.BatchSaveWithTx(tx, movements); err != nil {
-				return fmt.Errorf("error guardando kárdex: %w", err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-
-	cache.InvalidateCache(cache.CacheKeyProducts)
-	s.saleRepo.AfterCommit()
-
-	go func() {
-		defer func() { recover() }()
-		if s.telegramService != nil {
-			msg := fmt.Sprintf("✏️ *VENTA EDITADA (Productos Añadidos)*\n\n"+
-				"*Venta:* #%d\n"+
-				"*Monto Adicional:* $%.2f\n"+
-				"*Cajero:* %s\n"+
-				"*Items Nuevos:* %d",
-				sale.SaleID, additionalTotal, employeeDNI, len(newDetails))
-			s.telegramService.SendMarkdownAlert(msg)
-		}
 	}()
 
 	return nil
@@ -858,7 +668,8 @@ func (s *SaleService) DeleteSale(id uint, reason string, employeeDNI string) err
 		return err
 	}
 
-	cache.InvalidateCache(cache.CacheKeyProducts)
+	// Arreglo 2: anular una venta sólo restituye cantidades al stock; no
+	// afecta la forma del catálogo. No purgamos CacheKeyProducts.
 	if sale.ClientDNI != "" && sale.ClientDNI != "0" {
 		cache.InvalidateCache(cache.CacheKeyClients)
 		cache.InvalidateCache(fmt.Sprintf("client_dni_%s", sale.ClientDNI))
@@ -956,6 +767,49 @@ func (s *SaleService) UpdateSalePayment(id uint, paymentUpdate *models.Sale) err
 
 		paymentUpdate.AmountPaid = paidTotal
 		paymentUpdate.DebtPending = newDebt
+
+		// === PROTECCIÓN DEL DESGLOSE Nequi/Daviplata ===
+		//
+		// El dueño denunció: si el frontend viejo (o un cliente que no
+		// se recargó) manda una edición SIN transferNequi/Daviplata,
+		// el flujo original machacaba a 0 el desglose de una venta que
+		// ya tenía Nequi/Davi bien registrados. La venta "se queda sin
+		// canal" y el cierre siguiente la clasifica en "otras
+		// transferencias".
+		//
+		// MergeTransferBreakdownWithExisting (pura, testeada) resuelve
+		// las cuatro combinaciones payload x existente:
+		//   - payload trae desglose → payload gana.
+		//   - payload trae source Nequi/Davi → fallback como CreateSale.
+		//   - payload no trae nada útil + existente tenía desglose →
+		//     se preserva (o se escala si el total cambió).
+		//   - nada útil en ningún lado → todo a cero, como antes.
+		//
+		// ES SOLO para operaciones NUEVAS. No reclasifica ventas
+		// históricas MIXTO — el dueño lo prohibió expresamente.
+		merged := MergeTransferBreakdownWithExisting(
+			paymentUpdate.TransferAmount,
+			paymentUpdate.TransferNequi,
+			paymentUpdate.TransferDaviplata,
+			paymentUpdate.TransferSource,
+			existing.TransferAmount,
+			existing.TransferNequi,
+			existing.TransferDaviplata,
+			existing.TransferSource,
+		)
+		if merged.AdjustedByNormalization {
+			log.Printf(
+				"[UpdateSalePayment] venta #%d: desglose ajustado (%s) payload=%.2f/%.2f/%.2f existente=%.2f/%.2f/%.2f -> total=%.2f nequi=%.2f davi=%.2f",
+				id, merged.SourceUsed,
+				paymentUpdate.TransferAmount, paymentUpdate.TransferNequi, paymentUpdate.TransferDaviplata,
+				existing.TransferAmount, existing.TransferNequi, existing.TransferDaviplata,
+				merged.TransferAmount, merged.TransferNequi, merged.TransferDaviplata,
+			)
+		}
+		paymentUpdate.TransferAmount = merged.TransferAmount
+		paymentUpdate.TransferNequi = merged.TransferNequi
+		paymentUpdate.TransferDaviplata = merged.TransferDaviplata
+
 		paymentUpdate.PaymentMethod = deriveSalePaymentMethod(paymentUpdate)
 		cashForGoods := existing.TotalAmount - paymentUpdate.TransferAmount - paymentUpdate.CreditAmount
 		if cashForGoods < 0 {

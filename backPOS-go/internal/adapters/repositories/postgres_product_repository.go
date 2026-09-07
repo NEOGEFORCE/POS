@@ -40,7 +40,11 @@ func cloneProduct(product *models.Product) *models.Product {
 }
 
 func (r *PostgresProductRepository) invalidateDashboardCache() {
-	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
+	// Un cambio de precio o de recepción mueve el ahorro potencial que calcula
+	// GetSavingsOpportunities; si no se purga, el dashboard sigue recomendando
+	// comprarle al proveedor caro durante una hora.
+	cache.InvalidateSavingsOpportunities()
 	// Solicitar refresco asíncrono y debounced al servicio centralizado
 	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
 
@@ -162,13 +166,18 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	}
 
 	if stockFilter == "critical" {
+		// ROJO nuevo (regla del dueno, agosto 2026): ratio < 0.25 del minimo.
+		// Con minimo <= 0 se sigue considerando critico cuando quantity <= 0.
 		query = query.Where(`(
 			(COALESCE(products."minStock", 0) <= 0 AND products.quantity <= 0)
-			OR (COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) * 100 <= 20)
+			OR (COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) < 0.25)
 		)`)
 	} else if stockFilter == "warning" {
+		// AMARILLO nuevo: 0.25 <= ratio < 0.75. Sin minimo configurado con
+		// stock bajo (<=5) se sigue tolerando el fallback historico para no
+		// dejar productos sin senal cuando el dueno no puso minimo.
 		query = query.Where(`(
-			(COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) * 100 > 20 AND (products.quantity / NULLIF(products."minStock", 0)) * 100 <= 50)
+			(COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) >= 0.25 AND (products.quantity / NULLIF(products."minStock", 0)) < 0.75)
 			OR (COALESCE(products."minStock", 0) <= 0 AND products.quantity > 0 AND products.quantity <= 5)
 		)`)
 	}
@@ -240,7 +249,7 @@ func (r *PostgresProductRepository) GetActiveCount() (int64, error) {
 }
 
 func (r *PostgresProductRepository) UpdateSupplierPrice(barcode string, supplierID uint, price float64) error {
-	return r.db.Clauses(clause.OnConflict{
+	err := r.db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "product_barcode"}, {Name: "supplier_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{"purchasePrice"}),
 	}).Create(&models.ProductSupplier{
@@ -248,6 +257,14 @@ func (r *PostgresProductRepository) UpdateSupplierPrice(barcode string, supplier
 		SupplierID:    supplierID,
 		PurchasePrice: price,
 	}).Error
+
+	// product_suppliers."purchasePrice" es exactamente la entrada de
+	// GetSavingsOpportunities (ver postgres_product_stats.go): si no se purga,
+	// el dashboard sigue recomendando el proveedor barato de hace una hora.
+	if err == nil {
+		cache.InvalidateSavingsOpportunities()
+	}
+	return err
 }
 
 func (r *PostgresProductRepository) GetSupplierPrices(barcode string) ([]models.ProductSupplier, error) {
@@ -278,35 +295,85 @@ func (r *PostgresProductRepository) GetOrphanedProducts() ([]models.Product, err
 }
 
 func (r *PostgresProductRepository) UnlinkSupplier(barcode string, supplierID uint) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Set products.supplierId to NULL if it matches this supplier
-		if err := tx.Exec(`UPDATE products SET "supplierId" = NULL WHERE barcode = ? AND "supplierId" = ?`, barcode, supplierID).Error; err != nil {
+	barcode = strings.TrimSpace(barcode)
+	if barcode == "" || supplierID == 0 {
+		return fmt.Errorf("producto y proveedor son requeridos")
+	}
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Select("barcode").Where("barcode = ?", barcode).First(&product).Error; err != nil {
+			return fmt.Errorf("producto no encontrado: %w", err)
+		}
+		if err := tx.Model(&models.Product{}).
+			Where("barcode = ? AND \"supplierId\" = ?", barcode, supplierID).
+			Update("supplierId", nil).Error; err != nil {
 			return err
 		}
-		// 2. Remove from product_suppliers mapping table
-		if err := tx.Exec(`DELETE FROM product_suppliers WHERE product_barcode = ? AND supplier_id = ?`, barcode, supplierID).Error; err != nil {
+		if err := tx.Where("product_barcode = ? AND supplier_id = ?", barcode, supplierID).
+			Delete(&models.ProductSupplier{}).Error; err != nil {
 			return err
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	r.AfterCommitUpdate(barcode)
+	return nil
 }
 
 func (r *PostgresProductRepository) LinkSupplier(barcode string, supplierID uint) error {
-	return r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Set products.supplierId
-		if err := tx.Exec(`UPDATE products SET "supplierId" = ? WHERE barcode = ?`, supplierID, barcode).Error; err != nil {
+	barcode = strings.TrimSpace(barcode)
+	if barcode == "" || supplierID == 0 {
+		return fmt.Errorf("producto y proveedor son requeridos")
+	}
+
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var product models.Product
+		if err := tx.Select("barcode").Where("barcode = ? AND COALESCE(\"isActive\", TRUE) = TRUE", barcode).
+			First(&product).Error; err != nil {
+			return fmt.Errorf("producto no encontrado o inactivo: %w", err)
+		}
+		var supplier models.Supplier
+		if err := tx.Select("id").Where("id = ? AND \"is_active\" = TRUE", supplierID).
+			First(&supplier).Error; err != nil {
+			return fmt.Errorf("proveedor no encontrado o inactivo: %w", err)
+		}
+
+		if err := tx.Model(&models.Product{}).Where("barcode = ?", barcode).
+			Update("supplierId", supplierID).Error; err != nil {
 			return err
 		}
-		// 2. Insert into product_suppliers
-		if err := tx.Exec(`INSERT INTO product_suppliers (product_barcode, supplier_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, barcode, supplierID).Error; err != nil {
+		link := models.ProductSupplier{ProductID: barcode, SupplierID: supplierID}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&link).Error; err != nil {
 			return err
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	r.AfterCommitUpdate(barcode)
+	return nil
 }
 
+// UpdateSupplierFrequency actualiza visit_frequency_days SOLO cuando el
+// proveedor no tiene agenda manual configurada. Esta funcion era el mecanismo
+// que quemaba al dueno: sobreescribia la frecuencia sin preguntar y las
+// sugerencias se corrian a un mes.
+//
+// A partir del Sprint 9 (migracion 014) el aprendizaje real vive en las
+// columnas learned_* que llena el batch nocturno. Aca solo dejamos el
+// fallback historico: si el proveedor jamas fue configurado a mano ni por
+// aprendizaje nuevo, seguimos aportando algo. En cuanto exista visit_days o
+// delivery_days, este metodo se convierte en no-op para que la configuracion
+// del dueno mande.
 func (r *PostgresProductRepository) UpdateSupplierFrequency(supplierID uint, days int) error {
-	return r.db.Model(&models.Supplier{}).Where("id = ?", supplierID).Update("visit_frequency_days", days).Error
+	return r.db.Model(&models.Supplier{}).
+		Where("id = ?", supplierID).
+		Where("(visit_days IS NULL OR visit_days::text = '[]') AND (delivery_days IS NULL OR delivery_days::text = '[]')").
+		Update("visit_frequency_days", days).Error
 }
 
 func (r *PostgresProductRepository) GetDailySalesAverage(barcode string, days int) (float64, error) {

@@ -10,6 +10,7 @@ import {
   CreditCard as CardIcon, ChevronRight, Info, X
 } from 'lucide-react';
 import { Expense } from '@/lib/definitions';
+import { liveDebtTotal, sumPayables } from '@/lib/payables.mjs';
 
 interface PendingDebtsModalProps {
   isOpen: boolean;
@@ -101,7 +102,10 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                         {creditor}
                       </h3>
                       {creditorDebts.map((debt) => {
-                        const currentDebtAmount = debt.remainingAmount > 0 ? debt.remainingAmount : Number(debt.amount);
+                        // Fuente única compartida con la tarjeta de Cuentas por
+                        // Pagar y con el Centro de Pagos de /expenses: incluye
+                        // el impuesto, que también se debe.
+                        const currentDebtAmount = liveDebtTotal(debt);
                         const isSettling = settlingId === String(debt.id);
                         const paymentVal = parseFloat(paymentAmount) || 0;
                         const remainingAfterPayment = isSettling ? Math.max(0, currentDebtAmount - paymentVal) : currentDebtAmount;
@@ -206,7 +210,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
               <div className="flex flex-col">
                 <span className="text-[10px] font-medium text-gray-400 uppercase tracking-widest">Total por pagar</span>
                 <span className="text-xl font-medium text-rose-500 tabular-nums leading-none">
-                  ${debts.reduce((acc, d) => acc + (d.remainingAmount > 0 ? d.remainingAmount : Number(d.amount)), 0).toLocaleString()}
+                  ${sumPayables(debts).toLocaleString('es-CO')}
                 </span>
               </div>
               <Button

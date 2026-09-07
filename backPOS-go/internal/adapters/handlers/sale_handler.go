@@ -74,8 +74,10 @@ func (h *SaleHandler) Create(c *gin.Context) {
 }
 
 func (h *SaleHandler) GetAll(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "10"))
+	page := QueryPage(c, "page")
+	// Tope compartido: ver MaxPageSize en pagination.go. Sin él,
+	// ?pageSize=999999 traía el histórico completo de ventas con sus detalles.
+	pageSize := QueryPageSize(c, "pageSize", 10)
 	from := c.Query("from")
 	to := c.Query("to")
 	clientDni := c.Query("clientDni")
@@ -187,11 +189,32 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})
 }
 
+// AddSaleItemsReq define el contrato del endpoint /sales/add-items/:id.
+//
+// items[].quantity es FIRMADA: positivo agrega, negativo quita. Item con
+// quantity == 0 se rechaza.
+//
+// cashAmount, transferAmount, transferNequi, transferDaviplata y creditAmount
+// llegan como MAGNITUDES POSITIVAS elegidas en el modal. El servicio
+// determina el signo según el delta monetario neto:
+//   - delta > 0 → suman al canal correspondiente.
+//   - delta < 0 → restan (reembolso) del canal correspondiente.
+//   - delta = 0 → exige suma de magnitudes cero.
+type AddSaleItemsItem struct {
+	Barcode       string  `json:"barcode"`
+	Quantity      float64 `json:"quantity"`
+	MISCUnitPrice float64 `json:"unitPrice,omitempty"`
+	MISCCostPrice float64 `json:"costPrice,omitempty"`
+}
+
 type AddSaleItemsReq struct {
-	Items          []models.SaleDetail `json:"items"`
-	CashAmount     float64             `json:"cashAmount"`
-	TransferAmount float64             `json:"transferAmount"`
-	TransferSource string              `json:"transferSource"`
+	Items             []AddSaleItemsItem `json:"items"`
+	CashAmount        float64            `json:"cashAmount"`
+	TransferAmount    float64            `json:"transferAmount"`
+	TransferNequi     float64            `json:"transferNequi"`
+	TransferDaviplata float64            `json:"transferDaviplata"`
+	CreditAmount      float64            `json:"creditAmount"`
+	TransferSource    string             `json:"transferSource"`
 }
 
 func (h *SaleHandler) AddItems(c *gin.Context) {
@@ -206,21 +229,74 @@ func (h *SaleHandler) AddItems(c *gin.Context) {
 	}
 
 	if len(req.Items) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "No hay productos para agregar"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No hay productos para procesar"})
 		return
 	}
 
-	dni, _ := GetContextUser(c)
-	if err := h.service.AddItemsToSale(saleID, req.Items, req.CashAmount, req.TransferAmount, req.TransferSource, dni); err != nil {
-		if containsBusinessError(err.Error()) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
+	// Validar magnitudes positivas antes de tocar servicio.
+	if req.CashAmount < 0 || req.TransferAmount < 0 || req.TransferNequi < 0 ||
+		req.TransferDaviplata < 0 || req.CreditAmount < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "los montos deben ser magnitudes positivas"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Venta actualizada correctamente"})
+	items := make([]services.SaleEditItemInput, 0, len(req.Items))
+	for _, it := range req.Items {
+		items = append(items, services.SaleEditItemInput{
+			Barcode:       strings.TrimSpace(it.Barcode),
+			Quantity:      it.Quantity,
+			MISCUnitPrice: it.MISCUnitPrice,
+			MISCCostPrice: it.MISCCostPrice,
+		})
+	}
+
+	dni, name := GetContextUser(c)
+	summary, err := h.service.AddItemsToSaleV2(
+		saleID, items,
+		req.CashAmount, req.TransferAmount, req.TransferNequi, req.TransferDaviplata, req.CreditAmount,
+		req.TransferSource, dni,
+	)
+	if err != nil {
+		// Todos los errores del servicio son de negocio: 400.
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Venta actualizada correctamente",
+		"summary": summary,
+	})
+
+	// Auditoría crítica post-commit: DNI/nombre + delta + canales.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("⚠️ [Audit-EditSale] Recovery from panic: %v\n", r)
+			}
+		}()
+		direction := summary.Direction
+		details := fmt.Sprintf(
+			"Venta #%d editada (%s). Delta=$%.2f. Canales: cash=$%.2f nequi=$%.2f davi=$%.2f transfer=$%.2f credit=$%.2f",
+			summary.SaleID, direction, summary.MonetaryDelta,
+			summary.CashDelta, summary.NequiDelta, summary.DaviplataDelta,
+			summary.TransferDelta, summary.CreditDelta,
+		)
+		human := fmt.Sprintf("El cajero %s editó la venta #%d: %s $%.2f (líneas +%d -%d ×%d)",
+			name, summary.SaleID, direction, summary.MonetaryDelta,
+			summary.LinesAdded, summary.LinesReduced, summary.LinesRemoved)
+		h.auditService.Log(dni, name, "EDIT_SALE_ITEMS", "SALES", details, human, "{}", c.ClientIP(), c.Request.UserAgent(), true)
+	}()
+
+	// SSE dashboard tras commit para refresco en tiempo real.
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Printf("⚠️ [SSE-EditSale] Recovery from panic: %v\n", r)
+			}
+		}()
+		sse.GetSSEService().BroadcastDashboardUpdate()
+		sse.GetSSEService().BroadcastNewSale(models.Sale{SaleID: summary.SaleID})
+	}()
 }
 
 func containsBusinessError(msg string) bool {

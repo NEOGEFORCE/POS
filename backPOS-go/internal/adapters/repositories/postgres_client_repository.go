@@ -115,6 +115,27 @@ func (r *PostgresClientRepository) Delete(dni string) error {
 	return err
 }
 
+// SumLiveDebt suma la cartera viva de clientes con UN SELECT agregado.
+//
+// Antes el servicio llamaba a GetAll() y sumaba en Go: eso materializaba toda la
+// tabla de clientes (y la dejaba cacheada en RAM) sólo para producir un número.
+//
+// La definición de "deuda viva" es la que ya existía en working_capital.go y en
+// export_service.go: sólo los saldos POSITIVOS de clients."currentCredit". Un
+// saldo negativo es plata a favor del cliente, no cartera por cobrar; sumarlo
+// restaría del total y subvaloraría la cartera.
+//
+// La columna va entrecomillada porque el esquema la declara en camelCase.
+// El scope de soft-delete de GORM excluye los clientes borrados.
+func (r *PostgresClientRepository) SumLiveDebt() (float64, error) {
+	var total float64
+	err := r.db.Model(&models.Client{}).
+		Where(`COALESCE("currentCredit", 0) > 0`).
+		Select(`COALESCE(SUM("currentCredit"), 0)`).
+		Scan(&total).Error
+	return total, err
+}
+
 func (r *PostgresClientRepository) Count() (int64, error) {
 	if cached, found := cache.CacheManager.Get(cache.CacheKeyClientCount); found {
 		return cached.(int64), nil

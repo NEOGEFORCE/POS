@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 )
 
@@ -30,8 +31,8 @@ type SuggestedOrder struct {
 	IsPack            bool        `json:"isPack"`         // Modo Pack existente
 	PackMultiplier    int         `json:"packMultiplier"` // Multiplicador del pack
 	OrderMultiple     int         `json:"orderMultiple"`  // Alias para frontend (REQUERIDO)
-	RequiredMin       float64     `json:"requiredMin"`    // Mínimo obligado (MinStock - Stock)
-	ProjectedSales    float64     `json:"projectedSales"` // Proyección por ventas (TotalIdeal - RequiredMin)
+	RequiredMin       float64     `json:"requiredMin"`    // Piso para salir del rojo (25% del min - stock - transito, ceileado). Bajo la regla del duenio (agosto 2026) el minimo NO es meta.
+	ProjectedSales    float64     `json:"projectedSales"` // Proyección por ventas (avgDaily * diasCobertura - effectiveStock)
 	TotalIdeal        float64     `json:"totalIdeal"`     // Total ideal calculado (redondeado a PackMultiplier)
 	RecentSales       float64     `json:"recentSales"`    // Last 14 days
 	AvgDailySales     float64     `json:"avgDailySales"`  // Promedio venta diaria
@@ -146,18 +147,33 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		}
 
 		effectiveStock := p.Quantity + pendingQty
-		sugeridoBase := p.MinStock - effectiveStock
 		stockRequeridoPorVentas := avgDaily * diasCobertura
 		sugeridoPorVentas := stockRequeridoPorVentas - effectiveStock
 
-		var deficit float64
-		// Regla Estricta: PROHIBIDO sugerir si Stock >= Stock Mínimo y no ignoramos el stock
-		// EXCEPCION: Si hay algo en transito, lo mostramos para que el Frontend ponga la etiqueta "EN CAMINO"
-		if !ignoreStock && (p.Quantity >= p.MinStock) && pendingQty <= 0 {
+		// Regla nueva del dueno (agosto 2026): el minimo es alarma, NO meta.
+		// Prohibido llenar hasta el 100% del minimo — encarece el pedido.
+		// La cantidad a pedir es el MAYOR de:
+		//   (a) POR DEMANDA: demanda hasta la proxima visita menos lo
+		//       disponible (stock + transito). No usa colchon ABC porque
+		//       este servicio no clasifica ABC; el batch nocturno si lo
+		//       hace y alimenta /restock/suggestions-v2. Aca se pasa "" y
+		//       se toma la rama de demanda con el ideal ya calculado.
+		//   (b) PISO PARA SALIR DEL ROJO: solo si la banda es ROJA, lo que
+		//       falta para llegar al 25% del minimo. En amarillo/verde NO
+		//       existe. El helper vive en models.RedFloorShortfall.
+		// La funcion canonica que combina ambas cosas es
+		// models.SuggestedOrderQty; usarla aca en vez de duplicar la logica
+		// mata la divergencia entre este endpoint y /restock/suggestions-v2.
+		deficit := models.SuggestedOrderQty(stockRequeridoPorVentas, p.Quantity, pendingQty, p.MinStock, "")
+		redFloor := models.RedFloorShortfall(p.MinStock, p.Quantity, pendingQty)
+
+		// Filtro temprano: si no hay nada que pedir (demanda cubierta y
+		// banda no roja) y tampoco viene mercancia, no se emite item.
+		// El caso `ignoreStock=true` deja pasar todo para que el operador
+		// pueda revisar el catalogo completo.
+		if !ignoreStock && deficit <= 0 && pendingQty <= 0 {
 			continue
 		}
-
-		deficit = math.Max(0.0, sugeridoBase)
 
 		alert := ""
 		alertType := ""
@@ -168,7 +184,9 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			alertType = "HIGH_MOVER"
 		}
 
-		// Slow/High-Mover and Min Stock checks
+		// Slow/High-Mover and Min Stock checks. Estas heuristicas SUGIEREN
+		// un nuevo minimo al operador; NUNCA lo escriben (regla permanente,
+		// vigilada por TestNoAutoWriteToMinStock).
 		suggestedMinStock := p.MinStock
 		if avgDaily*14 > p.MinStock+2 {
 			suggestedMinStock = math.Ceil(avgDaily * 14)
@@ -196,7 +214,11 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			continue
 		}
 
-		isHighRotation := (totalIdeal > sugeridoBase && sugeridoPorVentas > sugeridoBase) || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
+		// "Alta rotacion" bajo la regla nueva: el pedido calculado supera
+		// al piso rojo Y la demanda proyectada supera al piso rojo. Es
+		// decir: no estamos pidiendo solo para salir del rojo, la demanda
+		// ya justifica pedir mas por si sola.
+		isHighRotation := (totalIdeal > redFloor && sugeridoPorVentas > redFloor) || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
 
 		if alert == "" {
 			if isHighRotation && totalIdeal > 0 {
@@ -208,7 +230,11 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			}
 		}
 
-		requiredMin := math.Max(0, sugeridoBase)
+		// requiredMin (JSON field) ahora expone el piso "salir del rojo":
+		// cuanto falta para llegar al 25% del minimo. Bajo la regla nueva
+		// esa es la unica cantidad "obligada" contra el minimo — el minimo
+		// entero ya no manda. Ver models.RedFloorShortfall.
+		requiredMin := redFloor
 		projectedSales := math.Max(0, sugeridoPorVentas)
 
 		supplierID := uint(0)
@@ -216,25 +242,21 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 			supplierID = *p.SupplierID
 		}
 
+		// Banda del semaforo con la regla nueva del dueno (agosto 2026):
+		// ROJO < 25% del minimo, AMARILLO 25%–75%, VERDE >= 75%. La logica
+		// canonica vive en models.ClassifyStockBand para que no se repita
+		// aca ni en la SQL de stats. StockCritical/Warning/Optimal son los
+		// nombres historicos que este endpoint sigue emitiendo por
+		// compatibilidad con el frontend.
 		var status StockStatus
-		if p.MinStock <= 0 {
-			if p.Quantity <= 0 {
-				status = StockCritical
-			} else if p.Quantity <= 2 {
-				status = StockWarning
-			} else {
-				status = StockOptimal
-			}
-		} else {
-			ratio := float64(p.Quantity) / p.MinStock
-
-			if p.Quantity <= 0 || ratio <= 0.25 {
-				status = StockCritical
-			} else if ratio <= 0.50 {
-				status = StockWarning
-			} else {
-				status = StockOptimal
-			}
+		switch models.ClassifyStockBand(p.Quantity, p.MinStock) {
+		case models.StockBandRed:
+			status = StockCritical
+		case models.StockBandYellow:
+			status = StockWarning
+		default:
+			// StockBandGreen y StockBandUnset -> Optimal.
+			status = StockOptimal
 		}
 
 		suggested = append(suggested, SuggestedOrder{
@@ -397,15 +419,19 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		}
 
 		effectiveStock := p.Quantity + pendingQty
-		sugeridoBase := p.MinStock - effectiveStock
 		stockRequeridoPorVentas := avgDaily * diasCobertura
 		sugeridoPorVentas := stockRequeridoPorVentas - effectiveStock
 
-		var deficit float64
-		if effectiveStock >= p.MinStock && pendingQty <= 0 {
+		// Regla nueva del dueno (agosto 2026): mismo helper compartido que
+		// GetGlobalRestockSuggestions y /restock/suggestions-v2 para que
+		// los tres endpoints jamas divergan sobre "cuanto se pide". El
+		// minimo es alarma, NO meta: solo salir del rojo (25% del min) y
+		// demanda hasta la proxima visita.
+		deficit := models.SuggestedOrderQty(stockRequeridoPorVentas, p.Quantity, pendingQty, p.MinStock, "")
+		redFloor := models.RedFloorShortfall(p.MinStock, p.Quantity, pendingQty)
+
+		if !ignoreStock && deficit <= 0 && pendingQty <= 0 {
 			continue
-		} else {
-			deficit = math.Max(0.0, sugeridoBase)
 		}
 
 		alert := ""
@@ -443,7 +469,7 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 			continue
 		}
 
-		isHighRotation := (totalIdeal > sugeridoBase && sugeridoPorVentas > sugeridoBase) || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
+		isHighRotation := (totalIdeal > redFloor && sugeridoPorVentas > redFloor) || alertType == "HIGH_MOVER" || alertType == "INCREASE_MIN_STOCK"
 
 		if alert == "" {
 			if isHighRotation && totalIdeal > 0 {
@@ -455,28 +481,21 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 			}
 		}
 
-		requiredMin := math.Max(0, sugeridoBase)
+		// requiredMin (JSON field) = piso "salir del rojo" bajo la regla
+		// nueva. Nunca "MinStock - Stock".
+		requiredMin := redFloor
 		projectedSales := math.Max(0, sugeridoPorVentas)
 
+		// Misma regla que arriba: banda ROJO/AMARILLO/VERDE contra el minimo
+		// configurado, delegada a models.ClassifyStockBand.
 		var status StockStatus
-		if p.MinStock <= 0 {
-			if p.Quantity <= 0 {
-				status = StockCritical
-			} else if p.Quantity <= 2 {
-				status = StockWarning
-			} else {
-				status = StockOptimal
-			}
-		} else {
-			ratio := float64(p.Quantity) / p.MinStock
-
-			if p.Quantity <= 0 || ratio <= 0.25 {
-				status = StockCritical
-			} else if ratio <= 0.50 {
-				status = StockWarning
-			} else {
-				status = StockOptimal
-			}
+		switch models.ClassifyStockBand(p.Quantity, p.MinStock) {
+		case models.StockBandRed:
+			status = StockCritical
+		case models.StockBandYellow:
+			status = StockWarning
+		default:
+			status = StockOptimal
 		}
 
 		suggested = append(suggested, SuggestedOrder{

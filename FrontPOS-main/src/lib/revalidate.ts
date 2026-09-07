@@ -81,6 +81,7 @@ export function revalidateKeysForEvent(event: SyncEvent) {
         '/dashboard/cashier-closure',
         '/inventory/stock',
         '/products/all-products',
+        '/products/stats',
         '/sales/history',
         '/reports/daily',
         '/dashboard/kpis'
@@ -89,16 +90,19 @@ export function revalidateKeysForEvent(event: SyncEvent) {
     case 'PRODUCT_UPDATE':
       keysToMutate = [
         '/products/all-products',
+        '/products/stats',
         '/inventory/stock',
         '/dashboard/stats',
         '/dashboard/overview',
-        '/products/paginated'
+        '/products/paginated',
+        '/restock/suggestions-v2'
       ];
       break;
     case 'INVENTORY_UPDATE':
       keysToMutate = [
         '/inventory/stock',
         '/products/all-products',
+        '/products/stats',
         '/dashboard/stats',
         '/dashboard/overview',
         '/inventory/suggested-orders',
@@ -138,7 +142,7 @@ export function revalidateKeysForEvent(event: SyncEvent) {
       keysToMutate.push('/categories/all-categories', '/products/all-products');
       break;
     case 'SUPPLIER_UPDATE':
-      keysToMutate.push('/suppliers/all-suppliers', '/products/all-products');
+      keysToMutate.push('/suppliers/all-suppliers', '/products/all-products', '/restock/suggestions-v2');
       break;
     case 'CUSTOMER_UPDATE':
       keysToMutate.push('/clients/all-clients');
@@ -153,6 +157,7 @@ export function revalidateKeysForEvent(event: SyncEvent) {
       keysToMutate = [
         '/inventory/stock',
         '/products/all-products',
+        '/products/stats',
         '/dashboard/stats',
         '/products/paginated'
       ];
@@ -174,7 +179,8 @@ export function revalidateKeysForEvent(event: SyncEvent) {
         key.includes('/sales/history') ||
         key.includes('/dashboard/stats') ||
         key.includes('/dashboard/cashier-closure') ||
-        key.includes('/inventory/stock')
+        key.includes('/inventory/stock') ||
+        key.includes('/restock/suggestions-v2')
       );
     });
   }

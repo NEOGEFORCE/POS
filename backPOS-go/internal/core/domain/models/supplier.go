@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -63,6 +64,16 @@ type Supplier struct {
 	VisitFrequencyDays int         `gorm:"default:7;column:visit_frequency_days" json:"visitFrequencyDays"`
 	LeadTimeDays       *int        `gorm:"column:lead_time_days" json:"leadTimeDays,omitempty"`
 	IsActive           bool        `gorm:"default:true;column:is_active" json:"isActive"`
+
+	// Agenda APRENDIDA por el batch a partir de confirmed_orders. Estas
+	// columnas viven en paralelo a VisitDays/DeliveryDays y NUNCA las
+	// sobreescriben: el dueño manda sobre visit_days y delivery_days, el
+	// sistema sólo escribe aquí. Ver migración 014.
+	LearnedVisitDays    StringArray `gorm:"type:jsonb;column:learned_visit_days" json:"learnedVisitDays,omitempty"`
+	LearnedDeliveryDays StringArray `gorm:"type:jsonb;column:learned_delivery_days" json:"learnedDeliveryDays,omitempty"`
+	LearnedLeadTimeDays *int        `gorm:"column:learned_lead_time_days" json:"learnedLeadTimeDays,omitempty"`
+	LearnedSampleCount  int         `gorm:"not null;default:0;column:learned_sample_count" json:"learnedSampleCount"`
+	LearnedAt           *time.Time  `gorm:"column:learned_at" json:"learnedAt,omitempty"`
 
 	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 	// Relaciones

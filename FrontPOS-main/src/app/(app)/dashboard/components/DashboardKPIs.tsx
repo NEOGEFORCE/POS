@@ -508,9 +508,18 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
 
             {/* FILA 2 */}
             <KpiCard
-                label="Egresos del Ultimo Cierre"
+                label="Egresos del Último Cierre"
                 value={typeof data.todayExpenses === 'object' ? (data.todayExpenses?.amount || 0) : (data.todayExpenses || 0)}
-                sub={`${typeof data.todayExpenses === 'object' ? (data.todayExpenses?.count || 0) : 0} salidas pagadas`}
+                sub={
+                    <div className="flex flex-col gap-0.5 mt-1">
+                        <span className="text-[10px] text-gray-500 dark:text-zinc-400">
+                            Total operativo · todos los canales
+                        </span>
+                        <span className="text-[9.5px] font-bold text-gray-400 dark:text-zinc-500 uppercase tracking-widest">
+                            {typeof data.todayExpenses === 'object' ? (data.todayExpenses?.count || 0) : 0} salidas pagadas
+                        </span>
+                    </div>
+                }
                 icon={DollarSign}
                 color="#f43f5e"
                 isCurrency={true}

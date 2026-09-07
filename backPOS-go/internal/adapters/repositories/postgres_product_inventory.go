@@ -23,7 +23,8 @@ func (r *PostgresProductRepository) UpdateQuantity(barcode string, newQuantity f
 	roundedQty := math.Round(newQuantity*1000) / 1000
 	err := r.db.Model(&models.Product{}).Where("barcode = ?", barcode).Update("quantity", roundedQty).Error
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyProducts)
+		// Arreglo 2: cambio sólo de cantidad — no invalidamos CacheKeyProducts.
+		// El dashboard sí depende de saldos agregados, así que lo refrescamos.
 		r.invalidateDashboardCache()
 	}
 	return err
@@ -51,7 +52,7 @@ func (r *PostgresProductRepository) BatchUpdateQuantities(updates map[string]flo
 
 	err := tx.Commit().Error
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyProducts)
+		// Arreglo 2: sólo se movieron cantidades, no la forma del catálogo.
 		r.invalidateDashboardCache()
 	}
 	return err
@@ -122,7 +123,8 @@ func (r *PostgresProductRepository) BatchAdjustQuantitiesWithTx(tx interface{}, 
 	if !ok {
 		err := gormDB.Commit().Error
 		if err == nil {
-			cache.InvalidateCache(cache.CacheKeyProducts)
+			// Arreglo 2: BatchAdjust sólo mueve cantidades — no purgamos
+			// CacheKeyProducts (ver comentario general en cache.go).
 			r.invalidateDashboardCache()
 		}
 		return err
@@ -198,10 +200,39 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 	var changedProducts []string
 	err := r.db.Transaction(func(tx *gorm.DB) error {
 		// Opción A: si estamos en modo edición, eliminar/dar de baja la recepción anterior y revertir stock antes de procesar el consolidado
+		//
+		// FIX (Sprint arreglos): el filtro histórico era
+		//   Where("reference_id = ? AND reason = ?", editReceptionID, "RECEPTION")
+		// y sólo atrapaba movimientos con reason="RECEPTION". Dejaba
+		// afuera:
+		//   - RECEPTION_BONUS (bonificaciones del proveedor).
+		//   - PACK_RECEPTION_BULK (el efecto sobre el producto BASE
+		//     cuando se recibió una paca; antes usaba un reference_id
+		//     distinto "PACKB-<ts>" — ahora comparte receptionID).
+		//   - PRICE_UPDATE_NO_STOCK (movimientos qty=0 de las recepciones
+		//     de sólo precio).
+		//   - ADJUSTMENT_UP/DOWN (ajustes físicos del entry y del base).
+		// La consecuencia real reportada por el dueño: editar una
+		// recepción de pacas duplicaba el stock del producto base.
+		//
+		// El allowlist vive en reception_reasons.go (con tests) para
+		// que si BulkReceive gana un reason nuevo, se sepa dónde
+		// actualizarlo.
 		if editReceptionID != "" {
 			var movements []models.StockMovement
-			if err := tx.Where("reference_id = ? AND reason = ?", editReceptionID, "RECEPTION").Find(&movements).Error; err == nil {
+			if err := tx.Where(
+				"reference_id = ? AND (reason IN ? OR type IN ?)",
+				editReceptionID,
+				ReceptionMovementReasons,
+				ReceptionAdjustmentTypes,
+			).Find(&movements).Error; err == nil {
 				for _, m := range movements {
+					if m.Quantity == 0 {
+						// PRICE_UPDATE_NO_STOCK: nada que revertir en stock,
+						// pero el movimiento se borra abajo para no dejar
+						// huellas fantasma.
+						continue
+					}
 					if err := tx.Model(&models.Product{}).
 						Where("barcode = ?", m.Barcode).
 						Updates(map[string]interface{}{
@@ -212,7 +243,12 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					}
 				}
 			}
-			if err := tx.Where("reference_id = ? AND reason = ?", editReceptionID, "RECEPTION").Delete(&models.StockMovement{}).Error; err != nil {
+			if err := tx.Where(
+				"reference_id = ? AND (reason IN ? OR type IN ?)",
+				editReceptionID,
+				ReceptionMovementReasons,
+				ReceptionAdjustmentTypes,
+			).Delete(&models.StockMovement{}).Error; err != nil {
 				return err
 			}
 			if err := tx.Where("reference_id = ?", editReceptionID).Delete(&models.Expense{}).Error; err != nil {
@@ -342,9 +378,34 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 					var baseProduct models.Product
 					if err := tx.Where("barcode = ?", *product.BaseProductBarcode).First(&baseProduct).Error; err == nil {
 						if isEgreso {
-							baseProduct.Quantity += diff * float64(product.PackMultiplier)
+							baseDiff := diff * float64(product.PackMultiplier)
+							baseProduct.Quantity += baseDiff
 							if err := tx.Save(&baseProduct).Error; err != nil {
 								return fmt.Errorf("error actualizando stock del producto base en ajuste: %w", err)
+							}
+
+							// FIX: Antes ESTE ajuste sobre el producto BASE NO
+							// se registraba como movimiento. Al editar/eliminar
+							// la recepción no se revertía, y el base quedaba
+							// descuadrado. Ahora emitimos un movimiento
+							// gemelo sobre el base con el mismo receptionID
+							// para que la reversión sea completa.
+							baseMoveType := "ADJUSTMENT_UP"
+							if baseDiff < 0 {
+								baseMoveType = "ADJUSTMENT_DOWN"
+							}
+							baseAdjMovement := models.StockMovement{
+								Date:         time.Now(),
+								Barcode:      baseProduct.Barcode,
+								Quantity:     baseDiff,
+								Type:         baseMoveType,
+								Reason:       "Ajuste en Recepción (base de paca)",
+								ReferenceID:  receptionID,
+								EmployeeDNI:  employeeDNI,
+								EmployeeName: employeeName,
+							}
+							if err := tx.Create(&baseAdjMovement).Error; err != nil {
+								return err
 							}
 						}
 					}
@@ -352,12 +413,35 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			}
 
 			// === TAREA 3: APRENDIZAJE LOGÍSTICO (Auto-Frecuencia en Bulk) ===
+			//
+			// Este bloque venia sobreescribiendo visit_frequency_days
+			// automaticamente con la separacion entre recepciones. Ese
+			// mecanismo inflaba las fechas y quemaba al dueno: si pasaban
+			// dos semanas sin recepcion, "aprendia" 14 dias y las sugerencias
+			// se corrian a un mes.
+			//
+			// A partir del Sprint 9 (migracion 014) el aprendizaje real vive
+			// en el batch nocturno y escribe en columnas learned_* separadas.
+			// Esta linea sigue vigente SOLO como fallback: si el proveedor
+			// NUNCA fue configurado a mano (visit_days y delivery_days vacios)
+			// y ademas nadie puso un lead_time_days explicito, seguimos
+			// aportando alguna senal.
+			//
+			// Si el dueno YA configuro visit_days O delivery_days, NO se
+			// toca visit_frequency_days: la agenda manual es sagrada.
 			if entry.AddedQuantity > 0 {
 				var lastMove models.StockMovement
 				if err := tx.Where("barcode = ? AND reason = ?", entry.Barcode, "RECEPTION").Order("date DESC").First(&lastMove).Error; err == nil {
 					days := int(time.Since(lastMove.Date).Hours() / 24)
 					if days > 1 && days < 100 && entry.SupplierID != nil {
-						tx.Model(&models.Supplier{}).Where("id = ?", *entry.SupplierID).Update("visit_frequency_days", days)
+						// Solo aprender si el proveedor NO tiene agenda
+						// manual configurada. El chequeo lo hace la BD con
+						// un WHERE que exige ambas columnas vacias — asi
+						// evitamos una lectura extra en Go.
+						tx.Model(&models.Supplier{}).
+							Where("id = ?", *entry.SupplierID).
+							Where("(visit_days IS NULL OR visit_days::text = '[]') AND (delivery_days IS NULL OR delivery_days::text = '[]')").
+							Update("visit_frequency_days", days)
 					}
 				}
 			}
@@ -393,12 +477,20 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				}
 
 				baseMovement := models.StockMovement{
-					Date:         time.Now(),
-					Barcode:      baseProduct.Barcode,
-					Quantity:     expandedQuantity,
-					Type:         "IN",
-					Reason:       "PACK_RECEPTION_BULK",
-					ReferenceID:  fmt.Sprintf("PACKB-%d", time.Now().Unix()),
+					Date:     time.Now(),
+					Barcode:  baseProduct.Barcode,
+					Quantity: expandedQuantity,
+					Type:     "IN",
+					Reason:   "PACK_RECEPTION_BULK",
+					// FIX: antes usaba fmt.Sprintf("PACKB-%d", time.Now().Unix())
+					// como reference_id, distinto al receptionID de la
+					// recepción padre. Como consecuencia, la reversión al
+					// editar/eliminar NO encontraba este movimiento y el
+					// stock del BASE se duplicaba al reprocesar la pack.
+					// Ahora comparte el mismo receptionID para que la
+					// reversión sea completa. El allowlist de reasons vive
+					// en reception_reasons.go.
+					ReferenceID:  receptionID,
 					EmployeeDNI:  employeeDNI,
 					EmployeeName: employeeName,
 				}
@@ -797,28 +889,50 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 	return changedProducts, err
 }
 
+// GetGlobalInventoryValue devuelve el valor del inventario A COSTO:
+// SUM(stock × precio de compra) sobre los productos activos.
+//
+// Es la cifra que alimenta el KPI "Valor del inventario" del dashboard y la
+// misma que totaliza el reporte de inventario. El predicado sale de
+// ports.SQLActiveProduct para que las dos no puedan divergir: antes esta
+// consulta usaba `"isActive" = true` pelado y descartaba en silencio las filas
+// legadas con isActive NULL, subvalorando el inventario.
 func (r *PostgresProductRepository) GetGlobalInventoryValue() (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Product{}).
-		Where("\"isActive\" = ?", true).
+		Where(ports.SQLActiveProduct).
 		Select("COALESCE(SUM(quantity * \"purchasePrice\"), 0)").
 		Scan(&total).Error
 	return total, err
 }
 
+// GetGlobalInventoryRetailValue devuelve el valor del inventario A PRECIO DE
+// VENTA: SUM(stock × precio de venta) sobre los productos activos.
 func (r *PostgresProductRepository) GetGlobalInventoryRetailValue() (float64, error) {
 	var total float64
 	err := r.db.Model(&models.Product{}).
-		Where("\"isActive\" = ?", true).
+		Where(ports.SQLActiveProduct).
 		Select("COALESCE(SUM(quantity * \"salePrice\"), 0)").
 		Scan(&total).Error
 	return total, err
 }
 func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 	err := r.db.Transaction(func(tx *gorm.DB) error {
-		// 1. Obtener todos los movimientos de esta recepción
+		// 1. Obtener todos los movimientos de esta recepción.
+		//
+		// FIX: El filtro histórico era
+		//   Where("reference_id = ? AND reason = ?", receptionID, "RECEPTION")
+		// e ignoraba bonificaciones, el efecto sobre el producto base
+		// de las pacas y los ajustes físicos. Al borrar una recepción
+		// con pacas, el stock del base no se revertía. Ahora se usa el
+		// allowlist definido en reception_reasons.go (con tests).
 		var movements []models.StockMovement
-		if err := tx.Where("reference_id = ? AND reason = ?", receptionID, "RECEPTION").Find(&movements).Error; err != nil {
+		if err := tx.Where(
+			"reference_id = ? AND (reason IN ? OR type IN ?)",
+			receptionID,
+			ReceptionMovementReasons,
+			ReceptionAdjustmentTypes,
+		).Find(&movements).Error; err != nil {
 			return err
 		}
 
@@ -826,8 +940,14 @@ func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 			return fmt.Errorf("no se encontraron movimientos para la recepción %s", receptionID)
 		}
 
-		// 2. Revertir stock para cada producto
+		// 2. Revertir stock para cada producto. Los PRICE_UPDATE_NO_STOCK
+		//    tienen Quantity=0, así que restar es un no-op de stock,
+		//    pero el movimiento sí se borra para no dejar huella
+		//    fantasma en el kárdex.
 		for _, m := range movements {
+			if m.Quantity == 0 {
+				continue
+			}
 			// MASTER SPRINT: Enforce 3 decimal precision in reversal
 			if err := tx.Model(&models.Product{}).
 				Where("barcode = ?", m.Barcode).
@@ -839,8 +959,13 @@ func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 			}
 		}
 
-		// 3. Eliminar los movimientos
-		if err := tx.Where("reference_id = ? AND reason = ?", receptionID, "RECEPTION").Delete(&models.StockMovement{}).Error; err != nil {
+		// 3. Eliminar los movimientos con el mismo criterio del find.
+		if err := tx.Where(
+			"reference_id = ? AND (reason IN ? OR type IN ?)",
+			receptionID,
+			ReceptionMovementReasons,
+			ReceptionAdjustmentTypes,
+		).Delete(&models.StockMovement{}).Error; err != nil {
 			return err
 		}
 
@@ -853,7 +978,8 @@ func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 	})
 
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyProducts)
+		// Arreglo 2: eliminar una recepción sólo revierte cantidades del kardex
+		// (no recalcula precios). No invalidamos CacheKeyProducts.
 		r.invalidateDashboardCache()
 	}
 	return err

@@ -1433,13 +1433,18 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 			targetDay = spanishWeekdays[now.Weekday()]
 		}
 
-		// Normalizar para comparación case-insensitive
-		targetDayLower := strings.ToLower(targetDay)
+		// Normalizacion: la SQL usa unaccent(lower(...)) en ambos lados,
+		// asi que basta pasar el nombre canonico crudo como parametro.
+		// Antes se usaba LIKE con "%<day_lower>%" que no toleraba tildes
+		// (formulario guarda "Miercoles" sin tilde y el cron consulta con
+		// tilde; los dos dias nunca hacian match).
 
 		// Listar proveedores cuyo visit_day o visit_days incluye el día objetivo.
 		// Soporta tanto el campo legacy `visitDay` (string) como el nuevo
-		// `visit_days` (jsonb array). En PostgreSQL `?` es operador JSONB
-		// "contiene clave"; lo evitamos usando texto y LIKE para compatibilidad.
+		// `visit_days` (jsonb array). Se usa unaccent+lower en AMBOS lados
+		// para tolerar tildes y mayusculas (el formulario guarda
+		// "Miercoles"/"Sabado" sin tilde y el cron consulta la version con
+		// tilde; sin este colchon esos dos dias nunca hacian match).
 		type supRow struct {
 			ID         uint
 			Name       string
@@ -1458,11 +1463,19 @@ func (s *AIBotService) executeFunction(chatID int64, name string, args map[strin
 			WHERE deleted_at IS NULL
 			  AND COALESCE(is_active, true) = true
 			  AND (
-			        LOWER(COALESCE("visitDay", '')) LIKE ?
-			     OR LOWER(COALESCE(visit_days::text, '')) LIKE ?
+			        EXISTS (
+			          SELECT 1
+			          FROM regexp_split_to_table(COALESCE("visitDay", ''), '\s*,\s*') part
+			          WHERE unaccent(lower(trim(part))) = unaccent(lower(?))
+			        )
+			     OR EXISTS (
+			          SELECT 1
+			          FROM jsonb_array_elements_text(COALESCE(visit_days, '[]'::jsonb)) d
+			          WHERE unaccent(lower(d)) = unaccent(lower(?))
+			        )
 			      )
 			ORDER BY name ASC
-		`, "%"+targetDayLower+"%", "%"+targetDayLower+"%").Scan(&sups).Error
+		`, targetDay, targetDay).Scan(&sups).Error
 		if err != nil {
 			return nil, fmt.Errorf("query suppliers: %w", err)
 		}

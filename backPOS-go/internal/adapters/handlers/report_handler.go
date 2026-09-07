@@ -48,8 +48,7 @@ func (h *ReportHandler) RecordReport(c *gin.Context) {
 }
 
 func (h *ReportHandler) GetHistory(c *gin.Context) {
-	limitStr := c.DefaultQuery("limit", "50")
-	limit, _ := strconv.Atoi(limitStr)
+	limit := QueryPageSize(c, "limit", 50)
 
 	history, err := h.service.GetHistory(limit)
 	if err != nil {

@@ -89,8 +89,17 @@ func (h *ReturnHandler) Delete(c *gin.Context) {
 	}()
 }
 
+// DefaultReturnsPageSize es cuántas devoluciones sirve la ruta cuando el cliente
+// no pide un tamaño. La pantalla de devoluciones muestra las últimas, no el
+// histórico completo.
+const DefaultReturnsPageSize = 50
+
 func (h *ReturnHandler) GetAll(c *gin.Context) {
-	returns, err := h.service.ListReturns()
+	// Antes esta ruta llamaba a un GetAll sin Limit: cada visita a la pantalla
+	// traía TODAS las devoluciones con sus detalles y productos precargados.
+	limit := QueryPageSize(c, "limit", DefaultReturnsPageSize)
+
+	returns, err := h.service.ListReturns(limit)
 	if err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener devoluciones", err)
 		return

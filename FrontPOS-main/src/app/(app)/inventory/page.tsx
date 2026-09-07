@@ -23,6 +23,22 @@ import { apiFetch, ApiError } from '@/lib/api-error';
 const ProductFormModal = dynamic(() => import('../products/components/ProductFormModal'), { ssr: false });
 
 // Interfaz unificada — igual a lo que devuelve /inventory/orders
+/**
+ * Valor del pedido que se muestra en Entregas Programadas.
+ *
+ * MANDA EL VALOR QUE ESCRIBIO EL DUEÑO. Es la cifra que anticipa la plata que
+ * hay que tener, porque el desglose por productos conocidos suma menos cuando el
+ * proveedor manda referencias nuevas que aún no existen en el catálogo.
+ *
+ * Nunca se usa invoiceRef: es el NÚMERO de la factura, no un monto.
+ */
+function orderDisplayValue(order: ExpectedOrder): number {
+  const declarado = Number(order.declaredValue);
+  if (Number.isFinite(declarado) && declarado > 0) return declarado;
+  const estimado = Number(order.estimatedCost ?? order.totalEstimated);
+  return Number.isFinite(estimado) && estimado > 0 ? estimado : 0;
+}
+
 interface OrderDetailItem {
   productName: string;
   barcode: string;
@@ -36,9 +52,20 @@ interface ExpectedOrder {
   supplierId: number;
   supplierName: string;
   expectedDate: string;
+  /** Valor a mostrar. El backend ya resuelve acá el valor declarado a mano. */
   estimatedCost: number;
   totalEstimated?: number;
-  invoiceRef?: string;      // precio real de factura (puede ser string numerico)
+  /** Valor que el dueño escribió al confirmar el pedido (real_invoice_total). */
+  declaredValue?: number;
+  /** Total calculado a partir de los productos desglosados. */
+  estimatedValue?: number;
+  /**
+   * REFERENCIA de la factura (su número), NO un monto.
+   *
+   * Antes esta pantalla hacía parseFloat(invoiceRef) y lo mostraba como pesos,
+   * así que un número de factura se sumaba al VALOR TOTAL como si fuera plata.
+   */
+  invoiceRef?: string;
   itemCount: number;
   status?: string;
   items?: OrderDetailItem[];
@@ -727,13 +754,7 @@ export default function InventoryHub() {
                                             </div>
                                             <div className="flex items-center gap-3">
                                                 <span className="text-xs font-medium text-zinc-900 dark:text-white tabular-nums">
-                                                    {(() => {
-                                                      const inv = parseFloat((order.invoiceRef || '').replace(/[^0-9.]/g, ''));
-                                                      const real = !isNaN(inv) && inv > 0 ? inv : null;
-                                                      return real
-                                                        ? formatPrice(Math.round(real))
-                                                        : formatPrice(Math.round(order.estimatedCost || order.totalEstimated || 0));
-                                                    })()}
+                                                    {formatPrice(Math.round(orderDisplayValue(order)))}
                                                 </span>
                                                 <Chip 
                                                     size="sm" 
@@ -805,11 +826,7 @@ export default function InventoryHub() {
                                 <div className="flex justify-between text-[10px]">
                                     <span className="text-gray-500 dark:text-zinc-500 font-medium uppercase tracking-tighter">VALOR TOTAL:</span>
                                     <span className="text-zinc-900 dark:text-zinc-100 font-medium tabular-nums">
-                                        {formatPrice(expectedOrders.reduce((acc, o) => {
-                                          const inv = parseFloat((o.invoiceRef || '').replace(/[^0-9.]/g, ''));
-                                          const real = !isNaN(inv) && inv > 0 ? inv : (o.estimatedCost || o.totalEstimated || 0);
-                                          return acc + real;
-                                        }, 0))}
+                                        {formatPrice(expectedOrders.reduce((acc, o) => acc + orderDisplayValue(o), 0))}
                                     </span>
                                 </div>
                             </div>

@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"syscall"
 	"time"
 
@@ -115,9 +117,16 @@ func main() {
 	reportHandler := handlers.NewReportHandler(reportService)
 	sseHandler := handlers.NewSSEHandler()
 
-	// Initialize and Start Cron Jobs
+	// Initialize and Start Cron Jobs (orquestador durable sobre PostgreSQL)
 	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService, restockNightlyService)
-	cronManager.Start()
+	orchestratorCtx, cancelOrchestratorBoot := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := cronManager.Start(orchestratorCtx); err != nil {
+		cancelOrchestratorBoot()
+		log.Fatalf("No se pudo iniciar el orquestador de jobs: %v", err)
+	}
+	cancelOrchestratorBoot()
+
+	jobHandler := handlers.NewJobHandler(cronManager.Orchestrator(), auditService)
 
 	// MEGA-SPRINT: Iniciar el bot de Telegram (Modo Escucha)
 	aiBotService := services.NewAIBotService(saleRepo, productRepo, expenseRepo, restockRepo, telegramService, repositories.DB)
@@ -241,6 +250,12 @@ func main() {
 	publicPath := "./out"
 	r.NoRoute(spaFallbackMiddleware(publicPath))
 
+	// El healthcheck se construye antes del árbol de rutas porque se monta en
+	// tres puntos: /health y /api/health (públicos, mínimos) y
+	// /api/admin/health/details (completo, sólo admin).
+	healthHandler := handlers.NewHealthHandler(repositories.DB)
+	r.GET("/health", healthHandler.Check)
+
 	// Add a simple request logger for visibility in a professional way
 	r.Use(func(c *gin.Context) {
 		c.Next()
@@ -250,6 +265,14 @@ func main() {
 	// API Routes
 	api := r.Group("/api")
 	{
+		// Healthcheck público: sólo status general y estado de la base.
+		// Se registra bajo /api porque es la URL que consulta el
+		// procedimiento de despliegue (desplegar_a_produccion.ps1). Antes esa
+		// URL no existía y "pasaba" el chequeo sólo porque el fallback de SPA
+		// devolvía index.html con 200: el deploy creía verificar salud y en
+		// realidad verificaba que el servidor sirviera HTML.
+		api.GET("/health", healthHandler.Check)
+
 		// Check de instalación no valida credenciales y se consulta en cada carga.
 		api.GET("/auth/check-setup", authHandler.CheckSetup)
 
@@ -268,6 +291,9 @@ func main() {
 		protected.Use(middlewares.RateLimitMiddleware(100, 10)) // 100 tokens max, 10 tokens/sec refill
 		{
 			// Products Management (Empleados y Admin)
+			// Sólo altas y consultas. Toda edición, ajuste o borrado vive en
+			// productAdmin: el dueño decidió que modificar o eliminar datos es
+			// exclusivo de admin/superadmin.
 			productManage := protected.Group("/")
 			productManage.Use(middlewares.RoleMiddleware("empleado"))
 			{
@@ -275,10 +301,7 @@ func main() {
 				productManage.POST("/products/import-csv", productHandler.ImportCSV)
 				productManage.GET("/products/export-csv", productHandler.ExportCSV)
 				productManage.GET("/products/stats", productHandler.GetStats)
-				productManage.PUT("/products/update-products/:barcode", productHandler.Update)
-				productManage.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
 				productManage.POST("/products/open-bulk/:barcode", productHandler.OpenBulk)
-				productManage.PATCH("/products/update-min-stock/:barcode", productHandler.UpdateMinStock)
 			}
 
 			// Products Administration (Solo Admin)
@@ -287,6 +310,14 @@ func main() {
 			{
 				// Expenses con vinculación a órdenes (crea egreso + recibe stock)
 				productAdmin.POST("/expenses/create-linked", expenseHandler.CreateLinked)
+
+				// Edición y ajuste de productos: sólo admin/superadmin.
+				// OJO: la pantalla de recepción usa update-products para
+				// actualizar precios, así que recibir mercancía editando
+				// precios requiere sesión de admin.
+				productAdmin.PUT("/products/update-products/:barcode", productHandler.Update)
+				productAdmin.PATCH("/products/adjust/:barcode", productHandler.AdjustStock)
+				productAdmin.PATCH("/products/update-min-stock/:barcode", productHandler.UpdateMinStock)
 
 				productAdmin.DELETE("/products/delete-products/:barcode", productHandler.Delete)
 				productManage.POST("/products/receive-stock", productHandler.ReceiveStock)
@@ -299,6 +330,14 @@ func main() {
 				productAdmin.POST("/inventory/save-alias", productHandler.SaveAlias)
 				productAdmin.POST("/products/maintenance/clean-names", productHandler.SanitizeAllNames)
 
+				// Orquestador de jobs: estado, historial y control manual.
+				// Sólo admin: expone errores internos y permite disparar el
+				// respaldo de la base.
+				productAdmin.GET("/admin/jobs", jobHandler.List)
+				productAdmin.GET("/admin/jobs/:key/history", jobHandler.History)
+				productAdmin.POST("/admin/jobs/:key/run", jobHandler.RunNow)
+				productAdmin.PATCH("/admin/jobs/:key/enabled", jobHandler.SetEnabled)
+
 				// Smart Restock API v2 (Demanda Real y Pre-cálculo)
 				productManage.GET("/restock/suggestions-v2", restockV2Handler.GetSuggestionsV2)
 				productAdmin.POST("/admin/run-nightly-restock", restockV2Handler.TriggerManualCalculation)
@@ -308,14 +347,18 @@ func main() {
 				productManage.GET("/inventory/restock/critical", restockHandler.GetCritical)
 				productManage.GET("/inventory/restock/purchase-list", restockHandler.GetPurchaseList)
 				productManage.POST("/inventory/restock/purchase-list", restockHandler.AddToPurchaseList)
-				productManage.DELETE("/inventory/restock/purchase-list/:id", restockHandler.RemoveFromPurchaseList)
+				productAdmin.DELETE("/inventory/restock/purchase-list/:id", restockHandler.RemoveFromPurchaseList)
 				productManage.POST("/inventory/restock/confirm", restockHandler.ConfirmOrder)
 
 				// Carga Maestra API
 				productManage.GET("/inventory/receive/pending", restockHandler.GetPendingOrders)
-				productManage.DELETE("/inventory/receive/pending/:id", restockHandler.CancelPendingOrder)
-				productManage.PUT("/inventory/receive/pending/:id/mark-received", restockHandler.MarkOrderAsReceived)
-				productManage.POST("/inventory/receive/pending/:id/mark-received", restockHandler.MarkOrderAsReceived)
+				// Cancelar un pedido y marcarlo como recibido cambian datos ya
+				// registrados: sólo admin. mark-received se registra en PUT y
+				// POST con el mismo handler, así que ambos verbos deben quedar
+				// restringidos o el POST sería una puerta trasera.
+				productAdmin.DELETE("/inventory/receive/pending/:id", restockHandler.CancelPendingOrder)
+				productAdmin.PUT("/inventory/receive/pending/:id/mark-received", restockHandler.MarkOrderAsReceived)
+				productAdmin.POST("/inventory/receive/pending/:id/mark-received", restockHandler.MarkOrderAsReceived)
 				productManage.GET("/inventory/receive/pending/:id", restockHandler.GetPendingOrder)
 				productManage.GET("/inventory/receive/history", restockHandler.GetOrdersHistory)
 
@@ -376,13 +419,16 @@ func main() {
 				clientGroup.POST("/pay-credit", clientHandler.PayCredit) // Empleados pueden recibir abonos
 				clientGroup.GET("/get-statement/:dni", clientHandler.GetStatement)
 
-				clientGroup.DELETE("/delete-credit-payment/:id", clientHandler.DeleteCreditPayment)
-				clientGroup.PUT("/update-credit-payment/:id", clientHandler.UpdateCreditPaymentMethod)
-
 				// Acciones de Gestión (Solo Admin/Superadmin)
 				clientAdmin := clientGroup.Group("/")
 				clientAdmin.Use(middlewares.RoleMiddleware("admin"))
 				{
+					// Borrar o cambiar el medio de pago de un abono ya
+					// registrado mueve plata en la cartera: estaban fuera de
+					// este bloque y las alcanzaba cualquier sesión.
+					clientAdmin.DELETE("/delete-credit-payment/:id", clientHandler.DeleteCreditPayment)
+					clientAdmin.PUT("/update-credit-payment/:id", clientHandler.UpdateCreditPaymentMethod)
+
 					clientAdmin.PUT("/update-client/:dni", clientHandler.Update)
 					clientAdmin.DELETE("/delete-client/:dni", clientHandler.Delete)
 				}
@@ -395,7 +441,9 @@ func main() {
 			protected.GET("/sales/history/:id", saleHandler.GetByID)
 			protected.DELETE("/sales/delete/:id", middlewares.RoleMiddleware("admin"), saleHandler.Delete)
 			protected.PUT("/sales/update/:id", middlewares.RoleMiddleware("admin"), saleHandler.Update)
-			protected.PUT("/sales/update-payment/:id", saleHandler.UpdatePayment)
+			// Cambiar el medio de pago de una venta ya registrada altera el
+			// cuadre de caja: sólo admin.
+			protected.PUT("/sales/update-payment/:id", middlewares.RoleMiddleware("admin"), saleHandler.UpdatePayment)
 			protected.POST("/sales/add-items/:id", middlewares.RoleMiddleware("empleado"), saleHandler.AddItems)
 
 			// Devoluciones: consultas para empleados; mutaciones financieras sólo admin.
@@ -420,7 +468,6 @@ func main() {
 			expenseGroup.Use(middlewares.RoleMiddleware("empleado")) // Permite listar y registrar a todos
 			{
 				expenseGroup.POST("/create", expenseHandler.Create)
-				expenseGroup.PATCH("/settle/:id", expenseHandler.Settle)
 				expenseGroup.GET("/list", expenseHandler.GetAll)
 				expenseGroup.GET("/paginated", expenseHandler.GetPaginated)
 
@@ -428,6 +475,11 @@ func main() {
 				expenseAdminActions := expenseGroup.Group("/")
 				expenseAdminActions.Use(middlewares.RoleMiddleware("admin"))
 				{
+					// Saldar una deuda la marca como pagada, y el Centro de
+					// Pagos permite condonarla sin registrar salida de plata.
+					// Eso no puede quedar en manos de un empleado.
+					expenseAdminActions.PATCH("/settle/:id", expenseHandler.Settle)
+
 					expenseAdminActions.DELETE("/delete/:id", expenseHandler.Delete)
 					expenseAdminActions.PUT("/update/:id", expenseHandler.Update)
 				}
@@ -476,6 +528,10 @@ func main() {
 			adminGroup := protected.Group("/admin")
 			adminGroup.Use(middlewares.RoleMiddleware("admin"))
 			{
+				// Diagnóstico completo: hostname, versión de Go, sistema
+				// operativo, memoria y goroutines. Antes vivía en el /health
+				// público.
+				adminGroup.GET("/health/details", healthHandler.CheckDetailed)
 				adminGroup.GET("/users", adminHandler.GetAllEmployees)
 				adminGroup.GET("/user/:dni", adminHandler.GetEmployee)
 				adminGroup.POST("/register-user", adminHandler.CreateEmployee)
@@ -484,11 +540,16 @@ func main() {
 				adminGroup.PATCH("/force-reset-password/:dni", adminHandler.ResetEmployeePassword)
 				adminGroup.GET("/audit-logs", adminHandler.GetAuditLogs)
 				adminGroup.PUT("/missing-items/status", adminHandler.UpdateMissingItemStatus)
+				adminGroup.PATCH("/suppliers/:id/schedule", supplierHandler.PatchSchedule)
 
 				// Mantenimiento de BD (V7.0)
 				adminGroup.GET("/backup", adminHandler.GenerateDatabaseBackup)
 				adminGroup.POST("/backup/telegram", adminHandler.SendBackupToTelegram)
 				adminGroup.POST("/purge", adminHandler.PurgeOldData)
+
+				// Arreglo 5(b): fusión de marcadores '[HISTORICO]' creados
+				// por corregir_referencias.ps1. Sólo admin.
+				adminGroup.POST("/products/merge-historical", productHandler.MergeHistoricalMarker)
 			}
 
 			// Faltantes (Accessible for all employees to report)
@@ -503,8 +564,10 @@ func main() {
 			protected.GET("/inventory/orders/:id/items", orderHandler.GetOrderItems)
 			protected.POST("/inventory/orders/dismiss", orderHandler.DismissOrder)
 			protected.POST("/inventory/shrinkage", middlewares.RoleMiddleware("admin"), productHandler.RegisterShrinkage)
-			protected.PATCH("/inventory/products/:barcode/unlink-supplier", productHandler.UnlinkSupplier)
-			protected.PATCH("/inventory/products/:barcode/link-supplier", productHandler.LinkSupplier)
+			// Vincular o desvincular el proveedor de un producto edita el
+			// catálogo maestro y cambia los pedidos sugeridos: sólo admin.
+			protected.PATCH("/inventory/products/:barcode/unlink-supplier", middlewares.RoleMiddleware("admin"), productHandler.UnlinkSupplier)
+			protected.PATCH("/inventory/products/:barcode/link-supplier", middlewares.RoleMiddleware("admin"), productHandler.LinkSupplier)
 			protected.POST("/telegram/send-delivery-summary", orderHandler.SendDeliverySummaryToTelegram)
 			protected.GET("/inventory/savings-opportunities", productHandler.GetSavingsOpportunities)
 
@@ -525,9 +588,6 @@ func main() {
 			protected.GET("/sse", sseHandler.Stream)
 		}
 	}
-
-	healthHandler := handlers.NewHealthHandler(repositories.DB)
-	r.GET("/health", healthHandler.Check)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -586,14 +646,80 @@ func main() {
 	}
 	log.Printf("✅ Servicio detenido de forma ordenada")
 }
+
+// resolveWithinRoot une root con el path pedido y garantiza que el resultado
+// quede DENTRO de root.
+//
+// Dos defensas encadenadas:
+//
+//  1. La ruta pedida se normaliza como ruta absoluta ("/..." ) y se limpia con
+//     path.Clean, que colapsa los ".." SIN poder subir por encima de "/". Así
+//     "/../../.env" se convierte en "/.env" y termina buscándose dentro de la
+//     carpeta servida (donde no existe) en vez de dos niveles más arriba.
+//  2. Se verifica explícitamente que la ruta resultante siga bajo la raíz. Es
+//     redundante con (1) en el caso común y es justamente lo que se quiere: si
+//     alguna forma de entrada exótica sortea la normalización, esto la detiene.
+//
+// Sin nada de esto, el middleware de SPA hacía filepath.Join con la ruta cruda
+// del cliente y era una primitiva de lectura arbitraria del disco del servidor.
+//
+// Devuelve ("", false) si la ruta escapa o no se puede resolver.
+func resolveWithinRoot(root, requestPath string) (string, bool) {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", false
+	}
+
+	// Los separadores de Windows en la URL también cuentan como separadores al
+	// llegar al sistema de archivos.
+	normalized := strings.ReplaceAll(requestPath, "\\", "/")
+	if !strings.HasPrefix(normalized, "/") {
+		normalized = "/" + normalized
+	}
+	cleaned := path.Clean(normalized)
+
+	candidate := filepath.Join(absRoot, filepath.FromSlash(cleaned))
+	absCandidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", false
+	}
+
+	// La comparación lleva el separador pegado para que una carpeta hermana como
+	// "out-privado" no pase por ser prefijo textual de "out".
+	if absCandidate != absRoot && !strings.HasPrefix(absCandidate, absRoot+string(os.PathSeparator)) {
+		return "", false
+	}
+	return absCandidate, true
+}
+
 func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
 
+		// 0. Una ruta de API que llegó hasta acá NO existe (o el verbo es el
+		// equivocado). Devolver index.html con 200 hacía que cualquier
+		// diagnóstico arrancara mintiendo: el cliente veía éxito y un cuerpo
+		// HTML donde esperaba JSON.
+		if strings.HasPrefix(path, "/api/") || path == "/api" {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"message": "Ruta de API no encontrada",
+				"error": gin.H{
+					"code":    "ERR_NOT_FOUND",
+					"message": "Ruta de API no encontrada",
+				},
+			})
+			return
+		}
+
 		// 1. Si la ruta tiene extensión (ej: .js, .css, .png), intentamos servirla
 		if filepath.Ext(path) != "" {
-			fullPath := filepath.Join(publicPath, path)
-			if _, err := os.Stat(fullPath); err == nil {
+			fullPath, ok := resolveWithinRoot(publicPath, path)
+			if !ok {
+				c.AbortWithStatus(http.StatusNotFound)
+				return
+			}
+			if info, err := os.Stat(fullPath); err == nil && !info.IsDir() {
 				// Cacheo a largo plazo para assets estaticos generados por Next.js
 				if filepath.Ext(path) == ".js" || filepath.Ext(path) == ".css" {
 					c.Header("Cache-Control", "public, max-age=31536000, immutable")
@@ -602,7 +728,7 @@ func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 				c.Abort()
 				return
 			}
-			c.AbortWithStatus(404)
+			c.AbortWithStatus(http.StatusNotFound)
 			return
 		}
 
@@ -612,12 +738,13 @@ func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 		c.Header("Expires", "0")
 
 		// 2. Intentar servir el archivo .html (Next.js static export)
-		htmlPath := filepath.Join(publicPath, path+".html")
-		if _, err := os.Stat(htmlPath); err == nil {
-			c.Status(http.StatusOK)
-			c.File(htmlPath)
-			c.Abort()
-			return
+		if htmlPath, ok := resolveWithinRoot(publicPath, path+".html"); ok {
+			if info, err := os.Stat(htmlPath); err == nil && !info.IsDir() {
+				c.Status(http.StatusOK)
+				c.File(htmlPath)
+				c.Abort()
+				return
+			}
 		}
 
 		// 3. Fallback a index.html
@@ -629,6 +756,6 @@ func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 			return
 		}
 
-		c.AbortWithStatus(404)
+		c.AbortWithStatus(http.StatusNotFound)
 	}
 }

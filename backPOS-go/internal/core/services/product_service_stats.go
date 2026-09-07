@@ -1,60 +1,25 @@
-﻿package services
+package services
 
-	// no imports needed besides standard ones if any, but since we use nothing external, just the package is fine
-
+// GetProductStats devuelve el resumen del catálogo (costo total del
+// inventario, precio de venta total, cantidad de productos activos y
+// contadores por severidad de stock).
+//
+// Antes recorría todo el catálogo en un bucle Go tras un GetAll() con Preload
+// y ORDER BY sobre 2168 filas. Ahora delega en una sola consulta agregada del
+// repositorio (ver postgres_product_stats.go). La clasificación crítico /
+// advertencia se replica EXACTAMENTE del bucle antiguo (ver ClassifyStockHealth
+// y su test de tabla en stock_health_test.go), incluyendo el caso minStock<=0.
 func (s *ProductService) GetProductStats() (map[string]interface{}, error) {
-	products, err := s.repo.GetAll()
+	totalCost, totalRetail, totalItems, criticalStock, warningStock, err := s.repo.GetProductStatsAggregate()
 	if err != nil {
 		return nil, err
 	}
-
-	var totalCost, totalRetail float64
-	var criticalStock, warningStock int
-	totalItems := 0
-
-	for _, p := range products {
-		// Solo productos activos. El dashboard filtra por isActive en su
-		// consulta (GetGlobalInventoryValue) y aqui no se filtraba, asi que las
-		// dos vistas daban valores distintos del mismo inventario.
-		if !p.IsActive {
-			continue
-		}
-		totalItems++
-
-		totalCost += p.Quantity * p.PurchasePrice
-		totalRetail += p.Quantity * p.SalePrice
-
-		effectiveStock := p.Quantity
-		var percentage float64
-		if p.MinStock > 0 {
-			percentage = (effectiveStock / p.MinStock) * 100
-		}
-
-		status := "OPTIMAL"
-		if p.MinStock <= 0 {
-			if effectiveStock <= 0 {
-				status = "CRITICAL"
-			}
-		} else {
-			if percentage <= 20 {
-				status = "CRITICAL"
-			} else if percentage <= 50 {
-				status = "WARNING"
-			}
-		}
-
-		if status == "CRITICAL" {
-			criticalStock++
-		} else if status == "WARNING" {
-			warningStock++
-		}
+	agg := ProductStatsAggregate{
+		TotalCost:     totalCost,
+		TotalRetail:   totalRetail,
+		TotalItems:    totalItems,
+		CriticalStock: criticalStock,
+		WarningStock:  warningStock,
 	}
-
-	return map[string]interface{}{
-		"totalCost":     totalCost,
-		"totalRetail":   totalRetail,
-		"criticalStock": criticalStock,
-		"warningStock":  warningStock,
-		"totalItems":    totalItems,
-	}, nil
+	return agg.AsMap(), nil
 }

@@ -1,4 +1,4 @@
-﻿package services
+package services
 
 import (
 	"bytes"
@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/ports"
 
 	"github.com/xuri/excelize/v2"
 	"gorm.io/gorm"
@@ -352,7 +353,7 @@ func (s *ExportService) GetProfitabilityReport(from, to time.Time, targetMargin 
 		amt := e.Amount + e.TaxAmount
 		report.TotalOpExpenses += amt
 
-		c, _, _, _ := parseExpenseChannels(&e)
+		c, _, _, _, _ := parseExpenseChannels(&e)
 		cashExpenses += c
 
 		switch ClassifyOpExpense(e.Category, e.Description) {
@@ -497,12 +498,12 @@ type ShrinkageRow struct {
 }
 
 type ShrinkageReport struct {
-	From          time.Time
-	To            time.Time
-	Rows          []ShrinkageRow
-	TotalUnits    float64
-	TotalLoss     float64
-	ByReason      map[string]float64 // reason -> totalLoss
+	From       time.Time
+	To         time.Time
+	Rows       []ShrinkageRow
+	TotalUnits float64
+	TotalLoss  float64
+	ByReason   map[string]float64 // reason -> totalLoss
 }
 
 func (s *ExportService) GetShrinkageReport(from, to time.Time) (*ShrinkageReport, error) {
@@ -556,28 +557,189 @@ func (s *ExportService) GetShrinkageReport(from, to time.Time) (*ShrinkageReport
 }
 
 // =============================================================
+// Reporte: Inventario Actual (snapshot + valorización)
+// =============================================================
+
+// InventoryRow es una línea del reporte de inventario. Guarda los valores
+// numéricos, no cadenas formateadas, para que los totales se calculen sobre lo
+// mismo que se imprime y no haya forma de que la suma no cuadre con el listado.
+type InventoryRow struct {
+	Barcode       string
+	ProductName   string
+	CategoryName  string
+	Stock         float64
+	MinStock      float64
+	PurchasePrice float64
+	SalePrice     float64
+	// CostValue = Stock × PurchasePrice. Es la valorización de esta línea.
+	CostValue float64
+	// RetailValue = Stock × SalePrice.
+	RetailValue float64
+	// MarginPct sobre precio de venta: (venta - costo) / venta.
+	MarginPct float64
+}
+
+// InventoryReport es el snapshot completo con su valorización.
+type InventoryReport struct {
+	GeneratedAt time.Time
+	Rows        []InventoryRow
+
+	// TotalProducts es cuántas referencias activas hay (no unidades).
+	TotalProducts int
+	// TotalUnits es la suma del stock físico.
+	TotalUnits float64
+	// TotalCostValue es el VALOR DEL INVENTARIO a costo: SUM(stock × compra).
+	// Es la misma definición que GetGlobalInventoryValue y que el KPI del
+	// dashboard.
+	TotalCostValue float64
+	// TotalRetailValue es el valor a precio de venta: SUM(stock × venta).
+	TotalRetailValue float64
+	// PotentialProfit es la utilidad bruta si se vendiera todo el stock.
+	PotentialProfit float64
+	// GlobalMarginPct es el margen ponderado del inventario completo.
+	GlobalMarginPct float64
+
+	// Señales de calidad del dato, para explicar por qué un total sorprende.
+	NegativeStockCount int
+	ZeroCostCount      int
+	OutOfStockCount    int
+	BelowMinStockCount int
+}
+
+// InventoryQueryRow es la fila cruda que devuelve la consulta de inventario,
+// antes de calcular valorizaciones. Existe separada de InventoryRow para que la
+// agregación sea una función pura y testeable sin base de datos.
+type InventoryQueryRow struct {
+	Barcode       string
+	ProductName   string
+	CategoryName  string
+	Stock         float64
+	MinStock      float64
+	PurchasePrice float64
+	SalePrice     float64
+}
+
+// GetInventoryReport arma el snapshot del inventario activo con su valorización.
+//
+// Antes esta consulta vivía suelta en el handler de exportación con el filtro
+// `"isActive" = true`, sin traer la categoría y sin totalizar nada: el reporte
+// listaba precios unitarios pero nunca decía cuánto valía el inventario, y se
+// comía las filas legadas con isActive NULL. Ahora usa ports.SQLActiveProduct,
+// que es el mismo predicado del KPI del dashboard.
+func (s *ExportService) GetInventoryReport() (*InventoryReport, error) {
+	var rows []InventoryQueryRow
+
+	// LEFT JOIN a categories: un producto sin categoría (categoryId 0, o
+	// apuntando a una categoría borrada) TIENE que seguir apareciendo en el
+	// inventario. Con INNER JOIN desaparecería, que es justo la clase de fuga
+	// silenciosa que este reporte ya tenía.
+	//
+	// El `c.deleted_at IS NULL` va en la condición del JOIN y no en el WHERE a
+	// propósito: en el WHERE convertiría el LEFT JOIN en INNER y volvería a
+	// perder productos. Puesto aquí, una categoría borrada simplemente cae en
+	// "(sin categoría)", que es la señal de que ese producto hay que
+	// recategorizarlo.
+	err := s.db.Table("products AS p").
+		Select(`p.barcode,
+				p."productName"    AS product_name,
+				COALESCE(c.name, '(sin categoría)') AS category_name,
+				p.quantity         AS stock,
+				COALESCE(p."minStock", 0)      AS min_stock,
+				COALESCE(p."purchasePrice", 0) AS purchase_price,
+				COALESCE(p."salePrice", 0)     AS sale_price`).
+		Joins(`LEFT JOIN categories c ON c.id = p."categoryId" AND c.deleted_at IS NULL`).
+		Where(ports.SQLActiveProductAliased("p")).
+		Where(`p.deleted_at IS NULL`).
+		Order(`p."productName" ASC`).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("inventory query: %w", err)
+	}
+
+	return AggregateInventory(rows, time.Now()), nil
+}
+
+// AggregateInventory valoriza cada línea y totaliza el inventario.
+//
+// Es pura a propósito: el VALOR DEL INVENTARIO es la cifra por la que se pide
+// este reporte, y tiene que poder verificarse con un test sin depender de
+// Postgres. La invariante que sostiene es que el total del pie es exactamente la
+// suma de las líneas impresas arriba.
+func AggregateInventory(rows []InventoryQueryRow, generatedAt time.Time) *InventoryReport {
+	rep := &InventoryReport{GeneratedAt: generatedAt}
+
+	for _, r := range rows {
+		costValue := r.Stock * r.PurchasePrice
+		retailValue := r.Stock * r.SalePrice
+
+		margin := 0.0
+		if r.SalePrice > 0 {
+			margin = (r.SalePrice - r.PurchasePrice) / r.SalePrice
+		}
+
+		rep.Rows = append(rep.Rows, InventoryRow{
+			Barcode:       r.Barcode,
+			ProductName:   r.ProductName,
+			CategoryName:  r.CategoryName,
+			Stock:         r.Stock,
+			MinStock:      r.MinStock,
+			PurchasePrice: r.PurchasePrice,
+			SalePrice:     r.SalePrice,
+			CostValue:     costValue,
+			RetailValue:   retailValue,
+			MarginPct:     margin,
+		})
+
+		rep.TotalUnits += r.Stock
+		rep.TotalCostValue += costValue
+		rep.TotalRetailValue += retailValue
+
+		switch {
+		case r.Stock < 0:
+			rep.NegativeStockCount++
+		case r.Stock == 0:
+			rep.OutOfStockCount++
+		}
+		if r.PurchasePrice <= 0 {
+			rep.ZeroCostCount++
+		}
+		if r.MinStock > 0 && r.Stock <= r.MinStock {
+			rep.BelowMinStockCount++
+		}
+	}
+
+	rep.TotalProducts = len(rep.Rows)
+	rep.PotentialProfit = rep.TotalRetailValue - rep.TotalCostValue
+	if rep.TotalRetailValue > 0 {
+		rep.GlobalMarginPct = rep.PotentialProfit / rep.TotalRetailValue
+	}
+
+	return rep
+}
+
+// =============================================================
 // Reporte: Rotación de Inventario
 // =============================================================
 
 type RotationRow struct {
-	Barcode       string
-	ProductName   string
-	CurrentStock  float64
-	UnitsSold     float64 // en el rango
-	SalesValue    float64
-	DaysCovered   float64 // ventas/día * stock = días de cobertura
+	Barcode        string
+	ProductName    string
+	CurrentStock   float64
+	UnitsSold      float64 // en el rango
+	SalesValue     float64
+	DaysCovered    float64 // ventas/día * stock = días de cobertura
 	AvgSalesPerDay float64
 	Classification string // HIGH | MEDIUM | LOW | STAGNANT (sin ventas en N días)
-	LastSaleDate  *time.Time
+	LastSaleDate   *time.Time
 }
 
 type RotationReport struct {
-	From            time.Time
-	To              time.Time
-	Rows            []RotationRow
-	StagnantCount   int
+	From              time.Time
+	To                time.Time
+	Rows              []RotationRow
+	StagnantCount     int
 	HighRotationCount int
-	TotalProducts   int
+	TotalProducts     int
 }
 
 // GetRotationReport calcula la rotación en el rango especificado.
@@ -676,27 +838,27 @@ func (s *ExportService) GetRotationReport(from, to time.Time) (*RotationReport, 
 // =============================================================
 
 type RealCashCutRow struct {
-	Date           time.Time
-	StartDate      time.Time
-	EndDate        time.Time
-	ClosureID      uint
-	ClosedByName   string
-	PhysicalCash   float64 // Efectivo real
-	NequiReal      float64
-	DaviplataReal  float64
-	TotalTransfer  float64 // suma digital
-	Expenses       float64
-	BalanceReal    float64 // = PhysicalCash + TotalTransfer - Expenses
-	Difference     float64 // diferencia teórica registrada
+	Date          time.Time
+	StartDate     time.Time
+	EndDate       time.Time
+	ClosureID     uint
+	ClosedByName  string
+	PhysicalCash  float64 // Efectivo real
+	NequiReal     float64
+	DaviplataReal float64
+	TotalTransfer float64 // suma digital
+	Expenses      float64
+	BalanceReal   float64 // = PhysicalCash + TotalTransfer - Expenses
+	Difference    float64 // diferencia teórica registrada
 }
 
 type RealCashReport struct {
-	From            time.Time
-	To              time.Time
-	Rows            []RealCashCutRow
-	TotalPhysical   float64
-	TotalTransfer   float64
-	TotalExpenses   float64
+	From             time.Time
+	To               time.Time
+	Rows             []RealCashCutRow
+	TotalPhysical    float64
+	TotalTransfer    float64
+	TotalExpenses    float64
 	TotalBalanceReal float64
 }
 
@@ -726,18 +888,18 @@ func (s *ExportService) GetRealCashReportByRange(from, to time.Time) (*RealCashR
 		balance := m.PhysicalCash + transfer - m.EgresosCaja
 
 		rep.Rows = append(rep.Rows, RealCashCutRow{
-			Date:           c.Date,
-			StartDate:      c.StartDate,
-			EndDate:        c.EndDate,
-			ClosureID:      c.ID,
-			ClosedByName:   c.ClosedByName,
-			PhysicalCash:   m.PhysicalCash,
-			NequiReal:      c.TotalNequiReal,
-			DaviplataReal:  c.TotalDaviplataReal,
-			TotalTransfer:  transfer,
-			Expenses:       m.EgresosCaja,
-			BalanceReal:    balance,
-			Difference:     c.Difference,
+			Date:          c.Date,
+			StartDate:     c.StartDate,
+			EndDate:       c.EndDate,
+			ClosureID:     c.ID,
+			ClosedByName:  c.ClosedByName,
+			PhysicalCash:  m.PhysicalCash,
+			NequiReal:     c.TotalNequiReal,
+			DaviplataReal: c.TotalDaviplataReal,
+			TotalTransfer: transfer,
+			Expenses:      m.EgresosCaja,
+			BalanceReal:   balance,
+			Difference:    c.Difference,
 		})
 		rep.TotalPhysical += m.PhysicalCash
 		rep.TotalTransfer += transfer

@@ -144,37 +144,18 @@ func (s *ExpectedOrderService) MarkAsReceivedBySupplier(supplierID uint) error {
 		}
 	}
 
-	// SPRINT: Auto-aprendizaje de Días de Visita (Delivery Days)
-	// Registrar el día de la semana actual si no está en la lista de días de entrega del proveedor
-	currentDayName := time.Now().Weekday().String() // Ej: "Monday", "Tuesday"
-	// Mapeo simple a español para consistencia
-	dayMap := map[string]string{
-		"Monday": "Lunes", "Tuesday": "Martes", "Wednesday": "Miércoles",
-		"Thursday": "Jueves", "Friday": "Viernes", "Saturday": "Sábado", "Sunday": "Domingo",
-	}
-	if translated, ok := dayMap[currentDayName]; ok {
-		currentDayName = translated
-	}
-
-	supplier, err := s.repo.GetSupplierByID(supplierID)
-	if err == nil && supplier != nil {
-		alreadyKnown := false
-		for _, day := range supplier.DeliveryDays {
-			if strings.EqualFold(day, currentDayName) {
-				alreadyKnown = true
-				break
-			}
-		}
-		if !alreadyKnown {
-			newDeliveryDays := append(models.StringArray{}, supplier.DeliveryDays...)
-			newDeliveryDays = append(newDeliveryDays, currentDayName)
-			if err := s.repo.UpdateSupplierDeliveryDays(supplierID, newDeliveryDays); err != nil {
-				log.Printf("[ExpectedOrderService] No se pudo aprender día de entrega para proveedor %d: %v", supplierID, err)
-			} else {
-				log.Printf("[ExpectedOrderService] Auto-aprendizaje: Proveedor %d ahora entrega en: %v", supplierID, newDeliveryDays)
-			}
-		}
-	}
+	// AUTO-APRENDIZAJE DE delivery_days ELIMINADO.
+	//
+	// Antes, cada vez que llegaba un pedido esperado se appendeaba el
+	// weekday actual a suppliers.delivery_days. En una semana quedaban
+	// todos los días de la semana en la ficha del proveedor,
+	// pulverizando la configuración manual del dueño.
+	//
+	// El aprendizaje real vive en scheduling.LearnSupplierSchedule y
+	// se persiste SÓLO en las columnas learned_* de suppliers,
+	// alimentado por el batch nocturno. suppliers.visit_days y
+	// suppliers.delivery_days son datos manuales sagrados y NADA
+	// automático los modifica de aquí en adelante.
 
 	return nil
 }

@@ -50,13 +50,139 @@ type ClosureMetrics struct {
 	EgresosCaja    float64
 	EgresosFondo   float64
 	EgresosDigital float64
-	EgresosTotales float64
+	// EgresosAlcancia son los egresos pagados con las monedas de la alcancía.
+	// Van aparte a propósito: la alcancía NO es la gaveta, así que no afectan
+	// el arqueo del efectivo ni pueden sumarse a la venta del cajero.
+	EgresosAlcancia float64
+	EgresosTotales  float64
 
 	// Returns es el dinero devuelto a clientes.
 	Returns float64
 
 	// VentasCajero es la VENTA TOTAL auditada del turno.
 	VentasCajero float64
+}
+
+// ComputeShiftExpenseTotals calcula el UNIVERSO CANÓNICO de egresos operativos
+// de un turno: total multicanal (efectivo + Nequi + Daviplata + fondo +
+// alcancía) y cuenta de líneas que aportaron a ese total.
+//
+// EXCLUSIONES (idénticas a las que aplica ComputeClosureMetrics al alimentar
+// el arqueo del cierre):
+//   - Egresos con status distinto de PAID (los PENDING todavía no salieron).
+//   - PaymentSource con PREST/DEUDA (préstamos/deudas no mueven caja aún).
+//   - Categoría DEVOLUCIONES (se contabilizan aparte vía TotalReturns).
+//
+// La clasificación por canal delega en parseExpenseChannels (SSOT). El count
+// se calcula sobre el MISMO universo que aportó al total, para preservar la
+// invariante amount ↔ count que consume el dashboard.
+func ComputeShiftExpenseTotals(expenses []models.Expense) (total float64, count int) {
+	for i := range expenses {
+		e := &expenses[i]
+		if !isOperationalExpense(e) {
+			continue
+		}
+		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
+		lineTotal := cash + nequi + davi + fondo + coins
+		if lineTotal <= 0 {
+			continue
+		}
+		total += lineTotal
+		count++
+	}
+	return
+}
+
+// ExpenseChannelBuckets agrupa un lote de egresos por canal canónico usando
+// parseExpenseChannels (SSOT). Excluye PENDING, PRESTAMOS/DEUDAS y
+// DEVOLUCIONES, igual que ComputeShiftExpenseTotals, para mantener alineado
+// el flujo de caja del dashboard con el arqueo del cierre.
+//
+// Devuelve un mapa con las llaves EFECTIVO, NEQUI, DAVIPLATA, FONDO, MONEDAS
+// (siempre presentes, aun con valor 0 para simplificar el consumo).
+func ExpenseChannelBuckets(expenses []models.Expense) map[string]float64 {
+	buckets := map[string]float64{
+		"EFECTIVO":  0,
+		"NEQUI":     0,
+		"DAVIPLATA": 0,
+		"FONDO":     0,
+		"MONEDAS":   0,
+	}
+	for i := range expenses {
+		e := &expenses[i]
+		if !isOperationalExpense(e) {
+			continue
+		}
+		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
+		buckets["EFECTIVO"] += cash
+		buckets["NEQUI"] += nequi
+		buckets["DAVIPLATA"] += davi
+		buckets["FONDO"] += fondo
+		buckets["MONEDAS"] += coins
+	}
+	return buckets
+}
+
+// SplitExpensesByKind parte los egresos operativos de un turno en dos bolsas
+// por TIPO DE GASTO, sumando TODOS los canales de cada una:
+//
+//	suppliers = mercancía, proveedores, insumos para la venta
+//	others    = el resto (nómina, arriendo, servicios, aseo, imprevistos…)
+//
+// POR QUÉ EXISTE (pedido del dueño, 2026-09-04): el reporte desglosado ya
+// mostraba el egreso repartido por CANAL (caja / fondo / digital), que responde
+// "por dónde salió la plata". Pero para decidir, el dueño necesita la otra
+// lectura: "en QUÉ se gastó". Ver un renglón de proveedores y otro de gastos del
+// local le dice de un vistazo cuánto se fue en mercancía y cuánto en operación.
+//
+// INVARIANTE QUE NO SE PUEDE ROMPER: suppliers + others == EgresosTotales del
+// mismo lote. Por eso reutiliza isOperationalExpense (mismas exclusiones de
+// pendientes, préstamos y devoluciones) y parseExpenseChannels (mismo reparto de
+// canales, alcancía incluida) que ComputeShiftExpenseTotals. Si se clasificara
+// con criterios propios, las dos filas dejarían de cuadrar con el total y el
+// reporte no se podría verificar a mano.
+//
+// La clasificación delega en IsMerchandiseExpense, que ya es la regla del
+// proyecto para separar mercancía de gasto del local (la misma que usa el
+// reporte de rentabilidad para no restar la mercancía dos veces).
+func SplitExpensesByKind(expenses []models.Expense) (suppliers, others float64) {
+	for i := range expenses {
+		e := &expenses[i]
+		if !isOperationalExpense(e) {
+			continue
+		}
+		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
+		lineTotal := cash + nequi + davi + fondo + coins
+		if lineTotal <= 0 {
+			continue
+		}
+		hasSupplier := e.SupplierID != nil && *e.SupplierID > 0
+		if IsMerchandiseExpense(e.Category, e.Description, hasSupplier) {
+			suppliers += lineTotal
+			continue
+		}
+		others += lineTotal
+	}
+	return suppliers, others
+}
+
+// isOperationalExpense define el universo canónico de egresos que realmente
+// afectan la caja del turno.
+func isOperationalExpense(e *models.Expense) bool {
+	if e == nil {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(e.Status), "PAID") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(e.Category), "DEVOLUCIONES") {
+		return false
+	}
+	src := strings.ToUpper(strings.TrimSpace(e.PaymentSource))
+	if strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") {
+		return false
+	}
+	return true
 }
 
 // ClosureExpenseLine es un egreso del turno con su plata ya repartida por canal.
@@ -72,6 +198,7 @@ type ClosureExpenseLine struct {
 	Nequi         float64
 	Davi          float64
 	Fondo         float64
+	Coins         float64
 	Total         float64
 	IsReturn      bool
 }
@@ -88,7 +215,7 @@ func ResolveClosureExpenses(c *models.CashierClosure) []ClosureExpenseLine {
 	lines := make([]ClosureExpenseLine, 0, len(expenses))
 	for i := range expenses {
 		e := &expenses[i]
-		cash, nequi, davi, fondo := parseExpenseChannels(e)
+		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
 
 		lines = append(lines, ClosureExpenseLine{
 			ID:            e.ID,
@@ -100,7 +227,8 @@ func ResolveClosureExpenses(c *models.CashierClosure) []ClosureExpenseLine {
 			Nequi:         nequi,
 			Davi:          davi,
 			Fondo:         fondo,
-			Total:         cash + nequi + davi + fondo,
+			Coins:         coins,
+			Total:         cash + nequi + davi + fondo + coins,
 			IsReturn:      strings.EqualFold(strings.TrimSpace(e.Category), "DEVOLUCIONES"),
 		})
 	}
@@ -127,9 +255,20 @@ func ComputeClosureMetrics(c *models.CashierClosure) ClosureMetrics {
 		m.EgresosCaja += l.Cash
 		m.EgresosDigital += l.Nequi + l.Davi
 		m.EgresosFondo += l.Fondo
+		m.EgresosAlcancia += l.Coins
 	}
-	m.EgresosTotales = m.EgresosCaja + m.EgresosDigital + m.EgresosFondo
+	m.EgresosTotales = m.EgresosCaja + m.EgresosDigital + m.EgresosFondo + m.EgresosAlcancia
 
+	// VENTA TOTAL DEL CAJERO.
+	//
+	// Se suman los egresos pagados EN EFECTIVO porque esa plata salio de la
+	// gaveta, y para estar en la gaveta tuvo que entrar antes por una venta.
+	//
+	// La ALCANCIA queda FUERA a proposito (arreglo 2026-08-31): es un tarro
+	// aparte, no la gaveta. Antes los egresos pagados con monedas caian en el
+	// bucket de efectivo y se sumaban aca, inflando la venta del mes sin que
+	// hubiera existido ninguna venta. Ese era el hueco entre la linea de
+	// "Ventas" del dashboard y el donut de metodos de pago.
 	m.VentasCajero = m.PhysicalCash + m.DigitalIncome + m.EgresosCaja + m.Returns
 
 	return m

@@ -84,6 +84,148 @@ Flujo del runner PowerShell:
 
 Parámetros como share, equipo, servicio y health URL se pueden sobrescribir al invocar directamente `desplegar_a_produccion.ps1`.
 
+## Orquestador de jobs
+
+Los jobs programados (respaldo nocturno, restock, alertas de Telegram, refresco
+del dashboard) ya no viven sólo en memoria. El paquete
+`internal/infrastructure/orchestrator` los respalda en PostgreSQL con dos tablas
+creadas por la migración `012_job_orchestrator.sql`:
+
+- `job_definitions`: horario, timeout, intentos y el flag `enabled`.
+- `job_runs`: una fila por ejecución, con estado, intentos, duración y error.
+
+Qué cambia en la práctica:
+
+- **Historial.** `GET /api/admin/jobs` responde qué corrió, cuándo y con qué
+  resultado. Ya se puede contestar "¿se hizo el respaldo de anoche?".
+- **Recuperación.** Los jobs con `catch_up` (respaldo, restock, alertas diarias)
+  ejecutan la última ocurrencia perdida al encender el PC. Antes, si el equipo
+  estaba apagado a las 21:20, el respaldo simplemente no ocurría.
+- **Reintentos.** Backoff exponencial con techo de 5 minutos. El respaldo
+  reintenta si falla el envío por Telegram.
+- **Sin duplicados.** El índice único `(job_key, scheduled_for)` impide que dos
+  instancias de `server.exe` corran el mismo job dos veces.
+- **Apagado sin recompilar.** `PATCH /api/admin/jobs/<key>/enabled` con
+  `{"enabled": false}`. El cambio se respeta en el siguiente disparo.
+- **Disparo manual.** `POST /api/admin/jobs/<key>/run` queda registrado como
+  `manual` y en la auditoría con el usuario que lo pidió.
+
+Las cuatro rutas exigen rol `admin`: exponen errores internos y permiten lanzar
+el respaldo de la base.
+
+La migración 012 debe aplicarse antes de arrancar el binario nuevo, porque
+`VerifyCurrent` aborta el arranque si el esquema no está al día. Se aplica con
+`migrar_base_datos.ps1` en una ventana aprobada, como cualquier otra.
+
+## Rendimiento de inventario y pedidos inteligentes
+
+La migración `013_restock_hot_path.sql` sostiene dos optimizaciones. **No es
+transaccional**, porque usa `CREATE INDEX CONCURRENTLY` para no bloquear
+`stock_movements`, que es la tabla que escriben ventas, recepciones, mermas y
+devoluciones.
+
+- Índice parcial `idx_stock_movements_reception_barcode_date` sobre
+  `(barcode, date DESC) WHERE reason = 'RECEPTION'`. El índice general de la
+  011 cubre todos los `reason`, y como más del 90 % de las filas son ventas, el
+  planificador escaneaba páginas de ruido para responder por recepciones.
+- Columnas `last_reception_at` y `sold_since_reception` en
+  `product_restock_metrics`. Antes, cada carga de Pedidos Inteligentes
+  recalculaba en caliente `MAX(date)` sobre todo el kárdex y un `JOIN` sobre
+  todo el histórico de ventas. Ahora eso lo hace el cálculo nocturno una vez y
+  la pantalla sólo lee la fila.
+
+### Paso obligatorio después de aplicar la 013
+
+Correr el cálculo nocturno una vez para poblar las columnas nuevas:
+
+```text
+POST /api/admin/run-nightly-restock
+```
+
+Hasta que se ejecute, la señal de última recepción sale como "sin dato" en toda
+la pantalla. Es degradación intencional: se prefirió mostrar el dato como
+desconocido antes que mostrar ceros que parezcan reales.
+
+## Códigos de barras retenidos por marcadores `[HISTORICO]`
+
+`paquete_produccion/corregir_referencias.ps1` creó productos marcadores
+inactivos llamados `[HISTORICO] <codigo>` para que las referencias huérfanas no
+violaran la FK nueva. Esos marcadores **ocupan códigos de barras reales**, así
+que un producto legítimo no puede tomar ese código y el error resulta
+desconcertante, porque el marcador es invisible en el catálogo.
+
+Cuántos hay:
+
+```sql
+SELECT COUNT(*) FROM products WHERE "productName" LIKE '[HISTORICO]%';
+```
+
+Para liberar uno, hay un endpoint sólo admin que fusiona el marcador con el
+producto real en una sola transacción:
+
+```text
+POST /api/admin/products/merge-historical
+{"realBarcode": "<codigo actual del producto>", "markerBarcode": "<codigo a liberar>"}
+```
+
+Mueve las referencias históricas de 14 tablas al producto real, borra el
+marcador y renombra el producto. Valida todo antes de mutar y aborta sin tocar
+nada si algo no cuadra. Queda en auditoría como acción crítica.
+
+**Es una operación de datos, no una tarea de rutina.** Los movimientos de
+kárdex, ventas y devoluciones del código histórico pasan a pertenecer al
+producto real, que es lo correcto cuando de verdad es el mismo producto. Hacerlo
+con respaldo reciente.
+
+## Agenda de proveedores: configurada a mano vs aprendida
+
+Cada proveedor tiene **dos** agendas, guardadas por separado a propósito:
+
+- `visit_days` / `delivery_days` — los días que el dueño escribió a mano. **Ningún
+  proceso automático los toca.** Un test estático
+  (`TestNoAutoWriteToVisitDaysOrDeliveryDays`) escanea todo `internal/` y falla el
+  build si alguien reintroduce una escritura automática sobre esas columnas.
+- `learned_visit_days` / `learned_delivery_days` / `learned_lead_time_days` /
+  `learned_sample_count` — lo que el sistema observó, calculado por el
+  precálculo nocturno a partir de `confirmed_orders.confirmed_at` (cuándo vino el
+  preventista) y `confirmed_orders.received_at` (cuándo llegó el pedido).
+  Columnas creadas por la migración `014_supplier_learned_schedule.sql`.
+
+Precedencia del lead time, expuesta en la API como `leadTimeSource`:
+
+```text
+configured_days > learned_days > explicit_lead_time > visit_frequency_learned > default (7)
+```
+
+Lo configurado a mano gana siempre. La pantalla de Pedidos Inteligentes muestra
+las dos agendas en columnas separadas, con cuántos pedidos respaldan lo
+aprendido, y destaca cuando se contradicen.
+
+Umbrales del aprendizaje (en `internal/core/services/scheduling/learn.go`):
+ventana de 90 días, mínimo 4 pedidos recibidos, un día se considera habitual si
+aparece en al menos el 25 % de los pedidos y al menos 2 veces, lead time por
+mediana (no promedio, para que un pedido demorado 30 días no arrastre el
+resultado), y se descartan los datos sucios (sin fecha de llegada, o llegada
+anterior al pedido).
+
+### Por qué existen dos agendas
+
+El mecanismo anterior hacía `UPDATE suppliers SET visit_days = visit_days || 'hoy'`
+en cada egreso, cada orden de compra, cada recepción y cada confirmación de lista
+de compras. Con el uso normal iba agregando días hasta dejar la semana completa,
+borrando en silencio lo que el dueño había configurado. Eran ocho puntos de
+código distintos; todos están desactivados.
+
+## Migraciones pendientes
+
+Al día 2026-08-31 hay tres migraciones escritas y **no aplicadas**: 012, 013 y
+014. Correr `migrate status` para ver la lista real. Las 013 y 014 **no son
+transaccionales** porque usan `CREATE INDEX CONCURRENTLY`.
+
+Después de aplicarlas, correr **una vez** `POST /api/admin/run-nightly-restock`
+para poblar las columnas de precálculo y la agenda aprendida. Antes de eso, la
+pantalla muestra "sin dato" en esas señales, que es intencional.
+
 ## Migraciones
 
 El despliegue sólo ejecuta `migrate status`, que es lectura. Nunca ejecuta `migrate up`. La migración 011 debe revisarse y aplicarse por separado siguiendo `backPOS-go/MIGRATIONS.md`, con respaldo y `--confirm`.

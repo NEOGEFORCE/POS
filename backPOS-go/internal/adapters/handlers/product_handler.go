@@ -324,17 +324,32 @@ func (h *ProductHandler) Update(c *gin.Context) {
 
 	if err := h.service.UpdateProduct(barcode, &product); err != nil {
 		fmt.Printf("[ERROR] UpdateProduct failed for barcode %s: %v\n", barcode, err)
+		// Arreglo 5(a): si el error corresponde a un código de barras
+		// retenido por un producto marcador '[HISTORICO]', respondemos con
+		// un 409 estructurado. La metadata alimenta al frontend, que ofrece
+		// la fusión únicamente tras confirmación explícita del admin. Este
+		// caso NO es un 500: no hay falla del servidor, es un conflicto de
+		// negocio conocido con recuperación documentada.
+		if status, apiErr, matched := historicalMarkerReservedResponse(err); matched {
+			c.JSON(status, ErrorResponse{
+				Success: false,
+				Message: apiErr.Message,
+				Error:   apiErr,
+			})
+			return
+		}
 		errStr := strings.ToLower(err.Error())
 		if strings.Contains(errStr, "not found") {
 			SendError(c, http.StatusNotFound, ErrNotFound, "Producto no encontrado", err)
 			return
 		}
-		// TEMPORAL: Devolver error REAL al frontend para diagnóstico
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":   "Fallo al actualizar: " + err.Error(),
-			"message": err.Error(),
-			"detail":  fmt.Sprintf("Barcode: %s | Error: %v", barcode, err),
-		})
+		// El error real queda en el log del servidor (arriba, y SendError también
+		// lo registra); al operador le llega un mensaje en español. Antes aquí se
+		// devolvía err.Error() crudo "para diagnóstico", lo que publicaba nombres
+		// de columnas y constraints de Postgres a cualquiera que pudiera llamar
+		// el endpoint.
+		SendError(c, http.StatusInternalServerError, ErrInternalServer,
+			"No se pudo actualizar el producto. Revise los datos e intente de nuevo.", err)
 		return
 	}
 

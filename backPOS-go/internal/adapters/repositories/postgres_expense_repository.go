@@ -8,6 +8,7 @@ import (
 	"backPOS-go/internal/infrastructure/sse"
 	"gorm.io/gorm"
 	"log"
+	"sort"
 	"strings"
 	"time"
 )
@@ -21,8 +22,9 @@ func NewPostgresExpenseRepository(db *gorm.DB) *PostgresExpenseRepository {
 }
 
 func (r *PostgresExpenseRepository) invalidateDashboardCache() {
-	// Invalidate RAM cache
-	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	// Invalidate RAM cache: TODAS las variantes por rango de fechas, no sólo la
+	// clave base (que nadie escribe nunca).
+	cache.InvalidateDashboard()
 
 	// Solicitar refresco asíncrono y debounced
 	refresher.GetRefresherService(r.db).RequestRefresh("mv_dashboard_stats_monthly")
@@ -39,10 +41,14 @@ func (r *PostgresExpenseRepository) Save(expense *models.Expense) error {
 	return err
 }
 
+// GetAll delega en GetAllFiltered sin filtros para que exista UNA sola
+// implementación de "los egresos que ve la pantalla".
+//
+// Antes tenía su propia consulta con Limit(1000), y como el servicio llama a
+// GetAll cuando no hay filtros (que es la carga inicial de la pantalla), era
+// justamente la ruta por la que desaparecían las cuentas por pagar viejas.
 func (r *PostgresExpenseRepository) GetAll() ([]models.Expense, error) {
-	expenses := []models.Expense{}
-	err := r.db.Preload("Creator").Order("date DESC").Limit(1000).Find(&expenses).Error
-	return expenses, err
+	return r.GetAllFiltered("", "")
 }
 
 func (r *PostgresExpenseRepository) SaveWithTx(tx interface{}, expense *models.Expense) error {
@@ -53,23 +59,82 @@ func (r *PostgresExpenseRepository) SaveWithTx(tx interface{}, expense *models.E
 	return gormTx.Create(expense).Error
 }
 
+// pendingDebtCondition es la condición canónica de "deuda viva" (cuenta por
+// pagar). Debe coincidir con GetPendingDebtsSummary y con GetExpensesByStatus,
+// que son las otras dos puertas al mismo universo.
+const pendingDebtCondition = `(UPPER(status) = 'PENDING' OR UPPER("paymentSource") IN ('PRESTAMO', 'PREST.')) AND UPPER(status) NOT IN ('PAID', 'SETTLED')`
+
+// GetAllFiltered devuelve los egresos que alimentan la pantalla de Egresos.
+//
+// POR QUÉ SON DOS CONSULTAS Y NO UNA:
+//
+// La lista principal está acotada a las 1000 filas más recientes por fecha,
+// porque el historial completo de egresos crece sin techo y la pantalla no
+// necesita años de movimientos para operar.
+//
+// Pero ese LIMIT hacía DESAPARECER cuentas por pagar. La pantalla suma la
+// tarjeta "Cuentas por Pagar" sobre las filas que recibe, así que una factura
+// fiada más vieja que la fila 1000 quedaba fuera del total aunque siguiera
+// viva en la base. Con el ritmo de egresos diarios del negocio la ventana
+// avanza sola, y las deudas viejas se caían por atrás: el total bajaba día a
+// día sin que nadie tocara esas facturas.
+//
+// Por eso las deudas vivas se traen SIN LÍMITE en una segunda consulta y se
+// mezclan sin duplicar. Es un conjunto chico (lo que realmente se debe), así
+// que no reintroduce el problema de tamaño que motivó el LIMIT.
 func (r *PostgresExpenseRepository) GetAllFiltered(supplier, concept string) ([]models.Expense, error) {
-	expenses := []models.Expense{}
-	query := r.db.Preload("Creator").Model(&models.Expense{})
-
-	if supplier != "" {
-		// Use a join to filter by supplier name, or filter by exact supplier_id if we had it.
-		// Since expense has supplier_id, we can join with suppliers table.
-		query = query.Joins("LEFT JOIN suppliers ON suppliers.id = expenses.supplier_id").
-			Where("suppliers.name ILIKE ?", "%"+supplier+"%")
+	applyFilters := func(q *gorm.DB) *gorm.DB {
+		if supplier != "" {
+			// Filtro por nombre de proveedor vía join; expenses.supplier_id es la FK.
+			q = q.Joins("LEFT JOIN suppliers ON suppliers.id = expenses.supplier_id").
+				Where("suppliers.name ILIKE ?", "%"+supplier+"%")
+		}
+		if concept != "" {
+			q = q.Where("description ILIKE ?", "%"+concept+"%")
+		}
+		return q
 	}
 
-	if concept != "" {
-		query = query.Where("description ILIKE ?", "%"+concept+"%")
+	// 1) Ventana reciente: lo que la pantalla muestra en la tabla y usa para
+	//    los totales del período.
+	recent := []models.Expense{}
+	if err := applyFilters(r.db.Preload("Creator").Model(&models.Expense{})).
+		Order("date DESC").Limit(1000).Find(&recent).Error; err != nil {
+		return nil, err
 	}
 
-	err := query.Order("date DESC").Limit(1000).Find(&expenses).Error
-	return expenses, err
+	// 2) Deudas vivas COMPLETAS: ninguna cuenta por pagar puede quedar invisible.
+	debts := []models.Expense{}
+	if err := applyFilters(r.db.Preload("Creator").Model(&models.Expense{})).
+		Where(pendingDebtCondition).
+		Order("date DESC").Find(&debts).Error; err != nil {
+		return nil, err
+	}
+
+	// Mezclar sin duplicar: las deudas recientes ya vienen en la ventana.
+	seen := make(map[uint]struct{}, len(recent)+len(debts))
+	merged := make([]models.Expense, 0, len(recent)+len(debts))
+	for i := range recent {
+		if _, dup := seen[recent[i].ID]; dup {
+			continue
+		}
+		seen[recent[i].ID] = struct{}{}
+		merged = append(merged, recent[i])
+	}
+	for i := range debts {
+		if _, dup := seen[debts[i].ID]; dup {
+			continue
+		}
+		seen[debts[i].ID] = struct{}{}
+		merged = append(merged, debts[i])
+	}
+
+	// Orden estable por fecha descendente para que la tabla no cambie de forma.
+	sort.SliceStable(merged, func(a, b int) bool {
+		return merged[a].Date.After(merged[b].Date)
+	})
+
+	return merged, nil
 }
 
 func (r *PostgresExpenseRepository) GetExpensesPaginated(filter ports.ExpenseFilter) ([]models.Expense, int64, error) {
@@ -233,6 +298,51 @@ func (r *PostgresExpenseRepository) GetGlobalTotalPaidExpenses() (float64, error
 	return total, nil
 }
 
+// addCoinsResidual rescata la parte de un egreso pagada con monedas que quedó
+// fuera de las columnas desglosadas.
+//
+// Hay egresos creados por versiones anteriores que sí tienen cash_amount y
+// fondo_amount, pero dejaron coins_amount en cero aunque el texto del canal diga
+// "ALCANCIA: $50000". Esas filas entran por la consulta de columnas (tienen
+// alguna > 0), así que el fallback por texto no las mira nunca y la parte pagada
+// con monedas se perdía: no se descontaba de la alcancía en ningún lado.
+//
+// Se recupera sólo el resto no cubierto por las columnas y sólo en filas cuyo
+// texto menciona monedas. Si las columnas ya están completas, el resto es cero y
+// esto no cambia ninguna cifra.
+func (r *PostgresExpenseRepository) addCoinsResidual(results map[string]float64, from, to *time.Time) {
+	query := r.db.Table("expenses").
+		Select(`COALESCE(SUM(
+			(amount + COALESCE(tax_amount, 0))
+			- (COALESCE(cash_amount,0) + COALESCE(nequi_amount,0)
+			   + COALESCE(daviplata_amount,0) + COALESCE(fondo_amount,0)
+			   + COALESCE(coins_amount,0))
+		), 0)`).
+		Where("deleted_at IS NULL").
+		Where("UPPER(status) = 'PAID'").
+		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0)").
+		Where(`(amount + COALESCE(tax_amount,0)) >
+			(COALESCE(cash_amount,0) + COALESCE(nequi_amount,0)
+			 + COALESCE(daviplata_amount,0) + COALESCE(fondo_amount,0)
+			 + COALESCE(coins_amount,0))`).
+		Where(`(UPPER(COALESCE("paymentSource", '')) LIKE '%ALCANCIA%'
+			OR UPPER(COALESCE("paymentSource", '')) LIKE '%ALCANCÍA%'
+			OR UPPER(COALESCE("paymentSource", '')) LIKE '%MONEDA%')`)
+
+	if from != nil && to != nil {
+		query = query.Where("date >= ? AND date <= ?", *from, *to)
+	}
+
+	var residual float64
+	if err := query.Scan(&residual).Error; err != nil {
+		return
+	}
+	if residual > 0 {
+		results["MONEDAS"] += residual
+	}
+}
+
 func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]float64, error) {
 	results := make(map[string]float64)
 
@@ -309,6 +419,8 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		Where("nequi_amount > 0 AND tax_amount > 0").
 		Scan(&totalNequiTax)
 	results["NEQUI"] += totalNequiTax
+
+	r.addCoinsResidual(results, nil, nil)
 
 	return results, nil
 }
@@ -415,6 +527,8 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, t
 		Where("nequi_amount > 0 AND tax_amount > 0").
 		Scan(&totalNequiTax)
 	results["NEQUI"] += totalNequiTax
+
+	r.addCoinsResidual(results, &from, &to)
 
 	return results, nil
 }

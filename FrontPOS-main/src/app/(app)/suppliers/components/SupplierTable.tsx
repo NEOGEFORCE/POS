@@ -12,6 +12,11 @@ import {
 import { Supplier } from '@/lib/definitions';
 import { useAuth } from '@/lib/auth';
 import { EmptyState } from '@/components/ui/EmptyState';
+import {
+    WEEKDAY_SHORT,
+    parseSupplierDays,
+    toDisplayDays,
+} from '@/lib/supplier-days.mjs';
 
 interface TableProps {
     suppliers: Supplier[];
@@ -93,56 +98,33 @@ const SupplierTable = memo(({
                     </div>
                 );
             case "logistics":
-                // Mapeo de nombres de dias a iniciales
-                const dayShortNames: Record<string, string> = {
-                    'Lunes': 'LU', 'Martes': 'MA', 'Miercoles': 'MI', 'Jueves': 'JU',
-                    'Viernes': 'VI', 'Sabado': 'SA', 'Domingo': 'DO'
-                };
-                const normalizeDayName = (d: string): string => {
-                    if (!d) return '';
-                    const clean = d.normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
-                    const map: Record<string, string> = {
-                        lunes: 'Lunes', martes: 'Martes', miercoles: 'Miercoles',
-                        jueves: 'Jueves', viernes: 'Viernes', sabado: 'Sabado', domingo: 'Domingo'
-                    };
-                    return map[clean] || d.trim();
-                };
-                const parseDays = (daysArray?: string[], daysString?: string): string[] => {
-                    const res: string[] = [];
-                    if (Array.isArray(daysArray) && daysArray.length > 0) {
-                        daysArray.forEach(item => {
-                            if (typeof item === 'string') {
-                                item.split(',').forEach(sub => {
-                                    const n = normalizeDayName(sub);
-                                    if (n && !res.includes(n)) res.push(n);
-                                });
-                            }
-                        });
-                    } else if (daysString && typeof daysString === 'string') {
-                        daysString.split(',').forEach(sub => {
-                            const n = normalizeDayName(sub);
-                            if (n && !res.includes(n)) res.push(n);
-                        });
-                    }
-                    return res;
-                };
-
-                const visitDays = parseDays(s.visitDays, s.visitDay);
-                const deliveryDays = parseDays(s.deliveryDays, s.deliveryDay);
+                // Fuente unica de verdad para parseo y normalizacion: helper
+                // compartido con SupplierFormModal. Dos copias divergian y
+                // dejaban el bug "Miercoles/Miércoles" abierto.
+                const visitDays = parseSupplierDays({ days: s.visitDays, csv: s.visitDay });
+                const deliveryDays = parseSupplierDays({ days: s.deliveryDays, csv: s.deliveryDay });
+                const visitDisplay = toDisplayDays(visitDays);
+                const deliveryDisplay = toDisplayDays(deliveryDays);
 
                 return (
                     <div className="flex items-center justify-center gap-3">
                         {/* VISITA - Chips con iniciales */}
                         <div className="flex flex-col items-center gap-1">
                             <span className="text-[7px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">VISITA</span>
-                            <div className="flex items-center gap-1">
+                            <div
+                                className="flex items-center gap-1"
+                                aria-label={visitDays.length > 0
+                                    ? `Dias de visita: ${visitDisplay.join(', ')}`
+                                    : 'Sin dias de visita configurados'}
+                            >
                                 {visitDays.length > 0 ? (
                                     visitDays.map((day, idx) => (
                                         <span
                                             key={idx}
+                                            title={visitDisplay[idx]}
                                             className="inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-2xl bg-black/5 dark:bg-white/5 border border-emerald-500/30 text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 text-[9px] font-medium"
                                         >
-                                            {dayShortNames[day] || day.slice(0, 2).toUpperCase()}
+                                            {WEEKDAY_SHORT[day as keyof typeof WEEKDAY_SHORT] ?? day.slice(0, 2).toUpperCase()}
                                         </span>
                                     ))
                                 ) : (
@@ -156,14 +138,20 @@ const SupplierTable = memo(({
                         {/* ENTREGA - Chips con iniciales */}
                         <div className="flex flex-col items-center gap-1">
                             <span className="text-[7px] font-medium text-orange-600 dark:text-orange-500 uppercase tracking-widest">ENTREGA</span>
-                            <div className="flex items-center gap-1">
+                            <div
+                                className="flex items-center gap-1"
+                                aria-label={deliveryDays.length > 0
+                                    ? `Dias de entrega: ${deliveryDisplay.join(', ')}`
+                                    : 'Sin dias de entrega configurados'}
+                            >
                                 {deliveryDays.length > 0 ? (
                                     deliveryDays.map((day, idx) => (
                                         <span
                                             key={idx}
+                                            title={deliveryDisplay[idx]}
                                             className="inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-2xl bg-orange-500/10 border border-orange-500/30 text-orange-600 dark:text-orange-400 text-[9px] font-medium"
                                         >
-                                            {dayShortNames[day] || day.slice(0, 2).toUpperCase()}
+                                            {WEEKDAY_SHORT[day as keyof typeof WEEKDAY_SHORT] ?? day.slice(0, 2).toUpperCase()}
                                         </span>
                                     ))
                                 ) : (
@@ -282,18 +270,34 @@ const SupplierTable = memo(({
                                                 )}
                                             </div>
                                             <div className="flex items-center gap-1.5 mt-2">
-                                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-2xl bg-black/5 dark:bg-white/5 border border-emerald-500/20">
-                                                    <Calendar size={8} className="text-zinc-900 dark:text-zinc-100" />
-                                                    <span className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-tight pr-0.5 leading-none">
-                                                        {s.visitDay || '---'}
-                                                    </span>
-                                                </div>
-                                                <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-2xl bg-orange-500/10 border border-orange-500/20">
-                                                    <Truck size={8} className="text-orange-500" />
-                                                    <span className="text-[8px] font-medium text-orange-600 dark:text-orange-400 uppercase tracking-tight pr-0.5 leading-none">
-                                                        {s.deliveryDay || '---'}
-                                                    </span>
-                                                </div>
+                                                {(() => {
+                                                    const cardVisitDays = parseSupplierDays({ days: s.visitDays, csv: s.visitDay });
+                                                    const cardDeliveryDays = parseSupplierDays({ days: s.deliveryDays, csv: s.deliveryDay });
+                                                    const cardVisitLabel = toDisplayDays(cardVisitDays).join(', ') || '---';
+                                                    const cardDeliveryLabel = toDisplayDays(cardDeliveryDays).join(', ') || '---';
+                                                    return (
+                                                        <>
+                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-2xl bg-black/5 dark:bg-white/5 border border-emerald-500/20">
+                                                                <Calendar size={8} className="text-zinc-900 dark:text-zinc-100" aria-hidden="true" />
+                                                                <span
+                                                                    className="text-[8px] font-medium text-zinc-900 dark:text-zinc-100 dark:text-zinc-300 uppercase tracking-tight pr-0.5 leading-none"
+                                                                    aria-label={`Dias de visita: ${cardVisitLabel}`}
+                                                                >
+                                                                    {cardVisitLabel}
+                                                                </span>
+                                                            </div>
+                                                            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-2xl bg-orange-500/10 border border-orange-500/20">
+                                                                <Truck size={8} className="text-orange-500" aria-hidden="true" />
+                                                                <span
+                                                                    className="text-[8px] font-medium text-orange-600 dark:text-orange-400 uppercase tracking-tight pr-0.5 leading-none"
+                                                                    aria-label={`Dias de entrega: ${cardDeliveryLabel}`}
+                                                                >
+                                                                    {cardDeliveryLabel}
+                                                                </span>
+                                                            </div>
+                                                        </>
+                                                    );
+                                                })()}
                                             </div>
                                         </div>
                                     </div>

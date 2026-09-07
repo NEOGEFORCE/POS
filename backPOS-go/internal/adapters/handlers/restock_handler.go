@@ -129,14 +129,52 @@ func needsInTransitConfirmation(products []models.InTransitProduct, allowInTrans
 	return len(products) > 0 && !allowInTransit
 }
 
+// declaredOrderValue devuelve el valor que el operador escribió a mano para el
+// pedido, sin depender de que haya desglosado los productos.
+//
+// El frontend manda el mismo número en los dos campos cuando el pedido va sin
+// desglose; se acepta cualquiera de los dos para no romper clientes viejos.
+func declaredOrderValue(req ConfirmOrderReq) float64 {
+	if req.RealInvoiceTotal > 0 {
+		return req.RealInvoiceTotal
+	}
+	if req.EstimatedTotal > 0 {
+		return req.EstimatedTotal
+	}
+	return 0
+}
+
+// validateConfirmOrder aplica las reglas mínimas para aceptar un pedido.
+// Devuelve el mensaje de error para el operador, o "" si el pedido es válido.
+//
+// REGLA (agosto 2026, pedido del dueño): un pedido SIN productos desglosados es
+// válido siempre que traiga un valor. El caso real es el preventista que pasa,
+// acuerdan un pedido por un monto y el dueño no quiere sentarse a listar
+// producto por producto: lo que necesita registrar es el compromiso con el
+// proveedor y la fecha en que llega, para que la plata esté prevista.
+//
+// Lo que sigue siendo obligatorio:
+//   - El proveedor. Sin proveedor el pedido no se puede atribuir a nadie.
+//   - Que haya productos O un valor. Un pedido sin ninguna de las dos cosas no
+//     registra nada y solo ensucia el historial.
+func validateConfirmOrder(req ConfirmOrderReq) string {
+	if req.SupplierID == 0 {
+		return "El proveedor es obligatorio"
+	}
+	if len(req.Items) == 0 && declaredOrderValue(req) <= 0 {
+		return "Agrega al menos un producto o escribe el valor del pedido"
+	}
+	return ""
+}
+
 func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 	var req ConfirmOrderReq
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Datos de pedido inválidos"})
 		return
 	}
-	if req.SupplierID == 0 || len(req.Items) == 0 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "El proveedor y al menos un producto son obligatorios"})
+	if message := validateConfirmOrder(req); message != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": message})
 		return
 	}
 
@@ -156,6 +194,13 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 			EstimatedPrice: reqItem.UnitCost,
 		})
 		estimatedTotal += reqItem.Quantity * reqItem.UnitCost
+	}
+
+	// Pedido sin desglose: el valor declarado por el operador ES el estimado.
+	// Sin esto el pedido quedaría guardado en cero y no serviría para prever la
+	// plata, que es justamente para lo que se registra.
+	if len(items) == 0 {
+		estimatedTotal = declaredOrderValue(req)
 	}
 
 	conflicts, err := h.metricsRepo.FindInTransitProducts(c.Request.Context(), productIDs, req.EditOrderID)
@@ -194,13 +239,29 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 	if estimatedTotal > 0 {
 		diff := realInvoiceTotal - estimatedTotal
 		if diff/estimatedTotal > 0.05 {
-			msg := fmt.Sprintf("⚠️ PEDIDO PROVEEDOR %d — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción",
-				req.SupplierID, estimatedTotal, realInvoiceTotal, diff)
+			// La alerta la lee una persona: va el NOMBRE del proveedor, no el
+			// ID interno.
+			label := supplierAlertLabel(req.SupplierID, h.metricsRepo.GetSupplierName(req.SupplierID))
+			msg := fmt.Sprintf("⚠️ PEDIDO %s — estimado $%.0f, factura real $%.0f, diferencia +$%.0f — revisar precios en recepción",
+				label, estimatedTotal, realInvoiceTotal, diff)
 			h.telegram.SendAlert(msg)
 		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pedido confirmado"})
+}
+
+// supplierAlertLabel arma la etiqueta con la que un proveedor aparece en
+// mensajes dirigidos a personas (alertas de Telegram).
+//
+// Prefiere el nombre. Si no se pudo resolver (proveedor borrado, fallo de
+// consulta, nombre en blanco) cae a "PROVEEDOR #<id>" para no perder la
+// trazabilidad: es peor una alerta sin identificar que una con el ID crudo.
+func supplierAlertLabel(supplierID uint, name string) string {
+	if n := strings.TrimSpace(name); n != "" {
+		return n
+	}
+	return fmt.Sprintf("PROVEEDOR #%d", supplierID)
 }
 
 func (h *RestockHandler) GetPendingOrders(c *gin.Context) {
@@ -251,15 +312,9 @@ func (h *RestockHandler) GetPendingOrder(c *gin.Context) {
 }
 
 func (h *RestockHandler) GetOrdersHistory(c *gin.Context) {
-	limit := 10
-	offset := 0
-
-	if limitStr := c.Query("limit"); limitStr != "" {
-		fmt.Sscanf(limitStr, "%d", &limit)
-	}
-	if offsetStr := c.Query("offset"); offsetStr != "" {
-		fmt.Sscanf(offsetStr, "%d", &offset)
-	}
+	// El tope sale de MaxPageSize (pagination.go), no de un número escrito aquí.
+	limit := QueryPageSize(c, "limit", 10)
+	offset := QueryOffset(c, "offset")
 
 	filters := make(map[string]interface{})
 	if supplier := c.Query("supplier_id"); supplier != "" {

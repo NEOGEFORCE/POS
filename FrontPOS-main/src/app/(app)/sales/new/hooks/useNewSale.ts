@@ -13,6 +13,13 @@ import { registerAuditLog } from '@/lib/audit-service';
 import { syncOfflineSalesQueue } from '@/lib/offline-sync';
 import { isSoundMuted } from '@/lib/audio-utils';
 import { useAuth } from '@/lib/auth';
+import {
+    buildEditItemsPayload,
+    buildStockAdjustmentMap,
+    computeEditDeltaTotal,
+    getEditMode,
+    hasEditChanges,
+} from '@/lib/sales-edit-helpers.mjs';
 
 export interface CartItem extends Product {
     cartQuantity: number;
@@ -416,17 +423,32 @@ export function useNewSale() {
     }, [currentCart]);
 
     const isEditMode = activeCartKey.startsWith('Factura EDIT-');
-    
-    const extraTotal = useMemo(() => {
+
+    // Total FIRMADO del cambio en modo edición. Positivo = cobro adicional;
+    // Negativo = devolución/ajuste; Cero con `editHasChanges=true` = mezcla
+    // neutral (se sustituyeron productos por el mismo valor). Se calcula
+    // sobre el carrito o sobre los items del split si el usuario dividió.
+    const editDeltaTotal = useMemo(() => {
         if (!isEditMode) return 0;
         const items = splitItemsToPay || currentCart;
-        if (!Array.isArray(items) || items.length === 0) return 0;
-        return items.reduce((sum, item) => {
-            const qty = item.isPreexisting ? Math.max(0, item.cartQuantity - (item.originalQuantity || 0)) : item.cartQuantity;
-            const price = Number(item.salePrice) || 0;
-            return sum + roundSaleLineSubtotal(price, qty);
-        }, 0);
+        return computeEditDeltaTotal(items);
     }, [splitItemsToPay, currentCart, isEditMode]);
+
+    const editHasChanges = useMemo(() => {
+        if (!isEditMode) return false;
+        const items = splitItemsToPay || currentCart;
+        return hasEditChanges(items);
+    }, [splitItemsToPay, currentCart, isEditMode]);
+
+    const editMode = useMemo<'no-changes' | 'charge' | 'refund' | 'neutral'>(() => {
+        if (!isEditMode) return 'no-changes';
+        const items = splitItemsToPay || currentCart;
+        return getEditMode(items);
+    }, [splitItemsToPay, currentCart, isEditMode]);
+
+    // Alias legacy conservado para no romper llamadores externos (page.tsx
+    // aún consume `extraTotal`). Ahora es firmado.
+    const extraTotal = editDeltaTotal;
 
     const total = useMemo(() => {
         const items = splitItemsToPay || currentCart;
@@ -569,23 +591,19 @@ export function useNewSale() {
             const item = current[idx];
             const newQty = item.cartQuantity + delta;
 
-            if (item.isPreexisting && newQty < (item.originalQuantity || 0)) {
-                toast({ variant: "destructive", title: "ACCION BLOQUEADA", description: "No puedes reducir la cantidad por debajo de lo que ya estaba en la factura original." });
-                return prev;
-            }
-
             if (newQty <= 0) {
+                // Los items pre-existentes (edición desde historial) NO se
+                // eliminan al llegar a 0: conservan `originalQuantity` para
+                // producir el delta negativo (-original) al enviar. Los
+                // items nuevos SÍ se eliminan porque su delta es 0.
+                if (item.isPreexisting) {
+                    current[idx] = { ...item, cartQuantity: 0 };
+                    return { ...prev, [currentKey]: current };
+                }
                 const filtered = current.filter(i => i.cartItemId !== cartItemId);
                 if (selectedItemId === cartItemId) setSelectedItemId(null);
                 return { ...prev, [currentKey]: filtered };
             }
-
-            // if (!item.isWeighted && newQty > item.quantity) {
-            //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${item.quantity} unidades de ${item.productName}` }), 0);
-            //     return prev;
-            // }
-
-
 
             current[idx] = { ...current[idx], cartQuantity: newQty };
             return { ...prev, [currentKey]: current };
@@ -641,23 +659,15 @@ export function useNewSale() {
 
             const item = current[idx];
 
-            if (item.isPreexisting && quantity < (item.originalQuantity || 0)) {
-                toast({ variant: "destructive", title: "ACCION BLOQUEADA", description: "No puedes reducir la cantidad por debajo de lo que ya estaba en la factura original." });
-                return prev;
-            }
-
             if (quantity <= 0) {
+                if (item.isPreexisting) {
+                    current[idx] = { ...item, cartQuantity: 0 };
+                    return { ...prev, [currentKey]: current };
+                }
                 const filtered = current.filter(i => i.cartItemId !== cartItemId);
                 if (selectedItemId === cartItemId) setSelectedItemId(null);
                 return { ...prev, [currentKey]: filtered };
             }
-
-            // if (!item.isWeighted && quantity > item.quantity) {
-            //     setTimeout(() => toast({ variant: "destructive", title: "STOCK INSUFICIENTE", description: `Solo quedan ${item.quantity} unidades de ${item.productName}` }), 0);
-            //     return prev;
-            // }
-
-
 
             current[idx] = { ...current[idx], cartQuantity: quantity };
             return { ...prev, [currentKey]: current };
@@ -968,44 +978,81 @@ export function useNewSale() {
             setSubmitting(true);
             submittingRef.current = true;
             try {
-                const payloadItems = [];
-                const totalDeductionsForState = new Map<string, number>();
+                const editItemsPayload = buildEditItemsPayload(itemsToPay);
 
-                for (const item of itemsToPay) {
-                    const qty = item.isPreexisting ? Math.max(0, item.cartQuantity - (item.originalQuantity || 0)) : item.cartQuantity;
-                    if (qty > 0) {
-                        payloadItems.push({
-                            barcode: item.barcode,
-                            quantity: qty
-                        });
-                        totalDeductionsForState.set(item.barcode, qty);
-                    }
-                }
-                
-                if (payloadItems.length === 0) {
-                    toast({ variant: "destructive", title: "SIN CAMBIOS", description: "No has agregado nuevos productos a esta factura." });
+                if (editItemsPayload.length === 0) {
+                    toast({ variant: "destructive", title: "SIN CAMBIOS", description: "No hay diferencias respecto a la factura original." });
                     setSubmitting(false);
                     submittingRef.current = false;
                     return;
                 }
-                
+
+                const deltaTotal = computeEditDeltaTotal(itemsToPay);
+                // 'charge' cobra al cliente, 'refund' le devuelve, 'neutral'
+                // sustituye productos por el mismo valor (sin flujo de caja).
+                const resolvedMode: 'charge' | 'refund' | 'neutral' = deltaTotal > 0
+                    ? 'charge'
+                    : deltaTotal < 0
+                    ? 'refund'
+                    : 'neutral';
+
+                // Contrato con /sales/add-items/:id: los montos viajan como
+                // MAGNITUDES POSITIVAS. El backend rechaza cualquier valor
+                // negativo y determina el signo aplicado según el delta
+                // monetario derivado de los items firmados. En 'neutral'
+                // (mezcla al mismo valor) se envían ceros aunque el modal
+                // traiga valores residuales.
+                const zeroChannels = resolvedMode === 'neutral';
+                const clamp = (n: number) => (n > 0 ? n : 0);
+                const cashAmount = zeroChannels ? 0 : clamp(paymentData.cash || 0);
+                const transferNequi = zeroChannels ? 0 : clamp(paymentData.transferNequi || 0);
+                const transferDaviplata = zeroChannels ? 0 : clamp(paymentData.transferDaviplata || 0);
+                const transferBreakdown = transferNequi + transferDaviplata;
+                const transferAmount = zeroChannels
+                    ? 0
+                    : transferBreakdown > 0
+                        ? transferBreakdown
+                        : clamp(paymentData.transfer || 0);
+                const creditAmount = zeroChannels ? 0 : clamp(paymentData.credit || 0);
+                const transferSource = paymentData.transferSource || '';
+
                 const saleId = currentKey.split('-')[1];
                 await apiFetch(`/sales/add-items/${saleId}`, {
                     method: 'POST',
-                    body: JSON.stringify({ items: payloadItems }),
+                    body: JSON.stringify({
+                        items: editItemsPayload,
+                        cashAmount,
+                        transferAmount,
+                        transferNequi,
+                        transferDaviplata,
+                        transferSource,
+                        creditAmount,
+                    }),
                     fallbackError: 'ERROR AL ACTUALIZAR',
+                    timeoutMs: 30000,
                 });
 
-                toast({ variant: 'success', title: 'VENTA ACTUALIZADA', description: 'SE AGREGARON LOS PRODUCTOS CON EXITO' });
-                setLastChange(paymentData.change);
+                const successCopy = resolvedMode === 'refund'
+                    ? { title: 'DEVOLUCIÓN APLICADA', description: 'SE AJUSTÓ LA FACTURA Y SE REEMBOLSÓ AL CLIENTE' }
+                    : resolvedMode === 'charge'
+                    ? { title: 'COBRO ADICIONAL REGISTRADO', description: 'SE ACTUALIZÓ LA FACTURA CON LOS NUEVOS PRODUCTOS' }
+                    : { title: 'AJUSTE APLICADO', description: 'SE SUSTITUYERON PRODUCTOS SIN COBRO ADICIONAL' };
+                toast({ variant: 'success', title: successCopy.title, description: successCopy.description });
+
+                setLastChange(paymentData.change || 0);
                 setShowSuccessScreen(true);
 
+                // Actualización optimista del stock local con signo:
+                // delta > 0 (venta neta) resta stock, delta < 0 (devolución)
+                // suma stock. `buildStockAdjustmentMap` ya trae los deltas
+                // firmados por barcode, ignorando items sin cambio.
+                const stockAdjustments = buildStockAdjustmentMap(itemsToPay);
                 setProducts(prev => prev.map(p => {
-                    const deduction = totalDeductionsForState.get(p.barcode);
-                    if (deduction !== undefined) {
-                        return { ...p, quantity: Math.max(0, p.quantity - deduction) };
-                    }
-                    return p;
+                    const adjustment = stockAdjustments.get(p.barcode);
+                    if (adjustment === undefined) return p;
+                    // Restamos el delta: si es positivo baja el stock (más
+                    // productos vendidos); si es negativo sube (devolución).
+                    return { ...p, quantity: p.quantity - adjustment };
                 }));
                 mutateProducts();
 
@@ -1015,13 +1062,21 @@ export function useNewSale() {
                 const newKeys = cartKeys.filter(k => k !== currentKey);
                 setCartKeys(newKeys.length > 0 ? newKeys : ['Factura 1']);
                 setActiveCartKey(newKeys.length > 0 ? newKeys[0] : 'Factura 1');
+                if (newKeys.length === 0) {
+                    setCarts(prevCarts => ({ ...prevCarts, 'Factura 1': [] }));
+                }
 
                 broadcastRevalidate('SALE_MADE');
             } catch (err) {
+                // En edición contable NO caemos a la cola offline: la venta
+                // ya existe en el backend y una segunda copia local
+                // duplicaría el movimiento cuando volviera la red. El error
+                // se muestra y el carrito se preserva para reintentar.
                 toast({
                     variant: "destructive",
                     title: err instanceof ApiError ? "ERROR DEL SERVIDOR" : "ERROR INESPERADO",
-                    description: err instanceof Error ? err.message : "Ocurrio un error de red",
+                    description: err instanceof Error ? err.message : "Ocurrió un error de red",
+                    duration: 8000,
                 });
             } finally {
                 setSubmitting(false);
@@ -1419,7 +1474,7 @@ export function useNewSale() {
         selectedCustomer, selectedCustomerDni,
         
         // Computed
-        total, extraTotal, isEditMode, filteredProductsGrid, filteredCustomers,
+        total, extraTotal, editDeltaTotal, editHasChanges, editMode, isEditMode, filteredProductsGrid, filteredCustomers,
         
         // UI State
         loading: loading || ((products.length === 0 || categories.length === 0) && (productsLoading || categoriesLoading)), 

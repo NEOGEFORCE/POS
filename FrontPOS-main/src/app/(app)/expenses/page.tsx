@@ -10,6 +10,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Expense, Supplier } from '@/lib/definitions';
 import Cookies from 'js-cookie';
 import { apiFetch } from '@/lib/api-error';
+import { selectLiveDebts, sumPayables } from '@/lib/payables.mjs';
 import { useAuth } from '@/lib/auth';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -341,16 +342,30 @@ export default function ExpensesPage() {
       }, {});
     const topSource = Object.entries(bySource).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'EFECTIVO';
 
-    const pendingExpenses = expenses.filter(e => e.status === 'PENDING' && (e.remainingAmount > 0 || Number(e.amount) > 0));
-    const totalPending = pendingExpenses.reduce((acc, e) => acc + (e.remainingAmount > 0 ? e.remainingAmount : Number(e.amount)), 0);
+    // CUENTAS POR PAGAR (deudas vivas).
+    //
+    // La regla vive en @/lib/payables.mjs, que es la fuente única compartida
+    // con el Centro de Pagos (PendingDebtsModal). Antes cada uno tenía su
+    // propia expresión y podían mostrar números distintos de la misma plata.
+    // Coincide con GetPendingDebtsSummary del backend Go: cuenta PENDING más
+    // préstamos no saldados, y suma el impuesto.
+    const pendingExpenses = selectLiveDebts(expenses);
+    const totalPending = sumPayables(expenses);
 
     return { totalMonth, topSource, count: periodExpenses.length, totalPending, pendingExpenses };
   }, [expenses, datePreset, dateRangeBounds]);
 
   const filteredExpenses = useMemo(() => {
+    const pendingIds = new Set(stats.pendingExpenses.map(e => e.id));
     return expenses.filter(e => {
-      // Ocultar deudas pendientes y saldadas de la tabla principal para evitar duplicidad visual
-      if (e.status === 'PENDING' || e.status === 'SETTLED') return false;
+      // Ocultar de la tabla principal lo que ya se muestra en el modal de
+      // deudas, para no contar visualmente dos veces la misma factura.
+      // Se compara contra el MISMO conjunto que alimenta "Cuentas por Pagar"
+      // (no sólo status==='PENDING'), así los préstamos con estado vacío
+      // tampoco aparecen duplicados.
+      if (pendingIds.has(e.id)) return false;
+      const status = (e.status || '').trim().toUpperCase();
+      if (status === 'SETTLED') return false;
 
       if (datePreset !== 'all') {
         const d = new Date(e.date);
@@ -359,7 +374,7 @@ export default function ExpensesPage() {
       
       return true;
     }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [expenses, datePreset, dateRangeBounds]);
+  }, [expenses, datePreset, dateRangeBounds, stats.pendingExpenses]);
 
   const [pageSize, setPageSize] = useState(10);
   const [currentPage, setCurrentPage] = useState(1);

@@ -45,13 +45,24 @@ export default function SaleEditModal({
         cash: number;
         transfer: number;
         transferSource: string;
+        transferNequi?: number;
+        transferDaviplata?: number;
         credit: number;
         totalPaid: number;
         change: number;
     }) => {
         if (!sale) return;
         setIsUpdating(true);
-        const { cash, transfer, transferSource, credit, totalPaid, change } = data;
+        const {
+            cash,
+            transfer,
+            transferSource,
+            transferNequi = 0,
+            transferDaviplata = 0,
+            credit,
+            totalPaid,
+            change,
+        } = data;
         
         try {
             const methodsCount = (cash > 0 ? 1 : 0) + (transfer > 0 ? 1 : 0) + (credit > 0 ? 1 : 0);
@@ -71,6 +82,11 @@ export default function SaleEditModal({
                 cashAmount: cash,
                 transferAmount: transfer,
                 transferSource: transferSource,
+                // El desglose Nequi/Daviplata debe viajar tambien al corregir
+                // el metodo de pago. Antes se perdia y una venta que era
+                // 100% Nequi se convertia en "otras transferencias" al editarla.
+                transferNequi: transferNequi,
+                transferDaviplata: transferDaviplata,
                 creditAmount: credit,
                 amountPaid: totalPaid,
                 change: change

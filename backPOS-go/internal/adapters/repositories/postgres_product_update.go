@@ -66,6 +66,33 @@ func (r *PostgresProductRepository) UpdateWithTx(tx interface{}, barcode string,
 			Where("barcode = ? OR ? = ANY(string_to_array(COALESCE(alternate_codes, ''), ','))", targetBarcode, targetBarcode).
 			First(&collision).Error
 		if err == nil {
+			// Arreglo 5(a): cuando el código destino está retenido por un
+			// producto marcador '[HISTORICO] ...' creado en su día por
+			// paquete_produccion\corregir_referencias.ps1 para tapar FKs
+			// huérfanas, devolvemos un error tipado (dominio) para que el
+			// handler responda 409 estructurado y el frontend pueda ofrecer
+			// la fusión previa confirmación explícita del admin. El mensaje
+			// visible al usuario y las instrucciones NO viajan aquí: se
+			// arman en la capa HTTP a partir de la metadata.
+			//
+			// La semántica del contrato con /admin/products/merge-historical:
+			//   RealBarcode   = código ACTUAL del producto real (X). Es el
+			//                   'barcode' de la URL, el que el operador está
+			//                   editando antes de intentar renombrarlo.
+			//   MarkerBarcode = código que hoy ocupa el marcador '[HISTORICO]'
+			//                   (B), i.e. el destino al que el operador quiere
+			//                   mover al producto real.
+			//
+			// Enviar ambos con el mismo valor rompía la fusión: el endpoint
+			// admin rechaza real==marker con "no pueden ser iguales" y el
+			// helper buildMergeRequest del frontend descarta ese payload.
+			if isHistoricalMarker(collision) {
+				return &models.HistoricalMarkerReservedError{
+					RealBarcode:   barcode,
+					MarkerBarcode: targetBarcode,
+					MarkerName:    collision.ProductName,
+				}
+			}
 			return fmt.Errorf("el código de barras %s ya pertenece a %s", targetBarcode, collision.ProductName)
 		}
 		if err != nil && err != gorm.ErrRecordNotFound {

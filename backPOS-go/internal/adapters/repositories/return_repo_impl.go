@@ -94,7 +94,8 @@ func (r *GormReturnRepository) CreateWithTransaction(
 	})
 
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyProducts)
+		// Arreglo 2: una devolución sólo ajusta cantidades del kardex. No
+		// invalidamos CacheKeyProducts para no dejar frío el catálogo.
 		r.invalidateDashboardCache()
 	}
 	return err
@@ -106,9 +107,34 @@ func (r *GormReturnRepository) GetByID(id uint) (*models.Return, error) {
 	return &ret, err
 }
 
-func (r *GormReturnRepository) GetAll() ([]models.Return, error) {
+// maxReturnsPerQuery es el techo absoluto de filas que esta consulta puede
+// materializar, incluso si el llamador pide más o pasa un límite inválido.
+// Cada Return arrastra Employee, Details y Details.Product por Preload, así que
+// una tabla de miles de filas se traduce en un pico de memoria y varias
+// consultas de precarga con IN gigantes.
+const maxReturnsPerQuery = 200
+
+// GetAll devuelve las devoluciones más recientes primero, acotadas a limit.
+//
+// Antes no tenía ni Limit ni filtro de fecha y estaba colgada de una ruta HTTP:
+// la pantalla de devoluciones traía el histórico completo en cada carga.
+// El orden es descendente por fecha (y por id como desempate estable, porque
+// varias devoluciones del mismo día comparten timestamp cuando `date` viene del
+// default now() truncado).
+func (r *GormReturnRepository) GetAll(limit int) ([]models.Return, error) {
+	if limit <= 0 || limit > maxReturnsPerQuery {
+		limit = maxReturnsPerQuery
+	}
+
 	var returns []models.Return
-	err := r.db.Preload("Employee").Preload("Details").Preload("Details.Product").Order("date desc").Find(&returns).Error
+	err := r.db.
+		Preload("Employee").
+		Preload("Details").
+		Preload("Details.Product").
+		Order("date desc").
+		Order("id desc").
+		Limit(limit).
+		Find(&returns).Error
 	return returns, err
 }
 
@@ -253,7 +279,8 @@ func (r *GormReturnRepository) ProcessAdvancedReturnTransaction(req ports.Proces
 	})
 
 	if err == nil {
-		cache.InvalidateCache(cache.CacheKeyProducts)
+		// Arreglo 2: devolución avanzada — sólo ajusta cantidades y crea
+		// registros financieros. Catálogo cacheado no cambia.
 		r.invalidateDashboardCache()
 	}
 	return createdReturn, err
@@ -369,7 +396,8 @@ func (r *GormReturnRepository) DeleteWithTransaction(id uint, adminDNI string, a
 	if err != nil {
 		return err
 	}
-	cache.InvalidateCache(cache.CacheKeyProducts)
+	// Arreglo 2: reverso de devolución sólo mueve stock; no invalida el
+	// catálogo cacheado.
 	r.invalidateDashboardCache()
 	return nil
 }

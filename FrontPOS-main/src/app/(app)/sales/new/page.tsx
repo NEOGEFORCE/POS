@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
     Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
     Spinner, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter
@@ -39,7 +39,7 @@ export default function NewSalePage() {
         products, customers, categories,
         currentCart, activeCartKey, cartKeys, cartCustomers,
         selectedCustomer, selectedCustomerDni,
-        total, extraTotal, isEditMode, filteredProductsGrid, filteredCustomers,
+        total, editDeltaTotal, editHasChanges, editMode, isEditMode, filteredProductsGrid, filteredCustomers,
         loading, submitting, searchQuery, setSearchQuery,
         selectedCategory, setSelectedCategory,
         selectedItemId, setSelectedItemId,
@@ -90,6 +90,23 @@ export default function NewSalePage() {
 
     const { user } = useAuth();
     const { toast } = useToast();
+
+    // Wrapper unificado para abrir el modal de pago. En modo edición con
+    // cero deltas (ninguna cantidad tocada) no tiene sentido abrir el
+    // cobrador: mostramos SIN CAMBIOS y evitamos el flujo. En modo edición
+    // con deltas de neto cero (mezcla de productos por igual valor) SÍ se
+    // abre porque hay algo que registrar en el backend.
+    const tryOpenPaymentDialog = useCallback(() => {
+        if (isEditMode && !editHasChanges) {
+            toast({
+                variant: "default",
+                title: "SIN CAMBIOS",
+                description: "No hay diferencias respecto a la factura original."
+            });
+            return;
+        }
+        setIsPaymentDialogOpen(true);
+    }, [isEditMode, editHasChanges, toast, setIsPaymentDialogOpen]);
 
     // Verificacion de caja abierta
     useEffect(() => {
@@ -235,7 +252,7 @@ export default function NewSalePage() {
             if (e.key === ' ' || e.key === '=') {
                 e.preventDefault();
                 if (currentCart.length > 0 && scannerBufferRef.current.length === 0) {
-                    setIsPaymentDialogOpen(true);
+                    tryOpenPaymentDialog();
                 }
                 return;
             }
@@ -285,9 +302,9 @@ export default function NewSalePage() {
                     handleCodeSubmit(scannerBufferRef.current);
                     setScannerBuffer('');
                     isScanningRef.current = false;
-                    setTimeout(() => setIsPaymentDialogOpen(true), 80);
+                    setTimeout(() => tryOpenPaymentDialog(), 80);
                 } else if (currentCart.length > 0) {
-                    setIsPaymentDialogOpen(true);
+                    tryOpenPaymentDialog();
                 }
                 return;
             }
@@ -320,7 +337,7 @@ export default function NewSalePage() {
             window.removeEventListener('keydown', handleGlobalKeyDown);
             window.removeEventListener('mousedown', handleGlobalClick);
         };
-    }, [handleCodeSubmit, addMiscItem, updateQuantity, setCartItemQuantity, removeFromCart, currentCart.length, showSuccessScreen, returnFocusToScanner, setIsPaymentDialogOpen, setShowSuccessScreen, setIsClientDialogOpen, setIsScannerOpen, setIsManualWeightOpen, setIsSplitDialogOpen, setIsMissingItemOpen, searchQuery]);
+    }, [handleCodeSubmit, addMiscItem, updateQuantity, setCartItemQuantity, removeFromCart, currentCart.length, showSuccessScreen, returnFocusToScanner, setIsPaymentDialogOpen, setShowSuccessScreen, setIsClientDialogOpen, setIsScannerOpen, setIsManualWeightOpen, setIsSplitDialogOpen, setIsMissingItemOpen, searchQuery, tryOpenPaymentDialog]);
 
     if (loading) {
         return (
@@ -517,10 +534,29 @@ export default function NewSalePage() {
                                     <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest leading-none">
                                         {isEditMode ? "TOTAL FACTURA" : "TOTAL"}
                                     </p>
-                                    {isEditMode && extraTotal > 0 && (
-                                        <span className="text-[10px] font-bold text-emerald-500 font-mono mt-0.5">
-                                            (+${formatCurrency(extraTotal)} nuevo)
-                                        </span>
+                                    {isEditMode && editHasChanges && (
+                                        editDeltaTotal > 0 ? (
+                                            <span
+                                                className="text-[10px] font-bold text-emerald-500 font-mono mt-0.5"
+                                                aria-label={`Cobro adicional al cliente: ${formatCurrency(editDeltaTotal)} pesos`}
+                                            >
+                                                +${formatCurrency(editDeltaTotal)} adicional
+                                            </span>
+                                        ) : editDeltaTotal < 0 ? (
+                                            <span
+                                                className="text-[10px] font-bold text-rose-500 font-mono mt-0.5"
+                                                aria-label={`Devolución al cliente: ${formatCurrency(Math.abs(editDeltaTotal))} pesos`}
+                                            >
+                                                -${formatCurrency(Math.abs(editDeltaTotal))} a devolver
+                                            </span>
+                                        ) : (
+                                            <span
+                                                className="text-[10px] font-bold text-sky-500 font-mono mt-0.5"
+                                                aria-label="Ajuste sin cobro adicional (mezcla de productos por igual valor)"
+                                            >
+                                                Ajuste sin cobro
+                                            </span>
+                                        )
                                     )}
                                 </div>
                                 <div className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 tabular-nums leading-none tracking-tighter flex overflow-hidden h-7 items-center">
@@ -587,7 +623,7 @@ export default function NewSalePage() {
                                             handleCodeSubmit(scannerBuffer);
                                             setScannerBuffer('');
                                         } else if (currentCart.length > 0) {
-                                            setIsPaymentDialogOpen(true); 
+                                            tryOpenPaymentDialog();
                                         }
                                         returnFocusToScanner();
                                     }} 
@@ -622,11 +658,33 @@ export default function NewSalePage() {
             <UniversalPaymentModal 
                 isOpen={isPaymentDialogOpen}
                 onOpenChange={(open) => { if (!open && submitting) return; setIsPaymentDialogOpen(open); }}
-                title="Cobrar Venta" 
+                title={
+                    isEditMode
+                        ? (editMode === 'charge'
+                            ? "COBRO ADICIONAL"
+                            : editMode === 'refund'
+                            ? "DEVOLUCIÓN / AJUSTE"
+                            : editMode === 'neutral'
+                            ? "AJUSTE SIN COBRO"
+                            : "Cobrar Venta")
+                        : "Cobrar Venta"
+                }
                 client={selectedCustomer} 
-                totalToPay={isEditMode ? (extraTotal > 0 ? extraTotal : total) : total} 
-                pendingReturnAmount={pendingReturn?.totalDev || 0}
+                totalToPay={
+                    isEditMode
+                        ? Math.abs(editDeltaTotal)
+                        : total
+                }
+                // En modo edición mantenemos el flujo del modal totalmente
+                // aislado del "pendingReturn" (que es para intercambios de
+                // devolución de ventas previas). Aquí lo importante es que
+                // el cajero elija canal (efectivo/Nequi/Daviplata) para el
+                // cobro o el reembolso, y el signo se aplica al enviar.
+                pendingReturnAmount={
+                    isEditMode ? 0 : (pendingReturn?.totalDev || 0)
+                }
                 originalPaymentMethod={pendingReturn?.originalPaymentMethod || 'EFECTIVO'}
+                flowType={isEditMode && editMode === 'refund' ? 'out' : 'in'}
                 showSuccessScreen={showSuccessScreen} 
                 submittingPayment={submitting} 
                 lastChange={lastChange} 

@@ -225,13 +225,13 @@ func (s *ReturnService) CreateReturn(ret *models.Return, employeeDNI string, emp
 	if err := s.returnRepo.CreateWithTransaction(ret, employeeDNI, employeeName, stockAdjustments, movements); err != nil {
 		return err
 	}
-	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
 	sse.GetSSEService().BroadcastDashboardUpdate()
 	return nil
 }
 
-func (s *ReturnService) ListReturns() ([]models.Return, error) {
-	return s.returnRepo.GetAll()
+func (s *ReturnService) ListReturns(limit int) ([]models.Return, error) {
+	return s.returnRepo.GetAll(limit)
 }
 
 func (s *ReturnService) DeleteReturn(id uint, adminDNI string, adminName string) error {
@@ -353,7 +353,7 @@ func (s *ReturnService) ProcessAdvancedReturn(req ports.ProcessReturnReq, employ
 	if err != nil {
 		return nil, err
 	}
-	cache.InvalidateCache(cache.CacheKeyDashboardOverview)
+	cache.InvalidateDashboard()
 	sse.GetSSEService().BroadcastDashboardUpdate()
 	return ret, nil
 }

@@ -1,4 +1,4 @@
-﻿package handlers
+package handlers
 
 import (
 	"fmt"
@@ -56,7 +56,7 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 
 	// Auditoría de Egreso
 	name, _ := c.Get("userName")
-	h.auditService.Log(expense.CreatedByDNI, fmt.Sprintf("%v", name), "CREATE_EXPENSE", "FINANCES", 
+	h.auditService.Log(expense.CreatedByDNI, fmt.Sprintf("%v", name), "CREATE_EXPENSE", "FINANCES",
 		fmt.Sprintf("Nuevo egreso: %s ($%.2f)", expense.Description, expense.Amount),
 		fmt.Sprintf("Se registró un egreso por %s de $%s", expense.Description, fmt.Sprintf("%.2f", expense.Amount)),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -67,12 +67,23 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 func normalizeExpensesForFrontend(expenses []models.Expense) {
 	for i := range expenses {
 		e := &expenses[i]
-		if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 {
+		if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 || e.CoinsAmount > 0 {
 			var parts []string
-			if e.CashAmount > 0 { parts = append(parts, "CAJA") }
-			if e.NequiAmount > 0 { parts = append(parts, "NEQUI") }
-			if e.DaviplataAmount > 0 { parts = append(parts, "DAVIPLATA") }
-			if e.FondoAmount > 0 { parts = append(parts, "FONDO") }
+			if e.CashAmount > 0 {
+				parts = append(parts, "CAJA")
+			}
+			if e.NequiAmount > 0 {
+				parts = append(parts, "NEQUI")
+			}
+			if e.DaviplataAmount > 0 {
+				parts = append(parts, "DAVIPLATA")
+			}
+			if e.FondoAmount > 0 {
+				parts = append(parts, "FONDO")
+			}
+			if e.CoinsAmount > 0 {
+				parts = append(parts, "ALCANCIA")
+			}
 			if len(parts) > 1 {
 				e.PaymentSource = strings.Join(parts, " + ")
 			} else if len(parts) == 1 {
@@ -86,19 +97,33 @@ func normalizeExpensesForFrontend(expenses []models.Expense) {
 				cleanSrc = strings.ReplaceAll(cleanSrc, "CASH", "CAJA")
 				// Extraer solo los nombres de los canales
 				var parts []string
-				if strings.Contains(cleanSrc, "NEQUI") { parts = append(parts, "NEQUI") }
-				if strings.Contains(cleanSrc, "DAVIPLATA") { parts = append(parts, "DAVIPLATA") }
-				if strings.Contains(cleanSrc, "CAJA") { parts = append(parts, "CAJA") }
-				if strings.Contains(cleanSrc, "FONDO") { parts = append(parts, "FONDO") }
+				if strings.Contains(cleanSrc, "NEQUI") {
+					parts = append(parts, "NEQUI")
+				}
+				if strings.Contains(cleanSrc, "DAVIPLATA") {
+					parts = append(parts, "DAVIPLATA")
+				}
+				if strings.Contains(cleanSrc, "CAJA") {
+					parts = append(parts, "CAJA")
+				}
+				if strings.Contains(cleanSrc, "FONDO") {
+					parts = append(parts, "FONDO")
+				}
 				if len(parts) > 1 {
 					e.PaymentSource = strings.Join(parts, " + ")
 				} else {
 					e.PaymentSource = "MIXTO" // Fallback fallback
 				}
 			} else {
-				if src == "CAJA" || src == "" { e.PaymentSource = "CAJA" }
-				if src == "EFECTIVO" { e.PaymentSource = "CAJA" }
-				if src == "PREST." || src == "DEUDA" { e.PaymentSource = "PRESTAMO" }
+				if src == "CAJA" || src == "" {
+					e.PaymentSource = "CAJA"
+				}
+				if src == "EFECTIVO" {
+					e.PaymentSource = "CAJA"
+				}
+				if src == "PREST." || src == "DEUDA" {
+					e.PaymentSource = "PRESTAMO"
+				}
 			}
 		}
 	}
@@ -118,8 +143,8 @@ func (h *ExpenseHandler) GetAll(c *gin.Context) {
 }
 
 func (h *ExpenseHandler) GetPaginated(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("pageSize", "50"))
+	page := QueryPage(c, "page")
+	pageSize := QueryPageSize(c, "pageSize", 50)
 	supplier := c.Query("supplier")
 	concept := c.Query("concept")
 
@@ -159,7 +184,7 @@ func (h *ExpenseHandler) Delete(c *gin.Context) {
 	// Auditoría de Eliminación de Egreso
 	dni, _ := c.Get("dni")
 	name, _ := c.Get("userName")
-	h.auditService.Log(dni.(string), name.(string), "DELETE_EXPENSE", "FINANCES", 
+	h.auditService.Log(dni.(string), name.(string), "DELETE_EXPENSE", "FINANCES",
 		fmt.Sprintf("Eliminado egreso ID: %d", id),
 		fmt.Sprintf("Se eliminó permanentemente el egreso con ID #%d", id),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -235,7 +260,7 @@ func (h *ExpenseHandler) CreateLinked(c *gin.Context) {
 
 	// Auditoría de Egreso Vinculado
 	name, _ := c.Get("userName")
-	h.auditService.Log(req.Expense.CreatedByDNI, fmt.Sprintf("%v", name), "CREATE_LINKED_EXPENSE", "FINANCES", 
+	h.auditService.Log(req.Expense.CreatedByDNI, fmt.Sprintf("%v", name), "CREATE_LINKED_EXPENSE", "FINANCES",
 		fmt.Sprintf("Egreso vinculado (Orden #%d): %s ($%.2f)", req.LinkedOrderID, req.Expense.Description, req.Expense.Amount),
 		fmt.Sprintf("Se registró un egreso de $%s vinculado a la orden #%d", fmt.Sprintf("%.2f", req.Expense.Amount), req.LinkedOrderID),
 		"", c.ClientIP(), c.Request.UserAgent(), true)
@@ -272,7 +297,7 @@ func (h *ExpenseHandler) Settle(c *gin.Context) {
 
 	// Auditoría de Pago de Deuda
 	name, _ := c.Get("userName")
-	h.auditService.Log(updaterDNI, fmt.Sprintf("%v", name), "SETTLE_EXPENSE_DEBT", "FINANCES", 
+	h.auditService.Log(updaterDNI, fmt.Sprintf("%v", name), "SETTLE_EXPENSE_DEBT", "FINANCES",
 		fmt.Sprintf("Deuda saldada ID: %d (%s)", id, expense.Description),
 		fmt.Sprintf("Se pagó la deuda de $%s con %s", fmt.Sprintf("%.2f", expense.Amount), expense.PaymentSource),
 		"", c.ClientIP(), c.Request.UserAgent(), true)

@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -23,19 +25,61 @@ func NewRestockV2Handler(
 	return &RestockV2Handler{metricsRepo: mr, nightlySvc: ns}
 }
 
-func (h *RestockV2Handler) GetSuggestionsV2(c *gin.Context) {
-	var supplierID *uint
-	if value := c.Query("supplier_id"); value != "" && value != "0" {
+// GetSuggestionsV2 responde /api/restock/suggestions-v2.
+//
+// Query params (Fase 1, agosto 2026):
+//
+//	supplier_id  int|opcional  filtra por proveedor. 0 o vacio = sin filtro.
+//	search       string|opc.   filtra por nombre o barcode (server-side, ILIKE).
+//	include_all     bool|opc. default false. Si false, solo devuelve las
+//	                filas accionables (RED, YELLOW o suggestedOrderQty>0).
+//	                Si true, devuelve tambien VERDE/UNSET sin pedido.
+//	unassigned_only bool|opc. filtra huérfanos vivos; no se combina con
+//	                supplier_id.
+//
+// El orden final es autoritativo (banda / pedido / cobertura / demanda /
+// nombre) y se aplica en el repositorio; el handler no ordena de nuevo.
+var errConflictingSuggestionFilters = errors.New("unassigned_only no se puede combinar con supplier_id")
+
+func parseSuggestionQueryParams(query url.Values) (repositories.SuggestionQueryParams, error) {
+	params := repositories.SuggestionQueryParams{Search: query.Get("search")}
+
+	if value := query.Get("supplier_id"); value != "" && value != "0" {
 		parsed, err := strconv.ParseUint(value, 10, 32)
 		if err != nil || parsed == 0 {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "supplier_id inválido"})
-			return
+			return params, errors.New("supplier_id inválido")
 		}
 		id := uint(parsed)
-		supplierID = &id
+		params.SupplierID = &id
 	}
 
-	suggestions, err := h.metricsRepo.GetSuggestions(c.Request.Context(), supplierID)
+	for key, target := range map[string]*bool{
+		"include_all":     &params.IncludeAll,
+		"unassigned_only": &params.UnassignedOnly,
+	} {
+		if value := query.Get(key); value != "" {
+			parsed, err := strconv.ParseBool(value)
+			if err != nil {
+				return params, errors.New(key + " inválido")
+			}
+			*target = parsed
+		}
+	}
+
+	if params.UnassignedOnly && params.SupplierID != nil {
+		return params, errConflictingSuggestionFilters
+	}
+	return params, nil
+}
+
+func (h *RestockV2Handler) GetSuggestionsV2(c *gin.Context) {
+	params, err := parseSuggestionQueryParams(c.Request.URL.Query())
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	suggestions, err := h.metricsRepo.GetSuggestions(c.Request.Context(), params)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "no se pudieron cargar las sugerencias"})
 		return

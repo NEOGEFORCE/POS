@@ -321,24 +321,26 @@ export function ExpensePaymentModal({
                   <button 
                     key={tab.id} 
                     onClick={() => { setActivePaymentTab(tab.id as any); setDialogAmount(''); }} 
-                    className={`h-10 md:h-14 px-2 md:px-5 rounded-2xl md:rounded-2xl flex items-center justify-center md:justify-start gap-1.5 md:gap-4 border transition-all group ${
+                    className={`h-14 md:h-14 px-3 md:px-5 rounded-2xl flex items-center justify-center md:justify-start gap-2.5 md:gap-4 border-2 transition-all group ${
                       activePaymentTab === tab.id 
                         ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white tracking-tight` 
                         : 'bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-500 dark:text-zinc-500 ' + theme.bgHover
                     }`}
                   >
-                    <div className={`p-1 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab.id ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:' + theme.bg + ' group-hover:text-white'}`}>
+                    <div className={`p-1.5 md:p-2 rounded-2xl transition-colors ${activePaymentTab === tab.id ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]' : 'bg-gray-200 dark:bg-zinc-700/50 group-hover:' + theme.bg + ' group-hover:text-white'}`}>
                       {tab.icon ? (
                         tab.icon
                       ) : (
                         <img 
                           src={tab.logo} 
-                          className={`h-3.5 w-3.5 md:h-7 md:w-7 object-contain ${activePaymentTab === tab.id ? 'brightness-200' : 'opacity-70 group-hover:opacity-100'}`} 
+                          className={`h-5 w-5 md:h-7 md:w-7 object-contain ${activePaymentTab === tab.id ? 'brightness-200' : 'opacity-70 group-hover:opacity-100'}`} 
                           alt={tab.label}
                         />
                       )}
                     </div>
-                    <span className="text-[7.5px] md:text-[10px] font-medium uppercase tracking-tight whitespace-nowrap tracking-wider md:tracking-widest leading-none">{tab.label}</span>
+                    {/* El canal de pago es la decision mas importante de esta
+                        pantalla: en movil estaba en 7,5px y era ilegible. */}
+                    <span className="text-[12px] md:text-[10px] font-bold uppercase tracking-wide whitespace-nowrap leading-none">{tab.label}</span>
                   </button>
                 ))}
               </div>
@@ -445,12 +447,18 @@ export function ExpensePaymentModal({
                   </div>
                 </div>
 
-                <div className="flex-1 w-full max-w-[420px] mx-auto md:max-w-none flex flex-col gap-2 md:gap-3 bg-white dark:bg-[#18181b] p-3 md:p-6 rounded-3xl md:rounded-[2rem] border border-gray-200 dark:border-white/5 shadow-sm min-h-0 pb-6 md:pb-6">
-                  <div className="grid grid-cols-3 grid-rows-4 gap-2 md:gap-3 flex-1 min-h-0">
+                <div className="w-full max-w-[420px] mx-auto md:flex-1 md:max-w-none flex flex-col gap-2 md:gap-3 bg-white dark:bg-[#18181b] p-3 md:p-6 rounded-3xl md:rounded-[2rem] border border-gray-200 dark:border-white/5 shadow-sm md:min-h-0 pb-6 md:pb-6">
+                  {/* En movil el teclado NO se estira: antes usaba flex-1 con
+                      teclas h-full y ocupaba casi toda la pantalla, dejando el
+                      monto y el canal de pago apretados arriba. Ahora las teclas
+                      tienen alto fijo y el espacio sobrante queda para los datos
+                      que hay que leer antes de pagar. En escritorio se conserva
+                      el comportamiento elastico. */}
+                  <div className="grid grid-cols-3 grid-rows-4 gap-2 md:gap-3 md:flex-1 md:min-h-0">
                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'CE', 0, '+'].map((n, i) => (
                       <Button 
                         key={i}
-                        className={`text-2xl md:text-3xl font-medium rounded-2xl md:rounded-3xl h-full w-full border-b-4 active:scale-95 transition-all text-gray-900 ${
+                        className={`text-xl md:text-3xl font-bold rounded-2xl md:rounded-3xl h-12 md:h-full w-full border-b-4 active:scale-95 transition-all text-gray-900 ${
                           n === '+' || n === 'CE' 
                             ? theme.bg + ' text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-rose-600'
                             : 'bg-gray-50 dark:bg-zinc-800 dark:text-white active:bg-gray-200 border-gray-200 dark:border-zinc-700 hover:bg-gray-100'

@@ -2,6 +2,7 @@
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -59,7 +60,12 @@ func (h *DebtHandler) RegisterPayment(c *gin.Context) {
 	}
 
 	if err := h.saleService.RegisterDebtPayment(uint(id), paymentData.Amount, paymentData.Method, empDNIStr); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// El error crudo puede venir de Postgres (nombres de columnas,
+		// constraints) o del dominio. SendError decide qué es seguro mostrar y
+		// deja el detalle técnico en el log.
+		log.Printf("[DEBT] RegisterPayment falló para deuda #%d: %v", id, err)
+		SendError(c, http.StatusInternalServerError, ErrInternalServer,
+			"No se pudo registrar el abono. Verifique el monto e intente de nuevo.", err)
 		return
 	}
 

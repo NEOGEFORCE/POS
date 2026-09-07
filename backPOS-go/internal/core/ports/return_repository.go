@@ -9,7 +9,11 @@ type ReturnRepository interface {
 	Create(ret *models.Return) error
 	CreateWithTransaction(ret *models.Return, employeeDNI string, employeeName string, adjustments map[string]float64, movements []*models.StockMovement) error
 	GetByID(id uint) (*models.Return, error)
-	GetAll() ([]models.Return, error)
+	// GetAll devuelve las devoluciones más recientes primero, acotadas por
+	// limit. El limite es obligatorio en la firma justamente porque antes no
+	// existía: la ruta expuesta materializaba la tabla completa con Preload de
+	// detalles y productos.
+	GetAll(limit int) ([]models.Return, error)
 	GetByDateRange(from, to time.Time) ([]models.Return, error)
 	GetTotalReturnedByRange(from, to time.Time) (float64, error)
 	ProcessAdvancedReturnTransaction(req ProcessReturnReq, originalSale *models.Sale, employeeDNI string, employeeName string, stockAdjustments map[string]float64, movements []*models.StockMovement) (*models.Return, error)

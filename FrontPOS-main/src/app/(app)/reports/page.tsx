@@ -235,7 +235,7 @@ export default function ReportsPage() {
             <MetricCard 
               label="Egresos Hoy" 
               value={data ? formatCurrency(data.todayExpenses?.amount || 0) : "---"} 
-              subValue={`${data?.todayExpenses?.count || 0} Movimientos`} 
+              subValue={`Total operativo · todos los canales · ${data?.todayExpenses?.count || 0} movimientos`} 
               trend="Auditado" 
             />
             <MetricCard 

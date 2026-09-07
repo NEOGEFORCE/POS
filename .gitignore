@@ -64,6 +64,17 @@ scratch/
 *.bak
 *.backup
 
+# Memoria del agente: grafo generado que cambia en cada sesion.
+# La configuracion de agentes y steering (.kiro/agents, .kiro/steering) SI se versiona.
+.kiro/memory/
+
+# Archivos sueltos de comparacion y exportes de trabajo
+_modal_diff.txt
+_modal_orig.tsx
+_real.txt
+FLUJO_DESGLOSADO_actual.csv
+FLUJO_DESGLOSADO_actual.xlsx
+
 
 # Versioned application migrations are source code, not database dumps
 !backPOS-go/migrations/sql/
