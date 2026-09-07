@@ -4,7 +4,13 @@ param(
     [string]$ProductionShare = "\\DESKTOP-VK2U90S\Users\surti\Desktop\POS",
     [string]$ServiceComputer = "DESKTOP-VK2U90S",
     [string]$ServiceName = "POS_Server",
-    [string]$HealthUrl = "http://192.168.1.6:8080/api/health"
+    # El API escucha en 3000 (cmd/api/main.go usa PORT y cae en 3000 por
+    # defecto). Este valor decia 8080, donde no hay nada escuchando: el paso 8
+    # fallaba sus 5 intentos y, como el release ya estaba activado, el catch
+    # disparaba Restore-PreviousRelease. Es decir, un despliegue correcto se
+    # revertia solo y produccion quedaba en el codigo viejo tras varios minutos
+    # de servicio caido.
+    [string]$HealthUrl = "http://192.168.1.6:3000/api/health"
 )
 
 $ErrorActionPreference = "Stop"
