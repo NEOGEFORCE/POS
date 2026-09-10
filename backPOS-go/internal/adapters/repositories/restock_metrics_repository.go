@@ -1042,11 +1042,32 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 	// alimenta la sugerencia. Si no hay evidencia larga (90d en cero), no se
 	// sugiere nada: no se toca un minimo por falta de datos.
 	// -----------------------------------------------------------------
+	// EL MINIMO SE MIDE POR EL CICLO DE REPOSICION, NO POR EL LEAD TIME.
+	//
+	// Reporte del dueno (2026-09-10, textual): "Eso de sugerir bajar el stock
+	// no lo tiene que medir por días, tiene que medirlo por los días que viene
+	// osea 8 días".
+	//
+	// Antes esto era demand90 * SupplierLeadDays. Para un proveedor que visita
+	// los martes y entrega los miercoles el lead time es 1 dia, asi que el ideal
+	// salia de UN dia de venta: COLANTA ENTERA (0.23/dia a 90 dias) daba ideal 1
+	// y el sistema proponia bajar el minimo de 3 a 1, con el producto agotado 7
+	// de los ultimos 30 dias. Ademas contradecia al aviso de pedido de la misma
+	// tarjeta, que si razona "hasta la proxima visita".
+	//
+	// El lead time responde "cuanto tarda en llegar lo que pido". El minimo
+	// responde "cuanto tengo que aguantar con lo que hay", y eso es hasta la
+	// siguiente visita mas el lead: para un proveedor semanal, 7 + 1 = 8 dias.
 	leadForMinStock := metric.SupplierLeadDays
 	if leadForMinStock <= 0 {
 		leadForMinStock = 7
 	}
-	longTermIdeal := math.Ceil(demand90 * float64(leadForMinStock))
+	coverageForMinStock := scheduling.MinStockCoverageDays(
+		row.EffectiveVisitDays,
+		row.EffectiveDeliveryDays,
+		leadForMinStock,
+	)
+	longTermIdeal := math.Ceil(demand90 * float64(coverageForMinStock))
 
 	suggestedMin := 0.0
 	suggestedMinReason := models.MinStockSuggestionNone

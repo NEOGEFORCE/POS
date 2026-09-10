@@ -13,6 +13,7 @@
 package scheduling
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -215,6 +216,118 @@ func daysBetween(from, to time.Time) int {
 		hours = -hours
 	}
 	return int(hours/24 + 0.5)
+}
+
+// MinStockCoverageDays devuelve cuantos dias de venta tiene que cubrir el
+// STOCK MINIMO de un producto de este proveedor.
+//
+// EL BUG QUE ARREGLA (reporte del dueno, 2026-09-10, textual): "Eso de sugerir
+// bajar el stock no lo tiene que medir por días, tiene que medirlo por los días
+// que viene osea 8 días".
+//
+// La sugerencia de bajar el minimo se calculaba como demanda x LEAD TIME. Para
+// un proveedor que visita los martes y entrega los miercoles el lead time es
+// 1 dia, asi que el "ideal" salia de un solo dia de venta. Con COLANTA ENTERA
+// (0.23/dia a 90 dias) eso daba ideal 1 y el sistema proponia bajar el minimo
+// de 3 a 1, cuando el producto ya se habia agotado 7 dias en el ultimo mes.
+//
+// El lead time es la respuesta a "cuanto tarda en llegar lo que pido". El
+// minimo responde otra pregunta: "cuanto tengo que aguantar con lo que hay".
+// Y lo que hay que aguantar es hasta la SIGUIENTE oportunidad de reposicion:
+//
+//	cobertura = peor intervalo entre dos visitas consecutivas + lead time
+//
+// Para un proveedor semanal (un solo dia de visita) eso es 7 + 1 = 8 dias, que
+// es exactamente el numero que dio el dueno.
+//
+// Se usa el PEOR intervalo, no el promedio: si el proveedor viene martes y
+// viernes, entre viernes y martes hay 4 dias y entre martes y viernes 3. El
+// minimo tiene que sobrevivir el hueco largo, porque si se calcula con el corto
+// el producto se agota justo el fin de semana.
+//
+// Sin dias de visita configurados ni aprendidos no se puede saber el ciclo y se
+// cae en fallbackDays (el llamador pasa el lead time resuelto, que ya tiene su
+// propia cadena de precedencia terminada en 7).
+func MinStockCoverageDays(visitDays, deliveryDays []string, fallbackDays int) int {
+	if fallbackDays < 1 {
+		fallbackDays = 7
+	}
+
+	visitSet := parseWeekdaySet(visitDays)
+	if len(visitSet) == 0 {
+		return fallbackDays
+	}
+
+	cycle := worstGapBetweenWeekdays(visitSet)
+
+	// Lead time del proveedor segun su agenda: dias entre la visita y la
+	// entrega. Si no hay dias de entrega utiles se asume que llega el mismo
+	// dia (0) en vez de inventar un colchon.
+	lead := 0
+	deliverySet := parseWeekdaySet(deliveryDays)
+	if len(deliverySet) > 0 {
+		lead = leadFromWeekdaySets(visitSet, deliverySet)
+	}
+
+	total := cycle + lead
+	if total < 1 {
+		return 1
+	}
+	return total
+}
+
+// worstGapBetweenWeekdays devuelve el intervalo mas largo, en dias, entre dos
+// dias de la semana consecutivos del conjunto, cerrando el ciclo semanal.
+//
+// Con un solo dia devuelve 7 (ciclo semanal completo). Con lunes y jueves
+// devuelve 4 (jueves -> lunes), no 3.
+func worstGapBetweenWeekdays(set map[time.Weekday]struct{}) int {
+	dias := make([]int, 0, len(set))
+	for weekday := range set {
+		dias = append(dias, int(weekday))
+	}
+	if len(dias) == 0 {
+		return 7
+	}
+	if len(dias) == 1 {
+		return 7
+	}
+	sort.Ints(dias)
+
+	peor := 0
+	for i := range dias {
+		siguiente := dias[(i+1)%len(dias)]
+		gap := siguiente - dias[i]
+		if gap <= 0 {
+			gap += 7 // cierre del ciclo semanal
+		}
+		if gap > peor {
+			peor = gap
+		}
+	}
+	if peor < 1 {
+		return 7
+	}
+	return peor
+}
+
+// leadFromWeekdaySets calcula el peor retraso entre pedir y recibir segun los
+// dias de la agenda: para cada dia de visita se busca el primer dia de entrega
+// que caiga el mismo dia o despues, y se conserva el maximo.
+func leadFromWeekdaySets(visitSet, deliverySet map[time.Weekday]struct{}) int {
+	peor := 0
+	for visita := range visitSet {
+		for offset := 0; offset < 7; offset++ {
+			candidato := time.Weekday((int(visita) + offset) % 7)
+			if _, ok := deliverySet[candidato]; ok {
+				if offset > peor {
+					peor = offset
+				}
+				break
+			}
+		}
+	}
+	return peor
 }
 
 // ResolveSupplierLeadTime aplica el orden de precedencia acordado con el

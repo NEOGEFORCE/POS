@@ -112,3 +112,68 @@ export function getVentasCajero(closure) {
   const digitalIncome = numeric(closure?.totalNequi) + numeric(closure?.totalDaviplata) + numeric(closure?.totalCard) + numeric(closure?.totalBancolombia) + numeric(closure?.totalOtherTransfer);
   return getRealPhysicalCash(closure) + digitalIncome + getClosureExpensesSummary(closure).cashExpenses + numeric(closure?.totalReturns);
 }
+
+// ============================================================================
+// ¿SE PUEDE CERRAR LA CAJA?
+//
+// REPORTE DEL DUEÑO (2026-09-10): "En el cierre cuando no registro billetes no
+// me está dejando cerrar caja".
+//
+// El botón CERRAR CAJA estaba con isDisabled cuando el campo de efectivo
+// contado quedaba vacío: se veía apagado y sin ninguna explicación, así que la
+// única salida era adivinar que había que llenar la grilla de billetes.
+//
+// El bloqueo tenía una razón legítima que NO se puede tirar a la basura: cerrar
+// con el campo vacío guardaría $0 de efectivo físico y un faltante falso igual a
+// todo lo esperado, que después aparece como descuadre en los reportes y en el
+// cuadre real.
+//
+// La respuesta correcta no es bloquear en silencio ni dejar pasar en silencio,
+// sino PREGUNTAR una vez. Esta función decide qué hace falta; la pantalla se
+// encarga de preguntarlo.
+// ============================================================================
+
+/**
+ * Decide si el cierre puede enviarse y, si no, qué le falta.
+ *
+ * @param {object} input
+ * @param {string}  input.actualCashInput  texto del campo de efectivo contado
+ * @param {number}  input.expectedCash     efectivo que el sistema espera
+ * @param {boolean} [input.isEditMode]     true al corregir un cierre histórico
+ * @param {boolean} [input.confirmedNoCash] true si ya confirmó que no hay efectivo
+ * @returns {{ canSubmit: boolean, needsCashDeclaration: boolean, reason: string }}
+ */
+export function evaluateClosureSubmission({
+  actualCashInput,
+  expectedCash,
+  isEditMode = false,
+  confirmedNoCash = false,
+}) {
+  const declarado = String(actualCashInput ?? '').trim();
+  const esperado = numeric(expectedCash);
+
+  // Corregir un cierre histórico no exige volver a contar: el admin ya está
+  // editando cifras existentes desde reportes.
+  if (isEditMode) {
+    return { canSubmit: true, needsCashDeclaration: false, reason: 'edit_mode' };
+  }
+
+  // Con un monto escrito —incluido "0"— hay declaración y se puede cerrar.
+  // Ojo: "0" es una declaración válida y distinta de dejar el campo vacío.
+  if (declarado !== '') {
+    return { canSubmit: true, needsCashDeclaration: false, reason: 'declarado' };
+  }
+
+  // Campo vacío pero el sistema no esperaba efectivo: no hay nada que declarar
+  // ni faltante que inventar. Es el día que se vendió todo por transferencia.
+  if (esperado <= 0) {
+    return { canSubmit: true, needsCashDeclaration: false, reason: 'sin_efectivo_esperado' };
+  }
+
+  // Campo vacío con efectivo esperado: hay que preguntar.
+  if (confirmedNoCash) {
+    return { canSubmit: true, needsCashDeclaration: false, reason: 'confirmado_sin_efectivo' };
+  }
+  return { canSubmit: false, needsCashDeclaration: true, reason: 'falta_declarar_efectivo' };
+}
+

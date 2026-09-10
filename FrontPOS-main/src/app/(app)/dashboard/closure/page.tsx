@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { evaluateClosureSubmission } from '@/lib/closures-helpers.mjs';
 import { 
     DollarSign, 
     Calculator, 
@@ -115,6 +116,9 @@ function CashierClosureContent() {
     const [adminAuthorizer, setAdminAuthorizer] = useState('');
     const [authError, setAuthError] = useState('');
     const [showAuthModal, setShowAuthModal] = useState(false);
+    // Confirmacion de cierre SIN efectivo contado. Ver needsCashDeclaration.
+    const [showNoCashModal, setShowNoCashModal] = useState(false);
+    const [confirmoSinEfectivo, setConfirmoSinEfectivo] = useState(false);
     const [showDetailedAudit, setShowDetailedAudit] = useState(false);
     const [isRealExpenseModalOpen, setIsRealExpenseModalOpen] = useState(false);
     const [isExpensesOpen, setIsExpensesOpen] = useState(false);
@@ -224,6 +228,9 @@ function CashierClosureContent() {
 
     useEffect(() => {
         localStorage.setItem('pos_closure_actual', actualCashInput);
+        // Si el operador escribe un monto despues de haber confirmado "no hay
+        // efectivo", esa confirmacion deja de aplicar: lo que vale es la cifra.
+        if (actualCashInput) setConfirmoSinEfectivo(false);
     }, [actualCashInput]);
 
     useEffect(() => {
@@ -478,7 +485,39 @@ function CashierClosureContent() {
 
     const status = getStatus();
 
+    // PENDING = todavia no se declaro el efectivo contado.
+    //
+    // REPORTE DEL DUENO (2026-09-10): "En el cierre cuando no registro billetes
+    // no me esta dejando cerrar caja". El boton estaba con
+    // isDisabled={status === 'PENDING'}: quedaba muerto y SIN explicar por que,
+    // asi que la unica salida era adivinar que faltaba llenar la grilla.
+    //
+    // El bloqueo tenia una razon legitima: si se cierra con el campo vacio, el
+    // sistema registraria $0 de efectivo fisico y generaria un faltante falso
+    // igual a todo lo esperado, que despues contamina los reportes.
+    //
+    // La solucion no es dejar pasar en silencio ni bloquear en silencio, sino
+    // PREGUNTAR. El boton vuelve a estar activo y, si el campo esta vacio, se
+    // pide una confirmacion explicita de que no hay efectivo.
+    //
+    // La regla vive en evaluateClosureSubmission (closures-helpers.mjs) para que
+    // sea testeable y no se duplique.
+    const { needsCashDeclaration } = evaluateClosureSubmission({
+        actualCashInput,
+        expectedCash,
+        isEditMode,
+        confirmedNoCash: confirmoSinEfectivo,
+    });
+
     const handleCloseRegister = async () => {
+        // Si no se declaro el efectivo contado, se pregunta en vez de bloquear.
+        // Ver la nota de needsCashDeclaration: cerrar con el campo vacio
+        // registraria $0 y un faltante falso por todo lo esperado.
+        if (needsCashDeclaration && !confirmoSinEfectivo) {
+            setShowNoCashModal(true);
+            return;
+        }
+
         // En modo edicion no exigimos reautorizacion (el admin ya entro a /reports y edito)
         // Si hay faltante y NO esta autorizado Y NO es admin, abrir modal de admin
         if (!isEditMode && status === 'SHORTAGE' && !isAuthorized && !isAdmin) {
@@ -1214,7 +1253,7 @@ function CashierClosureContent() {
                             </Button>
                             <Button
                                 onPress={handleCloseRegister}
-                                isDisabled={status === 'PENDING' || isSubmitting}
+                                isDisabled={isSubmitting}
                                 className={`flex-1 h-16 rounded-2xl font-medium text-xl uppercase tracking-widest tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
                                     isEditMode ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30' :
                                     (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5'
@@ -1229,6 +1268,65 @@ function CashierClosureContent() {
                     </div>
                 </div>
             </div>
+
+            {/* MODAL: cerrar sin declarar el efectivo contado.
+                Reemplaza el boton muerto que no explicaba nada. */}
+            <Modal
+                isOpen={showNoCashModal}
+                onClose={() => setShowNoCashModal(false)}
+                size="md"
+                classNames={{ base: "bg-white dark:bg-[#0a0a0a] border border-zinc-200 dark:border-white/10 rounded-3xl" }}
+            >
+                <ModalContent>
+                    <ModalHeader className="flex flex-col gap-1">
+                        <span className="text-[10px] font-medium text-amber-500 uppercase tracking-widest">Falta el efectivo contado</span>
+                        <span className="text-lg font-medium text-zinc-900 dark:text-zinc-50 tracking-tight">
+                            ¿Cerrar sin contar el efectivo?
+                        </span>
+                    </ModalHeader>
+                    <ModalBody>
+                        <p className="text-sm text-gray-600 dark:text-zinc-400">
+                            No escribiste cuánto efectivo hay en la caja. El sistema esperaba{' '}
+                            <span className="font-medium text-zinc-900 dark:text-zinc-100 tabular-nums">
+                                ${formatCurrency(Math.round(expectedCash))}
+                            </span>.
+                        </p>
+                        <p className="text-sm text-gray-600 dark:text-zinc-400">
+                            Si cierras así, el cierre queda con <span className="font-medium">$0 en efectivo</span> y una
+                            diferencia de{' '}
+                            <span className="font-medium text-rose-500 tabular-nums">
+                                -${formatCurrency(Math.round(expectedCash))}
+                            </span>, que después aparecerá como faltante en los reportes.
+                        </p>
+                        <p className="text-sm text-gray-500 dark:text-zinc-500">
+                            Si de verdad no hay efectivo, continúa. Si sí hay, cancela y escribe el
+                            monto o usa la grilla de billetes.
+                        </p>
+                    </ModalBody>
+                    <ModalFooter>
+                        <Button
+                            variant="flat"
+                            onPress={() => setShowNoCashModal(false)}
+                            className="font-medium uppercase tracking-tight text-[10px]"
+                        >
+                            Cancelar y contar
+                        </Button>
+                        <Button
+                            className="bg-amber-600 hover:bg-amber-500 text-white font-medium uppercase tracking-tight text-[10px]"
+                            onPress={() => {
+                                // Se declara explicitamente que no hay efectivo: el campo
+                                // pasa a "0" para que el cierre guarde una cifra dicha por
+                                // el operador y no un vacio interpretado por el sistema.
+                                setActualCashInput('0');
+                                setConfirmoSinEfectivo(true);
+                                setShowNoCashModal(false);
+                            }}
+                        >
+                            No hay efectivo, cerrar
+                        </Button>
+                    </ModalFooter>
+                </ModalContent>
+            </Modal>
 
             {/* MODAL DE AUTORIZACION (DISEÑO ULTRA-PREMIUM) */}
             <Modal 
