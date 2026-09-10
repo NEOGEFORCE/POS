@@ -132,3 +132,51 @@ export function suggestedQuantities(items) {
     (items ?? []).map((item) => [item.productId, Math.max(0, item.suggestedOrderQty ?? 0)])
   );
 }
+
+/**
+ * Arma las líneas que se envían al backend a partir de TODO lo seleccionado.
+ *
+ * EL BUG QUE ARREGLA (reportado por el dueño, 2026-09-10): "cuando estoy
+ * buscando un producto en pedidos, cuando lo voy a mandar y todavia estoy
+ * buscando solo se me manda el que estoy buscando y los demas que tenia
+ * selecionados se pierden".
+ *
+ * La búsqueda de esta pantalla es del lado del SERVIDOR: al escribir, el
+ * backend devuelve sólo las coincidencias, y los grupos por proveedor se
+ * construyen desde esa respuesta recortada. El envío iteraba `group.items`, o
+ * sea únicamente lo visible, y el resto del pedido se perdía en silencio: el
+ * carrito mostraba 12 productos y salía 1.
+ *
+ * El carrito ya sobrevivía al filtro gracias a las fotos de useSmartRestock
+ * (selectedItems). El envío no las usaba. Esta función cierra ese hueco
+ * tomando la selección completa como única fuente.
+ *
+ * ATRIBUCIÓN POR PROVEEDOR. Con filtro de proveedor activo hay un solo grupo y
+ * todo lo elegido le pertenece; ese es el flujo normal, y además el hook borra
+ * la selección al cambiar de proveedor, así que no puede colarse nada ajeno.
+ * Sin filtro se reparte por primarySupplierId, que es la misma clave con la que
+ * agrupa groupSuggestionsBySupplier.
+ *
+ * @param {object} input
+ * @param {Array<{productId: string, quantity: number, unitCost: number, primarySupplierId: number|null}>} input.selectedItems
+ *        selección completa, incluida la que no está en la vista
+ * @param {number|null} input.groupSupplierId proveedor del grupo que se confirma
+ * @param {boolean} input.supplierFilterActive true = hay un proveedor elegido en el filtro
+ * @returns {Array<{product_id: string, barcode: string, quantity: number, unit_cost: number}>}
+ */
+export function buildConfirmItems({ selectedItems, groupSupplierId, supplierFilterActive }) {
+  const lista = Array.isArray(selectedItems) ? selectedItems : [];
+  return lista
+    .filter((item) => {
+      if (!item || !item.productId) return false;
+      if (!(Number(item.quantity) > 0)) return false;
+      if (supplierFilterActive) return true;
+      return (item.primarySupplierId ?? null) === (groupSupplierId ?? null);
+    })
+    .map((item) => ({
+      product_id: item.productId,
+      barcode: item.productId,
+      quantity: Number(item.quantity),
+      unit_cost: Number(item.unitCost) || 0,
+    }));
+}

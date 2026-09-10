@@ -128,12 +128,17 @@ interface UseSmartRestockOptions {
 /**
  * Foto mínima de un producto para poder mostrarlo en el carrito aunque ya no
  * venga en la respuesta actual (porque se buscó otra cosa o cambió el filtro).
+ *
+ * primarySupplierId es imprescindible, no decorativo: al ENVIAR el pedido hay
+ * que saber a qué proveedor pertenece cada producto elegido, y los que están
+ * fuera de la vista sólo existen en esta foto.
  */
 interface SelectedItemSnapshot {
   productId: string;
   productName: string;
   unitCost: number;
   supplierName: string;
+  primarySupplierId: number | null;
 }
 
 /** Una línea del carrito: lo que el dueño realmente va a pedir. */
@@ -342,6 +347,7 @@ export function useSmartRestock(
         productName: item.productName,
         unitCost: item.unitCost,
         supplierName: item.supplierName ?? "",
+        primarySupplierId: item.primarySupplierId ?? null,
       });
     }
   }, [data, supplierKey]);
@@ -398,6 +404,7 @@ export function useSmartRestock(
         productName,
         unitCost: vivo?.unitCost ?? foto?.unitCost ?? 0,
         supplierName: vivo?.supplierName ?? foto?.supplierName ?? "",
+        primarySupplierId: vivo?.primarySupplierId ?? foto?.primarySupplierId ?? null,
         quantity,
         subtotal: quantity * (vivo?.unitCost ?? foto?.unitCost ?? 0),
         enVista: Boolean(vivo),

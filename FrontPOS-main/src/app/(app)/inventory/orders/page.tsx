@@ -27,6 +27,7 @@ import { formatPrice } from "@/lib/utils";
 // .mjs aparte para poder probarlas con `node --test`; el espejo en Go está en
 // restock_handler.go (validateConfirmOrder / declaredOrderValue).
 import {
+  buildConfirmItems,
   canConfirmOrder,
   formatOrderValueInput,
   normalizeOrderValueInput,
@@ -53,6 +54,7 @@ import {
   addDaysBogotaIso,
   describeLeadTimeSource,
   groupSuggestionsBySupplier,
+  isSupplierFilterActive,
   resolveExpectedDeliveryDate,
   summarizeGroupSchedule,
   summarizeSupplierAgenda,
@@ -675,14 +677,20 @@ function SmartRestockContent() {
       toast({ title: "Proveedor requerido", description: "Asigna un proveedor antes de confirmar el pedido", variant: "destructive" });
       return;
     }
-    const items: ConfirmOrderItem[] = group.items.flatMap((item) => {
-      const quantity = orderQuantities[item.productId] ?? 0;
-      return quantity > 0 ? [{
-        product_id: item.productId,
-        barcode: item.productId,
-        quantity,
-        unit_cost: item.unitCost,
-      }] : [];
+    // EL PEDIDO SE ARMA CON TODO LO SELECCIONADO, NO CON LO VISIBLE.
+    //
+    // Antes esto era `group.items.flatMap(...)`. La busqueda de esta pantalla es
+    // del lado del servidor: al escribir, el backend devuelve solo las
+    // coincidencias y los grupos se construyen desde esa respuesta recortada.
+    // Resultado: si el dueno cargaba 12 productos y despues buscaba el numero
+    // 13, al enviar salia UNO SOLO y los otros 12 se perdian sin aviso.
+    //
+    // `selectedItems` viene del hook y ya sobrevive al filtro gracias a las
+    // fotos de cada producto elegido; es la unica fuente fiable de "que pedi".
+    const items: ConfirmOrderItem[] = buildConfirmItems({
+      selectedItems,
+      groupSupplierId: group.supplierId,
+      supplierFilterActive: isSupplierFilterActive(selectedSupplier),
     });
 
     const form = getForm(group);
@@ -772,7 +780,7 @@ function SmartRestockContent() {
     } finally {
       setSubmittingGroup(null);
     }
-  }, [askTransitConfirmation, clearProducts, editOrderId, getForm, orderQuantities, router, toast, user?.name]);
+  }, [askTransitConfirmation, clearProducts, editOrderId, getForm, selectedItems, selectedSupplier, router, toast, user?.name]);
 
   const recalculate = useCallback(async () => {
     setRecalculating(true);
