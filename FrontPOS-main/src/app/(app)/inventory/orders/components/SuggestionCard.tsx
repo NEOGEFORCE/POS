@@ -7,6 +7,7 @@ import { Button } from "@heroui/react";
 import { formatPrice } from "@/lib/utils";
 import { STOCK_HEALTH, getCoverageDays, getStockHealth } from "@/lib/stock-health.mjs";
 import { LEAD_TIME_SOURCE, describeLeadTimeSource } from "@/lib/order-scheduling.mjs";
+import { isAlreadyOrdered } from "@/lib/restock-ordering.mjs";
 
 import type { ABCCategory, RestockSuggestion } from "../hooks/useSmartRestock";
 
@@ -215,7 +216,17 @@ export function SuggestionCard({
   // el aprendizaje del sistema esta activo, se dice "aprendido" para no
   // vender lo aprendido como si fuera lo que el dueno configuro. Si es una
   // estimacion, se muestra tal cual.
+  //
+  // LOS DIAS DEL ROTULO SON LA COBERTURA, NO EL LEAD TIME. Antes esto mostraba
+  // item.supplierLeadDays, que responde "cuanto tarda en llegar lo que pido".
+  // Con visita martes y entrega miercoles la tarjeta decia "Ideal 1 d" mientras
+  // el ideal ya se calculaba para 8 dias (ciclo de visitas + lead). Un rotulo
+  // que no cuadra con el numero de al lado hace dudar del resto de la tarjeta.
+  // coverageDays lo manda el backend (scheduling.ReplenishmentCoverageDays).
   const leadSource = describeLeadTimeSource(item.leadTimeSource);
+  const diasIdeal = item.coverageDays && item.coverageDays > 0
+    ? item.coverageDays
+    : item.supplierLeadDays;
   const idealHint = item.leadTimeSource === LEAD_TIME_SOURCE.CONFIGURED_DAYS
     ? "segun dias configurados"
     : item.leadTimeSource === LEAD_TIME_SOURCE.LEARNED_DAYS
@@ -224,13 +235,26 @@ export function SuggestionCard({
         ? `hasta la visita (${leadSource.label})`
         : `visita + margen (${leadSource.label})`;
   const idealLabel = item.leadTimeSource === LEAD_TIME_SOURCE.CONFIGURED_DAYS
-    ? `Ideal ${item.supplierLeadDays} d · agenda`
+    ? `Ideal ${diasIdeal} d · agenda`
     : item.leadTimeSource === LEAD_TIME_SOURCE.LEARNED_DAYS
-      ? `Ideal ${item.supplierLeadDays} d · aprendido`
-      : `Ideal ${item.supplierLeadDays} d · estimado`;
+      ? `Ideal ${diasIdeal} d · aprendido`
+      : `Ideal ${diasIdeal} d · estimado`;
+
+  // YA PEDIDO Y CUBIERTO: la tarjeta se atenua para que el ojo la salte.
+  //
+  // Regla del dueno (2026-09-10): lo que ya se pidio va al fondo de la lista y
+  // no debe cruzarse con lo que falta pedir. El orden lo hace
+  // restock-ordering.compareSuggestions; aca se refuerza visualmente, porque un
+  // agotado con mercancia en camino sigue pintando la barra en rojo y sin esto
+  // parece que exige accion.
+  const yaPedido = isAlreadyOrdered(item);
 
   return (
-    <article className="grid gap-3 p-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-4">
+    <article
+      className={`grid gap-3 p-3.5 md:grid-cols-[minmax(0,1fr)_auto] md:items-start md:gap-4 ${
+        yaPedido ? "opacity-60 hover:opacity-100 transition-opacity" : ""
+      }`}
+    >
       <div className="min-w-0 space-y-2.5">
         {/* Identidad y estado */}
         <div className="flex flex-wrap items-center gap-1.5">

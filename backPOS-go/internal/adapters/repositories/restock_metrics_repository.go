@@ -1058,16 +1058,16 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 	// El lead time responde "cuanto tarda en llegar lo que pido". El minimo
 	// responde "cuanto tengo que aguantar con lo que hay", y eso es hasta la
 	// siguiente visita mas el lead: para un proveedor semanal, 7 + 1 = 8 dias.
-	leadForMinStock := metric.SupplierLeadDays
-	if leadForMinStock <= 0 {
-		leadForMinStock = 7
+	leadFallback := metric.SupplierLeadDays
+	if leadFallback <= 0 {
+		leadFallback = 7
 	}
-	coverageForMinStock := scheduling.ReplenishmentCoverageDays(
+	coverageDays := scheduling.ReplenishmentCoverageDays(
 		row.EffectiveVisitDays,
 		row.EffectiveDeliveryDays,
-		leadForMinStock,
+		leadFallback,
 	)
-	longTermIdeal := math.Ceil(demand90 * float64(coverageForMinStock))
+	longTermIdeal := math.Ceil(demand90 * float64(coverageDays))
 
 	suggestedMin := 0.0
 	suggestedMinReason := models.MinStockSuggestionNone
@@ -1078,6 +1078,7 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 	item := models.RestockSuggestionResponse{
 		ProductRestockMetric:    metric,
 		InTransit:               row.LiveInTransitQty > 0,
+		CoverageDays:            coverageDays,
 		LastReceptionAt:         metric.LastReceptionAt,
 		DaysSinceReception:      row.DaysSinceReception,
 		SoldSinceReception:      metric.SoldSinceReception,

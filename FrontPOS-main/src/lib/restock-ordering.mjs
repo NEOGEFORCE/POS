@@ -7,7 +7,20 @@
 // El objetivo es que el operador vea de un vistazo lo que hay que atacar y
 // nunca lo optimo compita por el mismo espacio visual que lo critico.
 //
-//   1. CRITICO (rojo)      -> primero
+// REGLA DEL DUENO (2026-09-10, textual): "en los productos que ya se pidieron,
+// si se pidio por cualquier provedor necesito que me salga mejor que ya se
+// pidio y si ya se pidio que salga en la partes de al fondoooo, asi no se cruza
+// con lo que falta pedir".
+//
+// Por eso el PRIMER criterio, por encima del semaforo, es si el producto ya
+// esta pedido y lo que viene en camino alcanza. Antes esos productos quedaban
+// arriba mezclados con los que si hay que pedir: un agotado con 6 unidades en
+// camino sigue en banda ROJA, asi que encabezaba la lista aunque no hubiera
+// nada que hacer con el. El dueno tenia que leer tarjeta por tarjeta para
+// distinguir "hay que pedirlo" de "ya viene".
+//
+//   0. YA PEDIDO Y CUBIERTO -> al fondo, siempre
+//   1. CRITICO (rojo)       -> primero
 //   2. ADVERTENCIA (amarillo)
 //   3. OPTIMO (verde)
 //   4. SIN_MINIMO / desconocido -> ultimo
@@ -111,12 +124,45 @@ function nameKey(item) {
 }
 
 /**
+ * ¿El producto ya esta pedido y lo que viene en camino alcanza?
+ *
+ * Se cuenta como "ya pedido" el transito de CUALQUIER proveedor: el backend lo
+ * suma sin filtrar (CTE transito_vivo une confirmed_order_items y
+ * purchase_order_items agrupando solo por producto). Eso es deliberado: la
+ * mercancia que ya viene tapa el hueco sin importar a quien se le pidio.
+ *
+ * OJO CON LA CONDICION: se exige que NO quede sugerencia pendiente. Un producto
+ * que tiene algo en camino pero AUN necesita mas sigue siendo trabajo por hacer
+ * y se queda arriba. Solo baja al fondo lo que no necesita ninguna accion.
+ *
+ * @param {object} item
+ * @returns {boolean}
+ */
+export function isAlreadyOrdered(item) {
+  if (!item || typeof item !== "object") return false;
+  const enCamino = Number(item.inTransitQty);
+  if (!Number.isFinite(enCamino) || enCamino <= 0) return false;
+  const pendiente = Number(item.suggestedOrderQty);
+  return !Number.isFinite(pendiente) || pendiente <= 0;
+}
+
+/** Clave de orden: 1 = ya pedido y cubierto, va al fondo. */
+function alreadyOrderedKey(item) {
+  return isAlreadyOrdered(item) ? 1 : 0;
+}
+
+/**
  * Compara dos sugerencias segun las reglas de la Fase 1.
  * @param {object} left
  * @param {object} right
  * @returns {number}
  */
 export function compareSuggestions(left, right) {
+  // Lo ya pedido y cubierto va al fondo, por encima de cualquier otro criterio:
+  // no compite por atencion con lo que si hay que pedir.
+  const orderedDelta = alreadyOrderedKey(left) - alreadyOrderedKey(right);
+  if (orderedDelta !== 0) return orderedDelta;
+
   const bandDelta = BAND_WEIGHT[resolveBand(left)] - BAND_WEIGHT[resolveBand(right)];
   if (bandDelta !== 0) return bandDelta;
 

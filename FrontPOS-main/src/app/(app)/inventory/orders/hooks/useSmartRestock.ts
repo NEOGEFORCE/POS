@@ -32,6 +32,8 @@ export interface RestockSuggestion {
   primarySupplierId: number | null;
   supplierName: string;
   supplierLeadDays: number;
+  /** Dias de venta que cubre el ideal: ciclo de visitas + lead time. */
+  coverageDays?: number;
   unitCost: number;
   calculatedAt: string;
   inTransit: boolean;

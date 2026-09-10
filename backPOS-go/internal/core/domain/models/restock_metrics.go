@@ -211,6 +211,16 @@ type RestockSuggestionResponse struct {
 	InTransit       bool                  `json:"inTransit"`
 	CheaperSupplier *CheaperSupplierAlert `json:"cheaperSupplier,omitempty"`
 
+	// CoverageDays son los dias de venta que cubre el ideal: el ciclo de
+	// visitas del proveedor mas su lead time (scheduling.ReplenishmentCoverageDays).
+	//
+	// Se expone porque la tarjeta rotula "Ideal N d" y antes usaba
+	// SupplierLeadDays, que es OTRA cosa: cuanto tarda en llegar lo que se pide.
+	// Con visita martes y entrega miercoles la etiqueta decia "Ideal 1 d"
+	// mientras el ideal ya se calculaba para 8 dias. Un rotulo que no coincide
+	// con el numero de al lado hace dudar de todo el resto de la tarjeta.
+	CoverageDays int `json:"coverageDays"`
+
 	// Señales calculadas en el momento de la consulta, siempre frescas.
 	LastReceptionAt     *time.Time `json:"lastReceptionAt,omitempty"`
 	DaysSinceReception  *int       `json:"daysSinceReception,omitempty"`
