@@ -126,18 +126,54 @@ func TestLectorDeFacturasUsaLaMismaFormulaQueLaRecepcion(t *testing.T) {
 	}
 }
 
-// El porcentaje del descuento sigue sin persistirse (necesita la migración 015).
-// Este test documenta la deuda para que no se olvide ni se dé por hecha.
-func TestPendiente_ElDescuentoAunNoSePersiste(t *testing.T) {
+// El porcentaje del descuento SI se persiste desde la migracion 015. Antes se
+// escribia en la pantalla, se usaba para calcular el PVP y se perdia al
+// guardar: no habia forma de auditar que descuento dio cada proveedor.
+func TestElDescuentoSePersisteEnElKardex(t *testing.T) {
 	src := leerArchivo(t, "postgres_product_inventory.go")
+	cuerpo := cuerpoDeFuncion(t, src, "func (r *PostgresProductRepository) BulkReceive(")
 
-	// Verificación real: si algún día alguien empieza a leer DiscountPct, este
-	// test falla y hay que quitar el Skip porque la deuda ya se pagó.
-	if strings.Contains(src, "entry.DiscountPct") {
-		t.Fatal("entry.DiscountPct ya se usa: la deuda se pagó, actualizá este test y quitá el Skip")
+	// Los cuatro porcentajes de la linea tienen que viajar al movimiento.
+	for _, campo := range []string{"DiscountPct:", "IvaPct:", "IcuiPct:", "IbuaPct:"} {
+		if !strings.Contains(cuerpo, campo) {
+			t.Errorf("el movimiento de kardex debe guardar %s de la linea de compra", campo)
+		}
 	}
 
-	t.Skip("DEUDA CONOCIDA: entry.DiscountPct no se guarda en ninguna parte. " +
-		"Requiere la migración 015 (stock_movements.discount_pct), escrita y sin aplicar. " +
-		"Hasta entonces el DTO del proveedor no es auditable después de la recepción.")
+	// Y deben salir de la linea, no de la variable del bucle por referencia:
+	// tomar &entry.X hace que todos los movimientos apunten al mismo valor si
+	// cambia la semantica de captura del range.
+	for _, copia := range []string{"lineDiscountPct", "lineIvaPct", "lineIcuiPct", "lineIbuaPct"} {
+		if !strings.Contains(cuerpo, copia) {
+			t.Errorf("falta la copia local %s: no tomar la direccion de la variable del bucle", copia)
+		}
+	}
+	if strings.Contains(cuerpo, "&entry.DiscountPct") {
+		t.Error("no tomes la direccion de entry.DiscountPct; usa una copia local por linea")
+	}
+}
+
+// Los porcentajes son punteros para poder distinguir "no aplica" de "0% real".
+// Un movimiento de venta o de merma no tiene porcentajes de compra.
+func TestLosPorcentajesDelKardexSonOpcionales(t *testing.T) {
+	ruta := filepath.Join("..", "..", "core", "domain", "models", "stock_movement.go")
+	src := leerArchivo(t, ruta)
+
+	for _, campo := range []string{
+		`DiscountPct *float64 `,
+		`IvaPct      *float64 `,
+		`IcuiPct     *float64 `,
+		`IbuaPct     *float64 `,
+	} {
+		if !strings.Contains(src, campo) {
+			t.Errorf("StockMovement debe declarar %q como puntero: un 0%% real no es lo mismo que 'no aplica'", strings.TrimSpace(campo))
+		}
+	}
+	// El tipo debe coincidir con el de la migracion 015 para que AutoMigrate no
+	// recree las columnas con otra precision.
+	for _, col := range []string{"discount_pct", "iva_pct", "icui_pct", "ibua_pct"} {
+		if !strings.Contains(src, "column:"+col+";type:numeric(6,3)") {
+			t.Errorf("la columna %s debe declararse type:numeric(6,3), igual que en la migracion 015", col)
+		}
+	}
 }

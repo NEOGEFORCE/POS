@@ -638,6 +638,15 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				movementReason = "PRICE_UPDATE_NO_STOCK"
 			}
 
+			// Copias locales: se toma la dirección de estos valores, no la de la
+			// variable del bucle, para que cada movimiento guarde los
+			// porcentajes de SU línea sin depender de la semántica de captura
+			// del `range`.
+			lineDiscountPct := entry.DiscountPct
+			lineIvaPct := entry.IvaPct
+			lineIcuiPct := entry.IcuiPct
+			lineIbuaPct := entry.IbuaPct
+
 			movement := models.StockMovement{
 				Date:         time.Now(),
 				Barcode:      entry.Barcode,
@@ -648,6 +657,18 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				EmployeeDNI:  employeeDNI,
 				EmployeeName: employeeName,
 				Metadata:     string(metaBytes),
+
+				// Foto histórica de los porcentajes de ESTA línea de compra.
+				// products.iva/icui/ibua se sobrescriben en cada recepción, así
+				// que sin esto no se podía auditar después qué impuestos ni qué
+				// descuento se pactaron en una compra concreta. El DTO en
+				// particular no se guardaba en ninguna parte: se escribía en la
+				// pantalla, servía para calcular el PVP y se perdía al guardar.
+				// Columnas creadas por la migración 015.
+				DiscountPct: &lineDiscountPct,
+				IvaPct:      &lineIvaPct,
+				IcuiPct:     &lineIcuiPct,
+				IbuaPct:     &lineIbuaPct,
 			}
 			if err := tx.Create(&movement).Error; err != nil {
 				return err
