@@ -79,3 +79,6 @@ FLUJO_DESGLOSADO_actual.xlsx
 # Versioned application migrations are source code, not database dumps
 !backPOS-go/migrations/sql/
 !backPOS-go/migrations/sql/*.sql
+
+# Artefactos de despliegue (binarios compilados y scripts de ventana)
+backPOS-go/.deploy/
