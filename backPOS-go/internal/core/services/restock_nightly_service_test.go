@@ -38,6 +38,16 @@ func TestCalculateRestockMetricAdjustsDemandAndTransit(t *testing.T) {
 // TestCalculateRestockMetric_ClaseCYaPidePorDemanda: Fase 1 elimino el veto
 // contra clase C. Un producto con rotacion baja pero constante ahora si
 // puede sugerir un pedido.
+//
+// CIFRAS ACTUALIZADAS EL 2026-09-10. Este proveedor no tiene dias de visita
+// configurados y llega con SupplierLeadDays 30. Antes el ideal se calculaba con
+// esos 30 dias (0.1 x 30 = 3), o sea un MES de inventario de golpe. El dueno lo
+// rechazo explicitamente: "no a 30 dias". Ahora la cobertura desconocida se
+// acota a scheduling.MaxUnknownCycleDays (14 dias), asi que el ideal baja a
+// ceil(0.1 x 14) = 2.
+//
+// Lo que este test protege NO cambia: un producto de clase C con rotacion baja
+// sigue generando pedido. Solo cambia el tamano, y a proposito.
 func TestCalculateRestockMetric_ClaseCYaPidePorDemanda(t *testing.T) {
 	metric := calculateRestockMetric(models.RestockCalculationInput{
 		ProductID:        "7702",
@@ -50,13 +60,14 @@ func TestCalculateRestockMetric_ClaseCYaPidePorDemanda(t *testing.T) {
 	if metric.ABCCategory != "C" {
 		t.Fatalf("category = %q; want C", metric.ABCCategory)
 	}
-	// Demanda = 3/30 = 0.1, ideal = ceil(0.1*30*1.0) = 3. Con stock 0 la
-	// demanda pide los 3 completos (sin minimo por objetivo).
-	if metric.IdealStock != 3 {
-		t.Fatalf("ideal stock = %v; want 3", metric.IdealStock)
+	// Demanda = 3/30 = 0.1. Cobertura acotada a 14 dias (sin agenda conocida):
+	// ideal = ceil(0.1 * 14 * 1.0) = 2. Con stock 0 la demanda pide los 2
+	// completos; el piso de MinMeaningfulOrderQty no aplica porque esta agotado.
+	if metric.IdealStock != 2 {
+		t.Fatalf("ideal stock = %v; want 2", metric.IdealStock)
 	}
-	if metric.SuggestedOrderQty != 3 {
-		t.Fatalf("suggestion = %v; want 3 (Fase 1: clase C ya pide por demanda)", metric.SuggestedOrderQty)
+	if metric.SuggestedOrderQty != 2 {
+		t.Fatalf("suggestion = %v; want 2 (Fase 1: clase C ya pide por demanda)", metric.SuggestedOrderQty)
 	}
 }
 

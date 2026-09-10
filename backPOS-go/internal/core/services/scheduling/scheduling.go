@@ -218,43 +218,64 @@ func daysBetween(from, to time.Time) int {
 	return int(hours/24 + 0.5)
 }
 
-// MinStockCoverageDays devuelve cuantos dias de venta tiene que cubrir el
-// STOCK MINIMO de un producto de este proveedor.
+// MaxUnknownCycleDays acota la cobertura cuando NO se conoce la agenda del
+// proveedor.
 //
-// EL BUG QUE ARREGLA (reporte del dueno, 2026-09-10, textual): "Eso de sugerir
-// bajar el stock no lo tiene que medir por días, tiene que medirlo por los días
-// que viene osea 8 días".
+// Sin dias de visita hay que caer a algo, y la cadena de precedencia del lead
+// time termina en visit_frequency_days, un campo que el propio sistema marca
+// como "aprendido, sospechoso" y que en produccion aparece con valores de 30.
+// Con eso, un producto que vende 1/dia pedia 35 unidades: un mes entero de
+// inventario en una sola factura.
 //
-// La sugerencia de bajar el minimo se calculaba como demanda x LEAD TIME. Para
-// un proveedor que visita los martes y entrega los miercoles el lead time es
-// 1 dia, asi que el "ideal" salia de un solo dia de venta. Con COLANTA ENTERA
-// (0.23/dia a 90 dias) eso daba ideal 1 y el sistema proponia bajar el minimo
-// de 3 a 1, cuando el producto ya se habia agotado 7 dias en el ultimo mes.
+// REGLA DEL DUENO (2026-09-10): "no a 30 dias". Un ciclo de mas de dos semanas
+// significa que en realidad no se conoce el ritmo del proveedor; en ese caso es
+// mejor pedir de menos y volver a pedir que inmovilizar la plata en bodega.
+const MaxUnknownCycleDays = 14
+
+// ReplenishmentCoverageDays devuelve cuantos dias de venta tiene que cubrir el
+// inventario de un producto de este proveedor.
 //
-// El lead time es la respuesta a "cuanto tarda en llegar lo que pido". El
-// minimo responde otra pregunta: "cuanto tengo que aguantar con lo que hay".
-// Y lo que hay que aguantar es hasta la SIGUIENTE oportunidad de reposicion:
+// Alimenta las DOS cifras que antes se calculaban por separado y se
+// contradecian en la misma tarjeta:
+//
+//	el ideal del PEDIDO           (restock_nightly_service.calculateRestockMetric)
+//	la sugerencia de STOCK MINIMO (restock_metrics_repository)
+//
+// EL BUG QUE ARREGLA (reporte del dueno, 2026-09-10, textual): "ya tiene que
+// empezar a calcular dependiendo las visitas de los provedor, no a 30 dias,
+// osea si cocacola viene 2 veces a la semana, pues lo calcula en esos dias, y si
+// arroz del llano una ves a la semana pues en ese tiempo".
+//
+// Antes ambas cuentas multiplicaban la demanda por el LEAD TIME, que responde
+// otra pregunta: "cuanto tarda en llegar lo que pido". Eso rompia por los dos
+// extremos. Con agenda configurada (visita martes, entrega miercoles) el lead es
+// 1 dia, asi que se calculaba para UN dia de venta: COLANTA ENTERA quedaba con
+// ideal 2 vendiendo 0.48/dia y se agotaba 7 de cada 30 dias. Sin agenda, el lead
+// caia a visit_frequency_days = 30 y se pedia un mes entero.
+//
+// Lo que hay que cubrir es hasta la SIGUIENTE oportunidad de reposicion:
 //
 //	cobertura = peor intervalo entre dos visitas consecutivas + lead time
 //
-// Para un proveedor semanal (un solo dia de visita) eso es 7 + 1 = 8 dias, que
-// es exactamente el numero que dio el dueno.
+// Coca-Cola dos veces por semana (martes y viernes) cubre 4 dias; Arroz del
+// Llano una vez por semana cubre 7 + 1 = 8.
 //
 // Se usa el PEOR intervalo, no el promedio: si el proveedor viene martes y
 // viernes, entre viernes y martes hay 4 dias y entre martes y viernes 3. El
-// minimo tiene que sobrevivir el hueco largo, porque si se calcula con el corto
-// el producto se agota justo el fin de semana.
+// inventario tiene que sobrevivir el hueco largo, porque si se calcula con el
+// corto el producto se agota justo el fin de semana.
 //
-// Sin dias de visita configurados ni aprendidos no se puede saber el ciclo y se
-// cae en fallbackDays (el llamador pasa el lead time resuelto, que ya tiene su
-// propia cadena de precedencia terminada en 7).
-func MinStockCoverageDays(visitDays, deliveryDays []string, fallbackDays int) int {
-	if fallbackDays < 1 {
-		fallbackDays = 7
-	}
-
+// Sin dias de visita utiles se cae en fallbackDays, acotado a
+// MaxUnknownCycleDays.
+func ReplenishmentCoverageDays(visitDays, deliveryDays []string, fallbackDays int) int {
 	visitSet := parseWeekdaySet(visitDays)
 	if len(visitSet) == 0 {
+		if fallbackDays < 1 {
+			return 7
+		}
+		if fallbackDays > MaxUnknownCycleDays {
+			return MaxUnknownCycleDays
+		}
 		return fallbackDays
 	}
 

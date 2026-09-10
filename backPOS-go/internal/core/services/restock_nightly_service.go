@@ -295,7 +295,32 @@ func calculateRestockMetric(input models.RestockCalculationInput, calculatedAt t
 		leadDays = 7
 	}
 	category := classifyABC(demand, input.TotalSold30d)
-	idealStock := math.Ceil(demand * float64(leadDays) * safetyFactor(category))
+
+	// CUANTOS DIAS TIENE QUE CUBRIR EL PEDIDO: EL CICLO DEL PROVEEDOR.
+	//
+	// REGLA DEL DUENO (2026-09-10, textual): "ya tiene que empezar a calcular
+	// dependiendo las visitas de los provedor, no a 30 dias, osea si cocacola
+	// viene 2 veces a la semana, pues lo calcula en esos dias, y si arroz del
+	// llano una ves a la semana pues en ese tiempo".
+	//
+	// Antes esto era `demand * leadDays`, y leadDays sale de
+	// ResolveSupplierLeadTime, que responde una pregunta DISTINTA: "cuanto
+	// tarda en llegar lo que pido". Eso rompia por los dos extremos:
+	//
+	//   - Proveedor con agenda configurada (visita martes, entrega miercoles):
+	//     leadDays = 1, asi que el pedido se calculaba para UN dia de venta.
+	//     COLANTA ENTERA quedaba con ideal 2 vendiendo 0.48/dia, y se agotaba
+	//     7 de cada 30 dias.
+	//   - Proveedor sin agenda pero con visit_frequency_days aprendido en 30:
+	//     leadDays = 30 y el pedido se calculaba para un MES entero, inflando
+	//     la factura. Ese es el "no a 30 dias" del reporte.
+	//
+	// Lo que hay que cubrir es hasta la SIGUIENTE visita, mas lo que tarda en
+	// llegar. Coca-Cola dos veces por semana cubre ~3-4 dias; Arroz del Llano
+	// una vez por semana cubre 7+1. Es la misma cuenta que usa la sugerencia de
+	// stock minimo, para que las dos cifras de la tarjeta dejen de contradecirse.
+	coverageDays := scheduling.ReplenishmentCoverageDays(visitDays, deliveryDays, leadDays)
+	idealStock := math.Ceil(demand * float64(coverageDays) * safetyFactor(category))
 
 	// EL MINIMO ES ALARMA, NO META (regla del dueno, agosto 2026 / Fase 1).
 	//

@@ -1062,7 +1062,7 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 	if leadForMinStock <= 0 {
 		leadForMinStock = 7
 	}
-	coverageForMinStock := scheduling.MinStockCoverageDays(
+	coverageForMinStock := scheduling.ReplenishmentCoverageDays(
 		row.EffectiveVisitDays,
 		row.EffectiveDeliveryDays,
 		leadForMinStock,

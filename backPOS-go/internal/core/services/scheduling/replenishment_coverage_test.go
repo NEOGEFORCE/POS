@@ -19,45 +19,45 @@ import (
 // la siguiente oportunidad de reposicion, no hasta que llegue el pedido de hoy.
 // ============================================================================
 
-func TestMinStockCoverageDays_ProveedorSemanalDaOchoDias(t *testing.T) {
+func TestReplenishmentCoverageDays_ProveedorSemanalDaOchoDias(t *testing.T) {
 	// El caso exacto de la pantalla del dueno: COLANTA, visita martes y entrega
 	// miercoles. Lead time 1 dia, ciclo semanal 7 dias -> 8 dias de cobertura.
-	got := MinStockCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
+	got := ReplenishmentCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
 	if got != 8 {
 		t.Fatalf("cobertura = %d dias; want 8 (7 de ciclo semanal + 1 de lead)", got)
 	}
 }
 
-func TestMinStockCoverageDays_NoUsaSoloElLeadTime(t *testing.T) {
+func TestReplenishmentCoverageDays_NoUsaSoloElLeadTime(t *testing.T) {
 	// Guardian del bug: con lead time 1 la cobertura NO puede ser 1.
-	got := MinStockCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
+	got := ReplenishmentCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
 	if got <= 1 {
 		t.Fatalf("cobertura = %d: se volvio a medir por el lead time y el minimo "+
 			"quedaria calculado con un solo dia de venta", got)
 	}
 }
 
-func TestMinStockCoverageDays_VisitaYEntregaElMismoDia(t *testing.T) {
+func TestReplenishmentCoverageDays_VisitaYEntregaElMismoDia(t *testing.T) {
 	// Entrega inmediata: solo hay que cubrir el ciclo semanal.
-	got := MinStockCoverageDays([]string{"lunes"}, []string{"lunes"}, 3)
+	got := ReplenishmentCoverageDays([]string{"lunes"}, []string{"lunes"}, 3)
 	if got != 7 {
 		t.Fatalf("cobertura = %d; want 7 (ciclo semanal, lead 0)", got)
 	}
 }
 
-func TestMinStockCoverageDays_DosVisitasUsaElHuecoMasLargo(t *testing.T) {
+func TestReplenishmentCoverageDays_DosVisitasUsaElHuecoMasLargo(t *testing.T) {
 	// Martes y viernes: martes->viernes son 3 dias, viernes->martes son 4.
 	// El minimo tiene que sobrevivir el hueco LARGO, o el producto se agota
 	// justo el fin de semana.
-	got := MinStockCoverageDays([]string{"martes", "viernes"}, []string{"martes", "viernes"}, 7)
+	got := ReplenishmentCoverageDays([]string{"martes", "viernes"}, []string{"martes", "viernes"}, 7)
 	if got != 4 {
 		t.Fatalf("cobertura = %d; want 4 (peor hueco viernes->martes, lead 0)", got)
 	}
 }
 
-func TestMinStockCoverageDays_TresVisitas(t *testing.T) {
+func TestReplenishmentCoverageDays_TresVisitas(t *testing.T) {
 	// Lunes, miercoles y viernes: el peor hueco es viernes->lunes = 3.
-	got := MinStockCoverageDays(
+	got := ReplenishmentCoverageDays(
 		[]string{"lunes", "miercoles", "viernes"},
 		[]string{"lunes", "miercoles", "viernes"},
 		7,
@@ -67,60 +67,79 @@ func TestMinStockCoverageDays_TresVisitas(t *testing.T) {
 	}
 }
 
-func TestMinStockCoverageDays_TodosLosDias(t *testing.T) {
+func TestReplenishmentCoverageDays_TodosLosDias(t *testing.T) {
 	// Proveedor diario: el ciclo es 1 dia.
 	todos := []string{"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
-	got := MinStockCoverageDays(todos, todos, 7)
+	got := ReplenishmentCoverageDays(todos, todos, 7)
 	if got != 1 {
 		t.Fatalf("cobertura = %d; want 1 (visita diaria)", got)
 	}
 }
 
-func TestMinStockCoverageDays_EntregaLaSemanaSiguiente(t *testing.T) {
+func TestReplenishmentCoverageDays_EntregaLaSemanaSiguiente(t *testing.T) {
 	// Visita viernes, entrega martes: el lead cruza el fin de semana (4 dias).
 	// Ciclo semanal 7 + lead 4 = 11.
-	got := MinStockCoverageDays([]string{"viernes"}, []string{"martes"}, 1)
+	got := ReplenishmentCoverageDays([]string{"viernes"}, []string{"martes"}, 1)
 	if got != 11 {
 		t.Fatalf("cobertura = %d; want 11 (7 de ciclo + 4 de lead viernes->martes)", got)
 	}
 }
 
-func TestMinStockCoverageDays_SinAgendaCaeAlFallback(t *testing.T) {
+func TestReplenishmentCoverageDays_SinAgendaCaeAlFallback(t *testing.T) {
 	// Sin dias de visita no se puede conocer el ciclo: se usa lo que resolvio
-	// la cadena de precedencia del lead time.
-	if got := MinStockCoverageDays(nil, nil, 5); got != 5 {
+	// la cadena de precedencia del lead time, acotado a MaxUnknownCycleDays.
+	if got := ReplenishmentCoverageDays(nil, nil, 5); got != 5 {
 		t.Errorf("sin agenda: cobertura = %d; want 5 (fallback)", got)
 	}
-	if got := MinStockCoverageDays([]string{}, []string{"lunes"}, 9); got != 9 {
+	if got := ReplenishmentCoverageDays([]string{}, []string{"lunes"}, 9); got != 9 {
 		t.Errorf("sin dias de visita: cobertura = %d; want 9 (fallback)", got)
 	}
 	// Fallback invalido -> 7, nunca 0 ni negativo.
-	if got := MinStockCoverageDays(nil, nil, 0); got != 7 {
+	if got := ReplenishmentCoverageDays(nil, nil, 0); got != 7 {
 		t.Errorf("fallback 0: cobertura = %d; want 7", got)
 	}
-	if got := MinStockCoverageDays(nil, nil, -3); got != 7 {
+	if got := ReplenishmentCoverageDays(nil, nil, -3); got != 7 {
 		t.Errorf("fallback negativo: cobertura = %d; want 7", got)
 	}
 }
 
-func TestMinStockCoverageDays_ToleraNombresConTildesYBasura(t *testing.T) {
+// El caso "no a 30 dias" del reporte: un visit_frequency_days aprendido en 30 no
+// puede convertirse en un mes de inventario pedido de golpe.
+func TestReplenishmentCoverageDays_FallbackSeAcotaADosSemanas(t *testing.T) {
+	if got := ReplenishmentCoverageDays(nil, nil, 30); got != MaxUnknownCycleDays {
+		t.Errorf("fallback 30: cobertura = %d; want %d (tope)", got, MaxUnknownCycleDays)
+	}
+	if got := ReplenishmentCoverageDays(nil, nil, 90); got != MaxUnknownCycleDays {
+		t.Errorf("fallback 90: cobertura = %d; want %d (tope)", got, MaxUnknownCycleDays)
+	}
+	if MaxUnknownCycleDays > 14 {
+		t.Errorf("MaxUnknownCycleDays = %d: un ciclo de mas de dos semanas infla "+
+			"la factura, que es lo que el dueno pidio evitar", MaxUnknownCycleDays)
+	}
+	// Con agenda conocida el tope NO aplica: manda la agenda real.
+	if got := ReplenishmentCoverageDays([]string{"viernes"}, []string{"martes"}, 30); got != 11 {
+		t.Errorf("con agenda: cobertura = %d; want 11 (7 de ciclo + 4 de lead)", got)
+	}
+}
+
+func TestReplenishmentCoverageDays_ToleraNombresConTildesYBasura(t *testing.T) {
 	// La misma tolerancia que el resto del sistema: tildes, mayusculas y CSV.
-	got := MinStockCoverageDays([]string{"MARTES"}, []string{"Miércoles"}, 1)
+	got := ReplenishmentCoverageDays([]string{"MARTES"}, []string{"Miércoles"}, 1)
 	if got != 8 {
 		t.Fatalf("con tildes y mayusculas: cobertura = %d; want 8", got)
 	}
 	// Dias invalidos se ignoran; si no queda ninguno valido, fallback.
-	if got := MinStockCoverageDays([]string{"lunez", "xyz"}, []string{"lunes"}, 6); got != 6 {
+	if got := ReplenishmentCoverageDays([]string{"lunez", "xyz"}, []string{"lunes"}, 6); got != 6 {
 		t.Fatalf("dias invalidos: cobertura = %d; want 6 (fallback)", got)
 	}
 }
 
-func TestMinStockCoverageDays_NuncaDevuelveMenosDeUno(t *testing.T) {
+func TestReplenishmentCoverageDays_NuncaDevuelveMenosDeUno(t *testing.T) {
 	// Un cero haria que el ideal fuera 0 y el sistema propondria bajar todos
 	// los minimos a 1.
 	todos := []string{"lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo"}
 	for _, fallback := range []int{-10, 0, 1, 7, 30} {
-		if got := MinStockCoverageDays(todos, todos, fallback); got < 1 {
+		if got := ReplenishmentCoverageDays(todos, todos, fallback); got < 1 {
 			t.Fatalf("cobertura = %d con fallback %d; nunca puede ser menor que 1", got, fallback)
 		}
 	}
@@ -160,7 +179,7 @@ func TestCasoColanta_YaNoProponeBajarElMinimo(t *testing.T) {
 	}
 
 	// AHORA: ideal = demanda x cobertura del ciclo = ceil(0.23 * 8) = 2
-	cobertura := MinStockCoverageDays(visita, entrega, lead)
+	cobertura := ReplenishmentCoverageDays(visita, entrega, lead)
 	idealNuevo := math.Ceil(demand90 * float64(cobertura))
 	if idealNuevo != 2 {
 		t.Fatalf("ideal con cobertura de %d dias = %.0f; want 2", cobertura, idealNuevo)
@@ -177,7 +196,7 @@ func TestCasoColanta_UnMinimoRealmenteInfladoSiSeBaja(t *testing.T) {
 	// El arreglo no puede desactivar la sugerencia: un minimo genuinamente
 	// desproporcionado tiene que seguir avisando. Con la misma demanda de
 	// COLANTA, un minimo de 30 sigue estando muy por encima.
-	cobertura := MinStockCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
+	cobertura := ReplenishmentCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
 	ideal := math.Ceil(0.23 * float64(cobertura)) // 2
 
 	valor, razon := models.SuggestMinStockChange(ideal, 30)
@@ -192,7 +211,7 @@ func TestCasoColanta_UnMinimoRealmenteInfladoSiSeBaja(t *testing.T) {
 func TestCasoColanta_TambienSigueSugiriendoSubir(t *testing.T) {
 	// Producto que rota mucho mas de lo que dice su minimo: 2/dia con 8 dias de
 	// cobertura pide 16, y el minimo esta en 4.
-	cobertura := MinStockCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
+	cobertura := ReplenishmentCoverageDays([]string{"martes"}, []string{"miercoles"}, 1)
 	ideal := math.Ceil(2.0 * float64(cobertura)) // 16
 
 	valor, razon := models.SuggestMinStockChange(ideal, 4)
