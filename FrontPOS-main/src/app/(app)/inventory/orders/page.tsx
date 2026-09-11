@@ -226,6 +226,31 @@ function SmartRestockContent() {
   // filtrar en memoria (guardado por tests/orders-search-serverside.test.mjs).
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  // AL CAMBIAR DE PROVEEDOR SE LIMPIA LA BUSQUEDA.
+  //
+  // REPORTE DEL DUENO (2026-09-11): "en el provedor de zenu solo me esta
+  // mostrando 4 productos" ... "me toco recargar y ahi si salio bien".
+  //
+  // La busqueda es server-side: viaja en la URL junto al supplier_id. El texto
+  // del buscador sobrevivia al cambio de proveedor, asi que al elegir Zenu la
+  // lista mostraba solo los productos de Zenu que coincidian con lo que habia
+  // quedado escrito. Recargar la pagina lo "arreglaba" porque searchInput
+  // arranca vacio (a diferencia de includeAll, que se persiste en localStorage
+  // y por eso NO puede ser la causa).
+  //
+  // Es el peor sitio para un filtro invisible: el dueno concluye que el
+  // proveedor tiene 4 productos y manda el pedido incompleto.
+  //
+  // Se limpian LAS DOS variables a la vez. Si solo se limpiara searchInput, el
+  // debounce dejaria 300 ms en los que todavia se pide con el termino viejo.
+  const supplierAnterior = useRef(selectedSupplier);
+  useEffect(() => {
+    if (supplierAnterior.current === selectedSupplier) return;
+    supplierAnterior.current = selectedSupplier;
+    setSearchInput("");
+    setDebouncedSearch("");
+  }, [selectedSupplier]);
   useEffect(() => {
     const handle = setTimeout(() => setDebouncedSearch(searchInput.trim()), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(handle);
