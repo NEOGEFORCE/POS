@@ -154,8 +154,17 @@ test("usa el nombre del proveedor cuando no hay prestamista, y un cajón final",
 // aparecer una copia suelta.
 
 const consumers = [
+  // /expenses sigue filtrando con selectLiveDebts para OCULTAR las deudas
+  // vivas de su tabla principal (viven y se abonan en /loans).
   join(srcRoot, "app", "(app)", "expenses", "page.tsx"),
-  join(srcRoot, "app", "(app)", "expenses", "components", "PendingDebtsModal.tsx"),
+  // El Centro de Pagos se mudó de /expenses a /loans como pestaña visible.
+  // Es la ÚNICA pantalla donde se abonan o condonan deudas vivas.
+  join(srcRoot, "app", "(app)", "loans", "components", "PayablesCenter.tsx"),
+  // La página de /loans monta el PayablesCenter y usa sumPayables en el
+  // footer de totales.
+  join(srcRoot, "app", "(app)", "loans", "page.tsx"),
+  // El dashboard conserva su propio modal de deudas (payload simplificado);
+  // la unificación con la nueva ubicación es tarea de un sprint posterior.
   join(srcRoot, "app", "(app)", "dashboard", "components", "PendingDebtsModal.tsx"),
 ];
 
@@ -178,6 +187,8 @@ test("las pantallas de deuda usan el helper compartido y no su propia fórmula",
 });
 
 test("el Centro de Pagos no usa diálogos nativos del navegador", async () => {
+  // Índice 1 del array consumers → PayablesCenter.tsx (la nueva ubicación
+  // tras mover el Centro de Pagos de /expenses a /loans).
   const source = await readFile(consumers[1], "utf8");
   for (const nativo of ["window.confirm", "window.alert", "window.prompt"]) {
     assert.ok(!source.includes(nativo), `no se permite ${nativo} en el Centro de Pagos`);
@@ -189,4 +200,92 @@ test("el Centro de Pagos no usa diálogos nativos del navegador", async () => {
   );
   // Y la confirmación de condonar tiene que seguir existiendo: es destructiva.
   assert.ok(/debtToForgive/.test(source), "debe existir la confirmación propia para condonar");
+});
+
+// ============================================================================
+// MIGRACIÓN: El Centro de Pagos vive EN /loans, NO en /expenses.
+// ============================================================================
+//
+// Reglas del traslado (sprint 2026-10-05):
+//   - /expenses no monta PendingDebtsModal ni dispara el modal (sin
+//     tarjeta/botón/modal de cuentas por pagar).
+//   - El flujo de abono y condonación comparte endpoints con el original
+//     (PATCH /expenses/settle/:id y PUT /expenses/:id) — reutilizados
+//     desde /loans/page.tsx, sin inventar backend.
+//   - El guardián prohíbe redescubrir una "copia" del modal.
+
+test("expenses/page NO monta el modal/CTA de cuentas por pagar", async () => {
+  const expensesPage = await readFile(join(srcRoot, "app", "(app)", "expenses", "page.tsx"), "utf8");
+  assert.ok(
+    !/PendingDebtsModal|PayablesCenter/.test(expensesPage),
+    "expenses/page no debe importar ni montar el centro de pagos (vive en /loans)",
+  );
+  assert.ok(
+    !/onOpenPending/.test(expensesPage),
+    "expenses/page no debe pasar onOpenPending a ExpenseStats",
+  );
+  assert.ok(
+    !/handleSettleDebt|handleForceCloseDebt/.test(expensesPage),
+    "expenses/page no debe conservar los handlers de settle/forceClose (viven en /loans)",
+  );
+});
+
+test("expenses/components/ExpenseStats no muestra la tarjeta 'Cuentas por Pagar'", async () => {
+  const stats = await readFile(join(srcRoot, "app", "(app)", "expenses", "components", "ExpenseStats.tsx"), "utf8");
+  // Props removidos
+  assert.ok(!/totalPending/.test(stats), "ExpenseStats no debe exponer prop totalPending");
+  assert.ok(!/onOpenPending/.test(stats), "ExpenseStats no debe exponer prop onOpenPending");
+  // Y la tarjeta visual tampoco debe estar.
+  assert.ok(
+    !/Cuentas\s+por\s+Pagar/i.test(stats),
+    "ExpenseStats no debe renderizar la tarjeta 'Cuentas por Pagar' (vive en /loans)",
+  );
+});
+
+test("el archivo PendingDebtsModal.tsx ya NO existe en /expenses/components", async () => {
+  const legacyPath = join(srcRoot, "app", "(app)", "expenses", "components", "PendingDebtsModal.tsx");
+  let found = false;
+  try {
+    await readFile(legacyPath, "utf8");
+    found = true;
+  } catch (err) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  assert.ok(!found, "El modal viejo debe quedar borrado tras moverse a /loans/components/PayablesCenter.tsx");
+});
+
+test("loans/page es el único consumidor que ABONA o CONDONA cuentas por pagar", async () => {
+  const loansPage = await readFile(join(srcRoot, "app", "(app)", "loans", "page.tsx"), "utf8");
+
+  // Debe tener los handlers y los endpoints exactos del flujo trasladado.
+  assert.ok(/handleSettleDebt/.test(loansPage), "loans/page debe implementar handleSettleDebt");
+  assert.ok(/handleForceCloseDebt/.test(loansPage), "loans/page debe implementar handleForceCloseDebt");
+  assert.ok(
+    /\/expenses\/settle\/\$\{/.test(loansPage),
+    "loans/page debe llamar al endpoint existente PATCH /expenses/settle/:id (NO inventa backend)",
+  );
+  assert.ok(
+    /PUT[\s\S]{0,120}\/expenses\/\$\{/.test(loansPage) || /\/expenses\/\$\{[^}]+\}[\s\S]{0,80}method:\s*["']PUT/.test(loansPage),
+    "loans/page debe conservar el path irregular PUT /expenses/:id para condonar",
+  );
+
+  // Y monta el PayablesCenter como pestaña, no como modal.
+  assert.ok(/PayablesCenter/.test(loansPage), "loans/page debe montar PayablesCenter");
+
+  // No duplica fetchs: una sola llamada apiFetch a /expenses/list para
+  // alimentar la pestaña de cuentas por pagar. Las menciones en comentarios
+  // o docstrings no cuentan — contamos sólo invocaciones reales.
+  const fetchCalls = loansPage.match(/apiFetch[\s\S]{0,120}["'`]\/expenses\/list["'`]/g) || [];
+  assert.ok(
+    fetchCalls.length === 1,
+    `loans/page debe tener EXACTAMENTE una llamada apiFetch a /expenses/list (encontradas: ${fetchCalls.length})`,
+  );
+});
+
+test("loans/page expone un deep link ?pagos para aterrizar en Cuentas por pagar", async () => {
+  const loansPage = await readFile(join(srcRoot, "app", "(app)", "loans", "page.tsx"), "utf8");
+  assert.ok(
+    /pagos/.test(loansPage) && /useSearchParams/.test(loansPage),
+    "loans/page debe leer ?pagos de useSearchParams para abrir la pestaña de deuda directamente",
+  );
 });

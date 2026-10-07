@@ -1,6 +1,38 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Modal, ModalContent, Button, Avatar } from '@heroui/react';
-import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins } from 'lucide-react';
+import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins, HandCoins } from 'lucide-react';
+
+/**
+ * Préstamo registrado disponible para pagar un egreso.
+ *
+ * Esta pieza es opcional: sin `loanOption` el modal se comporta
+ * byte-a-byte igual que antes (5 canales: Caja, Bóveda, Alcancía, Nequi,
+ * Daviplata). Con `loanOption?.enabled`, aparece la sexta pestaña
+ * "Préstamo" al final de la lista — y es EXCLUSIVA: si se elige, los
+ * otros cinco canales se limpian porque el contrato backend
+ * (`POST /loans/:id/pay-expense`) no admite mezcla.
+ */
+export interface LoanOption {
+  loans: Array<{ id: number | string; lenderName: string; available: number }>;
+  enabled: boolean;
+}
+
+export interface ExpensePaymentModalPayload {
+  cash: number;
+  nequi: number;
+  daviplata: number;
+  fondo: number;
+  coins: number;
+  paymentSourceString: string;
+  taxAmount: number;
+  /**
+   * Si viene, el pago se cobra contra el principal disponible del préstamo
+   * indicado — el padre debe enrutar al endpoint `/loans/:id/pay-expense`.
+   * Cuando se usa `loanId`, los cinco canales de caja están en 0 y
+   * `paymentSourceString === 'PRESTAMO'`.
+   */
+  loanId?: number | string;
+}
 
 interface ExpensePaymentModalProps {
   isOpen: boolean;
@@ -13,15 +45,8 @@ interface ExpensePaymentModalProps {
   initialFondo?: number;
   initialCoins?: number;
   initialPaymentSource?: string;
-  onPay: (data: {
-    cash: number;
-    nequi: number;
-    daviplata: number;
-    fondo: number;
-    coins: number;
-    paymentSourceString: string;
-    taxAmount: number;
-  }) => Promise<void>;
+  loanOption?: LoanOption;
+  onPay: (data: ExpensePaymentModalPayload) => Promise<void>;
   onCloseComplete?: () => void;
 }
 
@@ -36,11 +61,18 @@ export function ExpensePaymentModal({
   initialFondo,
   initialCoins,
   initialPaymentSource,
+  loanOption,
   onPay,
   onCloseComplete
 }: ExpensePaymentModalProps) {
-  const [activePaymentTab, setActivePaymentTab] = useState<'cash'|'NEQUI'|'DAVIPLATA'|'fondo'|'coins'>('cash');
+  const loanTabEnabled = Boolean(loanOption?.enabled);
+  const availableLoans = useMemo(
+    () => (loanTabEnabled && Array.isArray(loanOption?.loans) ? loanOption!.loans : []),
+    [loanTabEnabled, loanOption],
+  );
+  const [activePaymentTab, setActivePaymentTab] = useState<'cash'|'NEQUI'|'DAVIPLATA'|'fondo'|'coins'|'loan'>('cash');
   const [dialogAmount, setDialogAmount] = useState<string>('');
+  const [selectedLoanId, setSelectedLoanId] = useState<string | number | null>(null);
   
   const [cashPaid, setCashPaid] = useState<number>(0);
   const [nequiPaid, setNequiPaid] = useState<number>(0);
@@ -60,6 +92,7 @@ export function ExpensePaymentModal({
       setShowSuccessScreen(false);
       setSubmittingPayment(false);
       isProcessingRef.current = false;
+      setSelectedLoanId(null);
 
       const hasExplicit = (initialCash || 0) > 0 || (initialNequi || 0) > 0 || (initialDaviplata || 0) > 0 || (initialFondo || 0) > 0 || (initialCoins || 0) > 0;
 
@@ -133,6 +166,41 @@ export function ExpensePaymentModal({
 
   const processPayment = useCallback(async () => {
     if (isProcessingRef.current || submittingPayment) return;
+
+    // --- Rama préstamo: canal exclusivo que NO toca ninguna caja ---
+    // El contrato con `POST /loans/:id/pay-expense` pide `loanId` y el
+    // backend coloca `paymentSource='PRESTAMO'` + canales en 0. Aquí
+    // sólo validamos monto y disponible y delegamos al padre.
+    if (activePaymentTab === 'loan') {
+      if (availableLoans.length === 0) return; // UI ya bloquea el botón
+      const chosen = availableLoans.find((l) => String(l.id) === String(selectedLoanId));
+      if (!chosen) return;
+      if (totalToPay <= 0) return;
+      if (chosen.available < totalToPay) return; // validación visible abajo
+
+      isProcessingRef.current = true;
+      setSubmittingPayment(true);
+      try {
+        await onPay({
+          cash: 0,
+          nequi: 0,
+          daviplata: 0,
+          fondo: 0,
+          coins: 0,
+          paymentSourceString: 'PRESTAMO',
+          taxAmount: 0,
+          loanId: chosen.id,
+        });
+        setShowSuccessScreen(true);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        isProcessingRef.current = false;
+        setSubmittingPayment(false);
+      }
+      return;
+    }
+
     isProcessingRef.current = true;
     setSubmittingPayment(true);
     
@@ -207,7 +275,7 @@ export function ExpensePaymentModal({
       isProcessingRef.current = false;
       setSubmittingPayment(false);
     }
-  }, [cashPaid, nequiPaid, daviplataPaid, fondoPaid, coinsPaid, currentDialogVal, activePaymentTab, remainingDebt, actualPayment, onPay, submittingPayment]);
+  }, [cashPaid, nequiPaid, daviplataPaid, fondoPaid, coinsPaid, currentDialogVal, activePaymentTab, remainingDebt, actualPayment, onPay, submittingPayment, availableLoans, selectedLoanId, totalToPay]);
 
   // Teclado fisico
   useEffect(() => {
@@ -238,7 +306,14 @@ export function ExpensePaymentModal({
         setDialogAmount(prev => prev.slice(0, -1));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (isReady || currentDialogVal > 0 || remainingDebt > 0) processPayment();
+        if (activePaymentTab === 'loan') {
+          // En la pestaña préstamo, Enter sólo dispara el pago si hay un
+          // préstamo seleccionado con disponible suficiente. El propio
+          // `processPayment` revalida antes de llamar al backend.
+          processPayment();
+        } else if (isReady || currentDialogVal > 0 || remainingDebt > 0) {
+          processPayment();
+        }
       } else if (e.key === '+' || e.key === 'Add') {
         e.preventDefault();
         handleAddPayment();
@@ -248,7 +323,7 @@ export function ExpensePaymentModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showSuccessScreen, dialogAmount, onOpenChange, processPayment, handleAddPayment, isReady, currentDialogVal, remainingDebt]);
+  }, [isOpen, showSuccessScreen, dialogAmount, onOpenChange, processPayment, handleAddPayment, isReady, currentDialogVal, remainingDebt, activePaymentTab]);
 
   if (!isOpen) return null;
 
@@ -317,10 +392,34 @@ export function ExpensePaymentModal({
                   { id: 'coins', label: 'Alcancía', icon: <Coins size={14} className="md:w-5 md:h-5" /> },
                   { id: 'NEQUI', label: 'Nequi', logo: '/logos/nequi.png' },
                   { id: 'DAVIPLATA', label: 'Daviplata', logo: '/logos/daviplata.png' },
+                  // La pestaña "Préstamo" sólo aparece cuando el padre entrega
+                  // `loanOption?.enabled = true`. Es la última de la lista para
+                  // dejar claro que es un canal especial — no sale de la caja.
+                  ...(loanTabEnabled
+                    ? [{ id: 'loan' as const, label: 'Préstamo', icon: <HandCoins size={14} className="md:w-5 md:h-5" /> }]
+                    : []),
                 ].map(tab => (
                   <button 
                     key={tab.id} 
-                    onClick={() => { setActivePaymentTab(tab.id as any); setDialogAmount(''); }} 
+                    onClick={() => {
+                      setActivePaymentTab(tab.id as any);
+                      setDialogAmount('');
+                      if (tab.id === 'loan') {
+                        // El pago con préstamo es EXCLUSIVO: no se mezcla con
+                        // los otros cinco canales. Limpiamos cualquier monto
+                        // acumulado para que el AUTORIZAR quede claro.
+                        setCashPaid(0);
+                        setNequiPaid(0);
+                        setDaviplataPaid(0);
+                        setFondoPaid(0);
+                        setCoinsPaid(0);
+                      } else {
+                        // Al abandonar la pestaña préstamo, descartamos la
+                        // selección de préstamo para evitar enviar loanId por
+                        // error en un pago de caja normal.
+                        setSelectedLoanId(null);
+                      }
+                    }}
                     className={`h-14 md:h-14 px-3 md:px-5 rounded-2xl flex items-center justify-center md:justify-start gap-2.5 md:gap-4 border-2 transition-all group ${
                       activePaymentTab === tab.id 
                         ? `${theme.bgLight} ${theme.border} text-gray-900 dark:text-white tracking-tight` 
@@ -360,6 +459,19 @@ export function ExpensePaymentModal({
               </header>
 
               <div className="flex flex-col md:flex-row gap-3 md:gap-8 flex-1 min-h-0">
+                {activePaymentTab === 'loan' ? (
+                  <LoanPaymentPanel
+                    totalToPay={totalToPay}
+                    loans={availableLoans}
+                    selectedLoanId={selectedLoanId}
+                    onSelect={setSelectedLoanId}
+                    onCancel={() => onOpenChange(false)}
+                    onConfirm={processPayment}
+                    submittingPayment={submittingPayment}
+                    formatCurrency={formatCurrency}
+                  />
+                ) : (
+                <>
                 <div className="w-full md:w-[360px] flex flex-col gap-2 md:gap-4 flex-shrink-0">
                   <div className="flex flex-col gap-2 w-full max-w-full overflow-x-auto custom-scrollbar pb-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -490,11 +602,179 @@ export function ExpensePaymentModal({
                     )}
                   </Button>
                 </div>
+                </>
+                )}
               </div>
             </div>
           </div>
         )}
       </ModalContent>
     </Modal>
+  );
+}
+
+
+// ============================================================================
+// Subcomponente — Panel exclusivo para pagar con un préstamo registrado.
+//
+// Se muestra cuando `activePaymentTab === 'loan'`. Reemplaza por completo
+// el teclado y los chips de canales porque:
+//   - El contrato backend (`POST /loans/:id/pay-expense`) no admite mezcla.
+//   - La plata del préstamo NO sale de ninguna caja, así que mostrar un
+//     keypad confundiría al cajero haciéndole creer que puede partir el pago.
+//
+// Reglas:
+//   - Si no hay préstamos activos → mensaje claro, botón deshabilitado.
+//   - Si hay préstamos → lista radio-like con `lenderName` + disponible COP.
+//   - AUTORIZAR se bloquea si `available < totalToPay`. En ese caso se
+//     muestra el mensaje "El préstamo sólo tiene $X disponible".
+// ============================================================================
+
+interface LoanPaymentPanelProps {
+  totalToPay: number;
+  loans: Array<{ id: number | string; lenderName: string; available: number }>;
+  selectedLoanId: string | number | null;
+  onSelect: (id: string | number | null) => void;
+  onCancel: () => void;
+  onConfirm: () => void;
+  submittingPayment: boolean;
+  formatCurrency: (val: number) => string;
+}
+
+function LoanPaymentPanel({
+  totalToPay,
+  loans,
+  selectedLoanId,
+  onSelect,
+  onCancel,
+  onConfirm,
+  submittingPayment,
+  formatCurrency,
+}: LoanPaymentPanelProps) {
+  const chosen = loans.find((l) => String(l.id) === String(selectedLoanId)) ?? null;
+  const noLoans = loans.length === 0;
+  const insufficient = chosen !== null && chosen.available < totalToPay;
+  const canSubmit = !submittingPayment && !noLoans && chosen !== null && !insufficient && totalToPay > 0;
+
+  return (
+    <div className="flex-1 flex flex-col gap-4 min-h-0">
+      {/* Resumen del compromiso */}
+      <div className="bg-white dark:bg-[#18181b] rounded-[1.5rem] p-4 md:p-6 border-2 border-amber-500/20 shadow-[0_8px_30px_rgb(245,158,11,0.12)] flex flex-col gap-2 items-center">
+        <p className="text-[8px] md:text-[10px] font-medium text-gray-400 uppercase tracking-widest flex items-center gap-1">
+          <HandCoins size={10} className="text-amber-500" />
+          TOTAL A CARGAR AL PRÉSTAMO
+        </p>
+        <p className="text-2xl md:text-5xl font-medium tracking-tight tabular-nums leading-none mt-1 text-amber-500">
+          ${formatCurrency(totalToPay)}
+        </p>
+        <p className="text-[9px] md:text-[10px] text-gray-500 dark:text-zinc-400 uppercase tracking-widest text-center max-w-md">
+          Esta plata NO sale de la caja, ni de la bóveda, ni de Nequi o Daviplata.
+          Se descuenta del disponible del préstamo seleccionado.
+        </p>
+      </div>
+
+      {/* Selector de préstamo */}
+      <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-y-auto custom-scrollbar pr-1">
+        {noLoans ? (
+          <div
+            role="status"
+            className="rounded-2xl border-2 border-dashed border-amber-500/40 bg-amber-500/5 p-6 text-center flex flex-col items-center gap-2"
+          >
+            <HandCoins size={28} className="text-amber-500" />
+            <p className="text-sm font-bold uppercase tracking-wide text-zinc-900 dark:text-zinc-50">
+              No hay préstamos activos
+            </p>
+            <p className="text-[11px] font-medium text-gray-500 dark:text-zinc-400">
+              Regístralo en Préstamos para poder usarlo como fondo de pago.
+            </p>
+          </div>
+        ) : (
+          <ul
+            role="radiogroup"
+            aria-label="Seleccionar préstamo para cobrar el egreso"
+            className="flex flex-col gap-2"
+          >
+            {loans.map((loan) => {
+              const isSelected = String(loan.id) === String(selectedLoanId);
+              const notEnough = loan.available < totalToPay;
+              return (
+                <li key={String(loan.id)}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={isSelected}
+                    onClick={() => onSelect(loan.id)}
+                    className={`w-full flex items-center justify-between gap-3 rounded-2xl border-2 px-4 py-3 text-left transition-all active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${
+                      isSelected
+                        ? 'bg-amber-500/10 border-amber-500 text-zinc-900 dark:text-white'
+                        : 'bg-white dark:bg-[#18181b] border-gray-200 dark:border-white/10 text-gray-600 dark:text-zinc-300 hover:border-amber-500/40'
+                    }`}
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <div className={`h-10 w-10 shrink-0 rounded-xl flex items-center justify-center ${isSelected ? 'bg-amber-500 text-white' : 'bg-amber-500/10 text-amber-500'}`}>
+                        <HandCoins size={18} />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-bold uppercase tracking-tight">
+                          {loan.lenderName || 'Sin acreedor'}
+                        </p>
+                        <p className="text-[10px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest">
+                          Disponible · <span className="tabular-nums text-amber-500">${formatCurrency(loan.available)}</span>
+                        </p>
+                      </div>
+                    </div>
+                    {isSelected && (
+                      <div className="shrink-0 h-6 w-6 rounded-full bg-amber-500 text-white flex items-center justify-center">
+                        <Check size={14} strokeWidth={3} />
+                      </div>
+                    )}
+                    {!isSelected && notEnough && (
+                      <span className="shrink-0 text-[9px] font-bold uppercase tracking-widest text-rose-500">
+                        Insuficiente
+                      </span>
+                    )}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {insufficient && chosen && (
+          <p
+            role="alert"
+            className="rounded-2xl border border-rose-500/30 bg-rose-500/5 p-3 text-[11px] font-bold uppercase tracking-widest text-rose-500 text-center"
+          >
+            El préstamo sólo tiene ${formatCurrency(chosen.available)} disponible
+          </p>
+        )}
+      </div>
+
+      {/* Acciones */}
+      <div className="flex flex-col sm:flex-row gap-2 pt-1">
+        <Button
+          variant="flat"
+          className="h-14 sm:h-16 font-medium text-[11px] px-6 rounded-2xl bg-rose-500/10 text-rose-500 tracking-widest uppercase border border-rose-500/20"
+          onPress={onCancel}
+        >
+          CANCELAR <X size={14} className="ml-1" />
+        </Button>
+        <Button
+          className={`flex-1 h-14 sm:h-16 font-semibold uppercase rounded-2xl tracking-[0.2em] shadow-[0_10px_40px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[13px] md:text-[15px] border-b-4 flex items-center justify-center ${
+            canSubmit
+              ? 'bg-amber-500 text-white border-amber-600'
+              : 'bg-gray-200 dark:bg-zinc-800 text-gray-400 dark:text-zinc-600 border-gray-300 dark:border-zinc-700'
+          }`}
+          onPress={onConfirm}
+          isLoading={submittingPayment}
+          isDisabled={!canSubmit}
+          aria-disabled={!canSubmit}
+        >
+          <div className="flex items-center">
+            AUTORIZAR CON PRÉSTAMO <ShieldCheck size={22} className="ml-2" />
+          </div>
+        </Button>
+      </div>
+    </div>
   );
 }

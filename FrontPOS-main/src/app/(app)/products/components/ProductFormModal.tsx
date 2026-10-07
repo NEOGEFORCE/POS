@@ -2,8 +2,9 @@
 
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Button, Input, Select, SelectItem, Switch, Autocomplete, AutocompleteItem, Chip
+  Button, Input, Select, SelectItem, Autocomplete, AutocompleteItem, Chip
 } from "@heroui/react";
+import { Switch } from "@/components/ui/switch";
 import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
 import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP, roundToNearestFifty, normalizeSalePrice } from '@/lib/utils';
@@ -452,13 +453,6 @@ const ProductFormModal = memo(function ProductFormModal({
     label: "text-xs font-medium text-gray-500 dark:text-zinc-500 dark:text-zinc-400 uppercase tracking-widest tracking-tight text-center w-full mb-0.5",
     inputWrapper: "h-9 bg-gray-50 dark:bg-[#18181b] border border-gray-100 dark:border-white/5 rounded-2xl group-data-[focus=true]:border-emerald-500 transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] py-1.5",
     input: "font-medium text-sm uppercase tracking-tight text-zinc-900 dark:text-zinc-50 text-left py-0"
-  };
-
-  // ESTILO DE SWITCH MINIMALISTA
-  const minimalistSwitchClass = {
-    base: "inline-flex flex-row-reverse w-full max-w-fit items-center justify-between cursor-pointer rounded-2xl gap-2",
-    wrapper: "p-0 h-6 w-10 overflow-visible bg-gray-200 dark:bg-zinc-800 group-data-[selected=true]:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 transition-colors duration-500 shadow-inner",
-    thumb: "w-4 h-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-2 border-transparent transition-all duration-300 group-data-[selected=true]:ml-4 bg-white",
   };
 
   return (
@@ -1168,7 +1162,7 @@ const ProductFormModal = memo(function ProductFormModal({
                         if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isWeighted: v }));
                         else setEditingProduct((p: any) => p ? { ...p, isWeighted: v } : null);
                       }}
-                      classNames={minimalistSwitchClass}
+                      aria-label="Marcar producto como pesable"
                     />
                   </div>
                 </div>
@@ -1187,7 +1181,7 @@ const ProductFormModal = memo(function ProductFormModal({
                       if (addDialogOpen) setNewProduct((p: any) => ({ ...p, isPack: v, quantity: v ? 0 : p.quantity }));
                       else setEditingProduct((p: any) => p ? { ...p, isPack: v, quantity: v ? 0 : p.quantity } : null);
                     }}
-                    classNames={minimalistSwitchClass}
+                    aria-label="Activar modo pack para este producto"
                   />
                 </div>
               </div>

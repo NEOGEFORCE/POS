@@ -168,17 +168,27 @@ func (r *PostgresProductRepository) GetAllWithLowStock() ([]models.Product, erro
 }
 
 // GetProductsWithBestSupplier - Obtiene productos y su mejor opción de proveedor inyectada
+//
+// Las columnas de agenda (visit_days, delivery_days, legacy visitDay/deliveryDay y
+// lead_time_days) se emiten para que inventory_service.go pueda calcular la
+// cobertura real con scheduling.ReplenishmentCoverageDays, en lugar del viejo
+// fallback hard-codeado de 30 dias o del multiplicador plano `avgDaily*14`.
 func (r *PostgresProductRepository) GetProductsWithBestSupplier(supplierID *uint) ([]ports.ProductRestockInfo, error) {
 	var results []ports.ProductRestockInfo
 
 	query := r.db.Model(&models.Product{}).
-		Select(`products.*, 
-			bs.best_supplier_id, 
-			bs.best_supplier_name, 
+		Select(`products.*,
+			bs.best_supplier_id,
+			bs.best_supplier_name,
 			bs.lowest_price,
 			ws.worst_supplier_name,
 			ws.worst_price,
-			bs.visit_frequency_days`).
+			bs.visit_frequency_days,
+			bs.best_supplier_visit_days,
+			bs.best_supplier_delivery_days,
+			bs.best_supplier_legacy_visit,
+			bs.best_supplier_legacy_delivery,
+			bs.best_supplier_lead_time_days`).
 		Joins(`LEFT JOIN (
 			SELECT 
 				ps.product_barcode, 
@@ -186,6 +196,11 @@ func (r *PostgresProductRepository) GetProductsWithBestSupplier(supplierID *uint
 				s.name as best_supplier_name, 
 				ps."purchasePrice" as lowest_price,
 				s.visit_frequency_days,
+				s.visit_days AS best_supplier_visit_days,
+				s.delivery_days AS best_supplier_delivery_days,
+				s."visitDay" AS best_supplier_legacy_visit,
+				s."deliveryDay" AS best_supplier_legacy_delivery,
+				s.lead_time_days AS best_supplier_lead_time_days,
 				ROW_NUMBER() OVER(PARTITION BY ps.product_barcode ORDER BY ps."purchasePrice" ASC) as rn
 			FROM product_suppliers ps
 			JOIN suppliers s ON ps.supplier_id = s.id

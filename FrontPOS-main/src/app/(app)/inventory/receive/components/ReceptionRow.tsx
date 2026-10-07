@@ -4,10 +4,19 @@ import React, { memo, useState, useEffect, useMemo } from 'react';
 import { Button, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
 import dynamic from 'next/dynamic';
 import { 
-    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles, Camera 
+    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles, Camera, Printer
 } from 'lucide-react';
 import { ReceiveItem } from '../page';
 import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText, normalizeSalePrice, roundToNearestFifty } from "@/lib/utils";
+import {
+    calculateGrossCost,
+    calculateNetCost,
+    calculateProjectedPVP,
+    calculateProjectedWacGross,
+    calculatePVP,
+    calculateRawPVP,
+    parseSubtotalEdit,
+} from '@/lib/reception-pricing.mjs';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api-error';
 import { broadcastRevalidate } from '@/lib/revalidate';
@@ -20,9 +29,16 @@ interface ReceptionRowProps {
     item: ReceiveItem;
     onUpdate: (lineId: string, updates: Partial<ReceiveItem>) => void;
     onDelete: (lineId: string) => void;
+    /**
+     * Callback opcional disparado al presionar el botón "Imprimir
+     * etiquetas unitarias". El padre decide cuándo mostrar la hoja
+     * (típicamente DESPUÉS de confirmar la recepción) y abre el
+     * LabelPrintSheet con los datos del producto.
+     */
+    onPrintLabels?: (item: ReceiveItem) => void;
 }
 
-const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
+const ReceptionRow = memo(({ item, onUpdate, onDelete, onPrintLabels }: ReceptionRowProps) => {
     const { toast } = useToast();
     const { user } = useAuth();
     const isAdmin = useMemo(() => {
@@ -40,30 +56,8 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const physicalStock = item.actualPhysicalStock;
     const currentStock = item.currentStock;
 
-    // TAREA 1: Formula Maestra de Modificadores Secuenciales (Compuesta) - Motor Surtifamiliar v10.0
-    // 1. Costo Bruto (sin descuento): Bruto = Base * (1 + IVA + ICUI + IBUA)
-    const calculateGrossCost = (basePrice: number, iva: number, icui: number, ibua: number) => {
-        return basePrice * (1 + (Number(iva || 0) / 100) + (Number(icui || 0) / 100) + (Number(ibua || 0) / 100));
-    };
-
-    // Costo Neto Final para el inventario y pago: Neto = Bruto * (1 - DTO)
-    const calculateNetCost = (basePrice: number, iva: number, icui: number, ibua: number, discount: number) => {
-        return calculateGrossCost(basePrice, iva, icui, ibua) * (1 - (Number(discount || 0) / 100));
-    };
-
-    // 2. Calculo de PVP Sugerido: Se calcula sobre el Costo Bruto, y sube el PVP proporcionalmente al descuento para dar beneficio
-    const calculateRawPVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number, discount: number = 0) => {
-        const grossCost = calculateGrossCost(basePrice, iva, icui, ibua);
-        const discountDec = Number(discount || 0) / 100;
-        // Evitar division por cero si el descuento es 100%
-        const baseForPvp = discountDec >= 1 ? grossCost : (grossCost / (1 - discountDec));
-        // El precio de venta sube respecto al descuento para aumentar el margen de ganancia real
-        return baseForPvp * (1 + (Number(marginPct || 0) / 100));
-    };
-
-    const calculatePVP = (basePrice: number, iva: number, icui: number, ibua: number, marginPct: number, discount: number = 0) => {
-        return normalizeSalePrice(calculateRawPVP(basePrice, iva, icui, ibua, marginPct, discount));
-    };
+    // Todos los cálculos fiscales usan los helpers canónicos compartidos de
+    // reception-pricing para mantener BASE/GROSS y redondeo consistentes.
 
     const formatInitial = (val: number) => (val === 0 ? '' : formatCOP(val));
     const formatInitialPercent = (val: number) => (val === 0 ? '' : String(val));
@@ -181,25 +175,63 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     };
 
     const handleSubtotalChange = (val: string) => {
-        setLocalSubtotal(formatInputCOP(val));
+        // Formatear primero el texto visible (puntos de miles) y conservarlo
+        // en el estado local para no romper la edición cómoda del usuario.
+        const formatted = formatInputCOP(val);
+        setLocalSubtotal(formatted);
+
+        // Durante la edición empujamos al padre en cada tecla VÁLIDA. Así, si
+        // el usuario pulsa "Sincronizar" con el input aún enfocado (sin blur),
+        // lo que se envía es exactamente el valor visible y no un fantasma.
+        const parsed = parseSubtotalEdit(formatted, Math.max(0.001, effectiveQty));
+        if (parsed.isValid) {
+            const basePrice = parsed.basePrice;
+            // El PVP se recalcula SIEMPRE desde el base vigente, no desde
+            // un subtotal viejo cacheado. De este modo cambiar IVA/ICUI/
+            // IBUA/DTO/GAN después no restaura ningún subtotal anterior.
+            const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage, item.discount);
+            onUpdate(item.lineId, {
+                newPurchasePrice: basePrice,
+                newSalePrice: newSalePrice,
+            });
+        } else {
+            // Vacío o inválido: publicamos newPurchasePrice=0 para que la
+            // validación del botón "Sincronizar" bloquee el envío. El texto
+            // local se mantiene tal como el usuario lo dejó.
+            if (item.entryType !== 'gift' && Number(item.newPurchasePrice) !== 0) {
+                onUpdate(item.lineId, {
+                    newPurchasePrice: 0,
+                    newSalePrice: 0,
+                });
+            }
+        }
     };
 
     const handleSubtotalBlur = (val: string) => {
-        const subtotalRow = parseCOP(val) || 0;
-        const basePrice = subtotalRow / Math.max(0.001, effectiveQty);
-        
+        const parsed = parseSubtotalEdit(val, Math.max(0.001, effectiveQty));
+        if (!parsed.isValid) {
+            // Normalizar: restaurar el visual al valor vigente del padre
+            // (que puede ser 0 si antes se publicó un inválido). Nunca
+            // enviamos silenciosamente el anterior "como si fuera el visible".
+            const parentSubtotal = Number(item.newPurchasePrice || 0) * effectiveQty;
+            setLocalSubtotal(formatInitial(parentSubtotal));
+            return;
+        }
+        const basePrice = parsed.basePrice;
+        const subtotalRow = parsed.subtotal;
+
         const neto = calculateNetCost(basePrice, item.iva, item.icui, item.ibua, item.discount);
         const bruto = calculateGrossCost(basePrice, item.iva, item.icui, item.ibua);
         const newSalePrice = calculatePVP(basePrice, item.iva, item.icui, item.ibua, item.marginPercentage, item.discount);
-        
+
         setLocalCost(formatCOP(Math.round(neto)));
         setLocalSalePrice(formatCOP(newSalePrice));
         setLocalTotal(formatCOP(Math.round(bruto * effectiveQty)));
         setLocalSubtotal(formatCOP(subtotalRow));
-        
+
         onUpdate(item.lineId, {
             newPurchasePrice: basePrice,
-            newSalePrice: newSalePrice
+            newSalePrice: newSalePrice,
         });
     };
 
@@ -425,22 +457,46 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     if (item.matchStatus === 'warning') matchClasses = "bg-amber-50 dark:bg-amber-900/30 border-amber-500/50 shadow-[0_0_15px_rgba(245,158,11,0.15)]";
     if (item.matchStatus === 'extra') matchClasses = "bg-rose-50 dark:bg-rose-900/30 border-rose-500/50 shadow-[0_0_15px_rgba(244,63,94,0.15)]";
 
-    const oldStock = item.currentStock || 0;
-    const oldPurchasePrice = item.oldPurchasePrice || 0;
-    const addedQuantity = item.addedQuantity || 0;
-    const newPurchasePrice = item.newPurchasePrice || 0;
-    let projectedWac = newPurchasePrice;
-    if (oldStock > 0 && addedQuantity > 0 && newPurchasePrice > 0) {
-        projectedWac = ((oldStock * oldPurchasePrice) + (addedQuantity * newPurchasePrice)) / (oldStock + addedQuantity);
-    }
-    
-    const targetMargin = item.marginPercentage;
+    const oldStock = Number(item.currentStock) || 0;
+    const oldPurchasePrice = Number(item.oldPurchasePrice) || 0; // gross persistido
+    const newPurchasePrice = Number(item.newPurchasePrice) || 0; // base UI/payload
+    const newGrossPurchasePrice = calculateGrossCost(
+        newPurchasePrice,
+        item.iva,
+        item.icui,
+        item.ibua,
+    );
+    // Esta proyección es sólo visual: pondera gross/gross con la cantidad
+    // efectiva (LB incluida) y no altera el WAC contable del backend.
+    const projectedWac = calculateProjectedWacGross(
+        oldPurchasePrice,
+        oldStock,
+        newPurchasePrice,
+        effectiveQty,
+        item.iva,
+        item.icui,
+        item.ibua,
+    );
+
+    const targetMargin = Number(item.marginPercentage) || 0;
     let projectedSalePrice = item.newSalePrice;
-    if (projectedWac !== newPurchasePrice && projectedWac > 0 && targetMargin > 0 && addedQuantity > 0) {
-        const suggestedSalePrice = projectedWac * (1 + (targetMargin / 100));
-        const base = Math.floor(suggestedSalePrice / 100) * 100;
-        const remainder = suggestedSalePrice % 100;
-        projectedSalePrice = remainder >= 25 ? base + 100 : base;
+    if (
+        oldStock > 0
+        && effectiveQty > 0
+        && newPurchasePrice > 0
+        && Math.abs(projectedWac - newGrossPurchasePrice) >= 0.01
+    ) {
+        projectedSalePrice = calculateProjectedPVP(
+            oldPurchasePrice,
+            oldStock,
+            newPurchasePrice,
+            effectiveQty,
+            item.iva,
+            item.icui,
+            item.ibua,
+            targetMargin,
+            item.discount,
+        );
     }
 
     return (
@@ -560,6 +616,24 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                     >
                         <Trash2 size={14} />
                     </Button>
+                    {/* El botón Printer SÓLO aparece cuando la línea ya se
+                        sincronizó (item.syncedReceptionId presente). Esto
+                        evita auditar trabajos de impresión antes de que la
+                        recepción exista en BD. Guardián estático:
+                        tests/label-reprint-contract.test.mjs. */}
+                    {onPrintLabels && item.syncedReceptionId && (
+                        <Button
+                            isIconOnly
+                            variant="flat"
+                            size="sm"
+                            onClick={() => onPrintLabels(item)}
+                            aria-label="Imprimir etiquetas unitarias"
+                            title="Imprimir etiquetas unitarias (recepción confirmada)"
+                            className="h-8 w-8 min-w-8 bg-sky-50 dark:bg-sky-500/10 text-sky-500 rounded-2xl border border-sky-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
+                        >
+                            <Printer size={14} />
+                        </Button>
+                    )}
                 </div>
             </div>
 
@@ -774,7 +848,7 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                 </div>
 
                 {/* Visualizador de Precio Sugerido (Solo si es diferente al PVP actual y no ha sido descartado) */}
-                {(!suggestionDismissed && oldStock > 0 && addedQuantity > 0 && newPurchasePrice > 0 && projectedWac !== newPurchasePrice && projectedSalePrice !== item.newSalePrice) && (
+                {(!suggestionDismissed && oldStock > 0 && effectiveQty > 0 && newPurchasePrice > 0 && Math.abs(projectedWac - newGrossPurchasePrice) >= 0.01 && projectedSalePrice !== item.newSalePrice) && (
                     <div className="flex items-center gap-2 mt-0.5 p-2 bg-emerald-500/10 dark:bg-emerald-500/20 border border-emerald-500/20 rounded-xl animate-in fade-in zoom-in-95 duration-300">
                         <Sparkles size={14} className="text-emerald-500 shrink-0" />
                         <span className="text-[10px] text-emerald-700 dark:text-emerald-400 font-medium flex-1">
@@ -783,17 +857,15 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                         {item.newSalePrice !== projectedSalePrice && (
                             <button
                                 onClick={() => {
-                                    const sale = applyRounding(projectedSalePrice);
-                                    const bruto = calculateGrossCost(item.newPurchasePrice, item.iva, item.icui, item.ibua);
-                                    const margin = bruto > 0 ? ((sale / bruto) - 1) * 100 : item.marginPercentage;
-                                    
-                                    setLocalMargin(String(margin));
+                                    // projectedSalePrice ya pasó por calculatePVP:
+                                    // impuestos + DTO + GAN + normalización frontend.
+                                    const sale = projectedSalePrice;
+
                                     setLocalSalePrice(formatCOP(sale));
                                     setSuggestionDismissed(true);
-                                    
-                                    onUpdate(item.lineId, { 
-                                        newSalePrice: sale, 
-                                        marginPercentage: margin 
+
+                                    onUpdate(item.lineId, {
+                                        newSalePrice: sale,
                                     });
                                 }}
                                 className="text-[9px] font-bold text-white bg-emerald-500 hover:bg-emerald-600 px-2.5 py-1 rounded-lg transition-colors shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 uppercase"

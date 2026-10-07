@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import (
 	"time"
@@ -7,50 +7,64 @@ import (
 )
 
 type CashierClosure struct {
-	ID              uint           `gorm:"primaryKey;autoIncrement" json:"id"`
-	Date            time.Time      `gorm:"not null" json:"date"`
-	StartDate       time.Time      `json:"startDate"`
-	EndDate         time.Time      `json:"endDate"`
-	SalesCount      int            `json:"salesCount"`
-	TotalSales      float64        `json:"totalSales"`
-	TotalCash       float64        `json:"totalCash"`
-	TotalTransfer   float64        `json:"totalTransfer"`
-	TotalCard       float64        `json:"totalCard"`
-	TotalExpenses   float64        `json:"totalExpenses"`
-	TotalReturns    float64        `json:"totalReturns"`
-	ReturnsCount    float64        `json:"returnsCount"`
-	TotalCreditIssued float64      `json:"totalCreditIssued"`
+	ID                   uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	Date                 time.Time `gorm:"not null" json:"date"`
+	StartDate            time.Time `json:"startDate"`
+	EndDate              time.Time `json:"endDate"`
+	SalesCount           int       `json:"salesCount"`
+	TotalSales           float64   `json:"totalSales"`
+	TotalCash            float64   `json:"totalCash"`
+	TotalTransfer        float64   `json:"totalTransfer"`
+	TotalCard            float64   `json:"totalCard"`
+	TotalExpenses        float64   `json:"totalExpenses"`
+	TotalReturns         float64   `json:"totalReturns"`
+	ReturnsCount         float64   `json:"returnsCount"`
+	TotalCreditIssued    float64   `json:"totalCreditIssued"`
 	TotalCreditCollected float64   `json:"totalCreditCollected"`
-	OpeningCash     float64        `json:"openingCash"`
-	OpeningNequi    float64        `json:"openingNequi"`
-	OpeningDaviplata float64       `json:"openingDaviplata"`
-	TotalNequi      float64        `json:"totalNequi"`
-	TotalDaviplata  float64        `json:"totalDaviplata"`
-	TotalBancolombia float64       `json:"totalBancolombia"`
-	TotalOtherTransfer float64     `json:"totalOtherTransfer"`
-	NetBalance      float64        `json:"netBalance"`
-	ExpectedCash    float64        `json:"expectedCash"`
-	CashBreakdown   string         `gorm:"type:text" json:"cashBreakdown"`
-	ActiveShiftName string         `gorm:"-" json:"activeShiftName"`
-	ActiveShiftDNI  string         `gorm:"-" json:"activeShiftDni"`
-	CashBills       float64        `json:"cashBills"`
-	Coins200        float64        `json:"coins200"`
-	Coins100        float64        `json:"coins100"`
-	Coins500        float64        `json:"coins500"`
-	Coins1000       float64        `json:"coins1000"`
-	ClosedByDNI     string         `json:"closedByDni"`
-	ClosedByName    string         `json:"closedByName"`
-	PhysicalCash    float64        `gorm:"column:physical_cash" json:"physicalCash"`
-	TotalCashReal   float64        `gorm:"column:total_cash_real" json:"totalCashReal"`
-	TotalNequiReal  float64        `gorm:"column:total_nequi_real" json:"totalNequiReal"`
-	TotalDaviplataReal float64     `gorm:"column:total_daviplata_real" json:"totalDaviplataReal"`
-	Difference      float64        `json:"difference"`
-	AuthorizedBy    string         `json:"authorizedBy"`
-	SalariesDetail  string         `gorm:"type:text" json:"salariesDetail"`
-	ExpensesDetail  string         `gorm:"type:text" json:"expensesDetail"`
-	Expenses        []Expense      `gorm:"-" json:"expenses"`
-	CreditsIssued   []Sale         `gorm:"-" json:"creditsIssued"`   // Listado de fiados realizados
-	CreditPayments  []CreditPayment `gorm:"-" json:"creditPayments"` // Listado de abonos recibidos
+	OpeningCash          float64   `json:"openingCash"`
+	OpeningNequi         float64   `json:"openingNequi"`
+	OpeningDaviplata     float64   `json:"openingDaviplata"`
+	TotalNequi           float64   `json:"totalNequi"`
+	TotalDaviplata       float64   `json:"totalDaviplata"`
+	TotalBancolombia     float64   `json:"totalBancolombia"`
+	TotalOtherTransfer   float64   `json:"totalOtherTransfer"`
+	NetBalance           float64   `json:"netBalance"`
+	ExpectedCash         float64   `json:"expectedCash"`
+	CashBreakdown        string    `gorm:"type:text" json:"cashBreakdown"`
+	ActiveShiftName      string    `gorm:"-" json:"activeShiftName"`
+	ActiveShiftDNI       string    `gorm:"-" json:"activeShiftDni"`
+	CashBills            float64   `json:"cashBills"`
+	Coins200             float64   `json:"coins200"`
+	Coins100             float64   `json:"coins100"`
+	Coins500             float64   `json:"coins500"`
+	Coins1000            float64   `json:"coins1000"`
+	ClosedByDNI          string    `json:"closedByDni"`
+	ClosedByName         string    `json:"closedByName"`
+	PhysicalCash         float64   `gorm:"column:physical_cash" json:"physicalCash"`
+	TotalCashReal        float64   `gorm:"column:total_cash_real" json:"totalCashReal"`
+	TotalNequiReal       float64   `gorm:"column:total_nequi_real" json:"totalNequiReal"`
+	TotalDaviplataReal   float64   `gorm:"column:total_daviplata_real" json:"totalDaviplataReal"`
+	Difference           float64   `json:"difference"`
+	AuthorizedBy         string    `json:"authorizedBy"`
+	SalariesDetail       string    `gorm:"type:text" json:"salariesDetail"`
+	ExpensesDetail       string    `gorm:"type:text" json:"expensesDetail"`
+
+	// ClientTxID (fix P1 — idempotencia anti-doble-cierre, 2026-10-04).
+	// Lo genera el frontend como UUID v4 antes del POST
+	// /dashboard/cashier-closure/close y lo persiste en localStorage
+	// (`pos_closure_tx_id`). El backend lo usa para rechazar reintentos
+	// idénticos (doble clic, replay post-timeout) devolviendo el id del
+	// cierre existente. Lo respalda la migración 018 con un índice único
+	// parcial sobre la columna; mientras la migración no se aplique en
+	// producción, el servicio detecta la ausencia vía
+	// `information_schema.columns` y salta la verificación idempotente.
+	// Puntero nullable + omitempty para no serializar siempre en los
+	// cierres históricos pre-018 (quedan en NULL).
+	ClientTxID *string `gorm:"column:client_tx_id" json:"clientTxId,omitempty"`
+
+	Expenses       []Expense       `gorm:"-" json:"expenses"`
+	CreditsIssued  []Sale          `gorm:"-" json:"creditsIssued"`  // Listado de fiados realizados
+	CreditPayments []CreditPayment `gorm:"-" json:"creditPayments"` // Listado de abonos recibidos
 
 	// Desglose dinámico por método de pago — se calcula en runtime desde
 	// las ventas y abonos del rango del cierre (no se persiste en BD).
@@ -72,7 +86,7 @@ type CashierClosure struct {
 	EgresosDigital   float64 `gorm:"-" json:"egresosDigital"`
 	EgresosTotales   float64 `gorm:"-" json:"egresosTotales"`
 
-	DeletedAt       gorm.DeletedAt `gorm:"index" json:"-"`
+	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
 }
 
 func (CashierClosure) TableName() string {

@@ -63,6 +63,17 @@ type ProductRestockInfo struct {
 	WorstPrice         float64 `json:"worstPrice"`
 	WorstSupplierName  string  `json:"worstSupplierName"`
 	VisitFrequencyDays int     `json:"visitFrequencyDays"`
+	// Agenda del mejor proveedor en forma utilizable por
+	// scheduling.ReplenishmentCoverageDays. Reemplazan el viejo fallback de
+	// 30 dias y el multiplicador fijo de 14 que usaba inventory_service.go
+	// cuando el proveedor no tenia frecuencia aprendida. Son campos
+	// opcionales — vacios se interpretan como "sin agenda registrada" y la
+	// cobertura cae al fallback acotado del paquete scheduling.
+	BestSupplierVisitDays       models.StringArray `gorm:"column:best_supplier_visit_days;type:jsonb" json:"bestSupplierVisitDays,omitempty"`
+	BestSupplierDeliveryDays    models.StringArray `gorm:"column:best_supplier_delivery_days;type:jsonb" json:"bestSupplierDeliveryDays,omitempty"`
+	BestSupplierLegacyVisit     *string            `gorm:"column:best_supplier_legacy_visit" json:"bestSupplierLegacyVisit,omitempty"`
+	BestSupplierLegacyDelivery  *string            `gorm:"column:best_supplier_legacy_delivery" json:"bestSupplierLegacyDelivery,omitempty"`
+	BestSupplierLeadTimeDays    *int               `gorm:"column:best_supplier_lead_time_days" json:"bestSupplierLeadTimeDays,omitempty"`
 }
 
 type ReceiveEntry struct {

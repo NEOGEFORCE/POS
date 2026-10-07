@@ -5,6 +5,7 @@ import (
 	"backPOS-go/internal/core/services"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -50,11 +51,15 @@ type DashboardHandler struct {
 	service         *services.DashboardService
 	telegramService *services.TelegramService
 	auditService    *services.AuditService
+	authService     *services.AuthService
 	db              *gorm.DB
 }
 
-func NewDashboardHandler(s *services.DashboardService, tg *services.TelegramService, a *services.AuditService, db *gorm.DB) *DashboardHandler {
-	return &DashboardHandler{service: s, telegramService: tg, auditService: a, db: db}
+// NewDashboardHandler compone el handler con todas sus dependencias.
+// `auth` se usa para verificar el token corto de autorización de
+// faltante (/auth/verify-admin), consumido server-side por SaveClosure.
+func NewDashboardHandler(s *services.DashboardService, tg *services.TelegramService, a *services.AuditService, auth *services.AuthService, db *gorm.DB) *DashboardHandler {
+	return &DashboardHandler{service: s, telegramService: tg, auditService: a, authService: auth, db: db}
 }
 
 func (h *DashboardHandler) GetOverview(c *gin.Context) {
@@ -108,14 +113,49 @@ func applyTrustedClosureData(target *models.CashierClosure, trusted *services.Ca
 }
 
 func (h *DashboardHandler) SaveClosure(c *gin.Context) {
-	var closure models.CashierClosure
-	if err := c.ShouldBindJSON(&closure); err != nil {
+	// Payload envolvente: el cuerpo trae el closure Y los campos
+	// "fuera de modelo" (authorizationToken y clientTxId). Los dos últimos
+	// NO viven en models.CashierClosure para no exponerlos al Save de GORM.
+	var payload struct {
+		models.CashierClosure
+		AuthorizationToken string `json:"authorizationToken,omitempty"`
+		ClientTxID         string `json:"clientTxId,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
 		log.Printf("❌ [SaveClosure] Error al bindear JSON: %v", err)
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de cierre inválido", err)
 		return
 	}
+	closure := payload.CashierClosure
 
-	// Obtener usuario del contexto de forma segura
+	// ─── P0: rechazo estricto de `id` en POST create ────────────────────────
+	// GORM Save hace UPSERT por PK: aceptar un id arbitrario permitiría
+	// sobrescribir un cierre existente con el payload de uno nuevo. La
+	// edición pasa por PUT /dashboard/cashier-history/:id, que está detrás
+	// de RoleMiddleware("admin").
+	if closure.ID != 0 {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "No se admite id en la creación de un cierre; use PUT para editar", nil)
+		return
+	}
+
+	// ─── P0: no confiar en AuthorizedBy del body ────────────────────────────
+	// El autorizador real se deriva del rol del actor o del claim JWT del
+	// `authorizationToken`. Limpiar el string libre del body impide spoof.
+	closure.AuthorizedBy = ""
+
+	// ─── P1: idempotencia por client_tx_id (migración 018) ──────────────────
+	// Lo validamos acá para dar error 400 legible si el UUID viene con
+	// una longitud absurda (ataque de inflación). El servicio decide si
+	// la verificación idempotente procede (tolerante a 018 no aplicada).
+	if txID := strings.TrimSpace(payload.ClientTxID); txID != "" {
+		if len(txID) > 64 {
+			SendError(c, http.StatusBadRequest, ErrBadRequest, "clientTxId excede 64 caracteres", nil)
+			return
+		}
+		closure.ClientTxID = &txID
+	}
+
+	// Obtener usuario del contexto de forma segura.
 	dniStr, nameStr := GetContextUser(c)
 	closure.ClosedByDNI = dniStr
 	closure.ClosedByName = nameStr
@@ -125,135 +165,182 @@ func (h *DashboardHandler) SaveClosure(c *gin.Context) {
 	// Asegurar que la fecha de fin sea la hora actual del servidor (UTC para consistencia)
 	closure.EndDate = time.Now()
 
-	// Obtener la fecha de inicio correcta (desde el último cierre o inicio de turno)
-	if closure.ID == 0 {
-		activeData, err := h.service.GetCashierClosure()
-		if err != nil || activeData == nil {
-			SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudieron verificar los totales reales del turno", err)
-			return
-		}
-		applyTrustedClosureData(&closure, activeData)
-		if !activeData.StartDate.IsZero() {
-			closure.StartDate = activeData.StartDate
-		} else {
-			loc := time.FixedZone("America/Bogota", -5*60*60)
-			nowLocal := time.Now().In(loc)
-			closure.StartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 1, 0, loc)
-		}
-
-		// ── REGLA DE MAYORÍA DE VENTAS ──────────────────────────────────────────
-		// Si el turno abarca más de un día calendario (ej. viernes-sábado madrugada),
-		// el cierre se registra en el día donde cayó la MAYORÍA de las ventas,
-		// conservando la hora real de EndDate.
-		// Así un turno que abre el viernes y cierra el sábado a las 2 AM queda como "viernes".
+	// Obtener la fecha de inicio correcta (desde el último cierre o inicio de turno).
+	// En POST create siempre pasa por aquí porque arriba se rechazó ID != 0.
+	activeData, err := h.service.GetCashierClosure()
+	if err != nil || activeData == nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudieron verificar los totales reales del turno", err)
+		return
+	}
+	applyTrustedClosureData(&closure, activeData)
+	if !activeData.StartDate.IsZero() {
+		closure.StartDate = activeData.StartDate
+	} else {
 		loc := time.FixedZone("America/Bogota", -5*60*60)
-		startLocal := closure.StartDate.In(loc)
-		endLocal := closure.EndDate.In(loc)
+		nowLocal := time.Now().In(loc)
+		closure.StartDate = time.Date(nowLocal.Year(), nowLocal.Month(), nowLocal.Day(), 0, 0, 1, 0, loc)
+	}
 
-		// Solo aplicar si el turno cruza al menos un día calendario
-		if startLocal.Format("2006-01-02") != endLocal.Format("2006-01-02") {
-			type daySales struct {
-				Day   string
-				Count int
-			}
-			var results []daySales
-			h.db.Raw(
-				`SELECT TO_CHAR("saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS day,
-				        COUNT(*) AS count
-				 FROM sales
-				 WHERE "saleDate" BETWEEN ? AND ?
-				   AND deleted_at IS NULL
-				 GROUP BY day
-				 ORDER BY count DESC
-				 LIMIT 1`,
-				closure.StartDate, closure.EndDate,
-			).Scan(&results)
+	// ── REGLA DE MAYORÍA DE VENTAS ──────────────────────────────────────────
+	// Si el turno abarca más de un día calendario (ej. viernes-sábado madrugada),
+	// el cierre se registra en el día donde cayó la MAYORÍA de las ventas,
+	// conservando la hora real de EndDate.
+	// Así un turno que abre el viernes y cierra el sábado a las 2 AM queda como "viernes".
+	loc := time.FixedZone("America/Bogota", -5*60*60)
+	startLocal := closure.StartDate.In(loc)
+	endLocal := closure.EndDate.In(loc)
 
-			if len(results) > 0 && results[0].Day != "" {
-				// Reemplazamos solo la fecha (año-mes-día) por la del día con más ventas,
-				// manteniendo la hora real del EndDate en hora Bogotá.
-				if majority, parseErr := time.ParseInLocation("2006-01-02", results[0].Day, loc); parseErr == nil {
-					closure.Date = time.Date(
-						majority.Year(), majority.Month(), majority.Day(),
-						endLocal.Hour(), endLocal.Minute(), endLocal.Second(), 0, loc,
-					)
-					log.Printf("📅 [SaveClosure] Mayoría de ventas: %s (%d ventas) → fecha del cierre ajustada a %s",
-						results[0].Day, results[0].Count, closure.Date.Format("2006-01-02 15:04"))
-				} else {
-					closure.Date = closure.EndDate
-				}
+	// Solo aplicar si el turno cruza al menos un día calendario
+	if startLocal.Format("2006-01-02") != endLocal.Format("2006-01-02") {
+		type daySales struct {
+			Day   string
+			Count int
+		}
+		var results []daySales
+		h.db.Raw(
+			`SELECT TO_CHAR("saleDate" AT TIME ZONE 'America/Bogota', 'YYYY-MM-DD') AS day,
+			        COUNT(*) AS count
+			 FROM sales
+			 WHERE "saleDate" BETWEEN ? AND ?
+			   AND deleted_at IS NULL
+			 GROUP BY day
+			 ORDER BY count DESC
+			 LIMIT 1`,
+			closure.StartDate, closure.EndDate,
+		).Scan(&results)
+
+		if len(results) > 0 && results[0].Day != "" {
+			// Reemplazamos solo la fecha (año-mes-día) por la del día con más ventas,
+			// manteniendo la hora real del EndDate en hora Bogotá.
+			if majority, parseErr := time.ParseInLocation("2006-01-02", results[0].Day, loc); parseErr == nil {
+				closure.Date = time.Date(
+					majority.Year(), majority.Month(), majority.Day(),
+					endLocal.Hour(), endLocal.Minute(), endLocal.Second(), 0, loc,
+				)
+				log.Printf("📅 [SaveClosure] Mayoría de ventas: %s (%d ventas) → fecha del cierre ajustada a %s",
+					results[0].Day, results[0].Count, closure.Date.Format("2006-01-02 15:04"))
 			} else {
 				closure.Date = closure.EndDate
 			}
 		} else {
-			// Turno de un solo día: usar EndDate directamente
 			closure.Date = closure.EndDate
 		}
 	} else {
-		// En modo edición, respetamos la fecha que envíe el cliente
-		if closure.Date.IsZero() {
-			closure.Date = closure.EndDate
-		}
+		// Turno de un solo día: usar EndDate directamente
+		closure.Date = closure.EndDate
 	}
 
-	err := h.service.SaveClosure(&closure)
+	// ─── P0: componer la autorización server-side ───────────────────────────
+	// `authz.ActorIsAdmin` → el admin propio autoriza con su sesión.
+	// `authz.Token*`       → el cajero empleado adjunta el token corto.
+	// Cualquier otra ruta (string libre, header) queda cerrada.
+	role := GetContextRole(c)
+	authz := services.SaveClosureAuthorization{
+		ActorIsAdmin: isAdminRole(role),
+		ActorDNI:     dniStr,
+		ActorName:    nameStr,
+	}
+	if !authz.ActorIsAdmin && strings.TrimSpace(payload.AuthorizationToken) != "" {
+		claims, verr := h.authService.VerifyClosureAuthorization(payload.AuthorizationToken)
+		if verr != nil {
+			log.Printf("⚠️ [SaveClosure] Token de autorización rechazado para %s: %v", dniStr, verr)
+			SendError(c, http.StatusForbidden, ErrForbidden, "Token de autorización inválido o expirado; vuelva a pedir la firma del admin", verr)
+			return
+		}
+		authz.TokenAdminDNI = claims.AdminDNI
+		authz.TokenAdminName = claims.AdminName
+	}
+
+	result, err := h.service.SaveClosure(&closure, authz)
 	if err != nil {
+		if errors.Is(err, services.ErrAuthorizationRequired) {
+			log.Printf("⛔ [SaveClosure] Faltante sin autorización por %s", dniStr)
+			SendError(c, http.StatusForbidden, ErrForbidden, "El faltante requiere autorización de un administrador antes de cerrar", err)
+			return
+		}
 		log.Printf("❌ [SaveClosure] Error en servicio SaveClosure: %v", err)
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al guardar cierre de caja en base de datos", err)
 		return
 	}
 
-	log.Printf("✅ [SaveClosure] Cierre guardado con éxito. ID: %d. Iniciando envío asíncrono de reportes...", closure.ID)
+	log.Printf("✅ [SaveClosure] Cierre guardado con éxito. ID: %d (reused=%v). Iniciando envío asíncrono de reportes...", result.ID, result.ReusedByClientTx)
 
-	// Auditoría Forense de Cierre de Caja
-	// Nueva política: El cuadre se valida según lo físico. Ya no es crítico si hay diferencia con lo esperado.
-	isCritical := false
+	// ─── Auditoría ──────────────────────────────────────────────────────────
+	// FIX P1 (isCritical en faltantes autorizados): un cierre con faltante
+	// autorizado por admin es un evento forense. Antes se registraba como
+	// no-crítico siempre y la autorización fraudulenta no quedaba marcada.
 	expectedCash := closure.ExpectedCash
 	if expectedCash == 0 {
 		expectedCash = closure.TotalCash - closure.TotalExpenses - closure.TotalReturns
 	}
-
 	realBalance := closure.PhysicalCash + closure.TotalNequi + closure.TotalDaviplata + closure.TotalCard + closure.TotalBancolombia + closure.TotalOtherTransfer - closure.TotalExpenses
 
-	details := fmt.Sprintf("Cierre de caja ID #%d realizado por %s", closure.ID, closure.ClosedByName)
+	isCritical := result.Difference < -closureAuditToleranceCOP
+	auditAction := "CASH_CLOSURE"
+	if result.ReusedByClientTx {
+		auditAction = "CASH_CLOSURE_IDEMPOTENT_REUSE"
+	}
+
+	details := fmt.Sprintf("Cierre de caja ID #%d realizado por %s", result.ID, closure.ClosedByName)
 	human := fmt.Sprintf("El cajero %s realizó el cierre de caja. Balance Real Físico: $%s. (Esperado sistema: $%s)",
 		closure.ClosedByName, fmt.Sprintf("%.2f", realBalance), fmt.Sprintf("%.2f", expectedCash))
+	changes := fmt.Sprintf(`{"expected": %f, "physical": %f, "realBalance": %f, "difference": %f, "authorizedBy": %q, "reusedByClientTx": %t}`,
+		expectedCash, closure.PhysicalCash, realBalance, result.Difference, closure.AuthorizedBy, result.ReusedByClientTx)
 
-	changes := fmt.Sprintf(`{"expected": %f, "physical": %f, "realBalance": %f}`, expectedCash, closure.PhysicalCash, realBalance)
+	h.auditService.Log(dniStr, nameStr, auditAction, "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), isCritical)
 
-	h.auditService.Log(dniStr, nameStr, "CASH_CLOSURE", "SALES", details, human, changes, c.ClientIP(), c.Request.UserAgent(), isCritical)
+	// Si el POST es un replay idempotente, NO re-emitimos Telegram ni PDF:
+	// la primera llamada ya los disparó y repetirlos sería spam.
+	if !result.ReusedByClientTx {
+		go func(cl models.CashierClosure) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("⚠️ [SaveClosure] El proceso de reportes asíncronos entró en PANIC: %v", r)
+				}
+			}()
 
-	// BLINDAJE: El envío de Telegram y PDF se hace en una goroutine para no bloquear la respuesta al cliente
-	go func(cl models.CashierClosure) {
-		defer func() {
-			if r := recover(); r != nil {
-				log.Printf("⚠️ [SaveClosure] El proceso de reportes asíncronos entró en PANIC: %v", r)
-			}
-		}()
+			tgMsg := h.formatTelegramClosureMessage(cl, false)
+			h.telegramService.SendMarkdownAlert(tgMsg)
 
-		// Telegram Alert
-		tgMsg := h.formatTelegramClosureMessage(cl, false)
-		h.telegramService.SendMarkdownAlert(tgMsg)
+			pdfBuf := h.generateClosurePDF(cl, false)
+			filename := fmt.Sprintf("CIERRE_%s_%s.pdf", time.Now().Format("20060102"), cl.ClosedByDNI)
+			_ = h.telegramService.SendDocument(pdfBuf, filename, "📄 Reporte de Cierre Profesional (PDF)")
 
-		// PDF Report
-		pdfBuf := h.generateClosurePDF(cl, false)
-		filename := fmt.Sprintf("CIERRE_%s_%s.pdf", time.Now().Format("20060102"), cl.ClosedByDNI)
-		_ = h.telegramService.SendDocument(pdfBuf, filename, "📄 Reporte de Cierre Profesional (PDF)")
+			log.Printf("📤 [SaveClosure] Reportes asíncronos enviados para cierre ID: %d", cl.ID)
 
-		log.Printf("📤 [SaveClosure] Reportes asíncronos enviados para cierre ID: %d", cl.ID)
-
-		// RESPALDO AUTOMÁTICO POST-CIERRE DE CAJA (Base de datos limpia sin turnos abiertos)
-		h.triggerPostClosureBackup(cl)
-	}(closure)
+			h.triggerPostClosureBackup(cl)
+		}(closure)
+	}
 
 	// Notificar a todos los clientes conectados que hubo un cierre (Zero-Reload)
 	go sse.GetSSEService().BroadcastDashboardUpdate()
 
-	c.JSON(http.StatusOK, gin.H{
-		"message": "Cierre de caja procesado y guardado correctamente",
-		"id":      closure.ID,
+	status := http.StatusOK
+	msg := "Cierre de caja procesado y guardado correctamente"
+	if result.ReusedByClientTx {
+		msg = "Cierre ya registrado previamente (idempotencia). Devolviendo id existente."
+	}
+	c.JSON(status, gin.H{
+		"message":          msg,
+		"id":               result.ID,
+		"reusedByClientTx": result.ReusedByClientTx,
 	})
 }
+
+// isAdminRole centraliza el reconocimiento de rol administrador en el
+// handler. Está también replicado en el helper `actorIsAdmin` del
+// LabelHandler; se mantiene duplicado a propósito para no cruzar
+// paquetes (el helper del label handler usa el role del context en vez
+// del param).
+func isAdminRole(role string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(role))
+	return normalized == "admin" || normalized == "administrador" || normalized == "superadmin"
+}
+
+// closureAuditToleranceCOP es la tolerancia en pesos para considerar un
+// faltante como "crítico" en auditoría. Faltantes menores a un peso son
+// aritmética de float64, no plata real que falta.
+const closureAuditToleranceCOP = 1.0
 
 func (h *DashboardHandler) triggerPostClosureBackup(cl models.CashierClosure) {
 	host := os.Getenv("DB_HOST")
@@ -350,18 +437,92 @@ func (h *DashboardHandler) AdjustInitialBalance(c *gin.Context) {
 }
 
 func (h *DashboardHandler) SendPartialReport(c *gin.Context) {
-	var closure models.CashierClosure
-	if err := c.ShouldBindJSON(&closure); err != nil {
-		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de reporte inválido", err)
+	// FIX P1 (SendPartialReport confiable, 2026-10-04): antes el handler
+	// aceptaba un `models.CashierClosure` crudo del body y lo pasaba
+	// directo a Telegram y PDF. Un cajero podía inventar las cifras del
+	// reporte parcial. Ahora reconstruimos el cierre a partir del
+	// servicio (datos trusted) y aceptamos sólo campos del conteo en
+	// curso (physical cash y desglose JSON).
+	type partialBody struct {
+		PhysicalCash  float64 `json:"physicalCash"`
+		CashBills     float64 `json:"cashBills"`
+		Coins100      float64 `json:"coins100"`
+		Coins200      float64 `json:"coins200"`
+		Coins500      float64 `json:"coins500"`
+		Coins1000     float64 `json:"coins1000"`
+		CashBreakdown string  `json:"cashBreakdown"`
+		Note          string  `json:"note"`
+	}
+	var body partialBody
+	// Payload opcional: si el cliente no envía nada, el reporte usa 0 en
+	// efectivo contado (lo cual es información útil: "aún no se cuenta").
+	_ = c.ShouldBindJSON(&body)
+
+	trusted, err := h.service.GetCashierClosure()
+	if err != nil || trusted == nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "No se pudo obtener el turno activo para el reporte parcial", err)
 		return
 	}
 
-	// Asegurar que el reporte parcial refleje la hora exacta del servidor
-	loc := time.FixedZone("America/Bogota", -5*60*60)
-	closure.EndDate = time.Now().In(loc)
+	dniStr, nameStr := GetContextUser(c)
+
+	loc := bogotaLocation()
+
+	// Reconstruir un models.CashierClosure a partir de los datos trusted
+	// del servicio + el conteo físico opcional del cuerpo.
+	closure := models.CashierClosure{
+		Date:                 time.Now().In(loc),
+		StartDate:            trusted.StartDate,
+		EndDate:              time.Now().In(loc),
+		SalesCount:           trusted.SalesCount,
+		TotalSales:           trusted.TotalSales,
+		TotalCash:            trusted.TotalCash,
+		TotalTransfer:        trusted.TotalTransfer,
+		TotalCard:            trusted.TotalCard,
+		TotalNequi:           trusted.TotalNequi,
+		TotalDaviplata:       trusted.TotalDaviplata,
+		TotalBancolombia:     trusted.TotalBancolombia,
+		TotalOtherTransfer:   trusted.TotalOtherTransfer,
+		TotalReturns:         trusted.TotalReturns,
+		ReturnsCount:         trusted.ReturnsCount,
+		TotalCreditIssued:    trusted.TotalCreditIssued,
+		TotalCreditCollected: trusted.TotalCreditCollected,
+		OpeningCash:          trusted.OpeningCash,
+		OpeningNequi:         trusted.OpeningNequi,
+		OpeningDaviplata:     trusted.OpeningDaviplata,
+		NetBalance:           trusted.NetBalance,
+		ExpectedCash:         trusted.ExpectedCash,
+		ClosedByDNI:          dniStr,
+		ClosedByName:         nameStr,
+		PhysicalCash:         body.PhysicalCash,
+		CashBills:            body.CashBills,
+		Coins100:             body.Coins100,
+		Coins200:             body.Coins200,
+		Coins500:             body.Coins500,
+		Coins1000:            body.Coins1000,
+		CashBreakdown:        body.CashBreakdown,
+		Expenses:             trusted.Expenses,
+		CreditPayments:       trusted.CreditPayments,
+		CreditsIssued:        trusted.CreditsIssued,
+	}
+	// Recalcular arqueo con la fuente única: nunca aceptar `difference`
+	// del cuerpo. ComputeClosureMetrics ya consume CashBreakdown vía
+	// resolvePhysicalCash (que es tolerante a strings vacíos), así que
+	// no necesitamos duplicar la lógica aquí.
+	metrics := services.ComputeClosureMetrics(&closure)
+	closure.PhysicalCash = metrics.PhysicalCash
+	closure.ExpectedCash = closure.OpeningCash + closure.TotalCash - metrics.EgresosCaja - closure.TotalReturns
+	closure.Difference = metrics.PhysicalCash - closure.ExpectedCash
+
+	// Nota del cajero: viaja al PDF/Telegram vía SalariesDetail (campo
+	// text libre que ya existía). Es trazabilidad, no cuenta en el arqueo.
+	if strings.TrimSpace(body.Note) != "" {
+		closure.SalariesDetail = strings.TrimSpace(body.Note)
+	}
 
 	// Telegram Alert (Partial)
 	tgMsg := h.formatTelegramClosureMessage(closure, true)
+	tgMsg = "⏳ *CIFRAS DEL SERVIDOR (REPORTE PARCIAL)* ⏳\n" + tgMsg
 	h.telegramService.SendMarkdownAlert(tgMsg)
 
 	// PDF Alert (Partial)
@@ -803,6 +964,41 @@ func (h *DashboardHandler) DeleteClosure(c *gin.Context) {
 	go sse.GetSSEService().BroadcastDashboardUpdate()
 }
 
+// bogotaLocation devuelve la zona America/Bogota con fallback a FixedZone.
+// Centraliza la zona del negocio para que ningún parseo caiga en
+// time.Local (hora del PC Windows): el servidor puede estar en UTC o en
+// otra zona, y entonces un "2026-09-15T22:00" se interpretaría mal.
+// Fix P2 (zona Bogotá consistente, 2026-10-04).
+func bogotaLocation() *time.Location {
+	if loc, err := time.LoadLocation("America/Bogota"); err == nil {
+		return loc
+	}
+	return time.FixedZone("America/Bogota", -5*60*60)
+}
+
+// updateClosureAllowedKeys es la allowlist estricta de campos editables
+// vía PUT /dashboard/cashier-history/:id. Cualquier otra clave en el
+// body se rechaza con 400 para que no viajen cambios silenciosos a
+// columnas sensibles (closed_by_dni, created_at, deleted_at, id,
+// client_tx_id, totales calculados por el servidor…).
+var updateClosureAllowedKeys = map[string]struct{}{
+	"start_date":         {},
+	"end_date":           {},
+	"date":               {},
+	"physical_cash":      {},
+	"coins100":           {},
+	"coins200":           {},
+	"coins500":           {},
+	"coins1000":          {},
+	"cash_bills":         {},
+	"cash_breakdown":     {},
+	"authorized_by":      {},
+	"total_expenses":     {},
+	"total_returns":      {},
+	"expenses_detail":    {},
+	"forgotten_expenses": {},
+}
+
 func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 32)
@@ -811,53 +1007,121 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		return
 	}
 
-	var updates map[string]interface{}
-	if err := c.ShouldBindJSON(&updates); err != nil {
+	// Deserializar primero a map[string]json.RawMessage para poder validar
+	// las claves presentes. Fix P1 (DTO/allowlist, 2026-10-04): antes el
+	// handler aceptaba cualquier mapa y lo pasaba a GORM Updates(). Un
+	// cliente malicioso podía renombrar `closed_by_dni` o resucitar un
+	// cierre con `deleted_at: null`. Ahora las claves fuera de la
+	// allowlist devuelven 400.
+	var raw map[string]json.RawMessage
+	if err := c.ShouldBindJSON(&raw); err != nil {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Cuerpo inválido", err)
 		return
 	}
-
-	if startDateStr, ok := updates["start_date"].(string); ok && startDateStr != "" {
-		if parsedStart, err := time.ParseInLocation("2006-01-02T15:04", startDateStr, time.Local); err == nil {
-			updates["start_date"] = parsedStart
-		} else {
-			delete(updates, "start_date")
-		}
-	}
-	if endDateStr, ok := updates["end_date"].(string); ok && endDateStr != "" {
-		if parsedEnd, err := time.ParseInLocation("2006-01-02T15:04", endDateStr, time.Local); err == nil {
-			updates["end_date"] = parsedEnd
-		} else {
-			delete(updates, "end_date")
+	for key := range raw {
+		if _, ok := updateClosureAllowedKeys[key]; !ok {
+			SendError(c, http.StatusBadRequest, ErrBadRequest, "Campo no editable: "+key, nil)
+			return
 		}
 	}
 
-	if dateStr, ok := updates["date"].(string); ok && dateStr != "" {
-		if parsedDate, err := time.ParseInLocation("2006-01-02", dateStr, time.Local); err == nil {
-			now := time.Now()
-			newDate := time.Date(parsedDate.Year(), parsedDate.Month(), parsedDate.Day(),
-				now.Hour(), now.Minute(), now.Second(), 0, time.Local)
-			updates["date"] = newDate
-		} else if parsedDate, err := time.ParseInLocation("2006-01-02T15:04", dateStr, time.Local); err == nil {
-			updates["date"] = parsedDate
-		} else {
-			delete(updates, "date")
+	// Desempaquetar valores concretos a `updates` para el servicio.
+	updates := make(map[string]interface{}, len(raw))
+	bogota := bogotaLocation()
+
+	// Fechas en zona Bogotá (fix P2). El frontend envía
+	// "2006-01-02T15:04" (datetime-local sin zona).
+	parseLocalDateTime := func(key string, value json.RawMessage) {
+		var s string
+		if err := json.Unmarshal(value, &s); err != nil || strings.TrimSpace(s) == "" {
+			return
+		}
+		if parsed, perr := time.ParseInLocation("2006-01-02T15:04", s, bogota); perr == nil {
+			updates[key] = parsed
+		}
+	}
+	if v, ok := raw["start_date"]; ok {
+		parseLocalDateTime("start_date", v)
+	}
+	if v, ok := raw["end_date"]; ok {
+		parseLocalDateTime("end_date", v)
+	}
+	if v, ok := raw["date"]; ok {
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil && strings.TrimSpace(s) != "" {
+			if parsed, perr := time.ParseInLocation("2006-01-02", s, bogota); perr == nil {
+				now := time.Now().In(bogota)
+				updates["date"] = time.Date(parsed.Year(), parsed.Month(), parsed.Day(),
+					now.Hour(), now.Minute(), now.Second(), 0, bogota)
+			} else if parsed, perr := time.ParseInLocation("2006-01-02T15:04", s, bogota); perr == nil {
+				updates["date"] = parsed
+			}
 		}
 	}
 
-	// NO recalcular aquí el arqueo. Antes este handler escribía su propia
-	// version de expected_cash y difference (sin la base de apertura) y acto
-	// seguido el servicio los recalculaba con otra fórmula y los sobrescribía:
-	// dos escrituras contradictorias en la misma petición.
-	//
-	// Ahora el arqueo lo calcula UNA sola vez UpdateClosure en el servicio,
-	// con services.ComputeClosureMetrics. Aquí solo se normalizan los canales
-	// de los egresos para que la BD refleje la separación exacta.
+	// Campos numéricos y texto: pasarlos tal cual al servicio. Si el
+	// cliente envía un número como string lo normalizamos.
+	numericKeys := []string{"physical_cash", "coins100", "coins200", "coins500", "coins1000", "cash_bills", "total_expenses", "total_returns"}
+	for _, key := range numericKeys {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var num float64
+		if err := json.Unmarshal(v, &num); err == nil {
+			updates[key] = num
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			clean := strings.ReplaceAll(strings.TrimSpace(s), ".", "")
+			clean = strings.ReplaceAll(clean, ",", ".")
+			if parsed, perr := strconv.ParseFloat(clean, 64); perr == nil {
+				updates[key] = parsed
+			}
+		}
+	}
+	// Campos de texto literal.
+	for _, key := range []string{"authorized_by", "cash_breakdown", "expenses_detail"} {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err == nil {
+			updates[key] = s
+		}
+	}
+	// forgotten_expenses se pasa como arreglo opaco al servicio para que
+	// lo deserialice con el modelo correcto.
+	if v, ok := raw["forgotten_expenses"]; ok {
+		var exps []models.Expense
+		if err := json.Unmarshal(v, &exps); err == nil {
+			updates["forgotten_expenses"] = exps
+		}
+	}
+
+	// ─── P1: autorizador — regla "preservar si no viene nuevo" ──────────────
+	// El frontend sobre-escribía authorized_by en cada edición con el
+	// nombre del admin que ingresaba al modal. Si un cierre se editaba
+	// dos veces, perdíamos el nombre del admin original. Ahora el
+	// servicio preserva el valor existente cuando el DTO no trae
+	// `authorized_by`. Como ya corrimos la allowlist, aquí basta con no
+	// forzar el campo.
+
+	// Normalización canónica de egresos (misma que ya existía antes).
+	// NO calcula arqueo acá: lo recalcula el servicio dentro de la
+	// transacción con fechas efectivas.
 	if closureObj, err := h.service.GetClosureByID(uint(id)); err == nil && closureObj != nil {
 		if len(closureObj.Expenses) > 0 {
 			normalizeExpensesForReport(closureObj.Expenses)
 			expBytes, _ := json.Marshal(closureObj.Expenses)
-			updates["expenses_detail"] = string(expBytes)
+			// Si el cliente ya mandó expenses_detail, no lo pisamos: el
+			// servicio terminará rearmando el detail con los egresos
+			// recalculados dentro de la transacción.
+			if _, provided := updates["expenses_detail"]; !provided {
+				updates["expenses_detail"] = string(expBytes)
+			}
 		}
 	}
 
@@ -867,7 +1131,7 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		return
 	}
 
-	// Re-enviar a Telegram tras editar el cierre
+	// Re-enviar a Telegram tras editar el cierre.
 	if updatedClosure, err := h.service.GetClosureByID(uint(id)); err == nil && updatedClosure != nil {
 		tgMsg := h.formatTelegramClosureMessage(*updatedClosure, false)
 		tgMsg = "⚠️ *REPORTE EDITADO MANUALMENTE* ⚠️\n" + tgMsg
@@ -876,7 +1140,7 @@ func (h *DashboardHandler) UpdateClosure(c *gin.Context) {
 		log.Printf("⚠️ No se pudo obtener el cierre %d para reenviar reporte de Telegram: %v", id, err)
 	}
 
-	// Auditoría Forense: Edición de cierre
+	// Auditoría Forense: edición de cierre es siempre crítica.
 	dniStr, nameStr := GetContextUser(c)
 	details := fmt.Sprintf("Cierre de caja ID #%d EDITADO por %s", id, nameStr)
 	human := fmt.Sprintf("El administrador %s editó el cierre de caja #%d.", nameStr, id)

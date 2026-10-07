@@ -1,8 +1,9 @@
-﻿package handlers
+package handlers
 
 import (
 	"log"
 	"net/http"
+	"time"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/services"
@@ -37,6 +38,14 @@ type SetupRequest struct {
 	Name     string `json:"name" binding:"required"`
 	Email    string `json:"email" binding:"required,email"`
 	Password string `json:"password" binding:"required,min=6"`
+}
+
+// VerifyAdminRequest es el payload para el endpoint
+// POST /api/auth/verify-admin. Fija el contrato con el frontend del modal
+// de autorización de faltantes.
+type VerifyAdminRequest struct {
+	Username string `json:"username" binding:"required"`
+	Password string `json:"password" binding:"required"`
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -136,4 +145,41 @@ func (h *AuthHandler) CheckSetup(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"needsSetup": needsSetup})
+}
+
+// VerifyAdmin emite un token corto de autorización de faltante en cierre
+// de caja. El frontend lo consume desde el modal "autorizar faltante" y
+// adjunta el token al payload del POST /dashboard/cashier-closure/close.
+//
+// Reemplaza al patrón anterior de "re-login con /auth/login y mandar el
+// nombre del admin como string libre": aquel permitía spoof trivial del
+// autorizador. Ahora el autorizador se deriva del claim descifrado
+// server-side (fix P0 — 2026-10-04).
+//
+// Respuestas:
+//
+//   - 200 { token, name, dni, expiresAt } — credenciales válidas y rol admin.
+//   - 400 — payload inválido o incompleto.
+//   - 401 — credenciales incorrectas o rol insuficiente. Mensaje genérico
+//     para no filtrar si el usuario existe.
+func (h *AuthHandler) VerifyAdmin(c *gin.Context) {
+	var req VerifyAdminRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
+		return
+	}
+	username := strings.TrimSpace(req.Username)
+	password := req.Password
+	token, claims, err := h.service.IssueClosureAuthorization(username, password)
+	if err != nil {
+		log.Printf("[AUTH] verify-admin rechazado para %q desde %s: %v", username, c.ClientIP(), err)
+		SendError(c, http.StatusUnauthorized, ErrUnauthorized, "Credenciales inválidas o rol insuficiente para autorizar", err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"token":     token,
+		"name":      claims.AdminName,
+		"dni":       claims.AdminDNI,
+		"expiresAt": claims.ExpiresAt.UTC().Format(time.RFC3339),
+	})
 }

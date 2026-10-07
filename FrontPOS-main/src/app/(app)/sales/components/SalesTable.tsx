@@ -13,6 +13,7 @@ import { useAuth } from '@/lib/auth';
 import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
 import { formatTime } from '@/lib/utils';
 import { PackagePlus } from 'lucide-react';
+import { resolvePaymentCorrectionEndpoint } from '@/lib/payment-correction.mjs';
 
 interface SalesTableProps {
     sales: Sale[];
@@ -38,7 +39,8 @@ const SaleRow = React.memo(({
     onEdit,
     onAddItems,
     onDelete,
-    isAdmin
+    isAdmin,
+    canCorrectPayment,
 }: { 
     sale: Sale, 
     style: React.CSSProperties, 
@@ -46,7 +48,8 @@ const SaleRow = React.memo(({
     onEdit: (s: Sale) => void,
     onAddItems: (s: Sale) => void,
     onDelete: (s: Sale) => void,
-    isAdmin: boolean
+    isAdmin: boolean,
+    canCorrectPayment: boolean,
 }) => {
     return (
         <div
@@ -111,7 +114,13 @@ const SaleRow = React.memo(({
                     </Tooltip>
                 )}
                 <Tooltip content="CORREGIR REGISTRO" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-zinc-900 dark:bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
-                    <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-amber-500 dark:text-zinc-500 dark:hover:text-amber-400 transition-colors p-2" onPress={() => onEdit(sale)}>
+                    <Button
+                        isIconOnly size="sm" variant="light"
+                        aria-label={`Corregir medio de pago de la factura ${sale.id}`}
+                        isDisabled={!canCorrectPayment}
+                        className={`transition-colors p-2 ${canCorrectPayment ? "text-gray-400 hover:text-amber-500 dark:text-zinc-500 dark:hover:text-amber-400" : "text-gray-200 dark:text-zinc-700 cursor-not-allowed"}`}
+                        onPress={() => onEdit(sale)}
+                    >
                         <Edit3 size={20} strokeWidth={2.5} />
                     </Button>
                 </Tooltip>
@@ -137,6 +146,23 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
         const role = user?.role?.toLowerCase() || "";
         return role === "admin" || role === "superadmin" || role === "administrador";
     }, [user]);
+
+    // Mapa de elegibilidad por venta. El empleado solo puede corregir SU
+    // propia venta en su turno activo; el admin puede siempre. Precalcular
+    // acá evita que cada fila ejecute la resolución en render.
+    const canCorrectBySaleId = React.useMemo(() => {
+        const map = new Map<string, boolean>();
+        if (!user) return map;
+        for (const sale of sales) {
+            // shiftOpen=true: la pantalla principal se encarga de ocultar el
+            // acceso cuando el turno está cerrado, y el backend valida el
+            // actor real. Aquí sólo evitamos pintar la acción cuando ni
+            // siquiera hay elegibilidad por rol/dueño/fiado/devoluciones.
+            const resolution = resolvePaymentCorrectionEndpoint(sale, user, { shiftOpen: true });
+            map.set(sale.id, resolution !== null);
+        }
+        return map;
+    }, [sales, user]);
 
     const rowVirtualizer = useVirtualizer({
         count: sales.length,
@@ -183,6 +209,7 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
                                 onAddItems={onOpenAddItems}
                                 onDelete={onOpenDelete}
                                 isAdmin={isAdmin}
+                                canCorrectPayment={canCorrectBySaleId.get(sale.id) ?? false}
                             />
                         );
                     })}

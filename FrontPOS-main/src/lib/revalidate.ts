@@ -134,7 +134,6 @@ export function revalidateKeysForEvent(event: SyncEvent) {
       keysToMutate = [
         '/dashboard/overview',
         '/dashboard/cashier-closure',
-        '/cash-register/history',
         '/reports/closures'
       ];
       break;
@@ -148,7 +147,7 @@ export function revalidateKeysForEvent(event: SyncEvent) {
       keysToMutate.push('/clients/all-clients');
       break;
     case 'CASH_REGISTER_UPDATE':
-      keysToMutate.push('/cash-register/status', '/dashboard/stats');
+      keysToMutate.push('/dashboard/stats');
       break;
     case 'DASHBOARD_UPDATE':
       keysToMutate.push('/dashboard/stats');

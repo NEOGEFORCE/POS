@@ -15,6 +15,19 @@ interface RecentSale {
     cash_amount?: number;
     transfer_amount?: number;
     credit_amount?: number;
+    // Desglose por canal digital. El dashboard-sse ya los expone en
+    // snake_case (`transfer_nequi` / `transfer_daviplata`); el fetch directo
+    // del endpoint `/dashboard/recent-sales` entrega el JSON de `models.Sale`
+    // con los nombres camelCase. Aceptamos ambos para no acoplar la UI al
+    // transporte.
+    transfer_nequi?: number;
+    transfer_daviplata?: number;
+    transferNequi?: number;
+    transferDaviplata?: number;
+    transferAmount?: number;
+    transferSource?: string;
+    cashAmount?: number;
+    creditAmount?: number;
 }
 
 interface RecentActivityProps {
@@ -61,27 +74,45 @@ export default function RecentActivity({ sales }: RecentActivityProps) {
                             <tbody className="divide-y divide-gray-100 dark:divide-white/5">
                                 {/* 2. Limite a 18 para igualar tu panel de Stock */}
                                 {safeSales.slice(0, 18).map((sale) => {
-                                    const source = sale.transfer_source?.toUpperCase() || "NEQUI";
-                                    const hasTransfer = (sale.transfer_amount || 0) > 0;
-                                    const hasCash = (sale.cash_amount || 0) > 0;
-                                    const hasCredit = (sale.credit_amount || 0) > 0;
+                                    // Lectura por canal real (admitimos
+                                    // snake_case del dashboard legacy).
+                                    const nequi = Number(sale.transfer_nequi ?? sale.transferNequi) || 0;
+                                    const daviplata = Number(sale.transfer_daviplata ?? sale.transferDaviplata) || 0;
+                                    const transferTotal = Number(sale.transfer_amount ?? sale.transferAmount) || 0;
+                                    const cashAmount = Number(sale.cash_amount ?? sale.cashAmount) || 0;
+                                    const creditAmount = Number(sale.credit_amount ?? sale.creditAmount) || 0;
+                                    const otherTransfer = transferTotal - nequi - daviplata;
+                                    const source = (sale.transfer_source || sale.transferSource || '').toUpperCase() || 'NEQUI';
+                                    const hasOtherTransfer = otherTransfer > 0.5;
+                                    const hasAnyTransfer = nequi > 0 || daviplata > 0 || hasOtherTransfer;
 
-                                    // Determinar Label (Sin "Mixto")
-                                    let methodLabel = "EFECTIVO";
-                                    if (hasTransfer && hasCash && hasCredit) methodLabel = `${source}+EFE+FIA`;
-                                    else if (hasTransfer && hasCash) methodLabel = `${source}+EFE`;
-                                    else if (hasTransfer && hasCredit) methodLabel = `${source}+FIA`;
-                                    else if (hasCash && hasCredit) methodLabel = `EFE+FIA`;
-                                    else if (hasTransfer) methodLabel = source;
-                                    else if (hasCredit) methodLabel = "FIADO";
+                                    // Construir label corto UNICAMENTE a
+                                    // partir de los montos. NUNCA se escribe
+                                    // "MIXTO" generico: si hay dos canales
+                                    // digitales se muestran ambos (p.ej.
+                                    // "NEQUI+DAVIPLATA"). Es la misma regla
+                                    // que getPaymentDescription usa en el
+                                    // historial, pero compacta para esta grilla.
+                                    const parts: string[] = [];
+                                    if (nequi > 0) parts.push('NEQUI');
+                                    if (daviplata > 0) parts.push('DAVIPLATA');
+                                    if (hasOtherTransfer) parts.push(
+                                        source && source !== 'MIXTO' && source !== 'NEQUI' && source !== 'DAVIPLATA'
+                                            ? source
+                                            : 'TRANSFER',
+                                    );
+                                    if (cashAmount > 0) parts.push('EFE');
+                                    if (creditAmount > 0) parts.push('FIA');
+                                    const methodLabel = parts.length > 0 ? parts.join('+') : 'EFECTIVO';
 
                                     // Determinar Color
                                     let chipColor = 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 text-zinc-900 dark:text-zinc-100 dark:bg-white/5 dark:text-zinc-300';
-                                    if (hasTransfer) {
-                                        if (source.includes("NEQUI")) chipColor = 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400';
-                                        else if (source.includes("DAVIPLATA")) chipColor = 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400';
+                                    if (hasAnyTransfer) {
+                                        if (nequi > 0 && daviplata === 0) chipColor = 'bg-violet-100 text-violet-700 dark:bg-violet-500/20 dark:text-violet-400';
+                                        else if (daviplata > 0 && nequi === 0) chipColor = 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400';
+                                        else if (nequi > 0 && daviplata > 0) chipColor = 'bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-500/20 dark:text-fuchsia-400';
                                         else chipColor = 'bg-sky-100 text-sky-700 dark:bg-sky-500/20 dark:text-sky-400';
-                                    } else if (hasCredit) {
+                                    } else if (creditAmount > 0) {
                                         chipColor = 'bg-rose-100 text-rose-700 dark:bg-rose-500/20 dark:text-rose-400';
                                     }
 

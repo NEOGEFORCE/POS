@@ -11,12 +11,14 @@ interface DeleteModalProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => Promise<void>;
+  isLoanFunded?: boolean;
 }
 
-const DeleteExpenseModal = memo(({ 
-  isOpen, 
-  onOpenChange, 
-  onConfirm 
+const DeleteExpenseModal = memo(({
+  isOpen,
+  onOpenChange,
+  onConfirm,
+  isLoanFunded = false,
 }: DeleteModalProps) => {
   return (
     <Modal 
@@ -48,8 +50,14 @@ const DeleteExpenseModal = memo(({
                 <AlertTriangle size={40} />
               </div>
               <p className="text-sm md:text-base font-bold text-gray-500 dark:text-zinc-400 uppercase tracking-widest leading-relaxed tracking-tight px-4">
-                ¿Confirma la anulacion definitiva? <br/>
-                <span className="text-rose-500 font-medium">Este movimiento sera purgado del historial de auditoria y balance de caja.</span>
+                ¿Confirma la anulación definitiva? <br/>
+                {isLoanFunded ? (
+                  <span className="text-amber-500 font-medium normal-case tracking-normal">
+                    Este pago fue hecho con préstamo: la cuenta volverá a Cuentas por pagar y el mismo valor quedará disponible otra vez en el principal del préstamo.
+                  </span>
+                ) : (
+                  <span className="text-rose-500 font-medium">Este movimiento será eliminado del historial y balance de caja.</span>
+                )}
               </p>
             </ModalBody>
             <ModalFooter className="px-6 md:px-10 py-6 border-t border-gray-100 dark:border-white/5 flex gap-4 rounded-b-[2.5rem] bg-gray-50/50 dark:bg-[#18181b]/50">

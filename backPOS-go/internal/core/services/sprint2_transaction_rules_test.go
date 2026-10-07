@@ -19,7 +19,14 @@ func TestSprint2DeriveSalePaymentMethod(t *testing.T) {
 		{name: "daviplata", sale: models.Sale{TransferAmount: 100, TransferDaviplata: 100}, want: "DAVIPLATA"},
 		{name: "fuente transferencia", sale: models.Sale{TransferAmount: 100, TransferSource: "bancolombia"}, want: "BANCOLOMBIA"},
 		{name: "fiado", sale: models.Sale{CreditAmount: 100}, want: "FIADO"},
-		{name: "mixto", sale: models.Sale{CashAmount: 40, TransferAmount: 60, TransferNequi: 60}, want: "MIXTO"},
+		// Antes del fix de pagos combinados (2026-10) este caso esperaba el
+		// literal "MIXTO". Ahora `deriveSalePaymentMethod` persiste el
+		// desglose real por canal para que el historial, el ticket y los
+		// reportes muestren los nombres verdaderos. "MIXTO" ya no es un
+		// string escrito por el sistema; solo sobrevive como fallback
+		// historico cuando el string legacy viene asi desde la base.
+		{name: "mixto efectivo + nequi", sale: models.Sale{CashAmount: 40, TransferAmount: 60, TransferNequi: 60}, want: "EFECTIVO + NEQUI"},
+		{name: "mixto nequi + daviplata", sale: models.Sale{TransferAmount: 100, TransferNequi: 50, TransferDaviplata: 50}, want: "NEQUI + DAVIPLATA"},
 		{name: "sin desglose conserva fallback", sale: models.Sale{}, want: "EFECTIVO"},
 	}
 	for _, test := range tests {

@@ -1,7 +1,14 @@
 ﻿"use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { evaluateClosureSubmission } from '@/lib/closures-helpers.mjs';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import {
+    evaluateClosureSubmission,
+    serializeCashBreakdown,
+    getOrCreateClientClosureId,
+    clearClientClosureId,
+    clearClosureStorage,
+} from '@/lib/closures-helpers.mjs';
+import { isAdminUser } from '@/lib/auth-helpers.mjs';
 import { 
     DollarSign, 
     Calculator, 
@@ -41,7 +48,13 @@ import {
     Chip
 } from "@heroui/react";
 import { formatCurrency, parseCOP, sanitizeNumber, formatTime, formatShortDateTime, formatDateTime } from '@/lib/utils';
-import { apiFetch } from '@/lib/api-error';
+import { apiFetch, ApiError } from '@/lib/api-error';
+import {
+    liveLoanAvailable,
+    normalizeLoanListResponse,
+    normalizeLoanPayExpenseResponse,
+    type LoanRecord,
+} from '@/lib/loans.mjs';
 import { useToast } from "@/hooks/use-toast";
 import Cookies from 'js-cookie';
 import { useAuth } from '@/lib/auth';
@@ -92,13 +105,30 @@ interface CashierClosure {
 
 function CashierClosureContent() {
     const { user, logout } = useAuth();
-    const isAdmin = useMemo(() => {
-        const role = (user?.role || user?.Role || '').toLowerCase();
-        return ['admin', 'administrador', 'superadmin'].includes(role);
-    }, [user]);
+    // Fuente unica: src/lib/auth-helpers.mjs. Antes esta pantalla tenia su
+    // propio set, y variantes como "root" o "super_admin" no pasaban.
+    const isAdmin = useMemo(() => isAdminUser(user), [user]);
     const [currentClosure, setCurrentClosure] = useState<CashierClosure | null>(null);
     const [loading, setLoading] = useState(true);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    // Latch anti-doble-submit a nivel de ref: isSubmitting (state) puede
+    // tener delay por batching de React. Un segundo click entre el click y
+    // el commit del state burlaba el bloqueo. useRef se actualiza
+    // sincronicamente y bloquea ese caso.
+    const submitLatchRef = useRef(false);
+    // Marcar el cierre como completado para que el boton NO se reactive si el
+    // usuario queda en pantalla mientras llega el router.push al login.
+    const [closureCompleted, setClosureCompleted] = useState(false);
+
+    // Token de autorizacion administrativa (claim corto). El frontend NUNCA
+    // sobreescribe la sesion del cajero: guardamos el token aparte y lo
+    // mandamos en el payload para que el backend lo verifique sin spoofing.
+    //
+    // Si el backend tiene el endpoint /auth/verify-admin disponible, usamos
+    // esa ruta; si no, caemos a /auth/login como fallback compatible (lee el
+    // user.role del body y mantiene el comportamiento legacy aceptable). La
+    // migracion P0 del backend endurecera el contrato.
+    const [adminAuthToken, setAdminAuthToken] = useState<string>('');
 
     // MODO EDICION: si llegamos con ?edit=:id desde el reporte de cierres,
     // cargamos el cierre historico y permitimos corregir sus valores.
@@ -129,28 +159,81 @@ function CashierClosureContent() {
     const [expenseToDelete, setExpenseToDelete] = useState<number | null>(null);
     const [expenseToEdit, setExpenseToEdit] = useState<any>(null);
 
+    // Préstamos disponibles para pagar un egreso sin mover caja. Sólo se
+    // cargan para admin y únicamente se ofrecen al crear un egreso del turno;
+    // editar un movimiento histórico nunca puede consumir principal.
+    const [paymentLoans, setPaymentLoans] = useState<LoanRecord[]>([]);
+
+
     const handleAdminVerify = async () => {
         setIsVerifying(true);
         setAuthError('');
         try {
-            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/auth/login`, {
+            const apiBase = (process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api');
+
+            // Preferimos el endpoint dedicado /auth/verify-admin cuando el
+            // backend lo expone. Responde { token: <jwt-corto>, user: {...} }
+            // y el token lleva un claim action="closure_authorization" con
+            // expiracion corta (~5min). Si el endpoint no existe (404) o
+            // devuelve algo distinto, caemos a /auth/login respetando la
+            // sesion del cajero.
+            let token = '';
+            let authorizerName = '';
+
+            const verifyAdminRes = await fetch(`${apiBase}/auth/verify-admin`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username: adminUser, password: adminPass }),
-            });
+            }).catch(() => null);
 
-            if (!response.ok) throw new Error('Credenciales invalidas');
-
-            const data = await response.json();
-            const role = data.user.role?.toUpperCase();
-
-            if (role === 'ADMIN' || role === 'SUPERADMIN') {
-                setIsAuthorized(true);
-                setAdminAuthorizer(data.user.name || data.user.username);
-                toast({ title: 'AUTORIZACION CONCEDIDA', description: `Verificado por ${data.user.name}`, variant: 'default' });
+            if (verifyAdminRes && verifyAdminRes.ok) {
+                const data = await verifyAdminRes.json().catch(() => ({}));
+                token = String(data?.token ?? data?.authorization ?? '').trim();
+                authorizerName = String(data?.user?.name ?? data?.name ?? adminUser).trim();
+                if (!token) {
+                    throw new Error('Respuesta de /auth/verify-admin sin token');
+                }
             } else {
-                throw new Error('El usuario no tiene permisos de administrador');
+                // Fallback: /auth/login. Validamos el rol del usuario
+                // devuelto SIN sobreescribir la sesion del cajero actual.
+                // Guardamos el access token devuelto como "authorizedByToken"
+                // para que el backend tolerante lo lea cuando este
+                // disponible en una version posterior.
+                const legacyRes = await fetch(`${apiBase}/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: adminUser, password: adminPass }),
+                });
+
+                if (!legacyRes.ok) {
+                    throw new Error('Credenciales invalidas');
+                }
+
+                const legacy = await legacyRes.json();
+                const role = String(legacy?.user?.role ?? '').toUpperCase();
+                if (role !== 'ADMIN' && role !== 'SUPERADMIN' && role !== 'ADMINISTRADOR') {
+                    throw new Error('El usuario no tiene permisos de administrador');
+                }
+                token = String(legacy?.token ?? '').trim();
+                authorizerName = String(legacy?.user?.name ?? legacy?.user?.username ?? adminUser).trim();
+                if (!token) {
+                    throw new Error('Respuesta de /auth/login sin token');
+                }
             }
+
+            // Guardamos el token aparte. NUNCA tocamos cookies de sesion
+            // porque reemplazariamos la sesion del cajero.
+            setAdminAuthToken(token);
+            setIsAuthorized(true);
+            setAdminAuthorizer(authorizerName);
+            toast({ title: 'AUTORIZACION CONCEDIDA', description: `Verificado por ${authorizerName}`, variant: 'default' });
+
+            // Cerrar el modal automaticamente para no bloquear el flujo.
+            // Antes el modal quedaba abierto hasta que el usuario cliqueara
+            // fuera, dejando el boton CERRAR CAJA tapado.
+            setShowAuthModal(false);
+            setAdminUser('');
+            setAdminPass('');
         } catch (error: any) {
             setAuthError(error.message);
             toast({ title: 'ERROR DE AUTORIZACION', description: error.message, variant: 'destructive' });
@@ -160,6 +243,49 @@ function CashierClosureContent() {
     };
 
     const { toast } = useToast();
+
+
+    const loadPaymentLoans = useCallback(async () => {
+        if (!isAdmin || isEditMode || expenseToEdit) return;
+        const token = Cookies.get('org-pos-token');
+        if (!token) return;
+        try {
+            const raw = await apiFetch<unknown>('/loans', {
+                method: 'GET',
+                fallbackError: 'No se pudieron cargar los préstamos',
+            }, token);
+            setPaymentLoans(normalizeLoanListResponse(raw).loans);
+        } catch (err: unknown) {
+            setPaymentLoans([]);
+            toast({
+                variant: 'destructive',
+                title: 'PRÉSTAMOS NO DISPONIBLES',
+                description: err instanceof Error ? err.message : 'No se pudo cargar la lista de préstamos.',
+            });
+        }
+    }, [expenseToEdit, isAdmin, isEditMode, toast]);
+
+    useEffect(() => {
+        if (isRealExpenseModalOpen && isAdmin && !isEditMode && !expenseToEdit) {
+            void loadPaymentLoans();
+        }
+    }, [expenseToEdit, isAdmin, isEditMode, isRealExpenseModalOpen, loadPaymentLoans]);
+
+    const loanOptionForExpense = useMemo(() => {
+        if (!isAdmin || isEditMode || expenseToEdit) return undefined;
+        const loans = paymentLoans
+            .filter((loan) => {
+                const status = String(loan.status || '').toUpperCase();
+                return status === 'ACTIVE' || status === 'DEFAULTED';
+            })
+            .map((loan) => ({
+                id: loan.id!,
+                lenderName: loan.lenderName || 'Sin acreedor',
+                available: liveLoanAvailable(loan),
+            }))
+            .filter((loan) => loan.available > 0);
+        return { enabled: true as const, loans };
+    }, [expenseToEdit, isAdmin, isEditMode, paymentLoans]);
 
     // Formulario interactivo derecho
     const [actualCashInput, setActualCashInput] = useState(() => {
@@ -348,9 +474,14 @@ function CashierClosureContent() {
                 } else {
                     toast({
                         title: 'NO SE PUDO CARGAR EL CIERRE',
-                        description: `El cierre #${editId} no se encontro. Verifica que el backend este actualizado.`,
+                        description: `El cierre #${editId} no se encontro. Volviendo al historial.`,
                         variant: 'destructive',
                     });
+                    // Edit mode sin datos: antes el usuario podia quedarse en
+                    // la pantalla y, al presionar GUARDAR, se enviaba un PUT
+                    // con los defaults (ceros + fechas vacias) sobre el
+                    // registro inexistente. Mejor sacarlo de aqui.
+                    setTimeout(() => router.replace('/reports'), 1500);
                 }
                 return;
             }
@@ -510,72 +641,123 @@ function CashierClosureContent() {
     });
 
     const handleCloseRegister = async () => {
-        // Si no se declaro el efectivo contado, se pregunta en vez de bloquear.
-        // Ver la nota de needsCashDeclaration: cerrar con el campo vacio
-        // registraria $0 y un faltante falso por todo lo esperado.
+        // ─────────────────────────────────────────────────────────────────
+        // GUARDAS PREVIOS: validaciones ANTES de tocar el latch.
+        //   - Si no hay declaracion de efectivo, PREGUNTAMOS (modal).
+        //   - En modo edicion y sin cierre cargado, no hacemos nada.
+        //   - Si no es admin y hay faltante sin autorizacion, abrir modal.
+        //   - Si falta token de sesion, aviso y vuelta al login.
+        // Estos chequeos no deben setear isSubmitting porque implicaria
+        // dejar el latch encendido si el usuario cancela el modal.
+        // ─────────────────────────────────────────────────────────────────
         if (needsCashDeclaration && !confirmoSinEfectivo) {
             setShowNoCashModal(true);
             return;
         }
 
-        // En modo edicion no exigimos reautorizacion (el admin ya entro a /reports y edito)
-        // Si hay faltante y NO esta autorizado Y NO es admin, abrir modal de admin
+        if (isEditMode && !currentClosure) {
+            toast({
+                title: 'NO HAY CIERRE CARGADO',
+                description: 'No se pudo cargar el cierre a editar. Vuelve a /reports.',
+                variant: 'destructive',
+            });
+            return;
+        }
+
         if (!isEditMode && status === 'SHORTAGE' && !isAuthorized && !isAdmin) {
             setShowAuthModal(true);
             return;
         }
 
-
-        // Nota: Ya no es obligatorio justificar porque el sistema requiere autorizacion administrativa directa.
-
-
-        setIsSubmitting(true);
+        // El token se verifica ANTES de encender el latch, para no bloquear
+        // la UI por una sesion expirada que el usuario tiene que arreglar
+        // antes del cierre. Si no hay token, abandonamos sin latch.
         const token = Cookies.get('org-pos-token');
-        if (!token) return;
+        if (!token) {
+            toast({
+                title: 'SESION EXPIRADA',
+                description: 'Vuelve a iniciar sesion y reintenta el cierre.',
+                variant: 'destructive',
+            });
+            return;
+        }
+
+        // Latch inmediato: dos clicks seguidos no abren dos requests.
+        if (submitLatchRef.current || isSubmitting || closureCompleted) return;
+        submitLatchRef.current = true;
+        setIsSubmitting(true);
 
         const totalSalidasEfectivo = totalEgresosEfectivo;
 
-        const totalBills = Object.entries(bills).reduce((acc, [val, qty]) => acc + (parseInt(val) * (parseInt(qty) || 0)), 0);
-        const cCombined = parseInt(coins['500/1000'] || '0');
-        const c200 = parseInt(coins['200'] || '0');
-        const c100 = parseInt(coins['100'] || '0');
+        // Sanitizamos el breakdown para que NUNCA viajen strings vacios al
+        // backend. applyCashBreakdown del backend revienta con "cantidad
+        // invalida" si recibe "". Delegamos la limpieza al helper puro.
+        const sanitizedBreakdown = serializeCashBreakdown({ bills, coins });
+        const parsedBreakdown = JSON.parse(sanitizedBreakdown) as {
+            bills: Record<string, number>;
+            coins: Record<string, number>;
+        };
+
+        const totalBills = Object.entries(parsedBreakdown.bills).reduce(
+            (acc, [val, qty]) => acc + parseInt(val, 10) * (qty || 0),
+            0,
+        );
+        const cCombined = parsedBreakdown.coins['500/1000'] || 0;
+        const c200 = parsedBreakdown.coins['200'] || 0;
+        const c100 = parsedBreakdown.coins['100'] || 0;
 
         const totalEgresosTotales = (currentClosure?.expenses || [])
             .filter((e: any) => String(e.status).toUpperCase() !== 'PENDING')
             .reduce((sum: number, e: any) => sum + Number(e.amount || 0) + Number(e.taxAmount || 0), 0);
 
-        const closureData = {
-            ...currentClosure,
+        // Idempotencia anti-doble-cierre: generamos (o reutilizamos) un UUID
+        // persistente en localStorage para este intento. El backend lo valida
+        // con UNIQUE partial contra `cashier_closures.client_tx_id` (migracion
+        // 018). Si la migracion todavia no se aplico, el backend tolerante
+        // ignora el campo y seguimos como antes. Nunca se envia en modo
+        // edicion (ahi hay un ID real).
+        const clientClosureId = !isEditMode ? getOrCreateClientClosureId() : undefined;
+
+        // Serializamos ANTES de construir el payload para no romper si el
+        // backend recalcula sobre un `cashBreakdown` sucio.
+        const baseClosureData = {
+            ...(currentClosure || {}),
             physicalCash: actualCash,
             difference: difference,
             closedByDni: user?.dni || 'S.N.',
             closedByName: user?.name || 'SOPORTE',
-            authorizedBy: isAdmin ? (user?.name || 'ADMIN') : adminAuthorizer,
-
+            // `authorizedBy` queda SIEMPRE como texto expositivo. La fuente
+            // de verdad para el backend es `authorizedByToken` cuando hay
+            // faltante. En modo edicion NO sobreescribimos salvo que el
+            // admin haya reautorizado un nuevo autorizador.
+            authorizedBy: isAdmin ? (user?.name || 'ADMIN') : (adminAuthorizer || undefined),
             totalExpenses: totalEgresosTotales,
             cashBills: totalBills,
-            cashBreakdown: JSON.stringify({ bills, coins }),
+            cashBreakdown: sanitizedBreakdown,
             coins1000: cCombined,
             coins500: 0,
             coins200: c200,
             coins100: c100,
             expenses: [
-                ...(currentClosure?.expenses || [])
-            ]
-        };
+                ...(currentClosure?.expenses || []),
+            ],
+        } as Record<string, any>;
+
+        // Modo CREATE: el `id` NUNCA debe viajar. GORM `db.Save(closure)`
+        // hace UPSERT por PK y un `id>0` sobre-escribiria un cierre
+        // historico. La migracion P0 del backend tambien lo rechaza.
+        if (!isEditMode) {
+            delete baseClosureData.id;
+            delete baseClosureData.ID;
+        }
 
         try {
-            // MODO EDICION: actualizar cierre historico con PUT
+            // ─────────────────────────────────────────────────────────────
+            // MODO EDICION: PUT /cashier-history/:id vía apiFetch (hereda
+            // recuperacion de sesion y timeouts). Antes se usaba fetch
+            // crudo que ignoraba el modal ReLogin.
+            // ─────────────────────────────────────────────────────────────
             if (isEditMode && editId) {
-                // GORM Updates con map[string]interface{} usa los keys literalmente
-                // como nombres de columna. Estos nombres deben coincidir con la BD:
-                //   - physical_cash, total_nequi_real, total_daviplata_real son
-                //     columnas explicitas declaradas con gorm:"column:..."
-                //   - total_expenses, expected_cash, cash_bills, authorized_by son
-                //     conversiones automaticas snake_case de TotalExpenses, etc.
-                //   - coins100/200/1000 NO llevan underscore (GORM no separa entre
-                //     letra y numero consecutivos)
-                // Solo enviar fechas si fueron modificadas
                 let originalStart = '';
                 let originalEnd = '';
                 if (currentClosure?.startDate) {
@@ -589,21 +771,39 @@ function CashierClosureContent() {
                     originalEnd = ed.toISOString().slice(0, 16);
                 }
 
+                // IMPORTANTE: el backend endurecido aplica una allowlist
+                // estricta (updateClosureAllowedKeys en dashboard_handler.go).
+                // Enviar un campo fuera de la allowlist devuelve 400 "Campo
+                // no editable" y el PUT entero falla.
+                //
+                // El servicio ya recalcula dentro de la transaccion
+                // (fechas efectivas + fuentes trusted de la BD):
+                //   - expected_cash
+                //   - difference
+                //   - total_sales
+                // Enviarlos desde aqui es ruido y rompe el PUT. Dejamos
+                // solo los campos que el admin realmente edita a mano:
+                // efectivo contado, monedas, nota de bills, desglose,
+                // total_expenses (que el servicio reescribe) y
+                // start/end/date opcionales mas abajo.
                 const updatePayload: any = {
                     physical_cash: actualCash,
-                    expected_cash: expectedCash,
                     total_expenses: totalSalidasEfectivo,
-                    total_nequi_real: currentClosure?.totalNequi || 0,
-                    total_daviplata_real: currentClosure?.totalDaviplata || 0,
-                    difference: difference,
                     coins100: c100,
                     coins200: c200,
                     coins1000: cCombined,
                     cash_bills: totalBills,
-                    cash_breakdown: JSON.stringify({ bills, coins }),
-                    authorized_by: closureData.authorizedBy,
+                    cash_breakdown: sanitizedBreakdown,
                 };
-                
+
+                // NUNCA sobreescribir `authorized_by` por defecto. Solo si
+                // el admin pasó por el modal de autorizacion durante esta
+                // edicion (adminAuthorizer != ''). Si no, el backend
+                // conserva el autorizador original.
+                if (isAuthorized && adminAuthorizer) {
+                    updatePayload.authorized_by = adminAuthorizer;
+                }
+
                 if (customStartDate && customStartDate !== originalStart) {
                     updatePayload.start_date = customStartDate;
                 }
@@ -612,22 +812,11 @@ function CashierClosureContent() {
                     updatePayload.date = customEndDate;
                 }
 
-                const res = await fetch(
-                    `${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/dashboard/cashier-history/${editId}`,
-                    {
-                        method: 'PUT',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify(updatePayload),
-                    }
-                );
-
-                if (!res.ok) {
-                    const errData = await res.json().catch(() => ({}));
-                    throw new Error(errData.userMessage || 'Error al actualizar el cierre');
-                }
+                await apiFetch(`/dashboard/cashier-history/${editId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(updatePayload),
+                    fallbackError: 'Error al actualizar el cierre',
+                }, token);
 
                 toast({
                     title: `CIERRE #${editId} ACTUALIZADO`,
@@ -636,34 +825,79 @@ function CashierClosureContent() {
                 });
 
                 broadcastRevalidate('CLOSURE_MADE');
+                try {
+                    localStorage.setItem('closure_edited', '1');
+                } catch { /* ignore */ }
 
-                // Marcar que hubo una edicion para que /reports refresque la lista
-                localStorage.setItem('closure_edited', '1');
-                // Volver al historial de cierres en /reports
+                setClosureCompleted(true);
                 setTimeout(() => router.push('/reports'), 1500);
                 return;
             }
 
-            // MODO NORMAL: cerrar caja (crear cierre nuevo)
+            // ─────────────────────────────────────────────────────────────
+            // MODO NORMAL: POST /cashier-closure/close
+            // ─────────────────────────────────────────────────────────────
+            const createPayload: any = { ...baseClosureData };
+            if (clientClosureId) {
+                createPayload.clientTxId = clientClosureId;
+                // Alias snake_case por si el backend lee desde el map crudo.
+                createPayload.client_tx_id = clientClosureId;
+            }
+            if (adminAuthToken) {
+                // Evidencia verificable: el backend endurecido lee este
+                // token con json tag `authorizationToken`, verifica el
+                // claim action="closure_authorization" y usa el nombre
+                // descifrado como `authorizedBy` real sin confiar en el
+                // string libre del body.
+                //
+                // IMPORTANTE: el nombre del campo DEBE ser
+                // `authorizationToken`. El backend lo decodifica con esa
+                // key exacta (dashboard_handler.go SaveClosure). Enviamos
+                // `authorizedByToken` como alias deprecado para releases
+                // intermedios donde conviva un frontend nuevo con un
+                // backend aun sin este fix.
+                createPayload.authorizationToken = adminAuthToken;
+                createPayload.authorizedByToken = adminAuthToken;
+            }
+
             await apiFetch('/dashboard/cashier-closure/close', {
                 method: 'POST',
-                body: JSON.stringify(closureData),
-                fallbackError: 'Error al procesar el cierre'
+                body: JSON.stringify(createPayload),
+                fallbackError: 'Error al procesar el cierre',
             }, token);
 
             toast({ title: "Caja Cerrada", description: "El cierre de caja ha sido exitoso. Sesion finalizada para cambio de turno.", variant: "default" });
-            
-            // LIMPIEZA AUTOMATICA TRAS EXITO
-            confirmReset(); 
 
-            // MEGA-SPRINT: Expulsion forzosa tras cierre de caja
+            // LIMPIEZA AUTOMATICA TRAS EXITO
+            confirmReset();
+            // El clientTxId SOLO se limpia tras exito confirmado del backend.
+            // Si limpiaramos antes y el POST fallaba, un reintento generaria
+            // un ID nuevo y la idempotencia dejaria de servir.
+            clearClientClosureId();
+            // Mantener el boton bloqueado hasta la expulsion para que no se
+            // reactive si el router demora.
+            setClosureCompleted(true);
+
             setTimeout(() => {
                 logout();
-            }, 2000); // Dar 2 segundos para leer el mensaje de exito
+            }, 2000);
         } catch (error: any) {
+            const status = (error as any)?.status;
+            // Si fue 400 (payload corrupto) borramos el conteo local porque
+            // los datos vigentes no sirven. Para 401/5xx conservamos todo
+            // para que el reintento no pierda el conteo.
+            if (status === 400 && !isEditMode) {
+                clearClosureStorage();
+            }
             toast({ title: "FALLO DE CIERRE", description: error.message, variant: "destructive" });
         } finally {
-            setIsSubmitting(false);
+            // El latch SIEMPRE se libera salvo que ya pasamos a modo
+            // "completado" (expulsion inminente). Antes faltaba este reset
+            // en varios paths y el boton quedaba bloqueado para siempre.
+            submitLatchRef.current = false;
+            if (!closureCompleted) {
+                setIsSubmitting(false);
+            }
         }
     };
 
@@ -672,10 +906,19 @@ function CashierClosureContent() {
         if (!token) return;
 
         setIsSendingPartial(true);
-        const totalBills = Object.entries(bills).reduce((acc, [val, qty]) => acc + (parseInt(val) * (parseInt(qty) || 0)), 0);
-        const cCombined = parseInt(coins['500/1000'] || '0');
-        const c200 = parseInt(coins['200'] || '0');
-        const c100 = parseInt(coins['100'] || '0');
+        // Mismo saneo que el cierre final: strings vacios -> 0.
+        const sanitizedBreakdown = serializeCashBreakdown({ bills, coins });
+        const parsedBreakdown = JSON.parse(sanitizedBreakdown) as {
+            bills: Record<string, number>;
+            coins: Record<string, number>;
+        };
+        const totalBills = Object.entries(parsedBreakdown.bills).reduce(
+            (acc, [val, qty]) => acc + parseInt(val, 10) * (qty || 0),
+            0,
+        );
+        const cCombined = parsedBreakdown.coins['500/1000'] || 0;
+        const c200 = parsedBreakdown.coins['200'] || 0;
+        const c100 = parsedBreakdown.coins['100'] || 0;
 
         const totalEgresosTotales = (currentClosure?.expenses || [])
             .filter((e: any) => String(e.status).toUpperCase() !== 'PENDING')
@@ -688,17 +931,24 @@ function CashierClosureContent() {
             closedByDni: user?.dni || 'S.N.',
             closedByName: user?.name || 'SOPORTE',
             totalExpenses: totalEgresosTotales,
+            // Nota del cajero: el backend endurecido lee `note` (singular,
+            // ver SendPartialReport). `notes` queda como alias legacy por
+            // si convive una version antigua del binario.
+            note: closingNote,
             notes: closingNote,
             cashBills: totalBills,
-            cashBreakdown: JSON.stringify({ bills, coins }),
+            cashBreakdown: sanitizedBreakdown,
             coins1000: cCombined,
             coins500: 0,
             coins200: c200,
             coins100: c100,
             expenses: [
-                ...(currentClosure?.expenses || [])
-            ]
-        };
+                ...(currentClosure?.expenses || []),
+            ],
+        } as Record<string, any>;
+        // El reporte parcial NO debe mover un cierre existente; limpiamos id.
+        delete closureData.id;
+        delete closureData.ID;
 
         try {
             await apiFetch('/dashboard/telegram-report-partial', {
@@ -738,12 +988,12 @@ function CashierClosureContent() {
         setBills({ '100000': '', '50000': '', '20000': '', '10000': '', '5000': '', '2000': '' });
         setCoins({ '500/1000': '', '200': '', '100': '' });
         setActualCashInput('');
-        localStorage.removeItem('pos_closure_bills');
-        localStorage.removeItem('pos_closure_coins');
-        localStorage.removeItem('pos_closure_actual');
-        localStorage.removeItem('pos_closure_salary');
-        localStorage.removeItem('pos_closure_operational');
-        localStorage.removeItem('pos_closure_note');
+        // Fuente unica: closures-helpers.listClosureStorageKeys(). Antes
+        // habia una lista hardcodeada aqui y otra en clearClosureStorage y
+        // se desincronizaban cuando alguien agregaba una clave nueva. El
+        // nombre `pos_closure_tx_id` (idempotencia) tambien se limpia aqui
+        // porque el cierre completo es un cierre nuevo.
+        clearClosureStorage();
     };
 
     const handleSaveRealExpense = async (data: any) => {
@@ -751,6 +1001,45 @@ function CashierClosureContent() {
         if (!token) return;
 
         try {
+            // Pagar con préstamo es exclusivo para un egreso NUEVO del turno.
+            // El backend crea Expense(PAID, PRESTAMO, canales=0) y
+            // loan_expenses en una sola transacción; aquí no fabricamos el
+            // paymentSource ni tocamos el arqueo.
+            if (!expenseToEdit && !isEditMode && data.loanId != null && data.loanId !== '') {
+                const amount = Math.abs(parseFloat(String(data.amount)) || 0);
+                const body: Record<string, unknown> = {
+                    amount,
+                    description: String(data.description || '').toUpperCase(),
+                    category: data.category || 'Otros Gastos',
+                    purpose: String(data.description || '').toUpperCase(),
+                };
+                if (data.category === 'Proveedores' && data.supplierId) {
+                    body.supplierId = Number(data.supplierId);
+                }
+                const raw = await apiFetch<unknown>(
+                    `/loans/${encodeURIComponent(String(data.loanId))}/pay-expense`,
+                    {
+                        method: 'POST',
+                        body: JSON.stringify(body),
+                        fallbackError: 'FALLO AL PAGAR CON EL PRÉSTAMO',
+                    },
+                    token,
+                );
+                normalizeLoanPayExpenseResponse(raw);
+                const chosen = paymentLoans.find((loan) => String(loan.id) === String(data.loanId));
+                toast({
+                    variant: 'success',
+                    title: 'PAGADO CON PRÉSTAMO',
+                    description: `Pagado con el préstamo de ${chosen?.lenderName || 'préstamo'}; no afecta la caja.`,
+                });
+                broadcastRevalidate('EXPENSE_UPDATE');
+                setIsRealExpenseModalOpen(false);
+                setExpenseToEdit(null);
+                void loadPaymentLoans();
+                fetchCurrent();
+                return;
+            }
+
             const payload = {
                 description: data.description.toUpperCase(),
                 amount: Math.abs(parseFloat(String(data.amount)) || 0),
@@ -782,13 +1071,25 @@ function CashierClosureContent() {
                 toast({ variant: "success", title: "ÉXITO", description: "EGRESO REGISTRADO EN LA BASE DE DATOS" });
             }
 
-            const { broadcastRevalidate } = await import('@/lib/revalidate');
             broadcastRevalidate('EXPENSE_UPDATE');
             setIsRealExpenseModalOpen(false);
             setExpenseToEdit(null);
             fetchCurrent(); // Refrescar auditoria para ver el nuevo gasto
         } catch (err: any) {
-            toast({ variant: "destructive", title: "ERROR", description: err.message });
+            if (err instanceof ApiError) {
+                const code = err.data?.error?.code || err.data?.code;
+                if (code === 'LOAN_NOT_ACTIVE') {
+                    toast({ variant: 'destructive', title: 'PRÉSTAMO INACTIVO', description: 'Sólo se pueden usar préstamos activos o en mora.' });
+                } else if (code === 'LOAN_PRINCIPAL_EXCEEDED') {
+                    toast({ variant: 'destructive', title: 'SALDO INSUFICIENTE', description: 'El monto supera el disponible del préstamo.' });
+                } else {
+                    toast({ variant: 'destructive', title: 'ERROR', description: err.message });
+                }
+            } else {
+                toast({ variant: "destructive", title: "ERROR", description: err?.message || 'No se pudo registrar el egreso.' });
+            }
+            // ExpensePaymentModal sólo muestra éxito si onSave resuelve.
+            throw err;
         }
     };
 
@@ -1253,13 +1554,14 @@ function CashierClosureContent() {
                             </Button>
                             <Button
                                 onPress={handleCloseRegister}
-                                isDisabled={isSubmitting}
+                                isDisabled={isSubmitting || closureCompleted || (isEditMode && !currentClosure)}
                                 className={`flex-1 h-16 rounded-2xl font-medium text-xl uppercase tracking-widest tracking-tight shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all ${
                                     isEditMode ? 'bg-blue-600 hover:bg-blue-500 shadow-blue-500/30' :
                                     (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'bg-rose-600 hover:bg-rose-500' : 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5'
                                 } text-white`}
                             >
                                 {isSubmitting ? 'PROCESANDO...' :
+                                 closureCompleted ? 'LISTO' :
                                  isEditMode ? `GUARDAR CAMBIOS #${editId}` :
                                  (status === 'SHORTAGE' && !isAuthorized && !isAdmin) ? 'AUTORIZAR' : 'CERRAR CAJA'}
                             </Button>
@@ -1466,6 +1768,8 @@ function CashierClosureContent() {
                 isEdit={!!expenseToEdit}
                 initialExpense={expenseToEdit}
                 suppliers={suppliers || []}
+                isAdmin={isAdmin}
+                loanOption={!expenseToEdit && !isEditMode ? loanOptionForExpense : undefined}
                 onSave={handleSaveRealExpense}
             />
 

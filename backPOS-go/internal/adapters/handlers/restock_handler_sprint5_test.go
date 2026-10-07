@@ -27,6 +27,54 @@ func TestNeedsInTransitConfirmationAllowsExplicitOverride(t *testing.T) {
 }
 
 // ============================================================================
+// INTRANSITPRODUCT TRANSPORTA CONTEXTO SUFICIENTE PARA MENSAJE CROSS-PROVEEDOR
+// ============================================================================
+//
+// Para que el frontend pueda mostrar "6 en camino de HERMARLY · ya pedido" sin
+// un query adicional, la estructura debe cargar supplierId, supplierName y
+// opcionalmente orderId / expectedDate. Los campos nuevos son retrocompatibles
+// (omitempty + zero-value) para no romper clientes legados.
+func TestInTransitProductCargaMetadatosCrossProveedor(t *testing.T) {
+	t.Parallel()
+
+	p := models.InTransitProduct{
+		ProductID:    "770123",
+		ProductName:  "Producto X",
+		Quantity:     6,
+		SupplierID:   42,
+		SupplierName: "HERMARLY",
+		OrderID:      "co-1234",
+		ExpectedDate: "2026-10-04",
+	}
+	if p.SupplierID == 0 || p.SupplierName == "" {
+		t.Fatal("la estructura debe permitir cargar proveedor origen del tránsito")
+	}
+	if p.OrderID == "" || p.ExpectedDate == "" {
+		t.Fatal("la estructura debe permitir OrderID y ExpectedDate opcionales")
+	}
+}
+
+// Un pedido con TODOS los conflictos del mismo proveedor sigue requiriendo
+// confirmación: incluso si el dueño vuelve a pedirle a HERMARLY, el aviso le
+// recuerda que ya hay mercancía en camino de ese mismo proveedor y que puede
+// estar duplicando. Es la misma regla que antes; el flag crossSupplier lo que
+// permite al frontend es destacar los casos de distinto proveedor.
+func TestNeedsInTransitConfirmationNoDependeDelProveedor(t *testing.T) {
+	t.Parallel()
+
+	mismoProveedor := []models.InTransitProduct{{
+		ProductID:    "770123",
+		ProductName:  "Producto",
+		Quantity:     3,
+		SupplierID:   7,
+		SupplierName: "HERMARLY",
+	}}
+	if !needsInTransitConfirmation(mismoProveedor, false) {
+		t.Fatal("mismo proveedor tambien debe advertir hasta recibir allow_in_transit")
+	}
+}
+
+// ============================================================================
 // PEDIDO SIN PRODUCTOS DESGLOSADOS PERO CON VALOR
 // ============================================================================
 //

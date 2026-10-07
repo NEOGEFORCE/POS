@@ -3,7 +3,7 @@
 import React, { memo } from 'react';
 import {
     Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-    Button, Input, Switch, Tabs, Tab, Spinner
+    Button, Input, Tabs, Tab, Spinner
 } from "@heroui/react";
 import { ShieldCheck, ShieldAlert, UserCircle, Mail, KeyRound, Sparkles, AlertTriangle, Zap, ToggleLeft, Info, UserCheck, UserX } from 'lucide-react';
 import { useAuth } from '@/lib/auth';

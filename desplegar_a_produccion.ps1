@@ -83,8 +83,13 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "go test fallo" }
         & go vet ./internal/... ./cmd/api ./migrations
         if ($LASTEXITCODE -ne 0) { throw "go vet fallo" }
-        & go run ./cmd/migrate status
-        if ($LASTEXITCODE -ne 0) { throw "migrate status fallo; no se aplico ninguna migracion" }
+        $migrationStatus = @(& go run ./cmd/migrate status 2>&1)
+        $migrationExitCode = $LASTEXITCODE
+        $migrationStatus | ForEach-Object { Write-Host $_ }
+        if ($migrationExitCode -ne 0) { throw "migrate status fallo; no se aplico ninguna migracion" }
+        if ($migrationStatus -match '^\s*PENDIENTE\b') {
+            throw "Esquema de produccion desactualizado: migrate status reporta migraciones PENDIENTES. No se detuvo el servicio ni se aplicaron migraciones."
+        }
     } finally { Pop-Location }
 
     Push-Location $frontend

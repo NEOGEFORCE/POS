@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"backPOS-go/internal/infrastructure/sse"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type ExpenseHandler struct {
@@ -171,12 +173,29 @@ func (h *ExpenseHandler) GetPaginated(c *gin.Context) {
 
 func (h *ExpenseHandler) Delete(c *gin.Context) {
 	idStr := c.Param("id")
-	id, _ := strconv.ParseUint(idStr, 10, 32)
-	if err := h.service.DeleteExpense(uint(id)); err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al eliminar gasto", err)
+	id, err := strconv.ParseUint(idStr, 10, 32)
+	if err != nil || id == 0 {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de egreso inválido", err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Gasto eliminado correctamente"})
+	actor := c.GetString("dni")
+	if actor == "" {
+		actor = c.GetString("userDni")
+	}
+	result, err := h.service.DeleteExpense(uint(id), actor)
+	if err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			status = http.StatusNotFound
+		}
+		SendError(c, status, ErrInternalServer, "Fallo al eliminar gasto", err)
+		return
+	}
+	message := "Gasto eliminado correctamente"
+	if result != nil && result.LoanReversed {
+		message = "Pago con préstamo reversado: deuda restaurada y principal liberado"
+	}
+	c.JSON(http.StatusOK, gin.H{"message": message, "result": result})
 
 	// AVISO GLOBAL: Gasto eliminado (Actualiza Dashboard)
 	go sse.GetSSEService().BroadcastDashboardUpdate()

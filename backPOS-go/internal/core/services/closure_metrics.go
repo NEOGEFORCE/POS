@@ -252,6 +252,14 @@ func ComputeClosureMetrics(c *models.CashierClosure) ClosureMetrics {
 		if l.IsReturn {
 			continue
 		}
+		// Egresos pagados con PRÉSTAMO: por regla del dueño NO afectan ningún
+		// canal (la plata no sale de la tienda). parseExpenseChannels ya
+		// devuelve 0,0,0,0,0 para estos; este skip explícito es defensa en
+		// profundidad por si una fila heredada trae CashAmount>0 con
+		// paymentSource='PRESTAMO'. Ver models.IsLoanFundedExpense.
+		if models.IsLoanFundedPaymentSource(l.PaymentSource) {
+			continue
+		}
 		m.EgresosCaja += l.Cash
 		m.EgresosDigital += l.Nequi + l.Davi
 		m.EgresosFondo += l.Fondo

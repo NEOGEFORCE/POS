@@ -463,6 +463,11 @@ func (s *ExportService) sumMerchandisePaid(from, to time.Time) float64 {
 	s.db.Preload("Supplier").
 		Where(`date BETWEEN ? AND ?`, from, to).
 		Where(`(status IS NULL OR UPPER(status) IN ('PAID', 'COMPLETED', 'SETTLED', ''))`).
+		// Excluir pagos con PRÉSTAMO: aparecen como PAID + PRESTAMO pero la
+		// plata real contra caja saldrá cuando se pague la cuota. Si no se
+		// filtran, un pago con préstamo con descripción "proveedor X" infla
+		// la cifra de mercancía pagada del mes.
+		Where(`NOT (` + models.LoanFundedExpenseSQLPredicate + `)`).
 		Find(&expenses)
 
 	var total float64

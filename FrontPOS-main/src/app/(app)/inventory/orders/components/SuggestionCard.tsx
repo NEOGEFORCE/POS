@@ -84,6 +84,13 @@ export interface SuggestionCardProps {
   onLinkSupplier: (item: RestockSuggestion) => void;
   /** Sólo se muestra para productos sin proveedor. */
   canLink: boolean;
+  /**
+   * Si el producto está en el BORRADOR de otro proveedor (localStorage),
+   * se recibe la foto correspondiente para pintar un aviso. Es sólo
+   * informativo: el backend es la autoridad al confirmar y bloqueará si
+   * hay cross-proveedor en tránsito real.
+   */
+  foreignDraft?: { supplierKey: string; supplierName: string; quantity: number };
 }
 
 export function SuggestionCard({
@@ -95,6 +102,7 @@ export function SuggestionCard({
   canUnlink,
   onLinkSupplier,
   canLink,
+  foreignDraft,
 }: SuggestionCardProps) {
   // El stock vivo es el del producto en este momento; el de las métricas es del
   // último recálculo. Para el semáforo manda el vivo.
@@ -228,9 +236,9 @@ export function SuggestionCard({
     ? item.coverageDays
     : item.supplierLeadDays;
   const idealHint = item.leadTimeSource === LEAD_TIME_SOURCE.CONFIGURED_DAYS
-    ? "segun dias configurados"
+    ? `cubre ${diasIdeal} días hasta la próxima`
     : item.leadTimeSource === LEAD_TIME_SOURCE.LEARNED_DAYS
-      ? "segun agenda aprendida"
+      ? `cubre ${diasIdeal} días (agenda aprendida)`
       : item.abcCategory === "C"
         ? `hasta la visita (${leadSource.label})`
         : `visita + margen (${leadSource.label})`;
@@ -266,10 +274,40 @@ export function SuggestionCard({
           <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold uppercase ${categoryStyles[item.abcCategory]}`}>
             {item.abcCategory} · {categoryLabels[item.abcCategory]}
           </span>
-          {item.inTransit && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
-              <Truck size={11} /> {item.inTransitQty} en camino · ya pedido
+          {foreignDraft && foreignDraft.quantity > 0 && (
+            // El producto YA está en el borrador de otro proveedor. El dueño
+            // puede terminar pidiendo lo mismo dos veces si no se da cuenta.
+            // El backend sigue siendo la autoridad al confirmar.
+            <span
+              role="note"
+              aria-label={`${item.productName} ya está en el borrador de ${foreignDraft.supplierName}`}
+              className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[10px] font-bold text-amber-700 dark:text-amber-300"
+              title={`Si confirmas aquí lo vas a pedir también a ${foreignDraft.supplierName}`}
+            >
+              <Truck size={11} /> {foreignDraft.quantity} en borrador de {foreignDraft.supplierName}
             </span>
+          )}
+          {item.inTransit && (
+            <>
+              {Array.isArray(item.inTransitSuppliers) && item.inTransitSuppliers.length > 0 ? (
+                // Desglose por proveedor: el dueño ve exactamente de dónde
+                // viene cada parte. Formato pedido textualmente: "6 en
+                // camino de HERMARLY · ya pedido".
+                item.inTransitSuppliers.map((entry) => (
+                  <span
+                    key={`${entry.supplierId}-${entry.orderId ?? "order"}`}
+                    className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300"
+                    title={entry.expectedDate ? `Llega ${entry.expectedDate}` : undefined}
+                  >
+                    <Truck size={11} /> {entry.quantity} en camino de {entry.supplierName} · ya pedido
+                  </span>
+                ))
+              ) : (
+                <span className="inline-flex items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[10px] font-bold text-sky-700 dark:text-sky-300">
+                  <Truck size={11} /> {item.inTransitQty} en camino · ya pedido
+                </span>
+              )}
+            </>
           )}
         </div>
 
@@ -358,10 +396,25 @@ export function SuggestionCard({
                 ? item.totalSold14d
                 : item.totalSold30d
             )}
+            // POR QUE 14 DIAS SI EL PROVEEDOR VIENE CADA 8.
+            //
+            // Pregunta del dueno (2026-09-11): "porque me sale venta de 14 dias,
+            // si ese provedor que es de la nieve cigarrilos viene cada 8 dias".
+            //
+            // Son dos cosas distintas y el rotulo no lo decia:
+            //   - 14 dias es la VENTANA DE MEDICION del ritmo de venta. Se mide
+            //     sobre mas tiempo que el ciclo a proposito: medir sobre una sola
+            //     semana hace que un festivo o un dia agotado desvie la tasa.
+            //   - 8 dias es lo que el pedido tiene que CUBRIR (ciclo del
+            //     proveedor + entrega). Eso es el "Ideal 8 d" de al lado.
+            //
+            // La tasa se divide por los dias CON STOCK, no por los 14
+            // calendario, para que un agotado no finja poca venta. Por eso 36
+            // unidades en 14 dias pueden dar 2,77/dia y no 2,57.
             hint={
               typeof item.avgDailySales14d === "number" && Number.isFinite(item.avgDailySales14d)
-                ? `${item.avgDailySales14d.toFixed(2)}/día · señal principal`
-                : `${item.avgDailySales.toFixed(2)}/día`
+                ? `${item.avgDailySales14d.toFixed(2)}/día · ritmo medido`
+                : `${item.avgDailySales.toFixed(2)}/día · ritmo medido`
             }
           />
           <Metric

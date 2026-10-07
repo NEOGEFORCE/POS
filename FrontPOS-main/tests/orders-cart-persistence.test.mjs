@@ -9,6 +9,7 @@ const ordersRoot = join(here, "..", "src", "app", "(app)", "inventory", "orders"
 const hookPath = join(ordersRoot, "hooks", "useSmartRestock.ts");
 const pagePath = join(ordersRoot, "page.tsx");
 const cartPath = join(ordersRoot, "components", "OrderCartModal.tsx");
+const suggestionCardPath = join(ordersRoot, "components", "SuggestionCard.tsx");
 
 // ============================================================================
 // EL PEDIDO A MEDIO ARMAR NO SE PIERDE
@@ -68,7 +69,7 @@ test("el total y el contador se calculan sobre lo elegido, no sobre lo visible",
 test("el pedido se guarda y se restaura al salir y volver a entrar", async () => {
   const source = await readFile(hookPath, "utf8");
 
-  assert.match(source, /CART_STORAGE_KEY/, "debe existir una clave de almacenamiento para el borrador");
+  assert.match(source, /CARTS_STORAGE_KEY/, "debe existir una clave de almacenamiento para el borrador");
   assert.match(
     source,
     /loadPersistedCart/,
@@ -81,7 +82,7 @@ test("el pedido se guarda y se restaura al salir y volver a entrar", async () =>
     /useState<Record<string, number>>\(\(\) => \{[\s\S]*?loadPersistedCart/,
     "la restauracion debe ir en el inicializador perezoso de useState"
   );
-  assert.match(source, /localStorage\.setItem\(CART_STORAGE_KEY/, "debe guardarse el borrador al cambiar");
+  assert.match(source, /localStorage\.setItem\(CARTS_STORAGE_KEY/, "debe guardarse el borrador al cambiar");
 });
 
 test("lo restaurado se marca como editado para que el efecto no lo ponga en cero", async () => {
@@ -95,21 +96,36 @@ test("lo restaurado se marca como editado para que el efecto no lo ponga en cero
   );
 });
 
-test("el borrador es por proveedor y no revive pedidos viejos", async () => {
+test("el borrador es POR PROVEEDOR y persiste al cambiar de supplier", async () => {
   const source = await readFile(hookPath, "utf8");
-  assert.match(source, /parsed\.supplierKey !== supplierKey/, "el borrador solo aplica al mismo proveedor");
-  assert.match(source, /CART_MAX_AGE_MS/, "el borrador debe vencer con el tiempo");
+  // El storage ahora es un mapa { [supplierKey]: PersistedCart } bajo
+  // CARTS_STORAGE_KEY. Al cambiar de proveedor NO se descartan los otros
+  // borradores: se cargan los del proveedor nuevo y se dejan intactos los
+  // demás para no perder lo armado.
+  assert.match(source, /CARTS_STORAGE_KEY = "pos_restock_carts_by_supplier_v1"/,
+    "la clave canónica es la del mapa por proveedor");
+  assert.match(source, /PersistedCartsMap/, "la estructura es un mapa por proveedor");
+  // Y al cambiar de proveedor no se tira el storage completo: solo se
+  // cargan los datos del proveedor nuevo.
+  assert.ok(
+    !/removeItem\(CARTS_STORAGE_KEY\)/.test(source),
+    "no se puede borrar todos los borradores al cambiar de proveedor"
+  );
   assert.match(
     source,
-    /removeItem\(CART_STORAGE_KEY\)/,
-    "al cambiar de proveedor o quedar vacio, el borrador se descarta"
+    /CART_MAX_AGE_MS/,
+    "el borrador debe vencer con el tiempo"
   );
 });
 
-test("un borrador corrupto no puede tumbar la pantalla", async () => {
+test("se migra el borrador legacy sin perder lo que había guardado", async () => {
   const source = await readFile(hookPath, "utf8");
-  const bloque = source.slice(source.indexOf("function loadPersistedCart"));
-  assert.match(bloque.slice(0, 700), /catch/, "la lectura del borrador debe estar protegida");
+  assert.match(source, /CART_STORAGE_KEY_LEGACY = "pos_restock_cart_v1"/,
+    "debe reconocerse la clave anterior para migrarla");
+  assert.match(source, /function migrateLegacyCart/,
+    "la migración debe ser explícita y limpiar la clave vieja");
+  assert.match(source, /removeItem\(CART_STORAGE_KEY_LEGACY\)/,
+    "la clave legacy se purga tras migrar");
 });
 
 // ============================================================================
@@ -150,4 +166,28 @@ test("confirmar desde el carrito lleva al formulario en vez de enviar sin fecha"
     /querySelector\("\[data-order-confirm-form\]"\)/,
     "confirmar desde el carrito debe llevar al formulario"
   );
+});
+
+
+
+// ============================================================================
+// CROSS-PROVEEDOR: aviso de borrador duplicado
+// ============================================================================
+
+test("avisa cuando un producto ya está en el borrador de otro proveedor", async () => {
+  const hook = await readFile(hookPath, "utf8");
+  // El hook debe exportar un índice de productos en borradores foráneos para
+  // que la UI pueda pintar el aviso sin tener que leer localStorage por su
+  // cuenta en cada tarjeta.
+  assert.match(hook, /export function readForeignCartIndex/,
+    "existe el helper que recorre todos los borradores y descarta el del proveedor activo");
+  assert.match(hook, /foreignCartIndex/,
+    "el hook expone el índice como estado derivado");
+
+  const card = await readFile(suggestionCardPath, "utf8");
+  // La tarjeta debe pintar un aviso visible cuando el producto esté en otro
+  // borrador. El backend sigue siendo la autoridad al confirmar.
+  assert.match(card, /foreignDraft/,
+    "la tarjeta recibe la info del borrador foráneo");
+  assert.match(card, /borrador de/, "el texto del aviso debe mencionar 'borrador de'");
 });

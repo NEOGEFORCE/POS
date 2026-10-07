@@ -559,6 +559,18 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 				product.Icui = entry.IcuiPct
 				product.Ibua = entry.IbuaPct
 
+				// Persistencia del DTO% de la lÃ­nea en products.discount.
+				//
+				// REGLA FISCAL (no se toca aquÃ­): el descuento NO baja el costo
+				// contable. GrossFromNet, el WAC y el egreso siguen calculados
+				// con la base + impuestos aditivos, sin restar entry.DiscountPct.
+				// Esta columna es Ãºnicamente la foto del Ãºltimo DTO% aprobado
+				// con el proveedor y se usa en la UI/auditorÃ­a; el histÃ³rico por
+				// recepciÃ³n vive en stock_movements.discount_pct (migraciÃ³n 015).
+				// La sanitizaciÃ³n evita NaN/Inf/negativos y respeta la precisiÃ³n
+				// decimal(10,2) de la columna del producto.
+				product.Discount = sanitizeDiscountPct(entry.DiscountPct)
+
 				if entry.SupplierID != nil {
 					ps := models.ProductSupplier{
 						ProductID:     entry.Barcode,
@@ -643,6 +655,14 @@ func (r *PostgresProductRepository) BulkReceive(entries []ports.ReceiveEntry, or
 			// porcentajes de SU línea sin depender de la semántica de captura
 			// del `range`.
 			lineDiscountPct := entry.DiscountPct
+			// Saneamiento BONUS: un regalo del proveedor no tiene descuento
+			// comercial. Si por una regresión de UI una línea BONUS llega con
+			// DTO > 0, lo forzamos a 0 antes de persistir la foto histórica
+			// del kárdex. products.Discount ya está blindado por el `if
+			// entry.NewPurchasePrice > 0` de arriba.
+			if strings.EqualFold(entry.LineType, "BONUS") {
+				lineDiscountPct = 0
+			}
 			lineIvaPct := entry.IvaPct
 			lineIcuiPct := entry.IcuiPct
 			lineIbuaPct := entry.IbuaPct
@@ -1034,6 +1054,30 @@ func (r *PostgresProductRepository) DeleteReception(receptionID string) error {
 
 func formatMoney(amount float64) string {
 	return fmt.Sprintf("%.0f", amount)
+}
+
+// sanitizeDiscountPct normaliza el DTO% recibido en una lÃ­nea de recepciÃ³n
+// antes de persistirlo en products.discount (decimal(10,2)).
+//
+// Reglas:
+//   - NaN / Â±Inf -> 0. Un flotante no finito dispararÃ­a un error de
+//     PostgreSQL dentro de la transacciÃ³n de BulkReceive; preferimos
+//     ignorar el dato corrupto antes de romper la recepciÃ³n completa.
+//   - Negativos -> 0. Un DTO negativo serÃ­a un recargo encubierto; la
+//     columna arranca en 0 por defecto y esa es la semÃ¡ntica de "sin
+//     descuento".
+//   - El valor se redondea a dos decimales para coincidir con la
+//     precisiÃ³n de la columna y evitar truncaciones silenciosas del
+//     driver.
+//
+// IMPORTANTE: esta funciÃ³n NO toca el costo. El DTO sigue sin reducir
+// GrossFromNet, el WAC ni el egreso del proveedor; sÃ³lo se guarda para
+// auditorÃ­a y para que la UI pueda recuperar el Ãºltimo descuento pactado.
+func sanitizeDiscountPct(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return 0
+	}
+	return math.Round(v*100) / 100
 }
 
 // SanitizeAllNames recorre todos los productos y elimina tildes/normaliza nombres

@@ -249,3 +249,162 @@ func (s *AuthService) VerifyAdminPIN(pin string) error {
 	}
 	return errors.New("PIN de administrador incorrecto")
 }
+
+// ============================================================================
+// Autorización server-side de FALTANTES en cierre de caja (fix P0 — 2026-10-04)
+// ============================================================================
+//
+// Antes el frontend validaba las credenciales del admin con un `/auth/login`
+// local y luego mandaba el nombre del autorizador como string libre en el
+// payload del cierre. El backend lo copiaba a `AuthorizedBy` sin verificar
+// nada, así que un empleado podía:
+//
+//     POST /dashboard/cashier-closure/close
+//     {"authorizedBy": "ADMIN", ...difference: -500000...}
+//
+// y cerrar un faltante grande sin que ningún admin firmara nunca. La
+// autenticación del modal era puramente estética.
+//
+// Nueva arquitectura:
+//
+//  1. El frontend llama `POST /api/auth/verify-admin` con usuario y contraseña
+//     del admin que autoriza. El endpoint valida credenciales, exige rol
+//     admin/superadmin y devuelve un JWT corto (5 min) con
+//     `action="closure_authorization"`, `admin_dni` y `admin_name`.
+//
+//  2. El payload del cierre incluye `authorizationToken: "<jwt>"`.
+//
+//  3. `SaveClosure`, tras recalcular `metrics.Difference`, exige el token si
+//     hay faltante y el actor NO es admin. El autorizador queda derivado del
+//     claim descifrado — jamás del string libre del body.
+//
+// Mismo contrato de firma que el resto del sistema: HS256 con SECRET_KEY, para
+// que un token forjado sin la clave real sea invalidable por el validador JWT
+// del middleware. El claim NO sustituye la sesión del actor: el middleware
+// `AuthMiddleware` sigue aplicando antes de que `SaveClosure` corra.
+
+const (
+	closureAuthorizationAction = "closure_authorization"
+	closureAuthorizationTTL    = 5 * time.Minute
+)
+
+// ClosureAuthorizationClaims es el resultado de verificar un token de
+// autorización de faltante.
+type ClosureAuthorizationClaims struct {
+	AdminDNI  string
+	AdminName string
+	ExpiresAt time.Time
+}
+
+// IssueClosureAuthorization valida identificador+contraseña, exige rol
+// admin/superadmin y devuelve un JWT corto que firma la autorización de
+// faltante. Devuelve también el nombre del admin para que el frontend lo
+// muestre en pantalla; el servidor no persistirá ese nombre: el autorizador
+// final sale del claim descifrado en `SaveClosure`.
+func (s *AuthService) IssueClosureAuthorization(identifier, password string) (token string, claims ClosureAuthorizationClaims, err error) {
+	identifier = strings.ToUpper(strings.TrimSpace(identifier))
+	if identifier == "" || password == "" {
+		return "", ClosureAuthorizationClaims{}, errors.New("credenciales incorrectas")
+	}
+
+	user, lookupErr := s.repo.FindByName(identifier)
+	if lookupErr != nil {
+		user, lookupErr = s.repo.FindByDNI(identifier)
+		if lookupErr != nil {
+			return "", ClosureAuthorizationClaims{}, errors.New("credenciales incorrectas")
+		}
+	}
+
+	if bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password)) != nil {
+		return "", ClosureAuthorizationClaims{}, errors.New("credenciales incorrectas")
+	}
+	if user.DeletedAt.Valid {
+		return "", ClosureAuthorizationClaims{}, errors.New("usuario removido")
+	}
+	if !user.IsActive {
+		return "", ClosureAuthorizationClaims{}, errors.New("usuario desactivado")
+	}
+
+	role := strings.ToUpper(strings.TrimSpace(user.Role))
+	if role != "ADMIN" && role != "SUPERADMIN" && role != "ADMINISTRADOR" {
+		return "", ClosureAuthorizationClaims{}, errors.New("sólo administradores pueden autorizar faltantes")
+	}
+
+	expiresAt := time.Now().Add(closureAuthorizationTTL)
+	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"action":     closureAuthorizationAction,
+		"admin_dni":  user.DNI,
+		"admin_name": user.Name,
+		"exp":        expiresAt.Unix(),
+	})
+
+	secret, err := jwtSigningSecret()
+	if err != nil {
+		return "", ClosureAuthorizationClaims{}, err
+	}
+	tokenString, err := jwtToken.SignedString(secret)
+	if err != nil {
+		return "", ClosureAuthorizationClaims{}, err
+	}
+	return tokenString, ClosureAuthorizationClaims{
+		AdminDNI:  user.DNI,
+		AdminName: user.Name,
+		ExpiresAt: expiresAt,
+	}, nil
+}
+
+// VerifyClosureAuthorization descifra el token emitido por
+// IssueClosureAuthorization y verifica que:
+//
+//   - HS256 con la SECRET_KEY del sistema.
+//   - action == "closure_authorization" (no se acepta un token general de
+//     sesión disfrazado de autorizador).
+//   - exp vigente (TTL 5 min).
+//   - admin_dni y admin_name presentes.
+//
+// Devuelve el DNI y nombre del admin que firmó la autorización. Ese nombre
+// es el único que `SaveClosure` persiste en `AuthorizedBy`.
+func (s *AuthService) VerifyClosureAuthorization(tokenString string) (ClosureAuthorizationClaims, error) {
+	tokenString = strings.TrimSpace(tokenString)
+	if tokenString == "" {
+		return ClosureAuthorizationClaims{}, errors.New("token de autorización vacío")
+	}
+	secret, err := jwtSigningSecret()
+	if err != nil {
+		return ClosureAuthorizationClaims{}, err
+	}
+	parsed, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		if token.Method.Alg() != jwt.SigningMethodHS256.Alg() {
+			return nil, fmt.Errorf("algoritmo JWT no permitido: %s", token.Method.Alg())
+		}
+		return secret, nil
+	}, jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}))
+	if err != nil || !parsed.Valid {
+		return ClosureAuthorizationClaims{}, errors.New("token de autorización inválido o expirado")
+	}
+	mapClaims, ok := parsed.Claims.(jwt.MapClaims)
+	if !ok {
+		return ClosureAuthorizationClaims{}, errors.New("token de autorización inválido")
+	}
+	action, _ := mapClaims["action"].(string)
+	if action != closureAuthorizationAction {
+		return ClosureAuthorizationClaims{}, errors.New("token no autoriza cierre")
+	}
+	adminDNI, _ := mapClaims["admin_dni"].(string)
+	adminName, _ := mapClaims["admin_name"].(string)
+	if strings.TrimSpace(adminDNI) == "" || strings.TrimSpace(adminName) == "" {
+		return ClosureAuthorizationClaims{}, errors.New("token sin identidad de administrador")
+	}
+	var expAt time.Time
+	switch v := mapClaims["exp"].(type) {
+	case float64:
+		expAt = time.Unix(int64(v), 0)
+	case int64:
+		expAt = time.Unix(v, 0)
+	}
+	return ClosureAuthorizationClaims{
+		AdminDNI:  adminDNI,
+		AdminName: adminName,
+		ExpiresAt: expAt,
+	}, nil
+}

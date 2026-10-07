@@ -12,6 +12,12 @@ interface IncrementalSuggestionListProps {
   onLinkSupplier: (item: RestockSuggestion) => void;
   canUnlink: boolean;
   canLink: boolean;
+  /**
+   * Productos que ya aparecen en el BORRADOR de otro proveedor. Se pintan
+   * con un aviso para que el dueño sepa que, si confirma, va a pedir ese
+   * producto dos veces (un pedido a cada proveedor).
+   */
+  foreignCartIndex?: Map<string, { supplierKey: string; supplierName: string; quantity: number }>;
 }
 
 /**
@@ -27,6 +33,7 @@ export function IncrementalSuggestionList({
   onLinkSupplier,
   canUnlink,
   canLink,
+  foreignCartIndex,
 }: IncrementalSuggestionListProps) {
   if (items.length === 0) {
     return (
@@ -50,6 +57,7 @@ export function IncrementalSuggestionList({
               onLinkSupplier={onLinkSupplier}
               canUnlink={canUnlink}
               canLink={canLink}
+              foreignDraft={foreignCartIndex?.get(item.productId)}
             />
           </div>
         ))}

@@ -120,6 +120,16 @@ func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, 
 	if strings.ToUpper(e.Status) == "PENDING" {
 		return 0, 0, 0, 0, 0
 	}
+	// Defensa en profundidad para egresos pagados con PRÉSTAMO (opción
+	// "pagar con préstamo", /api/loans/:id/pay-expense): aun si una fila
+	// heredada o un bug de ingestión trae CashAmount>0 con
+	// paymentSource='PRESTAMO', el egreso NO debe moverle plata a ningún
+	// canal de la tienda. El dueño confirmó que ese dinero recién sale de
+	// caja cuando se paga la cuota (eso ya existe por otra ruta). Centinela
+	// único: models.IsLoanFundedPaymentSource.
+	if models.IsLoanFundedPaymentSource(e.PaymentSource) {
+		return 0, 0, 0, 0, 0
+	}
 	src := strings.ToUpper(e.PaymentSource)
 	tax := e.TaxAmount
 	base := e.Amount

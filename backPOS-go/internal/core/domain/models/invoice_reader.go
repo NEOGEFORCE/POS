@@ -49,29 +49,56 @@ const (
 	LineTypeReturn  = "RETURN"  // ↙️ devolución (resta stock y resta del total a pagar)
 )
 
-// ExtractedItem represents the raw item extracted by Gemini Vision
+// ExtractedItem representa un ítem crudo extraído por Claude Vision.
+//
+// Contrato con Claude (ver buildInvoicePrompt en product_service.go):
+//   - UnitPrice / TotalPrice se emiten SIEMPRE pre-descuento y pre-impuestos.
+//     Si el proveedor factura con impuestos incluidos, la bandera vive en
+//     SupplierInvoiceParams, no en la línea; calculateItemDetails hace la
+//     conversión con NetFromGross.
+//   - DiscountValue es el monto TOTAL del descuento aplicado a la línea
+//     entera (unitPrice × quantity × pct/100), NO el descuento por unidad.
+//     Esto cuadra con la columna "DESC" / "DTO $" típica de las facturas
+//     colombianas (Postobón, Bavaria, Coca-Cola, Nutresa, Alpina, etc.).
+//   - Si vienen ambos, DiscountPercentage y DiscountValue, el porcentaje
+//     gana: refleja la decisión comercial del proveedor y es robusto frente
+//     a errores de OCR en separadores de miles.
+//
+// Invariante POST normalizeExtractedItem (ver product_service.go):
+//   - DiscountValue == 0 siempre: la única fuente de verdad del DTO es
+//     DiscountPercentage, en [0, 100].
+//   - Quantity > 0 siempre: una cantidad negativa se convierte en
+//     Quantity = |q| con LineType = "RETURN".
+//   - LineType ∈ {"REGULAR", "BONUS", "RETURN"}, nunca vacío.
+//   - BONUS fuerza DiscountPercentage = 0 (un regalo con "descuento" no
+//     tiene semántica).
 type ExtractedItem struct {
-	Name           string  `json:"name"`
-	Barcode        string  `json:"barcode,omitempty"`
-	Quantity       float64 `json:"quantity"`
+	Name     string  `json:"name"`
+	Barcode  string  `json:"barcode,omitempty"`
+	Quantity float64 `json:"quantity"`
 	// LineType: REGULAR | BONUS | RETURN. Si Claude no lo asigna, el
-	// post-procesador (splitBonusItems) lo deriva: BonusQuantity > 0 lo
-	// parte en REGULAR + BONUS; quantity < 0 se transforma en RETURN.
+	// post-procesador (splitBonusItems/normalizeExtractedItem) lo deriva:
+	// BonusQuantity > 0 lo parte en REGULAR + BONUS; quantity < 0 se
+	// transforma en RETURN.
 	LineType string `json:"lineType,omitempty"`
 	// BonusQuantity son las unidades regaladas/bonificadas en una promoción
 	// "Pague X, lleve Y". El splitter del backend convierte un único item
 	// con bonus_quantity en DOS items separados (uno REGULAR, uno BONUS)
 	// para que el carrito muestre dos tarjetas independientes.
-	BonusQuantity      float64 `json:"bonus_quantity,omitempty"`
-	UnitPrice          float64 `json:"unitPrice"`
-	TotalPrice         float64 `json:"totalPrice"`
+	BonusQuantity float64 `json:"bonus_quantity,omitempty"`
+	UnitPrice     float64 `json:"unitPrice"`
+	TotalPrice    float64 `json:"totalPrice"`
 	// DiscountPercentage / DiscountValue: rebaja comercial aplicada por línea.
 	// Tienen preferencia el porcentaje sobre el valor absoluto si vienen ambos.
+	// Tras normalizeExtractedItem, DiscountValue queda en 0 y DiscountPercentage
+	// es la única fuente de verdad.
 	DiscountPercentage float64 `json:"discount_percentage,omitempty"`
-	DiscountValue      float64 `json:"discount_value,omitempty"`
-	IvaPercentage      float64 `json:"iva_percentage,omitempty"`
-	IbuaPercentage     float64 `json:"ibua_percentage,omitempty"`
-	IcuiPercentage     float64 `json:"icui_percentage,omitempty"`
+	// DiscountValue: monto TOTAL por LÍNEA (no por unidad) del descuento
+	// pactado con el proveedor, expresado en la misma moneda de la factura.
+	DiscountValue  float64 `json:"discount_value,omitempty"`
+	IvaPercentage  float64 `json:"iva_percentage,omitempty"`
+	IbuaPercentage float64 `json:"ibua_percentage,omitempty"`
+	IcuiPercentage float64 `json:"icui_percentage,omitempty"`
 }
 
 // ExpectedTaxes are user-provided hints about which taxes the invoice contains.

@@ -12,7 +12,7 @@ import { useApi } from "@/hooks/use-api";
 import { Product } from "@/lib/definitions";
 import { formatCurrency, formatCOP, formatStock, isProductWeighted, formatTime, formatPrice, sanitizeProductPayload, normalizeText, calculateStockHealth } from "@/lib/utils";
 import Cookies from 'js-cookie';
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { useToast } from "@/hooks/use-toast";
 import CreateScheduledDeliveryModal from "./components/CreateScheduledDeliveryModal";
@@ -192,72 +192,92 @@ export default function InventoryHub() {
     console.log("Fecha Buscada:", bogotaDateStr);
   }, [allOrdersData, bogotaDateStr]);
 
-  // Filtro local: mostrar los pedidos cuya expectedDate sea menor o igual al dia
-  // seleccionado y que NO esten ya completados/recibidos/descartados/pagados por egreso.
-  const expectedOrders = useMemo(() => {
-    const closedStatuses = new Set([
-      'RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED', 'PAID',
-    ]);
+  // === FILTRADO ESTRICTO DE LLEGADAS POR FECHA + BANDA "RETRASADOS" ===
+  //
+  // Antes el filtro era `orderDate <= bogotaDateStr`, así que al elegir
+  // "hoy" aparecían hoy y todos los pedidos anteriores (atrasados), y al
+  // elegir "mañana" aparecían mañana + hoy + anteriores. El dueño pidió
+  // filtrado estricto: al elegir una fecha SÓLO se ven los pedidos de esa
+  // fecha. Los atrasados se muestran aparte en una banda dedicada que
+  // siempre está visible (hasta que se marquen como recibidos/cancelados).
+  //
+  // Reglas de estado:
+  //   - RETRASADO: orderDate < hoy && status PENDING / sin cerrar.
+  //   - EN CAMINO: orderDate === selectedDate && status PENDING.
+  //   - FUTURO:    orderDate > hoy (sólo visible al seleccionar esa fecha).
+  //   - RECIBIDO/CANCELADO/COMPLETADO: nunca se muestran.
+  //
+  // El set de estados cerrados es compartido para no divergir entre banda
+  // y lista principal.
+  const closedStatuses = useMemo(() => new Set([
+    'RECEIVED', 'COMPLETED', 'DISMISSED', 'CANCELLED', 'CANCELED', 'PAID',
+  ]), []);
 
+  const todayStr = useMemo(() => {
+    // "Hoy" absoluto en zona Bogotá, independiente de selectedDate.
+    return getBogotaDateStr();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const hasMatchingExpenseForOrder = useCallback((o: any, orderDate: string) => {
+    if (!Array.isArray(allExpensesData) || allExpensesData.length === 0) return false;
+    const orderDateStr = new Date(`${orderDate}T12:00:00`).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+    const oSupplierId = o.supplierId ? Number(o.supplierId) : null;
+    const oSupplierNameNorm = o.supplierName ? normalizeText(o.supplierName) : '';
+
+    return allExpensesData.some((e: any) => {
+      if (!e.date) return false;
+      const expDateStr = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
+      if (expDateStr !== orderDateStr && expDateStr !== bogotaDateStr) return false;
+
+      const catUpper = (e.category || '').toUpperCase();
+      const isSupplierExp = catUpper.includes('PROVEEDOR') || catUpper.includes('COMPRA') || Boolean(e.supplierId) || Boolean(e.supplier_id);
+      if (!isSupplierExp) return false;
+
+      const eSupplierId = e.supplierId ? Number(e.supplierId) : (e.supplier_id ? Number(e.supplier_id) : null);
+      if (oSupplierId && eSupplierId && oSupplierId === eSupplierId) return true;
+
+      if (oSupplierNameNorm.length >= 3) {
+        const eSupplierNameNorm = e.supplierName ? normalizeText(e.supplierName) : (e.Supplier?.name ? normalizeText(e.Supplier.name) : '');
+        if (eSupplierNameNorm && (eSupplierNameNorm === oSupplierNameNorm || eSupplierNameNorm.includes(oSupplierNameNorm) || oSupplierNameNorm.includes(eSupplierNameNorm))) return true;
+        const eDescNorm = e.description ? normalizeText(e.description) : (e.concept ? normalizeText(e.concept) : '');
+        if (eDescNorm && eDescNorm.includes(oSupplierNameNorm)) return true;
+      }
+      return false;
+    });
+  }, [allExpensesData, bogotaDateStr]);
+
+  // Lista PRINCIPAL: SÓLO pedidos de la fecha seleccionada (igualdad estricta).
+  const expectedOrders = useMemo(() => {
     return (allOrdersData || []).filter(o => {
       if (!o.expectedDate) return false;
       const orderDate = o.expectedDate.split('T')[0];
-      
-      // Mostrar pedidos de la fecha seleccionada y atrasados que no se han cerrado
-      if (orderDate > bogotaDateStr) return false;
+      // Filtrado estricto: sólo la fecha seleccionada, no acumula anteriores.
+      if (orderDate !== bogotaDateStr) return false;
 
       const status = (o.status || '').toUpperCase();
       if (closedStatuses.has(status)) return false;
-      
-      // SI YA SE REGISTRÓ UN EGRESO ESPECÍFICO PARA ESTE PROVEEDOR/PEDIDO EN ESTA FECHA: SE EXCLUYE DE ENTREGAS PROGRAMADAS
-      if (Array.isArray(allExpensesData) && allExpensesData.length > 0) {
-        const orderDateStr = new Date(`${orderDate}T12:00:00`).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
-        const oSupplierId = o.supplierId ? Number(o.supplierId) : null;
-        const oSupplierNameNorm = o.supplierName ? normalizeText(o.supplierName) : '';
 
-        const hasMatchingExpense = allExpensesData.some((e: any) => {
-          if (!e.date) return false;
-          const expDateStr = new Date(e.date).toLocaleDateString('en-CA', { timeZone: 'America/Bogota' });
-
-          // La fecha del egreso debe coincidir con la fecha del pedido o la fecha de hoy
-          if (expDateStr !== orderDateStr && expDateStr !== bogotaDateStr) {
-            return false;
-          }
-
-          const catUpper = (e.category || '').toUpperCase();
-          const isSupplierExp = catUpper.includes('PROVEEDOR') || catUpper.includes('COMPRA') || Boolean(e.supplierId) || Boolean(e.supplier_id);
-          if (!isSupplierExp) return false;
-
-          // 1. Coincidencia directa por ID de Proveedor
-          const eSupplierId = e.supplierId ? Number(e.supplierId) : (e.supplier_id ? Number(e.supplier_id) : null);
-          if (oSupplierId && eSupplierId && oSupplierId === eSupplierId) {
-            return true;
-          }
-
-          // 2. Coincidencia por Nombre de Proveedor o Descripción del Egreso
-          if (oSupplierNameNorm.length >= 3) {
-            const eSupplierNameNorm = e.supplierName ? normalizeText(e.supplierName) : (e.Supplier?.name ? normalizeText(e.Supplier.name) : '');
-            if (eSupplierNameNorm && (eSupplierNameNorm === oSupplierNameNorm || eSupplierNameNorm.includes(oSupplierNameNorm) || oSupplierNameNorm.includes(eSupplierNameNorm))) {
-              return true;
-            }
-
-            const eDescNorm = e.description ? normalizeText(e.description) : (e.concept ? normalizeText(e.concept) : '');
-            if (eDescNorm && eDescNorm.includes(oSupplierNameNorm)) {
-              return true;
-            }
-          }
-
-          return false;
-        });
-
-        if (hasMatchingExpense) {
-          return false;
-        }
-      }
-
+      if (hasMatchingExpenseForOrder(o, orderDate)) return false;
       return true;
     });
-  }, [allOrdersData, allExpensesData, bogotaDateStr]);
+  }, [allOrdersData, bogotaDateStr, closedStatuses, hasMatchingExpenseForOrder]);
+
+  // Banda de RETRASADOS: pedidos con fecha ANTERIOR a hoy que siguen abiertos.
+  // Visible siempre que haya atrasos, independiente de selectedDate.
+  const overdueOrders = useMemo(() => {
+    return (allOrdersData || []).filter(o => {
+      if (!o.expectedDate) return false;
+      const orderDate = o.expectedDate.split('T')[0];
+      if (orderDate >= todayStr) return false; // sólo fechas < hoy
+
+      const status = (o.status || '').toUpperCase();
+      if (closedStatuses.has(status)) return false;
+
+      if (hasMatchingExpenseForOrder(o, orderDate)) return false;
+      return true;
+    });
+  }, [allOrdersData, todayStr, closedStatuses, hasMatchingExpenseForOrder]);
 
   // Enviar fila a Telegram
   const sendToTelegram = async () => {
@@ -724,6 +744,79 @@ export default function InventoryHub() {
                                     </Button>
                                 </div>
                             </div>
+
+                            {/* BANDA DE RETRASADOS: visible SIEMPRE que haya pedidos
+                                con expectedDate < hoy y sin cerrar. No depende de selectedDate:
+                                son deudas de llegada que el dueño necesita ver cada vez
+                                que entra. Se muestran arriba de la lista principal. */}
+                            {overdueOrders.length > 0 && (
+                                <div className="mt-4 rounded-2xl border border-rose-500/30 bg-rose-500/5 dark:bg-rose-950/20 p-3 space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400">
+                                            <X size={14} />
+                                        </span>
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-rose-600 dark:text-rose-400">
+                                            Retrasados · {overdueOrders.length}
+                                        </p>
+                                    </div>
+                                    {overdueOrders.map((order) => (
+                                        <div
+                                            key={`overdue-${order.id}`}
+                                            onClick={() => handleOpenOrderDetail(order)}
+                                            data-arrival-status="late"
+                                            className="flex items-center justify-between p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-500/20 rounded-2xl hover:bg-rose-100 dark:hover:bg-rose-950/50 transition-all group cursor-pointer"
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-8 w-8 rounded-2xl bg-rose-100 dark:bg-rose-900/50 flex items-center justify-center text-rose-600 dark:text-rose-400">
+                                                    <Building2 size={14} />
+                                                </div>
+                                                <div>
+                                                    <p className="text-xs font-bold text-zinc-900 dark:text-white uppercase tracking-tight">
+                                                        {order.supplierName}
+                                                    </p>
+                                                    <p className="text-[9px] text-rose-600 dark:text-rose-400 font-bold">
+                                                        {order.itemCount} items · esperado {order.expectedDate?.split('T')[0]}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <span className="text-xs font-medium text-zinc-900 dark:text-white tabular-nums">
+                                                    {formatPrice(Math.round(orderDisplayValue(order)))}
+                                                </span>
+                                                <Chip
+                                                    size="sm"
+                                                    variant="flat"
+                                                    className="bg-rose-500/10 border border-rose-500/30 text-rose-600 dark:text-rose-400"
+                                                    classNames={{ content: "text-[8px] font-bold uppercase tracking-wider" }}
+                                                >
+                                                    Retrasado
+                                                </Chip>
+                                                <Button
+                                                    size="sm"
+                                                    color="success"
+                                                    variant="flat"
+                                                    className="h-7 px-2.5 rounded-xl font-bold text-[9px] uppercase tracking-wider text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 hover:text-white transition-all z-10"
+                                                    onClick={(e) => handleMarkOrderAsReceived(order.id, e)}
+                                                    startContent={<CheckCircle2 size={12} />}
+                                                >
+                                                    Ya llegó
+                                                </Button>
+                                                <Button
+                                                    isIconOnly
+                                                    size="sm"
+                                                    color="danger"
+                                                    variant="light"
+                                                    className="opacity-0 group-hover:opacity-100 transition-opacity ml-1 z-10"
+                                                    title="Cancelar pedido"
+                                                    onClick={(e) => handleCancelOrder(e, order.id, order.supplierName)}
+                                                >
+                                                    <X size={14} />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
 
                             {/* Lista de pedidos esperados */}
                             <div className="mt-4 space-y-3">

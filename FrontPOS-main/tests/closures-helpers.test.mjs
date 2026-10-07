@@ -31,6 +31,7 @@ test('expense summary prefers canonical channels and excludes returns and pendin
     totalExpenses: 15000,
     fondoExpenses: 0,
     digitalExpenses: 10000,
+    coinsExpenses: 0,
   });
 });
 

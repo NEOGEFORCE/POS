@@ -21,7 +21,9 @@ interface TableProps {
   isAdmin: boolean;
   onEdit: (expense: Expense) => void;
   onDelete: (id: string) => void;
-  onSettle: (id: string, paymentSource: string, amount: number) => Promise<void>;
+  // onSettle se removió: las cuentas por pagar ya no se abonan desde la
+  // tabla de /expenses. El Centro de Pagos vive en /loans ‣ pestaña
+  // "Cuentas por pagar". Esta tabla sólo muestra egresos PAGADOS.
   currentPage: number;
   totalPages: number;
   pageSize: number;
@@ -78,6 +80,13 @@ const formatPaymentSourceForDisplay = (source?: string) => {
   // Normalizar todo a CAJA
   cleanSource = cleanSource.replace(/\b(CASH|EFECTIVO)\b/g, 'CAJA');
 
+  // Un egreso con `paymentSource='PRESTAMO'` es informativo: la plata del
+  // préstamo no salió de la caja (el backend lo excluye de arqueo, KPIs y
+  // consolidado). Mostramos "PRÉSTAMO" con acento para que el cajero lo
+  // identifique como cargo contra el préstamo, no como salida real.
+  cleanSource = cleanSource.replace(/\bPRESTAMO\b/g, 'PRÉSTAMO');
+  cleanSource = cleanSource.replace(/\bPREST\.?\b/g, 'PRÉSTAMO');
+
   return cleanSource;
 };
 
@@ -88,14 +97,14 @@ const getPaymentSourceStyle = (source?: string) => {
   if (s === 'DAVIPLATA') return 'bg-red-100 text-red-700 dark:bg-red-500/20 dark:text-red-400';
   if (s === 'EFECTIVO' || s === 'CAJA') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-400';
   if (s === 'FONDO' || s === 'BÓVEDA' || s === 'BOVEDA') return 'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/20 dark:text-cyan-400';
-  if (s === 'PRESTAMO' || s === 'PREST.') return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400';
+  if (s === 'PRESTAMO' || s === 'PREST.' || s === 'PRÉSTAMO') return 'bg-amber-100 text-amber-700 dark:bg-amber-500/20 dark:text-amber-400';
   if (s === 'BANCOLOMBIA' || s === 'TRANSFERENCIA') return 'bg-blue-100 text-blue-700 dark:bg-blue-500/20 dark:text-blue-400';
   if (s.includes('+')) return 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-400'; // MIXTO
   return 'bg-gray-100 text-gray-700 dark:bg-white/10 dark:text-zinc-300';
 };
 
 const ExpenseTable = memo(({
-  expenses, isAdmin, onEdit, onDelete, onSettle,
+  expenses, isAdmin, onEdit, onDelete,
   currentPage, totalPages, pageSize, totalRecords,
   onPageChange, onPageSizeChange
 }: TableProps) => {

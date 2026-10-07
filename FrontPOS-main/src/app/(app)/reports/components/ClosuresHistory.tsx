@@ -22,6 +22,7 @@ import { useRouter } from 'next/navigation';
 import EditClosureModal from './EditClosureModal';
 import { setupSyncListener } from '@/lib/revalidate';
 import * as closureHelpers from '@/lib/closures-helpers.mjs';
+import { isAdminUser } from '@/lib/auth-helpers.mjs';
 
 export interface CashierClosure {
   id: number;
@@ -100,7 +101,9 @@ const getVentasCajero = closureHelpers.getVentasCajero;
 export default function ClosuresHistory() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const isAdmin = user?.role?.toUpperCase() === 'ADMIN' || user?.role?.toUpperCase() === 'SUPERADMIN';
+  // Fuente unica de rol admin: src/lib/auth-helpers.mjs. Esta pantalla
+  // mezclaba su propio chequeo en MAYUSCULAS que no reconocia "root".
+  const isAdmin = isAdminUser(user);
   const [closures, setClosures] = useState<CashierClosure[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [globalStats, setGlobalStats] = useState<{expected: number, real: number} | null>(null);
@@ -854,16 +857,21 @@ export default function ClosuresHistory() {
                                 const rawNequi = Number(e.nequiAmount ?? e.nequi_amount ?? 0);
                                 const rawDavi = Number(e.daviplataAmount ?? e.daviplata_amount ?? 0);
                                 const rawFondo = Number(e.fondoAmount ?? e.fondo_amount ?? 0);
+                                const rawCoins = Number(e.coinsAmount ?? e.coins_amount ?? e.alcanciaAmount ?? e.alcancia_amount ?? 0);
                                 const tax = Number(e.taxAmount ?? e.tax_amount ?? 0);
                                 const base = Number(e.amount ?? 0);
                                 const total = base + tax;
-                                const sumChannels = rawCash + rawNequi + rawDavi + rawFondo;
+                                const sumChannels = rawCash + rawNequi + rawDavi + rawFondo + rawCoins;
                                 const src = (e.paymentSource || e.payment_source || '').toUpperCase();
                                 
                                 let finalCash = 0;
                                 let finalNequi = 0;
                                 let finalDavi = 0;
                                 let finalFondo = 0;
+                                // Canal propio para la ALCANCIA (monedas): el backend ya lo separa
+                                // en `EgresosAlcancia`. Si se mezcla con `finalCash`, la caja fisica
+                                // queda inflada y aparece un sobrante irreal.
+                                let finalCoins = 0;
 
                                 if (src.includes('/')) {
                                     // PAGO MIXTO: los montos exactos están en el string
@@ -882,12 +890,14 @@ export default function ClosuresHistory() {
                                             }
                                             val = parseFloat(s) || 0;
                                         }
-                                        if (p.includes('NEQUI') || p.includes('NEQ')) finalNequi += val;
+                                        // ALCANCIA/MONEDAS primero (antes que CAJA) para no fugar al efectivo.
+                                        if (p.includes('ALCANC') || p.includes('MONEDA')) finalCoins += val;
+                                        else if (p.includes('NEQUI') || p.includes('NEQ')) finalNequi += val;
                                         else if (p.includes('DAVIPLATA') || p.includes('DAVI')) finalDavi += val;
                                         else if (p.includes('FONDO') || p.includes('BOVEDA') || p.includes('BÓVEDA') || p.includes('FOND')) finalFondo += val;
                                         else if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH') || p.includes('EFEC')) finalCash += val;
                                     });
-                                    if (finalCash + finalNequi + finalDavi + finalFondo === 0) {
+                                    if (finalCash + finalNequi + finalDavi + finalFondo + finalCoins === 0) {
                                         finalCash = total > 0 ? total : base;
                                     }
                                 } else if (sumChannels > 0) {
@@ -895,7 +905,8 @@ export default function ClosuresHistory() {
                                     finalNequi = rawNequi;
                                     finalDavi = rawDavi;
                                     finalFondo = rawFondo;
-                                    if (rawCash > 0 && tax > 0 && (rawNequi === 0 && rawDavi === 0 && rawFondo === 0)) {
+                                    finalCoins = rawCoins;
+                                    if (rawCash > 0 && tax > 0 && (rawNequi === 0 && rawDavi === 0 && rawFondo === 0 && rawCoins === 0)) {
                                         finalCash += tax;
                                     }
                                 } else {
@@ -903,8 +914,11 @@ export default function ClosuresHistory() {
                                         (src.includes('NEQUI') || src.includes('DAVIPLATA') || src.includes('DAVI') || src.includes('FONDO') || src.includes('BOVEDA') || src.includes('BÓVEDA') || src.includes('FOND') || src.includes('PREST') || src.includes('DEUDA') || src.includes('BANCOLOMBIA') || src.includes('TARJETA') || src.includes('TRANSFER')) &&
                                         !src.includes('CAJA') && !src.includes('EFECTIVO')
                                     );
+                                    const isCoinsOnly = (src.includes('ALCANC') || src.includes('MONEDA')) && !src.includes('CAJA') && !src.includes('EFECTIVO');
 
-                                    if (!isDigitalOnly) {
+                                    if (isCoinsOnly) {
+                                        finalCoins = total > 0 ? total : base;
+                                    } else if (!isDigitalOnly) {
                                         finalCash = total > 0 ? total : base;
                                     } else {
                                         if (src.includes('NEQUI')) finalNequi = total > 0 ? total : base;
@@ -917,11 +931,12 @@ export default function ClosuresHistory() {
                                 e._finalNequi = finalNequi;
                                 e._finalDavi = finalDavi;
                                 e._finalFondo = finalFondo;
+                                e._finalCoins = finalCoins;
                                 
                                 if (String(e.category).toUpperCase() !== 'DEVOLUCIONES') {
                                     egresosCaja += finalCash;
                                 }
-                                egresosGlobales += finalCash + finalNequi + finalDavi + finalFondo;
+                                egresosGlobales += finalCash + finalNequi + finalDavi + finalFondo + finalCoins;
                             }
                         });
                     } catch(e) {}
@@ -1083,6 +1098,10 @@ export default function ClosuresHistory() {
                                             let finalNequi = 0;
                                             let finalDavi = 0;
                                             let finalFondo = 0;
+                                            // Canal independiente: la alcancia es un cajon fisico distinto a la
+                                            // caja chica. El backend ya la separa en `EgresosAlcancia`; aqui la
+                                            // modelamos como _finalCoins para que no contamine el efectivo.
+                                            let finalCoins = 0;
 
                                             if (src.includes('/')) {
                                                 src.split('/').forEach((part: string) => {
@@ -1100,14 +1119,18 @@ export default function ClosuresHistory() {
                                                         }
                                                         val = parseFloat(s) || 0;
                                                     }
-                                                    if (p.includes('NEQUI') || p.includes('NEQ')) finalNequi += val;
+                                                    // ALCANCIA / MONEDAS primero, antes que CAJA, porque son cajones distintos.
+                                                    if (p.includes('ALCANC') || p.includes('MONEDA')) finalCoins += val;
+                                                    else if (p.includes('NEQUI') || p.includes('NEQ')) finalNequi += val;
                                                     else if (p.includes('DAVIPLATA') || p.includes('DAVI')) finalDavi += val;
                                                     else if (p.includes('FONDO') || p.includes('BOVEDA') || p.includes('BÓVEDA') || p.includes('FOND')) finalFondo += val;
                                                     else if (p.includes('CAJA') || p.includes('EFECTIVO') || p.includes('CASH') || p.includes('EFEC')) finalCash += val;
                                                 });
-                                                if (finalCash + finalNequi + finalDavi + finalFondo === 0) {
+                                                if (finalCash + finalNequi + finalDavi + finalFondo + finalCoins === 0) {
                                                     finalCash = total;
                                                 }
+                                            } else if (src.includes('ALCANC') || src.includes('MONEDA')) {
+                                                finalCoins = total;
                                             } else if (src === 'NEQUI') {
                                                 finalNequi = total;
                                             } else if (src === 'DAVIPLATA' || src === 'DAVI') {
@@ -1121,21 +1144,24 @@ export default function ClosuresHistory() {
                                                 const rawNequi = Number(e.nequiAmount || 0);
                                                 const rawDavi = Number(e.daviplataAmount || 0);
                                                 const rawFondo = Number(e.fondoAmount || 0);
-                                                const sum = rawCash + rawNequi + rawDavi + rawFondo;
+                                                const rawCoins = Number(e.coinsAmount || e.alcanciaAmount || 0);
+                                                const sum = rawCash + rawNequi + rawDavi + rawFondo + rawCoins;
 
                                                 if (sum > 0) {
-                                                    finalCash = rawCash; finalNequi = rawNequi; finalDavi = rawDavi; finalFondo = rawFondo;
+                                                    finalCash = rawCash; finalNequi = rawNequi; finalDavi = rawDavi; finalFondo = rawFondo; finalCoins = rawCoins;
                                                     if (tax > 0 && sum === base) {
-                                                        const count = (rawCash>0?1:0)+(rawNequi>0?1:0)+(rawDavi>0?1:0)+(rawFondo>0?1:0);
+                                                        const count = (rawCash>0?1:0)+(rawNequi>0?1:0)+(rawDavi>0?1:0)+(rawFondo>0?1:0)+(rawCoins>0?1:0);
                                                         if (count <= 1) {
                                                             if (rawCash > 0) finalCash += tax;
                                                             if (rawNequi > 0) finalNequi += tax;
                                                             if (rawDavi > 0) finalDavi += tax;
                                                             if (rawFondo > 0) finalFondo += tax;
+                                                            if (rawCoins > 0) finalCoins += tax;
                                                         } else {
                                                             if (rawNequi > 0) finalNequi += tax;
                                                             else if (rawDavi > 0) finalDavi += tax;
                                                             else if (rawFondo > 0) finalFondo += tax;
+                                                            else if (rawCoins > 0) finalCoins += tax;
                                                             else finalCash += tax;
                                                         }
                                                     }
@@ -1143,7 +1169,7 @@ export default function ClosuresHistory() {
                                                     finalCash = total;
                                                 }
                                             }
-                                            return { ...e, _finalCash: finalCash, _finalNequi: finalNequi, _finalDavi: finalDavi, _finalFondo: finalFondo };
+                                            return { ...e, _finalCash: finalCash, _finalNequi: finalNequi, _finalDavi: finalDavi, _finalFondo: finalFondo, _finalCoins: finalCoins };
                                         });
 
                                 if (expensesForChannels.length === 0) return null;
@@ -1154,7 +1180,8 @@ export default function ClosuresHistory() {
                                           { name: 'EFECTIVO', key: '_finalCash', icon: <Banknote size={14}/>, color: 'text-zinc-600 dark:text-zinc-400' },
                                           { name: 'NEQUI', key: '_finalNequi', icon: <Wallet size={14}/>, color: 'text-purple-500' },
                                           { name: 'DAVIPLATA', key: '_finalDavi', icon: <Landmark size={14}/>, color: 'text-rose-500' },
-                                          { name: 'FONDO', key: '_finalFondo', icon: <Banknote size={14}/>, color: 'text-cyan-500' }
+                                          { name: 'FONDO', key: '_finalFondo', icon: <Banknote size={14}/>, color: 'text-cyan-500' },
+                                          { name: 'ALCANCIA', key: '_finalCoins', icon: <Wallet size={14}/>, color: 'text-amber-500' },
                                         ].map(method => {
                                             const mExps = expensesForChannels.filter((e: any) => e[method.key] > 0);
                                             if (mExps.length === 0) return null;
@@ -1225,24 +1252,42 @@ export default function ClosuresHistory() {
                                       <TableColumn align="end">TOTAL</TableColumn>
                                     </TableHeader>
                                     <TableBody>
-                                      {fullDetail.sales.map((s: any) => (
+                                      {fullDetail.sales.map((s: any) => {
+                                        // Representacion ESTABLE del canal:
+                                        // componemos desde los montos para
+                                        // nunca mostrar 'MIXTO' cuando hay
+                                        // desglose Nequi/Daviplata recuperable.
+                                        // Fallback 'MIXTO' solo si realmente
+                                        // no se puede determinar el canal.
+                                        const sCash = Number(s.cashAmount) || 0;
+                                        const sNequi = Number(s.transferNequi) || 0;
+                                        const sDavi = Number(s.transferDaviplata) || 0;
+                                        const sTransfer = Number(s.transferAmount) || 0;
+                                        const sCredit = Number(s.creditAmount) || 0;
+                                        const sOther = sTransfer - sNequi - sDavi;
+                                        const sParts: string[] = [];
+                                        if (sCash > 0) sParts.push('EFECTIVO');
+                                        if (sNequi > 0) sParts.push('NEQUI');
+                                        if (sDavi > 0) sParts.push('DAVIPLATA');
+                                        if (sOther > 0.5) sParts.push('TRANSFER');
+                                        if (sCredit > 0) sParts.push('FIADO');
+                                        const chipLabel = sParts.length > 0
+                                          ? sParts.join(' + ')
+                                          : ((s.paymentMethod || '---').toString().toUpperCase());
+                                        return (
                                         <TableRow key={s.id || s.saleId}>
                                           <TableCell>{s.date ? formatTime(s.date) : '---'}</TableCell>
                                           <TableCell>#{s.id || s.saleId}</TableCell>
                                           <TableCell className="truncate max-w-[180px]">{s.client?.name || 'CONSUMIDOR FINAL'}</TableCell>
                                           <TableCell>
                                             <Chip size="sm" variant="flat" className="h-5 text-[8px] font-medium uppercase">
-                                              {s.cashAmount > 0 && s.transferAmount > 0 ? 'MIXTO' :
-                                               s.cashAmount > 0 ? 'EFECTIVO' :
-                                               s.transferNequi > 0 ? 'NEQUI' :
-                                               s.transferDaviplata > 0 ? 'DAVIPLATA' :
-                                               s.transferAmount > 0 ? 'TRANSFER' :
-                                               s.creditAmount > 0 ? 'FIADO' : '---'}
+                                              {chipLabel}
                                             </Chip>
                                           </TableCell>
                                           <TableCell className="text-emerald-500">${formatCurrency(Number(s.total) || 0)}</TableCell>
                                         </TableRow>
-                                      ))}
+                                        );
+                                      })}
                                     </TableBody>
                                   </Table>
                                 </div>

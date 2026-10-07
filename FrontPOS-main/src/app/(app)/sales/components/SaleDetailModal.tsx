@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { 
     Modal, 
     ModalContent, 
@@ -29,12 +29,19 @@ import {
 import { Sale } from '@/lib/definitions';
 import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
 import { formatCurrency } from '@/lib/utils';
+import { useToast } from '@/hooks/use-toast';
+import { printThermalTicket, saleToTicket, shareTicketImage } from '@/lib/thermal-ticket';
 
 interface SaleDetailModalProps {
     isOpen: boolean;
     onOpenChange: (open: boolean) => void;
     sale: Sale | null;
-    onPrint: () => void;
+    /**
+     * Callback opcional. Si no se envía, el modal usa `printThermalTicket`
+     * con la misma plantilla del ticket impreso: así una reimpresión desde
+     * historial es idéntica a la tirilla original.
+     */
+    onPrint?: () => void;
 }
 
 export default function SaleDetailModal({
@@ -44,6 +51,49 @@ export default function SaleDetailModal({
     onPrint
 }: SaleDetailModalProps) {
     const [copied, setCopied] = useState(false);
+    const [sharing, setSharing] = useState(false);
+    const { toast } = useToast();
+
+    // Los hooks DEBEN declararse antes de cualquier early return para no
+    // violar las reglas de hooks. El `if (!sale) return null;` queda abajo.
+    const handleWhatsAppShare = useCallback(async () => {
+        if (!sale) return;
+        setSharing(true);
+        try {
+            // Fuente única: la misma plantilla térmica que se usa en caja. Si
+            // hay share nativo adjunta el PNG; si no, descarga la imagen y
+            // abre WhatsApp con un texto corto para que el cajero la adjunte
+            // manualmente, sin volver a mandar la factura con emojis.
+            await shareTicketImage(saleToTicket(sale, getPaymentDescription(sale)), {
+                phone: sale.client?.phone,
+            });
+        } catch (err: any) {
+            toast({
+                variant: "destructive",
+                title: "NO SE PUDO COMPARTIR",
+                description: err?.message || "Intenta imprimir y envía la foto manualmente.",
+            });
+        } finally {
+            setSharing(false);
+        }
+    }, [sale, toast]);
+
+    const handlePrint = useCallback(() => {
+        if (onPrint) {
+            onPrint();
+            return;
+        }
+        if (!sale) return;
+        try {
+            printThermalTicket(saleToTicket(sale, getPaymentDescription(sale)));
+        } catch (err: any) {
+            toast({
+                variant: "destructive",
+                title: "IMPRESIÓN",
+                description: err?.message || "No se pudo imprimir el ticket.",
+            });
+        }
+    }, [onPrint, sale, toast]);
 
     if (!sale) return null;
 
@@ -60,46 +110,6 @@ export default function SaleDetailModal({
         navigator.clipboard.writeText(sale.id);
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-    };
-
-    const handleWhatsAppShare = () => {
-        if (!sale) return;
-        const clientName = sale.client?.name || 'CONSUMIDOR FINAL';
-        const clientDni = sale.client?.dni || '0';
-        const paymentMethod = getPaymentDescription(sale);
-
-        const itemsText = (sortedDetails || []).map((detail: any) => {
-            const pName = detail.product?.productName || 'Producto';
-            const qty = detail.quantity;
-            const unitPrice = detail.unitPrice || (detail.subtotal / (detail.quantity || 1));
-            const subtotal = detail.subtotal || (unitPrice * qty);
-            return `• *${qty}x* ${pName}\n   $${formatCurrency(unitPrice)} c/u — *$${formatCurrency(subtotal)}*`;
-        }).join('\n');
-
-        let msg = `🧾 *FACTURA DE VENTA N° #${sale.id}*\n`;
-        msg += `🏢 *SISTEMA POS PRO*\n`;
-        msg += `📅 *Fecha:* ${formattedDate}\n`;
-        msg += `👤 *Cliente:* ${clientName}\n`;
-        msg += `📄 *NIT/DNI:* ${clientDni}\n\n`;
-        msg += `🛒 *DETALLE DE PRODUCTOS:*\n${itemsText}\n\n`;
-        msg += `💰 *TOTAL VENTA:* *$${formatCurrency(sale.total)}*\n`;
-        msg += `💳 *Método de Pago:* ${paymentMethod}\n`;
-        
-        if (sale.cashAmount > 0 && sale.change > 0) {
-            msg += `💵 *Efectivo Recibido:* $${formatCurrency(sale.cashAmount)}\n`;
-            msg += `🪙 *Cambio:* $${formatCurrency(sale.change)}\n`;
-        }
-
-        msg += `\n¡Gracias por su compra! 🙏✨`;
-
-        let rawPhone = sale.client?.phone?.replace(/\D/g, '') || '';
-        if (rawPhone && !rawPhone.startsWith('57') && rawPhone.length === 10) {
-            rawPhone = `57${rawPhone}`;
-        }
-        const url = rawPhone 
-            ? `https://wa.me/${rawPhone}?text=${encodeURIComponent(msg)}`
-            : `https://wa.me/?text=${encodeURIComponent(msg)}`;
-        window.open(url, '_blank');
     };
 
     return (
@@ -333,17 +343,21 @@ export default function SaleDetailModal({
                                 VOLVER <X size={15} className="ml-1" />
                             </Button>
                             <Button
+                                variant="flat"
+                                isLoading={sharing}
+                                aria-label="Enviar factura por WhatsApp"
                                 className="h-12 flex-1 rounded-2xl font-bold uppercase text-[11px] bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20 tracking-wider"
-                                startContent={<MessageSquare size={18} />}
+                                startContent={!sharing ? <MessageSquare size={18} /> : undefined}
                                 onPress={handleWhatsAppShare}
                             >
                                 ENVIAR POR WHATSAPP
                             </Button>
                             <Button
                                 color="primary"
+                                aria-label="Imprimir factura en impresora térmica"
                                 className="h-12 flex-1 rounded-2xl font-bold uppercase text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 tracking-wider"
                                 startContent={<Printer size={18} />}
-                                onPress={onPrint}
+                                onPress={handlePrint}
                             >
                                 IMPRIMIR FACTURA
                             </Button>

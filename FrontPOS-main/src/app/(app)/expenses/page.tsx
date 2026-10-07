@@ -9,8 +9,14 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Expense, Supplier } from '@/lib/definitions';
 import Cookies from 'js-cookie';
-import { apiFetch } from '@/lib/api-error';
-import { selectLiveDebts, sumPayables } from '@/lib/payables.mjs';
+import { apiFetch, ApiError } from '@/lib/api-error';
+import { selectLiveDebts } from '@/lib/payables.mjs';
+import {
+  liveLoanAvailable,
+  normalizeLoanListResponse,
+  normalizeLoanPayExpenseResponse,
+  type LoanRecord,
+} from '@/lib/loans.mjs';
 import { useAuth } from '@/lib/auth';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
@@ -20,7 +26,12 @@ const ExpenseStats = dynamic(() => import('./components/ExpenseStats'), { ssr: f
 const ExpenseTable = dynamic(() => import('./components/ExpenseTable'), { ssr: false });
 const ExpenseFormModal = dynamic(() => import('./components/ExpenseFormModal'), { ssr: false });
 const DeleteExpenseModal = dynamic(() => import('./components/DeleteExpenseModal'), { ssr: false });
-const PendingDebtsModal = dynamic(() => import('./components/PendingDebtsModal'), { ssr: false });
+// NOTA: El Centro de Pagos / "Cuentas por pagar" ya no vive aquí. Se trasladó
+// a /loans como pestaña visible junto a los préstamos (son flujos de deuda
+// hermanos). Ver `src/app/(app)/loans/components/` para el panel inline.
+// En /expenses sólo quedan los egresos ya pagados y la creación de nuevas
+// salidas; `selectLiveDebts` se mantiene para OCULTAR las deudas vivas de la
+// tabla principal (no se cuentan dos veces).
 
 const ExpenseHeader = memo(({ 
   filter, 
@@ -231,13 +242,67 @@ export default function ExpensesPage() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [pendingModalOpen, setPendingModalOpen] = useState(false);
   
   const [duplicateAlertOpen, setDuplicateAlertOpen] = useState(false);
   const [pendingExpenseData, setPendingExpenseData] = useState<any>(null);
 
   // Estados de Datos
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
+
+  // Préstamos activos para el modal de pago. Sólo se cargan si el usuario
+  // es admin — un empleado no puede pagar un egreso con la plata de un
+  // préstamo (el backend lo restringe también vía `loansAdmin`).
+  const [loans, setLoans] = useState<LoanRecord[]>([]);
+
+  const loadLoansForPayment = useCallback(async () => {
+    if (!isAdmin) return;
+    const token = Cookies.get('org-pos-token');
+    if (!token) return;
+    try {
+      const raw = await apiFetch<unknown>('/loans', {
+        method: 'GET',
+        fallbackError: 'No se pudo cargar la lista de préstamos',
+      }, token);
+      const { loans: normalized } = normalizeLoanListResponse(raw);
+      setLoans(normalized);
+    } catch {
+      // Silencioso: si no hay préstamos cargados, el modal muestra el
+      // mensaje "No hay préstamos activos" sin romper el flujo del egreso.
+    }
+  }, [isAdmin]);
+
+  // Cargar préstamos al abrir el modal (crear o editar). Un fetch único
+  // por apertura: el POS no cambia préstamos muy seguido.
+  useEffect(() => {
+    if ((addDialogOpen || editDialogOpen) && isAdmin) {
+      void loadLoansForPayment();
+    }
+  }, [addDialogOpen, editDialogOpen, isAdmin, loadLoansForPayment]);
+
+  // Mantener la lista fresca cuando algún otro componente dispare
+  // EXPENSE_UPDATE (p. ej. tras pagar una cuota de préstamo en /loans).
+  useEffect(() => {
+    const cleanup = setupSyncListener((event) => {
+      if (event === 'EXPENSE_UPDATE') void loadLoansForPayment();
+    });
+    return cleanup;
+  }, [loadLoansForPayment]);
+
+  const loanOption = useMemo(() => {
+    if (!isAdmin) return undefined;
+    const activeLoans = loans
+      .filter((l) => {
+        const status = String(l?.status || '').toUpperCase();
+        return status === 'ACTIVE' || status === 'DEFAULTED';
+      })
+      .map((l) => ({
+        id: l.id!,
+        lenderName: l.lenderName || 'Sin acreedor',
+        available: liveLoanAvailable(l),
+      }))
+      .filter((l) => l.available > 0);
+    return { enabled: true as const, loans: activeLoans };
+  }, [isAdmin, loans]);
 
   const loadExpenses = useCallback(async () => {
     setLoading(true);
@@ -342,17 +407,14 @@ export default function ExpensesPage() {
       }, {});
     const topSource = Object.entries(bySource).sort((a: any, b: any) => b[1] - a[1])[0]?.[0] || 'EFECTIVO';
 
-    // CUENTAS POR PAGAR (deudas vivas).
-    //
-    // La regla vive en @/lib/payables.mjs, que es la fuente única compartida
-    // con el Centro de Pagos (PendingDebtsModal). Antes cada uno tenía su
-    // propia expresión y podían mostrar números distintos de la misma plata.
-    // Coincide con GetPendingDebtsSummary del backend Go: cuenta PENDING más
-    // préstamos no saldados, y suma el impuesto.
+    // Las deudas vivas se SIGUEN calculando con el helper compartido para
+    // ocultarlas de la tabla principal (no se cuentan dos veces: la tabla
+    // de /expenses muestra lo PAGADO; las deudas se abonan en /loans ‣
+    // "Cuentas por pagar"). El guardián `tests/payables.test.mjs` exige
+    // que esta pantalla siga importando @/lib/payables.mjs.
     const pendingExpenses = selectLiveDebts(expenses);
-    const totalPending = sumPayables(expenses);
 
-    return { totalMonth, topSource, count: periodExpenses.length, totalPending, pendingExpenses };
+    return { totalMonth, topSource, count: periodExpenses.length, pendingExpenses };
   }, [expenses, datePreset, dateRangeBounds]);
 
   const filteredExpenses = useMemo(() => {
@@ -418,6 +480,72 @@ export default function ExpensesPage() {
 
   const proceedWithSave = async (data: any, token: string) => {
     try {
+      // --- Rama préstamo: NO crea un egreso normal. El endpoint del backend
+      // (POST /loans/:id/pay-expense) crea el `expense` dentro de la misma
+      // transacción con `paymentSource='PRESTAMO'` y canales = 0. El
+      // frontend sólo manda loanId + metadata; nunca fabrica el canal.
+      if (addDialogOpen && data.loanId != null && data.loanId !== '') {
+        const expenseAmount = Math.abs(parseFloat(String(data.amount)) || 0);
+        if (expenseAmount <= 0) {
+          toast({ variant: 'destructive', title: 'MONTO INVÁLIDO', description: 'EL MONTO DEBE SER MAYOR A CERO' });
+          return;
+        }
+        const supplierId = data.category === 'Proveedores' && data.supplierId ? Number(data.supplierId) : undefined;
+        const body: Record<string, unknown> = {
+          amount: expenseAmount,
+          description: String(data.description || '').toUpperCase(),
+          category: data.category || 'Otros Gastos',
+          purpose: String(data.description || '').toUpperCase(),
+        };
+        if (supplierId) body.supplierId = supplierId;
+
+        try {
+          const raw = await apiFetch<unknown>(
+            `/loans/${encodeURIComponent(String(data.loanId))}/pay-expense`,
+            {
+              method: 'POST',
+              body: JSON.stringify(body),
+              fallbackError: 'FALLO AL PAGAR CON EL PRÉSTAMO',
+            },
+            token,
+          );
+          normalizeLoanPayExpenseResponse(raw);
+          const chosenLoan = loans.find((l) => String(l.id) === String(data.loanId));
+          const lenderName = chosenLoan?.lenderName || 'préstamo';
+          toast({
+            variant: 'success',
+            title: 'PAGADO CON PRÉSTAMO',
+            description: `Pagado con el préstamo de ${lenderName}; no afecta la caja.`,
+          });
+          setAddDialogOpen(false);
+          setEditDialogOpen(false);
+          localStorage.removeItem('expense-form-draft');
+          setEditingExpense(null);
+          loadExpenses();
+          void loadLoansForPayment();
+          broadcastRevalidate('EXPENSE_UPDATE');
+        } catch (err: any) {
+          if (err instanceof ApiError) {
+            const code = err.data?.error?.code || err.data?.code;
+            if (code === 'LOAN_NOT_FOUND') {
+              toast({ variant: 'destructive', title: 'PRÉSTAMO NO EXISTE', description: 'Recarga la lista de préstamos.' });
+            } else if (code === 'LOAN_NOT_ACTIVE') {
+              toast({ variant: 'destructive', title: 'PRÉSTAMO INACTIVO', description: 'Sólo préstamos ACTIVOS o EN MORA.' });
+            } else if (code === 'LOAN_PRINCIPAL_EXCEEDED') {
+              toast({ variant: 'destructive', title: 'EXCEDE EL PRÉSTAMO', description: 'El monto supera el disponible del préstamo.' });
+            } else {
+              toast({ variant: 'destructive', title: 'ERROR AL PAGAR', description: err.message || 'Fallo al pagar con el préstamo.' });
+            }
+          } else {
+            toast({ variant: 'destructive', title: 'ERROR AL PAGAR', description: err?.message || 'Fallo al pagar con el préstamo.' });
+          }
+          // Retornar una promesa rechazada evita que el catch exterior duplique
+          // el toast y permite que ExpensePaymentModal NO muestre éxito falso.
+          return Promise.reject(err);
+        }
+        return;
+      }
+
       const currentDate = new Date().toISOString();
 
       // Si hay linkedOrderId y es creacion, usar endpoint especial vinculado
@@ -498,17 +626,22 @@ export default function ExpensesPage() {
     if (!deletingId) return;
     const token = Cookies.get('org-pos-token');
     try {
-      await apiFetch(`/expenses/delete/${deletingId}`, {
+      const response = await apiFetch<{ result?: { loanReversed?: boolean; restoredAmount?: number; releasedPrincipal?: number } }>(`/expenses/delete/${deletingId}`, {
         method: 'DELETE',
         fallbackError: 'FALLO AL ELIMINAR EGRESO'
       }, token!);
+      const loanReversed = response?.result?.loanReversed === true;
       toast({
         variant: "success",
-        title: "EXITO",
-        description: "REGISTRO ELIMINADO",
+        title: loanReversed ? "PAGO CON PRÉSTAMO REVERSADO" : "ÉXITO",
+        description: loanReversed
+          ? "La deuda volvió a Cuentas por pagar y el principal quedó disponible otra vez."
+          : "REGISTRO ELIMINADO",
       });
       setDeleteDialogOpen(false);
-      loadExpenses();
+      setDeletingId(null);
+      await loadExpenses();
+      void loadLoansForPayment();
       broadcastRevalidate('EXPENSE_UPDATE');
     } catch (err: any) {
       toast({
@@ -520,75 +653,12 @@ export default function ExpensesPage() {
     }
   };
 
-  const handleSettleDebt = async (id: string, paymentData: any, amount: number) => {
-    const token = Cookies.get('org-pos-token');
-    if (!token) return;
-
-    try {
-      await apiFetch(`/expenses/settle/${id}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ 
-          paymentSource: paymentData.paymentSourceString, 
-          amount,
-          cashAmount: paymentData.cash || 0,
-          nequiAmount: paymentData.nequi || 0,
-          daviplataAmount: paymentData.daviplata || 0,
-          fondoAmount: paymentData.fondo || 0
-        }),
-        fallbackError: 'FALLO AL SALDAR DEUDA'
-      }, token);
-
-      toast({
-        variant: "success",
-        title: "DEUDA SALDADA",
-        description: `EL EGRESO SE HA MARCADO COMO PAGADO CON ${paymentData.paymentSourceString}`,
-      });
-      loadExpenses();
-      broadcastRevalidate('EXPENSE_UPDATE');
-    } catch (err: any) {
-      toast({
-        variant: "destructive",
-        title: "FALLO AL SALDAR",
-        description: err.message || 'FALLO AL SALDAR DEUDA',
-      });
-    }
-  };
-
-  const handleForceCloseDebt = async (id: string) => {
-    const token = Cookies.get('org-pos-token');
-    if (!token) return;
-
-    try {
-      const expenseToUpdate = expenses.find(e => String(e.id) === id);
-      if (!expenseToUpdate) return;
-      
-      const updateData = {
-        ...expenseToUpdate,
-        status: 'PAID',
-        remainingAmount: 0,
-      };
-
-      await apiFetch(`/expenses/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(updateData),
-        fallbackError: 'FALLO AL CONDONAR DEUDA'
-      }, token);
-
-      toast({
-        variant: "success",
-        title: "DEUDA CONDONADA",
-        description: `EL EGRESO SE HA MARCADO COMO PAGADO FORZOSAMENTE`,
-      });
-      loadExpenses();
-      broadcastRevalidate('EXPENSE_UPDATE');
-    } catch (err: any) {
-      toast({
-        variant: "destructive",
-        title: "FALLO AL CONDONAR",
-        description: err.message || 'FALLO AL CONDONAR DEUDA',
-      });
-    }
-  };
+  // Los handlers de settle/forceClose se trasladaron a /loans junto con el
+  // Centro de Pagos. El abono y la condonación comparten los mismos
+  // endpoints del backend (PATCH /expenses/settle/:id y PUT /expenses/:id)
+  // y la misma fuente de datos (`GET /expenses/list` filtrada con
+  // `selectLiveDebts`); el cambio es sólo UI (dónde se dispara) para
+  // tener un único lugar donde cerrar deudas en el POS.
 
   if (loading) return <div className="flex-1 h-full w-full flex items-center justify-center bg-zinc-50 dark:bg-[#09090b]"><Spinner color="danger" size="lg" /></div>;
 
@@ -619,8 +689,6 @@ export default function ExpensesPage() {
           totalMonth={stats.totalMonth}
           topSource={stats.topSource}
           count={stats.count}
-          totalPending={stats.totalPending}
-          onOpenPending={() => setPendingModalOpen(true)}
         />
       </div>
 
@@ -631,7 +699,6 @@ export default function ExpensesPage() {
           isAdmin={isAdmin}
           onEdit={(e) => { setEditingExpense({ ...e }); setEditDialogOpen(true); }}
           onDelete={(id) => { setDeletingId(id); setDeleteDialogOpen(true); }}
-          onSettle={handleSettleDebt}
           currentPage={currentPage}
           totalPages={totalPages}
           pageSize={pageSize}
@@ -654,6 +721,8 @@ export default function ExpensesPage() {
         }}
         initialExpense={editingExpense || undefined}
         onSave={handleSaveExpense}
+        isAdmin={isAdmin}
+        loanOption={addDialogOpen ? loanOption : undefined}
       />
 
       <ConfirmDialog
@@ -676,15 +745,10 @@ export default function ExpensesPage() {
         isOpen={deleteDialogOpen}
         onOpenChange={setDeleteDialogOpen}
         onConfirm={handleDeleteExpense}
-      />
-
-      <PendingDebtsModal
-        isOpen={pendingModalOpen}
-        onOpenChange={setPendingModalOpen}
-        debts={stats.pendingExpenses}
-        onSettle={handleSettleDebt}
-        isAdmin={isAdmin}
-        onForceClose={handleForceCloseDebt}
+        isLoanFunded={expenses.some((e) =>
+          String(e.id) === String(deletingId) &&
+          ["PRESTAMO", "PREST."].includes(String(e.paymentSource || "").trim().toUpperCase()),
+        )}
       />
 
     </div>

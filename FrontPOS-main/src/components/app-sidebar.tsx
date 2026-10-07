@@ -27,6 +27,7 @@ import {
   Blocks,
   HeartHandshake,
   Receipt,
+  HandCoins,
   Printer,
   IdCard,
   Fingerprint,
@@ -51,7 +52,8 @@ const menuItems = [
   { href: "/categories", label: "Categorias", icon: Blocks },
   { href: "/customers", label: "Clientes", icon: HeartHandshake },
   { href: "/expenses", label: "Gastos", icon: Receipt },
-  { href: "/labels", label: "Etiquetas", icon: Printer },
+  { href: "/loans", label: "Prestamos", icon: HandCoins },
+  { href: "/labels", label: "Codigos", icon: Printer },
   { href: "/users", label: "Personal", icon: IdCard, adminOnly: true },
   { href: "/audit", label: "Auditoria", icon: Fingerprint, adminOnly: true },
 ]

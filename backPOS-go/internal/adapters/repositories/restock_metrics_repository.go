@@ -328,6 +328,14 @@ type restockSuggestionRow struct {
 	// Historial de cantidades recibidas, agrupado en JSON: [{"q":12,"t":4},...].
 	// Alimenta models.LearnPackSize para deducir el empaque.
 	PackHistory string `gorm:"column:pack_history"`
+	// TransitDetail agrupa el transito vivo por (proveedor, pedido) y lo
+	// entrega como JSON para parsear en Go sin hacer un query adicional por
+	// producto. El shape de cada entrada es:
+	//   { "s": supplier_id, "n": supplier_name, "q": quantity,
+	//     "o": order_id, "d": expected_date }
+	// Un transito sin proveedor resuelto (dato historico incompleto) viaja
+	// con s=0 y n="".
+	TransitDetail string `gorm:"column:transit_detail"`
 }
 
 // SuggestionQueryParams son los filtros que acepta /restock/suggestions-v2.
@@ -416,24 +424,59 @@ WITH candidatos AS (
 		OR p.barcode ILIKE '%' || @search || '%'
 	  )
 ), transito_vivo AS (
-	SELECT product_id, SUM(quantity)::numeric AS quantity
+	-- Cada fila es un transito VIVO (una orden pendiente). Se conserva el
+	-- supplier_id + nombre + order_id + expected_date para poder desglosar
+	-- despues "6 de HERMARLY, 4 de POSTOBON" sin otro query. La cantidad
+	-- total por producto se calcula al JOIN con el agregado.
+	SELECT product_id, supplier_id, supplier_name, order_id, expected_date,
+	       SUM(quantity)::numeric AS quantity
 	FROM (
-		SELECT coi.product_id, SUM(coi.quantity)::numeric AS quantity
+		SELECT coi.product_id,
+		       co.supplier_id,
+		       COALESCE(NULLIF(TRIM(s.name), ''), '') AS supplier_name,
+		       co.id::text AS order_id,
+		       NULLIF(co.expected_date::text, '') AS expected_date,
+		       SUM(coi.quantity)::numeric AS quantity
 		FROM confirmed_order_items coi
 		JOIN candidatos c ON c.product_id = coi.product_id
 		JOIN confirmed_orders co ON co.id = coi.confirmed_order_id
+		LEFT JOIN suppliers s ON s.id = co.supplier_id AND s.deleted_at IS NULL
 		WHERE co.status IN ('pending', 'in_transit')
-		GROUP BY coi.product_id
+		GROUP BY coi.product_id, co.supplier_id, s.name, co.id, co.expected_date
 		UNION ALL
-		SELECT poi."productBarcode" AS product_id, SUM(poi.quantity)::numeric AS quantity
+		SELECT poi."productBarcode" AS product_id,
+		       po."supplierId" AS supplier_id,
+		       COALESCE(NULLIF(TRIM(s.name), ''), '') AS supplier_name,
+		       po.id::text AS order_id,
+		       NULLIF(TO_CHAR(COALESCE(po."deliveryDate", po."orderDate"), 'YYYY-MM-DD'), '') AS expected_date,
+		       SUM(poi.quantity)::numeric AS quantity
 		FROM purchase_order_items poi
 		JOIN candidatos c ON c.product_id = poi."productBarcode"
 		JOIN purchase_orders po ON po.id = poi."orderId"
+		LEFT JOIN suppliers s ON s.id = po."supplierId" AND s.deleted_at IS NULL
 		WHERE po.status IN ('PENDING', 'IN_TRANSIT')
 		  AND po.deleted_at IS NULL
 		  AND poi.deleted_at IS NULL
-		GROUP BY poi."productBarcode"
+		GROUP BY poi."productBarcode", po."supplierId", s.name, po.id, po."deliveryDate", po."orderDate"
 	) pendientes
+	GROUP BY product_id, supplier_id, supplier_name, order_id, expected_date
+), transito_total AS (
+	SELECT product_id, SUM(quantity)::numeric AS quantity
+	FROM transito_vivo
+	GROUP BY product_id
+), transito_detalle AS (
+	-- Un unico JSON por producto con el desglose por (proveedor, pedido).
+	-- Las claves cortas (s/n/q/o/d) reducen el tamano del payload cuando hay
+	-- muchos productos con transito; el parser Go las reconoce.
+	SELECT product_id,
+	       json_agg(json_build_object(
+	           's', COALESCE(supplier_id, 0),
+	           'n', supplier_name,
+	           'q', quantity,
+	           'o', order_id,
+	           'd', COALESCE(expected_date, '')
+	       ) ORDER BY expected_date NULLS LAST, supplier_name)::text AS detail
+	FROM transito_vivo
 	GROUP BY product_id
 ), ventas_vivas AS (
 	SELECT sd.barcode AS product_id,
@@ -496,6 +539,7 @@ SELECT
 		ELSE FLOOR(EXTRACT(EPOCH FROM (NOW() - c.last_reception_at)) / 86400)::int
 	END AS days_since_reception,
 	COALESCE(tv.quantity, 0)::numeric AS live_in_transit_qty,
+	COALESCE(td.detail, '[]') AS transit_detail,
 	effective.supplier_id AS effective_supplier_id,
 	effective.supplier_name AS effective_supplier_name,
 	effective.unit_cost AS effective_unit_cost,
@@ -518,7 +562,8 @@ SELECT
 	COALESCE(dc.days_zero_90d, 0)::integer AS live_days_zero_90d,
 	COALESCE(ea.historial, '[]') AS pack_history
 FROM candidatos c
-LEFT JOIN transito_vivo tv ON tv.product_id = c.product_id
+LEFT JOIN transito_total tv ON tv.product_id = c.product_id
+LEFT JOIN transito_detalle td ON td.product_id = c.product_id
 LEFT JOIN ventas_vivas vv ON vv.product_id = c.product_id
 LEFT JOIN dias_cero dc ON dc.product_id = c.product_id
 LEFT JOIN empaque_aprendido ea ON ea.product_id = c.product_id
@@ -856,6 +901,48 @@ func learnPackSizeFromHistory(raw string) float64 {
 	return models.LearnPackSize(history)
 }
 
+// parseTransitDetailJSON traduce el JSON agregado por la consulta de
+// sugerencias a una lista de models.InTransitProduct. Las claves cortas
+// (s/n/q/o/d) son las mismas que se emiten en el SQL.
+//
+// Un JSON invalido devuelve nil para que el campo quede omitido del
+// response (omitempty). El productID se agrega aqui porque el agregado
+// SQL no lo incluye por fila (ya viene de la fila padre).
+func parseTransitDetailJSON(raw, productID, fallbackName string) []models.InTransitProduct {
+	if raw == "" || raw == "[]" || raw == "null" {
+		return nil
+	}
+	var entries []struct {
+		S uint    `json:"s"`
+		N string  `json:"n"`
+		Q float64 `json:"q"`
+		O string  `json:"o"`
+		D string  `json:"d"`
+	}
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil
+	}
+	out := make([]models.InTransitProduct, 0, len(entries))
+	for _, e := range entries {
+		if e.Q <= 0 {
+			continue
+		}
+		out = append(out, models.InTransitProduct{
+			ProductID:    productID,
+			ProductName:  fallbackName,
+			Quantity:     e.Q,
+			SupplierID:   e.S,
+			SupplierName: strings.TrimSpace(e.N),
+			OrderID:      strings.TrimSpace(e.O),
+			ExpectedDate: strings.TrimSpace(e.D),
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) models.RestockSuggestionResponse {
 	metric := row.ProductRestockMetric
 	if row.EffectiveSupplierID != nil {
@@ -1089,6 +1176,9 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 		SuggestedMinStockReason: suggestedMinReason,
 		OrderReason:             orderReason,
 		LeadTimeSource:          leadSource,
+		// Desglose por proveedor del transito vivo. Vacio si no hay nada
+		// en camino, se omite del JSON por omitempty.
+		InTransitBreakdown: parseTransitDetailJSON(row.TransitDetail, row.ProductID, row.ProductName),
 		// Ventanas 30d/90d en vivo.
 		TotalSold90d:     row.LiveTotalSold90d,
 		AvgDailySales30d: demand30,
@@ -1355,6 +1445,18 @@ func (r *RestockMetricsRepository) SaveSupplierLearnedSchedules(
 
 // FindInTransitProducts returns pending quantities from both order systems.
 // The order being edited can be excluded so it does not block itself.
+//
+// Devuelve UNA fila POR (producto, proveedor): si el mismo producto esta en
+// camino desde Coca-Cola y desde Postobon al mismo tiempo, el frontend
+// recibe dos filas distintas y puede decirle al operador "6 en camino de
+// COCA-COLA · 4 en camino de POSTOBON". Esto respalda la advertencia de
+// pedidos cross-proveedor pedida por el dueno.
+//
+// Cuando el mismo proveedor tiene VARIAS ordenes abiertas por el mismo
+// producto, se agrega la cantidad y se expone el OrderID / ExpectedDate del
+// pedido mas proximo a llegar (orden ascendente por fecha esperada). Si la
+// fecha no existe en el pedido (purchase_orders viejos sin delivery_date),
+// se cae a la fecha de creacion para no inventar un dato.
 func (r *RestockMetricsRepository) FindInTransitProducts(
 	ctx context.Context,
 	productIDs []string,
@@ -1367,31 +1469,55 @@ func (r *RestockMetricsRepository) FindInTransitProducts(
 	var conflicts []models.InTransitProduct
 	err := r.db.WithContext(ctx).Raw(`
 		WITH pending AS (
-			SELECT coi.product_id, SUM(coi.quantity)::numeric AS quantity
+			SELECT coi.product_id,
+			       co.supplier_id,
+			       co.id::text AS order_id,
+			       co.expected_date::text AS expected_date,
+			       SUM(coi.quantity)::numeric AS quantity
 			FROM confirmed_order_items coi
 			JOIN confirmed_orders co ON co.id = coi.confirmed_order_id
 			WHERE coi.product_id IN ?
 			  AND UPPER(co.status) IN ('PENDING', 'IN_TRANSIT')
 			  AND (? = '' OR co.id::text <> ?)
-			GROUP BY coi.product_id
+			GROUP BY coi.product_id, co.supplier_id, co.id, co.expected_date
 			UNION ALL
-			SELECT poi."productBarcode" AS product_id, SUM(poi.quantity)::numeric AS quantity
+			SELECT poi."productBarcode" AS product_id,
+			       po."supplierId" AS supplier_id,
+			       po.id::text AS order_id,
+			       NULLIF(TO_CHAR(COALESCE(po."deliveryDate", po."orderDate"), 'YYYY-MM-DD'), '') AS expected_date,
+			       SUM(poi.quantity)::numeric AS quantity
 			FROM purchase_order_items poi
 			JOIN purchase_orders po ON po.id = poi."orderId"
 			WHERE poi."productBarcode" IN ?
 			  AND UPPER(po.status) IN ('PENDING', 'IN_TRANSIT')
 			  AND po.deleted_at IS NULL
 			  AND poi.deleted_at IS NULL
-			GROUP BY poi."productBarcode"
+			GROUP BY poi."productBarcode", po."supplierId", po.id, po."deliveryDate", po."orderDate"
+		), aggregated AS (
+			SELECT product_id,
+			       supplier_id,
+			       SUM(quantity)::numeric AS quantity,
+			       -- MIN sobre fechas en texto YYYY-MM-DD mantiene el orden lexicografico
+			       -- correcto; FILTER evita que un NULL propague como minimo falso.
+			       MIN(expected_date) FILTER (WHERE expected_date IS NOT NULL) AS expected_date,
+			       -- Primer OrderID con fecha disponible (desempate por fecha ascendente);
+			       -- si ninguno trae fecha, cualquier id vale como referencia.
+			       (ARRAY_AGG(order_id ORDER BY expected_date NULLS LAST, order_id))[1] AS order_id
+			FROM pending
+			GROUP BY product_id, supplier_id
+			HAVING SUM(quantity) > 0
 		)
-		SELECT pending.product_id,
-		       COALESCE(p."productName", pending.product_id) AS product_name,
-		       SUM(pending.quantity)::numeric AS quantity
-		FROM pending
-		LEFT JOIN products p ON p.barcode = pending.product_id
-		GROUP BY pending.product_id, p."productName"
-		HAVING SUM(pending.quantity) > 0
-		ORDER BY product_name
+		SELECT a.product_id,
+		       COALESCE(p."productName", a.product_id) AS product_name,
+		       a.quantity,
+		       COALESCE(a.supplier_id, 0) AS supplier_id,
+		       COALESCE(NULLIF(TRIM(s.name), ''), '') AS supplier_name,
+		       COALESCE(a.order_id, '') AS order_id,
+		       COALESCE(a.expected_date, '') AS expected_date
+		FROM aggregated a
+		LEFT JOIN products p ON p.barcode = a.product_id
+		LEFT JOIN suppliers s ON s.id = a.supplier_id AND s.deleted_at IS NULL
+		ORDER BY product_name, supplier_name, order_id
 	`, productIDs, excludeConfirmedOrderID, excludeConfirmedOrderID, productIDs).
 		Scan(&conflicts).Error
 	return conflicts, err

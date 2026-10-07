@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
 import {
-  Modal, ModalContent, Button, Avatar, Switch
+  Modal, ModalContent, Button, Avatar
 } from "@heroui/react";
+import { Switch } from "@/components/ui/switch";
 import {
   Banknote, Zap, Check, Wallet, ArrowRight, X,
   Calculator, ShieldCheck, TrendingUp, Grid3X3, Users, AlertTriangle,
@@ -13,6 +14,17 @@ import { Customer } from '@/lib/definitions';
 import { formatCurrency } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/api-error";
+import { API_URL } from "@/lib/constants";
+import { getSessionToken } from "@/lib/session";
+import {
+  type TicketData,
+  getAutoPrint as readAutoPrint,
+  setAutoPrint as persistAutoPrint,
+  printThermalTicket,
+  saleToTicket,
+  sendTicketImageToTelegram,
+  shareTicketImage,
+} from "@/lib/thermal-ticket";
 
 /* ============================================================================
  * TIPOGRAFÍA — REGLA DE ORO PARA UNA CAJA REGISTRADORA
@@ -34,6 +46,16 @@ interface UniversalPaymentModalProps {
     transfer: number;
     transferSource: string;
     credit: number;
+    // Shape extendido: cuando viene desde el historial corregido, el helper
+    // `initialPaidAmountsFromSale` entrega Nequi y Daviplata por separado
+    // para que el modal precargue ambos canales sin que el cajero tenga
+    // que redigitar los montos. Los campos legacy `transfer` y
+    // `transferSource` se mantienen para los consumidores que todavia
+    // mandan la suma colapsada (p.ej. abonos, egresos).
+    nequi?: number;
+    daviplata?: number;
+    otherTransfer?: number;
+    otherTransferSource?: string;
   };
   showSuccessScreen: boolean;
   submittingPayment: boolean;
@@ -84,12 +106,12 @@ interface SummaryTileProps {
 
 function SummaryTile({ label, icon, value, valueClassName = "", containerClassName = "", prefix = "$" }: SummaryTileProps) {
   return (
-    <div className={`bg-white dark:bg-[#18181b] px-3 py-2 md:px-4 md:py-3 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center ${containerClassName}`}>
+    <div className={`bg-white dark:bg-[#18181b] px-3 py-2 md:px-4 md:py-3 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col justify-center min-w-0 ${containerClassName}`}>
       <p className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-wider flex items-center gap-1.5 leading-none mb-1.5">
         {icon}
-        <span>{label}</span>
+        <span className="truncate">{label}</span>
       </p>
-      <p className={`text-2xl md:text-3xl font-semibold tabular-nums tracking-tight leading-none ${valueClassName}`}>
+      <p className={`text-xl md:text-3xl font-semibold tabular-nums tracking-tight leading-none truncate ${valueClassName}`} title={`${prefix}${formatCurrency(value)}`}>
         {prefix}{formatCurrency(value)}
       </p>
     </div>
@@ -216,19 +238,35 @@ export default function UniversalPaymentModal({
   // Inicializar estados cuando se abre el modal
   useEffect(() => {
     if (isOpen) {
+      // Nuevo shape (desde `initialPaidAmountsFromSale` del historial): trae
+      // Nequi y Daviplata por SEPARADO para que la correccion de una venta
+      // mixta precargue ambos canales sin colapsar. Si solo esta el shape
+      // legacy (`transfer` + `transferSource` singular), caemos a el para no
+      // romper a los consumidores viejos (abonos, egresos, caja).
+      const presetNequi = typeof initialPaidAmounts?.nequi === "number"
+        ? initialPaidAmounts.nequi
+        : (initialPaidAmounts?.transferSource === 'NEQUI' ? (initialPaidAmounts?.transfer || 0) : 0);
+      const presetDaviplata = typeof initialPaidAmounts?.daviplata === "number"
+        ? initialPaidAmounts.daviplata
+        : (initialPaidAmounts?.transferSource === 'DAVIPLATA' ? (initialPaidAmounts?.transfer || 0) : 0);
+
       setCashPaid(initialPaidAmounts?.cash || 0);
-      setNequiPaid(initialPaidAmounts?.transferSource === 'NEQUI' ? (initialPaidAmounts?.transfer || 0) : 0);
-      setDaviplataPaid(initialPaidAmounts?.transferSource === 'DAVIPLATA' ? (initialPaidAmounts?.transfer || 0) : 0);
+      setNequiPaid(presetNequi);
+      setDaviplataPaid(presetDaviplata);
       setCreditPaid(initialPaidAmounts?.credit || 0);
       setDialogAmount('');
       setCashTendered('');
       setIsMobileNumpadOpen(false);
       setIsReady(false); // No esta listo inmediatamentente
 
-      // Determinar tab inicial
+      // Determinar tab inicial: priorizamos canal con monto cargado para que
+      // el cajero vea de inmediato los montos acumulados en el pill del header.
       if (initialPaidAmounts?.credit && initialPaidAmounts.credit > 0) setActivePaymentTab('credit');
-      else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0) setActivePaymentTab(initialPaidAmounts.transferSource as any);
-      else setActivePaymentTab('cash');
+      else if (presetNequi > 0 && presetDaviplata === 0) setActivePaymentTab('NEQUI');
+      else if (presetDaviplata > 0 && presetNequi === 0) setActivePaymentTab('DAVIPLATA');
+      else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0 && initialPaidAmounts?.transferSource) {
+        setActivePaymentTab(initialPaidAmounts.transferSource as any);
+      } else setActivePaymentTab('cash');
 
       // Pequeño retardo de seguridad (300ms) para evitar capturar el Enter que abrio el modal
       const timer = setTimeout(() => setIsReady(true), 300);
@@ -251,15 +289,16 @@ export default function UniversalPaymentModal({
   const handleAddPayment = useCallback(() => {
     const val = currentDialogVal > 0 ? currentDialogVal : remainingDebt;
     if (val > 0) {
+      // Al acumular un canal digital, DEJAMOS el tab activo donde estaba.
+      // Antes se forzaba el salto a 'cash' automaticamente, lo que confundia
+      // al cajero que acababa de digitar un monto en Nequi y queria sumar
+      // otro parcial en el mismo canal. Ahora el cajero decide cuando saltar.
       if (activePaymentTab === 'NEQUI') {
         setNequiPaid(prev => prev + Math.min(val, remainingDebt));
-        setActivePaymentTab('cash');
       } else if (activePaymentTab === 'DAVIPLATA') {
         setDaviplataPaid(prev => prev + Math.min(val, remainingDebt));
-        setActivePaymentTab('cash');
       } else if (activePaymentTab === 'credit') {
         setCreditPaid(prev => prev + Math.min(val, remainingDebt));
-        setActivePaymentTab('cash');
       } else {
         if (val >= remainingDebt) setCashTendered(String(val));
         else setCashPaid(prev => prev + val);
@@ -365,13 +404,40 @@ export default function UniversalPaymentModal({
 
   const { toast } = useToast();
   const [isTelegramSending, setIsTelegramSending] = useState(false);
-  const [autoPrint, setAutoPrint] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('pos_auto_print_ticket') === 'true';
-    }
-    return false;
-  });
+  const [isSharing, setIsSharing] = useState(false);
+  // Preferencia unificada: se lee desde `thermal-ticket.getAutoPrint`, que
+  // honra tanto la clave canónica `pos_auto_print` como la legacy
+  // `pos_auto_print_ticket` por retrocompatibilidad.
+  const [autoPrint, setAutoPrint] = useState(() => readAutoPrint());
 
+  // Convierte el `lastReceipt` de la caja al shape que entiende saleToTicket.
+  // El receipt vive con un formato legacy (cashAmount/transferAmount/...);
+  // mapeamos con la cara de un Sale para reusar la misma fuente de ticket
+  // que el historial y evitar duplicar la plantilla.
+  const buildTicketData = useCallback((): TicketData => {
+    const items = (lastReceipt?.items ?? []).map((it: any) => ({
+      quantity: Number(it.quantity || it.cartQuantity || 1),
+      unitPrice: Number(it.unitPrice || it.salePrice || it.price || 0),
+      subtotal: Number(it.subtotal || (it.quantity || it.cartQuantity || 1) * (it.unitPrice || it.salePrice || it.price || 0)),
+      barcode: it.barcode,
+      product: { productName: it.product?.productName || it.name || it.productName || "PRODUCTO" },
+    }));
+    const saleLike = {
+      id: lastReceipt?.saleId ?? lastReceipt?.id ?? "POS",
+      date: lastReceipt?.date,
+      total: Number(lastReceipt?.total ?? totalToPay),
+      cashAmount: Number(lastReceipt?.cashAmount ?? 0),
+      transferAmount: Number(lastReceipt?.transferAmount ?? 0),
+      creditAmount: Number(lastReceipt?.creditAmount ?? 0),
+      change: Number(lastReceipt?.change ?? lastChange ?? 0),
+      employeeName: lastReceipt?.employeeName,
+      client: { name: lastReceipt?.clientName || client?.name, dni: lastReceipt?.clientDni || client?.dni, phone: lastReceipt?.clientPhone || client?.phone },
+      details: items,
+    };
+    return saleToTicket(saleLike, lastReceipt?.paymentMethod);
+  }, [lastReceipt, totalToPay, lastChange, client]);
+
+  // Texto plano (compat para el endpoint legacy /telegram/ticket).
   const generateTicketText = useCallback(() => {
     const rClient = lastReceipt?.clientName || client?.name || "CONSUMIDOR FINAL";
     const rDni = lastReceipt?.clientDni || client?.dni || "0";
@@ -404,10 +470,33 @@ export default function UniversalPaymentModal({
   }, [lastReceipt, client, totalToPay, lastChange]);
 
   const handleTelegramShare = useCallback(async (silent = false) => {
-    const text = generateTicketText();
-    if (!text) return;
     setIsTelegramSending(true);
     try {
+      // 1er intento: imagen con la misma plantilla térmica. El backend valida
+      // MIME + firma mágica PNG y reusa TelegramService.SendPhoto. Si el
+      // endpoint todavía no está desplegado, caemos al legacy de texto.
+      try {
+        const token = getSessionToken() ?? "";
+        const data = buildTicketData();
+        const result = await sendTicketImageToTelegram(data, {
+          token,
+          apiBase: API_URL,
+          caption: `Factura #${data.ticketNumber}`,
+        });
+        if (result.ok) {
+          if (!silent) toast({ title: "FACTURA ENVIADA", description: "Imagen enviada a Telegram." });
+          return;
+        }
+        if (result.status !== 404 && result.status !== 405) {
+          throw new Error(`HTTP ${result.status}`);
+        }
+        // 404/405: endpoint multipart aún no publicado → fallback a texto.
+      } catch {
+        // No pisamos el flujo: pasamos al legacy. El operador no debería
+        // enterarse de la diferencia salvo que ambos fallen.
+      }
+      const text = generateTicketText();
+      if (!text) return;
       await apiFetch('/telegram/ticket', {
         method: 'POST',
         body: JSON.stringify({ text }),
@@ -423,34 +512,49 @@ export default function UniversalPaymentModal({
     } finally {
       setIsTelegramSending(false);
     }
-  }, [generateTicketText, toast]);
+  }, [buildTicketData, generateTicketText, toast]);
 
-  const handleWhatsAppShare = useCallback(() => {
-    const text = generateTicketText();
-    if (!text) return;
-    let phone = (lastReceipt?.clientPhone || client?.phone || '').replace(/\D/g, '');
-    if (phone && !phone.startsWith('57') && phone.length === 10) {
-      phone = `57${phone}`;
+  const handleWhatsAppShare = useCallback(async () => {
+    setIsSharing(true);
+    try {
+      const data = buildTicketData();
+      // Camino preferido: compartir el PNG. En celular dispara el share nativo
+      // (foto adjunta); en escritorio sin share baja el PNG + abre WhatsApp
+      // con un texto corto, sin re-mandar el detalle completo con emojis.
+      await shareTicketImage(data, {
+        phone: lastReceipt?.clientPhone || client?.phone,
+      });
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "NO SE PUDO COMPARTIR",
+        description: err?.message || "Intenta imprimir y envía la foto manualmente.",
+      });
+    } finally {
+      setIsSharing(false);
     }
-    const url = phone
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(text)}`
-      : `https://wa.me/?text=${encodeURIComponent(text)}`;
-    window.open(url, '_blank');
-  }, [generateTicketText, lastReceipt, client]);
+  }, [buildTicketData, client?.phone, lastReceipt?.clientPhone, toast]);
 
   const handlePrintTicket = useCallback(() => {
-    window.print();
-  }, []);
+    // Antes se usaba window.print() de la página entera: la impresora térmica
+    // recibía el DOM completo del POS y salía descuadrado. Ahora se delega al
+    // iframe aislado que ya usa `printThermalTicket`.
+    try {
+      printThermalTicket(buildTicketData());
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "IMPRESIÓN", description: err?.message || "No se pudo imprimir el ticket." });
+    }
+  }, [buildTicketData, toast]);
 
-  // Efecto de Auto-Impresión persistente
+  // Efecto de Auto-Impresión persistente — usa la MISMA plantilla térmica.
   useEffect(() => {
     if (showSuccessScreen && autoPrint) {
       const timer = setTimeout(() => {
-        window.print();
+        try { printThermalTicket(buildTicketData()); } catch { /* no debe tumbar la UI */ }
       }, 200);
       return () => clearTimeout(timer);
     }
-  }, [showSuccessScreen, autoPrint]);
+  }, [showSuccessScreen, autoPrint, buildTicketData]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -552,15 +656,19 @@ export default function UniversalPaymentModal({
       size="full"
       onClose={onCloseComplete}
     classNames={{
-        base: "bg-gray-50 dark:bg-zinc-950 max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none",
+        // base: ancho real limitado a 100vw en movil para que el flex-row
+        // interno NO empuje la caja fuera de la pantalla (bug reportado:
+        // el pad desktop y las imagenes grandes de billetes sobresalian
+        // por la derecha en 360-640 px). `w-screen max-w-[100vw]` fuerza
+        // 100vw real en movil; en escritorio recupera el ancho fluido.
+        base: "bg-gray-50 dark:bg-zinc-950 w-screen md:w-auto max-w-[100vw] md:max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none",
         closeButton: "hidden",
         wrapper: "fixed top-0 left-0 w-screen h-screen bg-black/70 z-[9999] flex items-center justify-center"
       }}
     >
       <ModalContent>
         {() => (
-          <div className="flex flex-col md:flex-row h-full overflow-hidden relative">
-            {showSuccessScreen && (
+          <div className="flex flex-col md:flex-row h-full min-h-0 min-w-0 overflow-hidden relative">            {showSuccessScreen && (
               <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center justify-center p-4 md:p-8 animate-in fade-in zoom-in duration-300">
                 <div className="bg-white dark:bg-[#18181b] p-6 md:p-8 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-md relative overflow-hidden group">
                   <div className={`h-16 w-16 rounded-2xl ${theme.bg} text-white flex items-center justify-center mb-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}>
@@ -580,6 +688,8 @@ export default function UniversalPaymentModal({
                     <div className="grid grid-cols-3 gap-2 w-full">
                       <Button
                         size="sm"
+                        isLoading={isSharing}
+                        aria-label="Compartir factura por WhatsApp"
                         className="h-11 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 rounded-xl font-semibold uppercase text-[11px] tracking-wider flex items-center justify-center gap-1.5"
                         onPress={handleWhatsAppShare}
                       >
@@ -615,9 +725,10 @@ export default function UniversalPaymentModal({
                         size="sm"
                         color="success"
                         isSelected={autoPrint}
+                        aria-label="Impresión automática del ticket"
                         onValueChange={(val) => {
                           setAutoPrint(val);
-                          localStorage.setItem('pos_auto_print_ticket', String(val));
+                          persistAutoPrint(val);
                         }}
                       />
                     </div>
@@ -636,7 +747,7 @@ export default function UniversalPaymentModal({
               </div>
             )}
 
-            <div className="w-full md:w-[220px] bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
+            <div className="w-full md:w-[220px] md:shrink-0 min-w-0 bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
               <div className="hidden md:flex flex-col mb-6 px-1">
                 <h3 className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-widest leading-none">
                   Método de pago
@@ -697,7 +808,7 @@ export default function UniversalPaymentModal({
               </Button>
             </div>
 
-            <div className="flex-1 bg-gray-50 dark:bg-zinc-950 pt-3 md:pt-6 px-3 md:px-8 pb-3 flex flex-col relative overflow-hidden z-10">
+            <div className="flex-1 min-w-0 bg-gray-50 dark:bg-zinc-950 pt-3 md:pt-6 px-3 md:px-8 pb-3 flex flex-col relative overflow-hidden z-10">
               <header className="mb-3 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-2 md:gap-4">
                 <div className="flex flex-col min-w-0">
                   <h1 className="text-xl md:text-3xl font-semibold text-gray-900 dark:text-white uppercase tracking-tight leading-tight mb-1 text-center md:text-left">
@@ -856,6 +967,16 @@ export default function UniversalPaymentModal({
 
                    {!isMobileNumpadOpen ? (
                      <>
+                      {/* Grilla de denominaciones:
+                          - MOVIL: chips compactos h-10 con cifra ("$100.000"),
+                            dos columnas; antes era una galeria aspect-[2.2/1]
+                            con <img object-cover> que consumia ~462 px solo en
+                            billetes y tapaba el resumen y el boton PROCESAR en
+                            360x640. El valor funcional (toque rapido para
+                            sumar monto) se preserva.
+                          - DESKTOP md+: billete real (image) con aspect ratio
+                            original.
+                      */}
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mt-3 content-start">
                         {[
                           { v: 100000, img: '100.000.jpg' },
@@ -873,7 +994,7 @@ export default function UniversalPaymentModal({
                             key={v}
                             tabIndex={-1}
                             onMouseDown={(e) => e.preventDefault()}
-                            className="aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] h-auto"
+                            className="h-10 md:h-auto md:aspect-[2.2/1] w-full bg-white dark:bg-zinc-800 border border-gray-100 dark:border-white/5 group active:scale-95 transition-all rounded-xl md:rounded-2xl p-0 overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
                             aria-label={`Agregar $${formatCurrency(v)}`}
                             onPress={() => {
                               setCashTendered(prev => String(Number(prev || 0) + v));
@@ -884,39 +1005,48 @@ export default function UniversalPaymentModal({
                               }, 0);
                             }}
                           >
+                            {/* Chip con cifra visible en movil (<md) */}
+                            <span className="md:hidden text-[13px] font-semibold tabular-nums text-gray-900 dark:text-white tracking-tight leading-none">
+                              ${formatCurrency(v)}
+                            </span>
+                            {/* Imagen real del billete en escritorio */}
                             <img
                               src={`/logos/${img}`}
-                              className="h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
+                              className="hidden md:block h-full w-full object-cover group-hover:scale-105 transition-transform duration-500"
                               alt={`Billete de ${v}`}
                             />
                           </Button>
                         ))}
+                        {/* Teclado: SOLO en celular. En escritorio el numpad ya
+                            vive fijo en la columna derecha; este boton con
+                            col-span-2 + aspect-ratio salia el doble de alto que
+                            un billete y forzaba scroll en la columna central. */}
                         <Button
-                          className={`aspect-[2.2/1] w-full lg:col-span-2 bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-2xl p-0 flex flex-col items-center justify-center gap-1 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`}
+                          className={`md:hidden h-10 w-full bg-${themeColor}-500 text-white border-none active:scale-95 transition-all rounded-xl p-0 flex flex-row items-center justify-center gap-1.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] shadow-${themeColor}-500/20`}
+                          aria-label="Abrir teclado numérico"
                           onPress={() => setIsMobileNumpadOpen(true)}
                         >
-                          <Calculator size={18} />
+                          <Calculator size={16} />
                           <span className="text-[11px] font-semibold uppercase tracking-wider">Teclado</span>
                         </Button>
                       </div>
-                      <Button
-                        className={`md:hidden h-14 mt-4 ${theme.bg} text-white font-semibold uppercase rounded-2xl tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] active:scale-95 transition-all`}
-                        onPress={processPayment}
-                        isLoading={submittingPayment}
-                      >
-                        PROCESAR PAGO <ShieldCheck size={18} className="ml-2" />
-                      </Button>
                     </>
                    ) : (
                     <>
+                      {/* Numpad movil del tab efectivo. Antes mostraba '00';
+                          se reemplazo por '+' para igualar al numpad desktop
+                          y permitir acumular canales en MOVIL (critico al
+                          corregir pagos combinados desde el historial). */}
                       <div className="grid grid-cols-3 gap-2 mt-3">
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
+                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
                           <NumpadKey
                             key={n}
                             value={n}
-                            variant={n === 'CE' ? 'clear' : 'digit'}
+                            variant={n === 'CE' ? 'clear' : n === '+' ? 'add' : 'digit'}
+                            themeBgClass={theme.bg}
                             onPress={() => {
                               if (n === 'CE') setDialogAmount('');
+                              else if (n === '+') handleAddPayment();
                               else setDialogAmount((p: string) => p + String(n));
                             }}
                           />
@@ -929,16 +1059,23 @@ export default function UniversalPaymentModal({
                         >
                           <Grid3X3 size={16} /> BILLETES
                         </Button>
-                        <Button
-                          className={`flex-[2] h-12 ${theme.bg} text-white font-semibold uppercase rounded-2xl tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] active:scale-95 transition-all`}
-                          onPress={processPayment}
-                          isLoading={submittingPayment}
-                        >
-                          REALIZAR <ShieldCheck size={16} />
-                        </Button>
                       </div>
                     </>
                    )}
+
+                   {/* Sticky action bar en movil: siempre alcanzable sin
+                       scroll, respeta safe-area iPhone. En desktop queda
+                       oculta porque el boton principal vive en el pad
+                       derecho. */}
+                   <div className="md:hidden sticky bottom-0 left-0 right-0 -mx-3 mt-3 bg-gray-50 dark:bg-zinc-950 border-t border-gray-200 dark:border-white/5 px-3 pt-3 pb-[max(env(safe-area-inset-bottom),0.75rem)]">
+                     <Button
+                       className={`h-14 w-full ${theme.bg} text-white font-semibold uppercase rounded-2xl tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] active:scale-95 transition-all`}
+                       onPress={processPayment}
+                       isLoading={submittingPayment}
+                     >
+                       {isMobileNumpadOpen ? 'REALIZAR' : 'PROCESAR PAGO'} <ShieldCheck size={18} className="ml-2" />
+                     </Button>
+                   </div>
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1 custom-scrollbar">
@@ -1045,14 +1182,42 @@ export default function UniversalPaymentModal({
                     </div>
                   )}
 
+                  {/* Boton explicito '+ AGREGAR CANAL' visible en MOVIL para
+                      corregir pagos combinados desde el historial. Antes el
+                      '+' solo existia en el pad lateral de escritorio y en
+                      movil era imposible acumular. Aparece siempre que la
+                      pestana no sea credit, y queda deshabilitado si no hay
+                      monto digitado ni restante por asignar. */}
+                  <Button
+                    tabIndex={-1}
+                    onMouseDown={(e) => e.preventDefault()}
+                    isDisabled={(currentDialogVal <= 0 && remainingDebt <= 0) || activePaymentTab === 'credit'}
+                    className={`md:hidden h-12 mb-3 w-full font-semibold uppercase rounded-2xl text-[12px] tracking-wider shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95 transition-all flex items-center justify-center gap-2 ${
+                      (currentDialogVal <= 0 && remainingDebt <= 0) || activePaymentTab === 'credit'
+                        ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 border border-zinc-200 dark:border-white/5 cursor-not-allowed'
+                        : `${theme.bg} text-white border border-transparent`
+                    }`}
+                    onPress={handleAddPayment}
+                    aria-label="Agregar canal al pago combinado"
+                  >
+                    + AGREGAR CANAL
+                  </Button>
+
+                  {/* Numpad movil del tab Nequi/Daviplata/Fiado. Antes
+                      mostraba '00'; se reemplazo por '+' para que en MOVIL
+                      el cajero pueda ACUMULAR mas de un canal al corregir
+                      pagos combinados desde el historial. En desktop el '+'
+                      vive en el pad lateral derecho (ya existente). */}
                   <div className="grid grid-cols-3 gap-2">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '00', 'CE'].map(n => (
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
                       <NumpadKey
                         key={n}
                         value={n}
-                        variant={n === 'CE' ? 'clear' : 'digit'}
+                        variant={n === 'CE' ? 'clear' : n === '+' ? 'add' : 'digit'}
+                        themeBgClass={theme.bg}
                         onPress={() => {
                           if (n === 'CE') setDialogAmount('');
+                          else if (n === '+') handleAddPayment();
                           else setDialogAmount((p: string) => p + String(n));
                         }}
                       />
@@ -1076,7 +1241,7 @@ export default function UniversalPaymentModal({
                   )}
 
                   <Button
-                    className={`md:hidden h-14 w-full font-semibold uppercase rounded-2xl mt-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] tracking-wider active:scale-95 transition-all ${
+                    className={`md:hidden h-14 w-full font-semibold uppercase rounded-2xl mt-4 sticky bottom-0 shadow-[0_8px_30px_rgb(0,0,0,0.12)] text-[13px] tracking-wider active:scale-95 transition-all mb-[max(env(safe-area-inset-bottom),0.5rem)] ${
                         isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund ? 'bg-amber-500/20 text-amber-500 border border-amber-500/30 cursor-not-allowed' : `${theme.bg} text-white`
                     }`}
                     onPress={processPayment}
@@ -1089,8 +1254,11 @@ export default function UniversalPaymentModal({
               )}
             </div>
 
-            {/* Teclado Pad Derecho Maestro */}
-            <div className="hidden md:flex w-[320px] bg-white dark:bg-[#18181b] border-l border-gray-200 dark:border-white/5 p-6 flex-col gap-4 z-20">
+            {/* Teclado Pad Derecho Maestro — solo escritorio.
+                `hidden md:flex` lo saca del DOM visual en movil pero el
+                `shrink-0` sigue siendo clave en desktop para que no se
+                comprima al tener mucho contenido en la columna central. */}
+            <div className="hidden md:flex w-[320px] shrink-0 min-w-0 bg-white dark:bg-[#18181b] border-l border-gray-200 dark:border-white/5 p-6 flex-col gap-4 z-20">
               <label className="bg-gray-50 dark:bg-zinc-950 p-5 rounded-2xl border border-gray-200 dark:border-white/10 text-right shadow-inner relative overflow-hidden cursor-text">
                 <div className={`absolute top-2 left-2 opacity-5 ${theme.text}`}><Calculator size={44} /></div>
                 <p className={`text-[11px] font-semibold ${theme.text} uppercase tracking-wider flex items-center justify-end gap-2 relative z-10 mb-2`}>

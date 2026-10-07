@@ -117,9 +117,11 @@ export function stripStaleTimestamp(payload) {
  * así que un no-admin verá 403 aunque el frontend lo permita. La UI usa este
  * chequeo para ocultar el botón y pedir explícitamente que un administrador
  * apruebe la fusión.
+ *
+ * Esta función delega al helper central `src/lib/auth-helpers.mjs` para que
+ * exista una sola tabla de alias de admin en todo el frontend.
  */
+import { isAdminRole as _isAdminRoleCentral } from "./auth-helpers.mjs";
 export function isAdminRole(role) {
-  if (!role) return false;
-  const normalized = String(role).trim().toLowerCase();
-  return normalized === 'admin' || normalized === 'administrador' || normalized === 'superadmin';
+  return _isAdminRoleCentral(role);
 }

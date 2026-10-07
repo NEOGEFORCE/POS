@@ -12,6 +12,8 @@ type ClosureRepository interface {
 	GetByDateRange(from, to time.Time) ([]models.CashierClosure, error)
 	GetAll() ([]models.CashierClosure, error)
 	GetByID(id uint) (*models.CashierClosure, error)
+	// GetByIDWithTx recarga un cierre dentro de una transacción.
+	GetByIDWithTx(tx interface{}, id uint) (*models.CashierClosure, error)
 	GetLast() (*models.CashierClosure, error)
 	GetGlobalReportedBalance() (float64, error)
 	GetGlobalReportedBalanceByMethod() (map[string]float64, error)
@@ -22,4 +24,10 @@ type ClosureRepository interface {
 	GetMonthlyReconstructedSales() (map[string]float64, error)
 	Delete(id uint) error
 	Update(id uint, updates map[string]interface{}) error
+	// UpdateWithTx ejecuta el UPDATE con allowlist dentro de una transacción.
+	UpdateWithTx(tx interface{}, id uint, updates map[string]interface{}) error
+	// FindIDByClientTxID consulta la columna de idempotencia (migración
+	// 018) dentro de una transacción activa. Tolerante a migración
+	// no aplicada: devuelve (0, nil, nil).
+	FindIDByClientTxID(tx interface{}, clientTxID string) (uint, *models.CashierClosure, error)
 }

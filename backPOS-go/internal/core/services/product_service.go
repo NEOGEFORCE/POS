@@ -3,14 +3,10 @@ package services
 import (
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"io"
 	"log"
 	"math"
-	"net/http"
-	"os"
 	"strings"
 	"time"
 
@@ -641,8 +637,35 @@ func (s *ProductService) EditReception(ref string, dniStr string, reason string,
 }
 
 // --- AI Invoice Reader Logic ---
+//
+// La función ScanInvoice es el punto de entrada del lector de facturas.
+// El prompt, el helper de normalización (normalizeExtractedItem), el
+// splitter de bonos (splitBonusItems) y la llamada a Claude Vision viven
+// en invoice_reader.go dentro del mismo paquete.
+//
+// Flujo:
+//  1. Carga aliases y params del proveedor.
+//  2. Pide a Claude el JSON con el shape nuevo (incluye barcode y DTO).
+//  3. Normaliza cada ítem (quantity signo, DTO %/$, LineType, impuestos).
+//  4. Aplica splitBonusItems: líneas con bonus_quantity se parten en
+//     REGULAR + BONUS.
+//  5. Match jerárquico: primero barcode (si Claude lo extrajo y existe en
+//     catálogo), luego alias del proveedor, finalmente sugerencias.
+//  6. Propaga a ScannedItem/UnmatchedItem los campos de contrato
+//     (LineType, BonusQuantity, DiscountPercentage, Iva/Icui/Ibua %).
 
-func (s *ProductService) ScanInvoice(imageBase64, mimeType, supplierName string, supplierID uint, expectedTaxes *models.ExpectedTaxes) (*models.ScanInvoiceResult, error) {
+// ScanInvoice procesa la imagen de una factura y devuelve items emparejados
+// y pendientes de emparejar.
+//
+// ctx viaja desde el handler y controla la cancelación de la llamada HTTP
+// a Claude: si el cliente del POS cuelga el request, no retenemos el
+// goroutine esperando 90 segundos.
+func (s *ProductService) ScanInvoice(
+	ctx context.Context,
+	imageBase64, mimeType, supplierName string,
+	supplierID uint,
+	expectedTaxes *models.ExpectedTaxes,
+) (*models.ScanInvoiceResult, error) {
 	aliases, err := s.repo.GetSupplierAliases(supplierID)
 	if err != nil {
 		aliases = make(map[string]models.SupplierProductAlias)
@@ -650,34 +673,83 @@ func (s *ProductService) ScanInvoice(imageBase64, mimeType, supplierName string,
 
 	params, _ := s.repo.GetSupplierInvoiceParams(supplierID)
 
-	extractedItems, err := s.callClaudeVision(imageBase64, mimeType, supplierName, params)
+	extractedItems, err := s.callClaudeVision(ctx, imageBase64, mimeType, supplierName, params, expectedTaxes)
 	if err != nil {
 		return nil, err
 	}
 
+	// 1. Normalizar cada ítem en sitio (quantity signo, DTO %/$, LineType,
+	//    impuestos). Después de este paso, la invariante del contrato se
+	//    cumple en toda la lista.
+	for i := range extractedItems {
+		normalizeExtractedItem(&extractedItems[i])
+	}
+
+	// 2. Partir bonificaciones del patrón A en pares REGULAR + BONUS.
+	//    splitBonusItems es idempotente sobre líneas que ya vinieron
+	//    separadas (patrón B).
+	extractedItems = splitBonusItems(extractedItems)
+
 	result := &models.ScanInvoiceResult{}
 
 	for _, extracted := range extractedItems {
-		if extracted.Quantity <= 0 {
+		// La normalización garantiza Quantity >= 0 y LineType asignado.
+		// Un item con Quantity == 0 realmente no aporta: lo descartamos.
+		if extracted.Quantity == 0 {
 			continue
 		}
 
-		if alias, ok := aliases[strings.ToUpper(extracted.Name)]; ok {
-			product, _ := s.repo.GetByBarcode(alias.ProductBarcode)
-			if product != nil {
-				item := s.calculateItemDetails(product, extracted, params, "alias", 1.0)
-				result.ScannedItems = append(result.ScannedItems, item)
-				continue
+		// --- Match jerárquico ---
+		var matched *models.Product
+		matchType := ""
+		confidence := 0.0
+
+		// 2.a Match por barcode: la fuente más confiable. Sólo si el OCR
+		//     devolvió un código de barras no vacío y existe en catálogo.
+		if trimmed := strings.TrimSpace(extracted.Barcode); trimmed != "" {
+			if product, err := s.repo.GetByBarcode(trimmed); err == nil && product != nil {
+				matched = product
+				matchType = "barcode"
+				confidence = 1.0
 			}
 		}
 
+		// 2.b Fallback a alias por nombre normalizado del proveedor.
+		if matched == nil {
+			if alias, ok := aliases[strings.ToUpper(strings.TrimSpace(extracted.Name))]; ok {
+				if product, err := s.repo.GetByBarcode(alias.ProductBarcode); err == nil && product != nil {
+					matched = product
+					matchType = "alias"
+					confidence = 1.0
+				}
+			}
+		}
+
+		if matched != nil {
+			item := s.calculateItemDetails(matched, extracted, params, matchType, confidence)
+			result.ScannedItems = append(result.ScannedItems, item)
+			continue
+		}
+
+		// 3. No match: va al reviewer con TODO el shape para que el
+		//    frontend muestre el DTO y los impuestos pre-detectados.
 		result.Unmatched = append(result.Unmatched, models.UnmatchedItem{
-			InvoiceName: extracted.Name,
-			Quantity:    extracted.Quantity,
-			UnitPrice:   extracted.UnitPrice,
-			Suggestions: s.repo.SearchSimilarProducts(extracted.Name, 5),
+			InvoiceName:        extracted.Name,
+			Quantity:           extracted.Quantity,
+			LineType:           extracted.LineType,
+			BonusQuantity:      extracted.BonusQuantity,
+			DiscountPercentage: extracted.DiscountPercentage,
+			UnitPrice:          extracted.UnitPrice,
+			IvaPercentage:      extracted.IvaPercentage,
+			IbuaPercentage:     extracted.IbuaPercentage,
+			IcuiPercentage:     extracted.IcuiPercentage,
+			Suggestions:        s.repo.SearchSimilarProducts(extracted.Name, 5),
 		})
 	}
+
+	// Totales del contrato: ambos campos siempre consistentes.
+	result.TotalDetected = len(result.ScannedItems) + len(result.Unmatched)
+	result.TotalMatched = len(result.ScannedItems)
 
 	return result, nil
 }
@@ -688,16 +760,35 @@ func (s *ProductService) calculateItemDetails(product *models.Product, extracted
 		unitPrice = extracted.TotalPrice / extracted.Quantity
 	}
 
-	// Los porcentajes del producto son la tasa de cada impuesto.
+	// Tasas efectivas por línea: la FACTURA es la verdad fiscal del momento.
+	// Si el OCR extrajo un porcentaje > 0, lo preferimos sobre el del producto;
+	// si no, usamos el guardado en catálogo. Esto permite que un proveedor que
+	// cambia el IBUA de 8 a 18 en una línea concreta quede reflejado sin que
+	// el operador tenga que corregir el catálogo primero. Si todo está en 0,
+	// la línea entra sin impuestos (REGULAR puro sin fiscal).
 	productRates := models.TaxRates{
 		IvaPct:  product.Iva,
 		IcuiPct: product.Icui,
 		IbuaPct: product.Ibua,
 	}
+	effectiveRates := models.TaxRates{
+		IvaPct:  productRates.IvaPct,
+		IcuiPct: productRates.IcuiPct,
+		IbuaPct: productRates.IbuaPct,
+	}
+	if extracted.IvaPercentage > 0 {
+		effectiveRates.IvaPct = extracted.IvaPercentage
+	}
+	if extracted.IcuiPercentage > 0 {
+		effectiveRates.IcuiPct = extracted.IcuiPercentage
+	}
+	if extracted.IbuaPercentage > 0 {
+		effectiveRates.IbuaPct = extracted.IbuaPercentage
+	}
 
 	// Si la factura del proveedor ya trae los impuestos incluidos, se quitan
 	// para llegar a la base. Sólo se descuentan los que el proveedor realmente
-	// incluye, por eso se arma un TaxRates parcial en vez de usar productRates.
+	// incluye, por eso se arma un TaxRates parcial en vez de usar effectiveRates.
 	//
 	// Antes esto se hacía dividiendo impuesto por impuesto —multiplicativo—
 	// mientras la recepción sumaba los porcentajes —aditivo—. Con dos impuestos
@@ -706,20 +797,23 @@ func (s *ProductService) calculateItemDetails(product *models.Product, extracted
 	if params != nil {
 		included := models.TaxRates{}
 		if params.PriceIncludesIVA {
-			included.IvaPct = product.Iva
+			included.IvaPct = effectiveRates.IvaPct
 		}
 		if params.PriceIncludesICUI {
-			included.IcuiPct = product.Icui
+			included.IcuiPct = effectiveRates.IcuiPct
 		}
 		if params.PriceIncludesIBUA {
-			included.IbuaPct = product.Ibua
+			included.IbuaPct = effectiveRates.IbuaPct
 		}
 		if !included.IsZero() {
 			unitPrice = models.NetFromGross(unitPrice, included)
 		}
 	}
 
-	costoReal := models.GrossFromNet(unitPrice, productRates)
+	// REGLA FISCAL: GrossFromNet trabaja con la base pelada; el DTO NO
+	// entra en esta cuenta (ver reception_discount_test.go). El DTO
+	// viaja aparte como DiscountPercentage al carrito.
+	costoReal := models.GrossFromNet(unitPrice, effectiveRates)
 
 	var margin float64
 	var marginSource string
@@ -739,150 +833,27 @@ func (s *ProductService) calculateItemDetails(product *models.Product, extracted
 	pvpSugerido = applyRounding(pvpSugerido)
 
 	return models.ScannedItem{
-		Barcode:      product.Barcode,
-		ProductName:  product.ProductName,
-		InvoiceName:  extracted.Name,
-		Quantity:     extracted.Quantity,
-		CostUnit:     math.Round(unitPrice*100) / 100,
-		CostoReal:    math.Round(costoReal*100) / 100,
-		PVPActual:    product.SalePrice,
-		PVPSugerido:  pvpSugerido,
-		MarginUsed:   margin,
-		MarginSource: marginSource,
-		IVA:          product.Iva,
-		ICUI:         product.Icui,
-		IBUA:         product.Ibua,
-		CurrentStock: product.Quantity,
-		CurrentWAC:   product.PurchasePrice,
-		Confidence:   confidence,
-		MatchType:    matchType,
+		Barcode:            product.Barcode,
+		ProductName:        product.ProductName,
+		InvoiceName:        extracted.Name,
+		Quantity:           extracted.Quantity,
+		LineType:           extracted.LineType,
+		BonusQuantity:      extracted.BonusQuantity,
+		DiscountPercentage: extracted.DiscountPercentage,
+		CostUnit:           math.Round(unitPrice*100) / 100,
+		CostoReal:          math.Round(costoReal*100) / 100,
+		PVPActual:          product.SalePrice,
+		PVPSugerido:        pvpSugerido,
+		MarginUsed:         margin,
+		MarginSource:       marginSource,
+		IVA:                effectiveRates.IvaPct,
+		ICUI:               effectiveRates.IcuiPct,
+		IBUA:               effectiveRates.IbuaPct,
+		CurrentStock:       product.Quantity,
+		CurrentWAC:         product.PurchasePrice,
+		Confidence:         confidence,
+		MatchType:          matchType,
 	}
 }
 
-func buildInvoicePrompt(supplierName string, params *models.SupplierInvoiceParams) string {
-	prompt := fmt.Sprintf("\x60Analiza esta factura del proveedor \"%s\".\n"+
-		"Extrae TODOS los productos con sus cantidades y precios.\n"+
-		"Responde ÚNICAMENTE con JSON válido, sin texto adicional en el siguiente formato:\n"+
-		"[\n"+
-		"  {\n"+
-		"    \"name\": \"nombre exacto del producto como aparece en la factura\",\n"+
-		"    \"quantity\": número,\n"+
-		"    \"unitPrice\": número,\n"+
-		"    \"totalPrice\": número\n"+
-		"  }\n"+
-		"]\n"+
-		"Reglas estrictas:\n"+
-		"- Si solo aparece precio total de línea, divide entre cantidad para obtener unitario\n"+
-		"- Ignora filas de subtotal, total, descuentos globales, encabezados y pie de página\n"+
-		"- Si una cantidad dice \"1 PAC x 6 UND\", pon quantity: 6\n"+
-		"- Precios como números puros sin símbolos ni puntos de miles\n"+
-		"- Si un valor no es legible, pon 0\n"+
-		"- NO incluyas productos con cantidad 0\x60", supplierName)
-
-	if params != nil && params.Notes != "" {
-		prompt += "\nInstrucción especial para este proveedor: " + params.Notes
-	}
-	return prompt
-}
-
-func (s *ProductService) callClaudeVision(imageBase64, mimeType, supplierName string, params *models.SupplierInvoiceParams) ([]models.ExtractedItem, error) {
-	apiKey := os.Getenv("ANTHROPIC_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("ANTHROPIC_API_KEY no configurado en .env")
-	}
-
-	prompt := buildInvoicePrompt(supplierName, params)
-
-	// Limpiar cabecera data:image/... del base64 si existe
-	cleanBase64 := imageBase64
-	if idx := strings.Index(imageBase64, ","); idx != -1 {
-		cleanBase64 = imageBase64[idx+1:]
-	}
-
-	// Determinar media_type limpio
-	cleanMime := mimeType
-	if cleanMime == "" {
-		cleanMime = "image/jpeg"
-	}
-
-	// Construir payload multimodal exacto para Claude
-	reqBody := map[string]interface{}{
-		"model":      VisionModel(),
-		"max_tokens": 4000,
-		"messages": []map[string]interface{}{
-			{
-				"role": "user",
-				"content": []map[string]interface{}{
-					{
-						"type": "image",
-						"source": map[string]interface{}{
-							"type":       "base64",
-							"media_type": cleanMime,
-							"data":       cleanBase64,
-						},
-					},
-					{
-						"type": "text",
-						"text": prompt,
-					},
-				},
-			},
-		},
-	}
-
-	jsonData, err := json.Marshal(reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	httpReq, err := http.NewRequest("POST", "https://api.anthropic.com/v1/messages", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("x-api-key", apiKey)
-	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	httpReq.Header.Set("content-type", "application/json")
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("claude API error %d: %s", resp.StatusCode, string(body))
-	}
-
-	var claudeResp struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	}
-	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		return nil, fmt.Errorf("error parseando respuesta de Claude: %v", err)
-	}
-
-	if len(claudeResp.Content) == 0 {
-		return nil, fmt.Errorf("Claude devolvió respuesta vacía")
-	}
-
-	text := claudeResp.Content[0].Text
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
-
-	var items []models.ExtractedItem
-	if err := json.Unmarshal([]byte(text), &items); err != nil {
-		return nil, fmt.Errorf("error parseando JSON de Claude: %v. Raw: %s", err, text)
-	}
-
-	return items, nil
-}
+// buildInvoicePrompt y callClaudeVision viven en invoice_reader.go.

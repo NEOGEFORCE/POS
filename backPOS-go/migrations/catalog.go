@@ -115,13 +115,15 @@ func Catalog() ([]Migration, error) {
 		// CONCURRENTLY, la 013 hace lo mismo para el índice parcial sobre
 		// stock_movements (reason='RECEPTION'), la 014 para el índice parcial
 		// sobre confirmed_orders(supplier_id, received_at) usado por el batch
-		// de aprendizaje de agenda, y la 015 agrega seis índices parciales
-		// más (clients con saldo vivo, sales con deuda viva, expenses en
-		// mora, missing_items PENDIENTE, shrinkages por fecha, price_logs
-		// por created_at) junto con las columnas de porcentajes de recepción
-		// en stock_movements. PostgreSQL prohíbe CONCURRENTLY dentro de una
-		// transacción, así que estas seis corren en autocommit.
-		transactional := version != 8 && version != 9 && version != 11 && version != 13 && version != 14 && version != 15
+		// de aprendizaje de agenda, la 015 agrega seis índices parciales más
+		// (clients con saldo vivo, sales con deuda viva, expenses en mora,
+		// missing_items PENDIENTE, shrinkages por fecha, price_logs por
+		// created_at) junto con las columnas de porcentajes de recepción en
+		// stock_movements, y la 018 agrega el índice único parcial de
+		// idempotencia anti-doble-cierre sobre cashier_closures(client_tx_id).
+		// PostgreSQL prohíbe CONCURRENTLY dentro de una transacción, así que
+		// estas siete corren en autocommit.
+		transactional := version != 8 && version != 9 && version != 11 && version != 13 && version != 14 && version != 15 && version != 18
 		migration := Migration{
 			Version:       version,
 			Name:          matches[2],

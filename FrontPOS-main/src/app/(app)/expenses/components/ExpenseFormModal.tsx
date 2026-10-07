@@ -1,7 +1,7 @@
 ﻿import React, { memo, useState, useEffect } from 'react';
 import {
   Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  Button, Input, Autocomplete, AutocompleteItem, Card, CardBody, Switch, cn
+  Button, Input, Autocomplete, AutocompleteItem, Card, CardBody
 } from "@heroui/react";
 import {
   TrendingDown, Wallet, Zap, Building2, HandCoins, Sparkles,
@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { Expense, Supplier } from '@/lib/definitions';
 import { useApi } from '@/hooks/use-api';
-import { ExpensePaymentModal } from './ExpensePaymentModal';
+import { ExpensePaymentModal, type LoanOption } from './ExpensePaymentModal';
 import { formatCurrency, parseCurrency } from '@/lib/utils';
 import { validateExpense, FieldError } from '@/lib/formValidation';
 import ValidationErrors from '@/components/ValidationErrors';
@@ -22,7 +22,7 @@ interface ExpenseFormModalProps {
   isOpen: boolean;
   onOpenChange?: (open: boolean) => void;
   onClose?: () => void;
-  onSave: (expense: Partial<Expense>) => Promise<void>;
+  onSave: (expense: Partial<Expense> & { loanId?: number | string }) => Promise<void>;
   isEdit?: boolean;
   initialExpense?: Expense | null;
   suppliers?: Supplier[];
@@ -30,6 +30,12 @@ interface ExpenseFormModalProps {
   onSettle?: (id: string, paymentSource: string, amount: number) => Promise<void>;
   onDelete?: (id: string) => void;
   isAdmin?: boolean;
+  /**
+   * Si viene, el modal de pago mostrará la pestaña "Préstamo" al momento
+   * de autorizar. El contrato backend coloca el canal; el frontend sólo
+   * manda `loanId` dentro del payload a `onSave`.
+   */
+  loanOption?: LoanOption;
 }
 
 interface LocalExpenseState {
@@ -85,7 +91,8 @@ const ExpenseFormModal = memo(({
   onQuickCreateSupplier,
   onSettle,
   onDelete,
-  isAdmin = false
+  isAdmin = false,
+  loanOption
 }: ExpenseFormModalProps) => {
   const { data: fetchedSuppliers, mutate: mutateSuppliers } = useApi<Supplier[]>('/suppliers/all-suppliers');
   const activeSuppliers = (suppliers && suppliers.length > 0) ? suppliers : (fetchedSuppliers || []);
@@ -638,10 +645,11 @@ const ExpenseFormModal = memo(({
         initialFondo={Number(localExpense.fondoAmount) || 0}
         initialCoins={Number(localExpense.coinsAmount) || 0}
         initialPaymentSource={localExpense.paymentSource}
+        loanOption={loanOption}
         onPay={async (data) => {
             // Este onPay se llama desde el Modal Multi-Pago cuando autorizan el dinero
             const baseAmount = Number(localExpense.amount) || 0;
-            const payload: Partial<Expense> = {
+            const payload: Partial<Expense> & { loanId?: number | string } = {
                 ...localExpense,
                 paymentSource: data.paymentSourceString,
                 cashAmount: data.cash,
@@ -654,6 +662,12 @@ const ExpenseFormModal = memo(({
                 linkedOrderId: selectedOrderId,
                 status: 'PAID'
             };
+            if (data.loanId != null && data.loanId !== '') {
+              // El pago con préstamo se enruta en el padre a
+              // POST /loans/:id/pay-expense. El frontend NO pone
+              // paymentSource='PRESTAMO' en expenses: el backend lo hace.
+              payload.loanId = data.loanId;
+            }
             await onSave(payload);
         }}
       />

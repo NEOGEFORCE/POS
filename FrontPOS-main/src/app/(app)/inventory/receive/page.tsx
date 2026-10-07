@@ -3,7 +3,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Button, Input, Badge, Spinner, Select, SelectItem, Autocomplete, AutocompleteItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Switch, Tooltip, Checkbox, Card, CardBody } from "@heroui/react";
+import { Button, Input, Badge, Spinner, Select, SelectItem, Autocomplete, AutocompleteItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Tooltip, Card, CardBody } from "@heroui/react";
 import Link from 'next/link';
 import {
     Search, Plus, Camera, Truck, RefreshCw,
@@ -13,6 +13,12 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Product, Supplier, Category } from '@/lib/definitions';
 import { formatCurrency, applyRounding, sanitizeProductPayload, normalizeText } from "@/lib/utils";
+import {
+    calculateMarginFromGross,
+    grossToBasePrice,
+    resolveBasePrice,
+    resolveEffectivePercentage,
+} from '@/lib/reception-pricing.mjs';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import Cookies from 'js-cookie';
 import dynamic from 'next/dynamic';
@@ -28,6 +34,15 @@ const SupplierFormModal = dynamic(() => import('../../suppliers/components/Suppl
 const ProductFormModal = dynamic(() => import('../../products/components/ProductFormModal'), { ssr: false });
 const InvoiceReaderModal = dynamic(() => import('./components/InvoiceReaderModal'), { ssr: false });
 const UnmatchedItemsReviewer = dynamic(() => import('./components/UnmatchedItemsReviewer'), { ssr: false });
+// Modales nuevos del flujo "código solo en paquete" (sprint 11).
+const PackageIntakeModal = dynamic(() => import('./components/PackageIntakeModal'), { ssr: false });
+const LabelPrintSheet = dynamic(() => import('./components/LabelPrintSheet'), { ssr: false });
+// Modal post-recepción: aparece SOLO después de que /products/bulk-receive
+// responde OK. Es el único lugar donde se expone el botón "Imprimir
+// etiquetas unitarias". Garantiza que ningún trabajo de impresión se
+// audita antes de que la recepción exista en BD. Ver test
+// label-reprint-contract.test.mjs.
+const PostReceptionLabelsModal = dynamic(() => import('./components/PostReceptionLabelsModal'), { ssr: false });
 import { ExpensePaymentModal } from '../../expenses/components/ExpensePaymentModal';
 
 // Stats compactos de la recepción activa.
@@ -62,6 +77,16 @@ export interface ReceiveItem {
     productSuppliers?: any[];
     isMatched?: boolean;
     supplierId?: string | number;
+    /**
+     * syncedReceptionId: cuando `/products/bulk-receive` responde OK,
+     * el frontend genera un identificador de lote (client-side, prefijo
+     * `RCV-<ms>-<rand>`) y marca cada línea del snapshot con él. Las
+     * filas en estado DRAFT (antes del POST) NO tienen este campo y por
+     * contrato el botón "Imprimir etiquetas" NO se renderiza para ellas:
+     * así se evita auditar trabajos de impresión antes de que la
+     * recepción exista.
+     */
+    syncedReceptionId?: string;
 }
 
 export default function ReceiveInventoryPage() {
@@ -75,6 +100,35 @@ export default function ReceiveInventoryPage() {
     const [submitting, setSubmitting] = useState(false);
     const [notFoundDialogOpen, setNotFoundDialogOpen] = useState(false);
     const [scannedNotFoundCode, setScannedNotFoundCode] = useState('');
+    // Package intake: cuando el resolver backend devuelve match=exact|new, abrimos
+    // el modal PackageIntakeModal para que el usuario confirme units × packs.
+    const [packageIntakeState, setPackageIntakeState] = useState<{
+        open: boolean;
+        code: string;
+        product: any | null;
+        unitsPerPack: number | null;
+    }>({ open: false, code: '', product: null, unitsPerPack: null });
+    // Hoja de impresión unitaria desde la fila del carrito. Se abre
+    // SOLO después de que la recepción quedó guardada (contrato con tests).
+    const [labelSheetState, setLabelSheetState] = useState<{
+        open: boolean;
+        barcode: string;
+        productName: string;
+        defaultCount: number;
+        receptionRef?: string;
+    }>({ open: false, barcode: '', productName: '', defaultCount: 1 });
+
+    // POST-RECEPCIÓN: líneas que acaban de sincronizarse exitosamente.
+    // Cada entrada aquí tiene `syncedReceptionId` establecido y se usan
+    // para ofrecer la impresión de etiquetas unitarias desde un modal
+    // dedicado. El carrito DRAFT (receiveList) nunca contiene entradas
+    // con syncedReceptionId: por diseño, el botón Printer sólo aparece
+    // en este modal post-sync.
+    const [postReceptionLines, setPostReceptionLines] = useState<ReceiveItem[]>([]);
+    const [isPostReceptionOpen, setIsPostReceptionOpen] = useState(false);
+    // Si el usuario cancela el modal post-recepción sin imprimir, se
+    // redirige al dashboard después de un breve retraso (same UX previa).
+    const [pendingPostReceptionRedirect, setPendingPostReceptionRedirect] = useState<boolean>(false);
 
     const [products, setProducts] = useState<Product[]>([]);
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -194,13 +248,26 @@ export default function ReceiveInventoryPage() {
                         }
                         
                         const addedQuantity = item.quantity;
-                        const newPurchasePrice = meta.newPurchasePrice || item.product?.purchasePrice || 0;
-                        const newSalePrice = meta.newSalePrice || item.product?.salePrice || 0;
-                        const iva = meta.ivaPct || 0;
-                        const icui = meta.icuiPct || 0;
-                        const ibua = meta.ibuaPct || 0;
-                        const discount = meta.discountPct || 0;
-                        const supplierId = meta.supplierId || item.product?.supplierId || null;
+                        // Contrato histórico: metadata.newPurchasePrice ya es
+                        // BASE cuando la propiedad existe (incluido 0). Sólo
+                        // el fallback product.purchasePrice es BRUTO.
+                        const iva = resolveEffectivePercentage(meta.ivaPct, item.product?.iva);
+                        const icui = resolveEffectivePercentage(meta.icuiPct, item.product?.icui);
+                        const ibua = resolveEffectivePercentage(meta.ibuaPct, item.product?.ibua);
+                        const newPurchasePrice = resolveBasePrice(
+                            meta.newPurchasePrice,
+                            item.product?.purchasePrice,
+                            iva,
+                            icui,
+                            ibua,
+                        );
+                        const newSalePrice = meta.newSalePrice !== undefined && meta.newSalePrice !== null
+                            ? Number(meta.newSalePrice)
+                            : Number(item.product?.salePrice ?? 0);
+                        const discount = resolveEffectivePercentage(meta.discountPct, 0);
+                        const supplierId = meta.supplierId !== undefined && meta.supplierId !== null
+                            ? meta.supplierId
+                            : (item.product?.supplierId ?? null);
                         const actualPhysicalStock = meta.actualPhysicalStock !== undefined ? meta.actualPhysicalStock : addedQuantity;
 
                         return {
@@ -483,12 +550,25 @@ export default function ReceiveInventoryPage() {
     const addToReceive = useCallback((product: Product, customQty?: number, customPrice?: number) => {
         setReceiveList(prev => {
             const newLineId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
-            const basePrice = customPrice || Number(product.purchasePrice);
             const iva = Number(product.iva || 0);
             const icui = Number(product.icui || 0);
             const ibua = Number(product.ibua || 0);
+            // CONTRATO FISCAL (ver src/lib/reception-pricing.mjs):
+            //   • products.purchasePrice persiste el costo BRUTO con impuestos.
+            //     Al cargarlo en el carrito hay que convertirlo a base
+            //     pre-impuestos EXACTAMENTE UNA VEZ para que los helpers de
+            //     SUBT./Costo/PVP no vuelvan a aplicar IVA+ICUI+IBUA sobre
+            //     un valor que ya los contenía (eso inflaba el precio y
+            //     dejaba el "SUBT. escrito a mano" sin sincronizar bien).
+            //   • customPrice, cuando llega, YA es la base pre-impuestos:
+            //     se usa en los pocos callers que preparan ese valor a mano
+            //     (p. ej. flujos antiguos del OCR). Se mantiene así por
+            //     contrato explícito — ver tests reception-pricing.
+            const basePrice = customPrice !== undefined
+                ? Number(customPrice)
+                : grossToBasePrice(Number(product.purchasePrice), iva, icui, ibua);
             const discount = 0; // El descuento varia semanalmente, se inicia en 0 por defecto
-            
+
             // Neto inicial para calcular margen real (Aditivo: Base * (1 + IVA + ICUI + IBUA) * (1-DTO))
             const neto = basePrice * (1 + iva/100 + icui/100 + ibua/100);
             const salePrice = applyRounding(Number(product.salePrice));
@@ -522,8 +602,14 @@ export default function ReceiveInventoryPage() {
         // Items vienen del modal con shape:
         //   matched (isMatched=true):    ScannedItem  ↤ { barcode, productName, quantity,
         //                                                 costUnit, pvpActual, pvpSugerido,
-        //                                                 marginUsed, iva, icui, ibua, currentStock }
-        //   unmatched (isMatched=false): UnmatchedItem ↤ { invoiceName, quantity, unitPrice, suggestions }
+        //                                                 marginUsed, iva, icui, ibua, currentStock,
+        //                                                 discount_percentage, lineType,
+        //                                                 bonus_quantity, __ocrLocalId }
+        //   unmatched (isMatched=false): UnmatchedItem ↤ { invoiceName, quantity, unitPrice,
+        //                                                   suggestions, discount_percentage,
+        //                                                   iva_percentage, ibua_percentage,
+        //                                                   icui_percentage, lineType,
+        //                                                   bonus_quantity, __ocrLocalId }
         let addedCount = 0;
         let updatedCount = 0;
         let skippedCount = 0;
@@ -534,12 +620,21 @@ export default function ReceiveInventoryPage() {
 
             items.forEach(ocr => {
                 if (ocr.isMatched === false) {
-                    // Sin emparejar — encolar para el reviewer (no pierde estos items)
+                    // Sin emparejar — encolar para el reviewer con TODA la metadata
+                    // del OCR para que el reviewer pueda proyectar impuestos y DTO,
+                    // y usar identidad estable para navegación/dedupe.
                     unmatched.push({
                         invoiceName: ocr.invoiceName || ocr.name || 'Sin nombre',
                         quantity: Number(ocr.quantity) || 0,
                         unitPrice: Number(ocr.unitPrice) || 0,
                         suggestions: Array.isArray(ocr.suggestions) ? ocr.suggestions : [],
+                        iva_percentage: Number(ocr.iva_percentage) || 0,
+                        ibua_percentage: Number(ocr.ibua_percentage) || 0,
+                        icui_percentage: Number(ocr.icui_percentage) || 0,
+                        discount_percentage: Number(ocr.discount_percentage) || 0,
+                        lineType: typeof ocr.lineType === 'string' ? ocr.lineType.toUpperCase() : ocr.line_type,
+                        bonus_quantity: Number(ocr.bonus_quantity) || 0,
+                        __ocrLocalId: ocr.__ocrLocalId,
                     });
                     return;
                 }
@@ -551,18 +646,40 @@ export default function ReceiveInventoryPage() {
                     return;
                 }
 
+                // Normalización de descuento desde el OCR: SOLO el porcentaje
+                // (ya normalizado por el backend). Ignoramos cualquier campo
+                // monetario para evitar doble aplicación — el DTO viaja al
+                // carrito como % puro, nunca como monto.
+                const ocrDtoPct = Number(ocr.discount_percentage) || 0;
+                // Mapeo lineType (REGULAR/BONUS/RETURN del backend OCR)
+                // ↤ entryType del carrito (purchase/gift/return).
+                const ocrLineType = String(ocr.lineType || ocr.line_type || '').toUpperCase();
+                const isBonusOcr = ocrLineType === 'BONUS';
+                const isReturnOcr = ocrLineType === 'RETURN';
+
                 const existIdx = newList.findIndex(item => item.barcode === ocrBarcode);
 
                 if (existIdx >= 0) {
-                    if (Math.abs(Number(newList[existIdx].addedQuantity) - ocrQty) < 0.01) {
+                    const prevRow = newList[existIdx];
+                    const prevDiscount = Number(prevRow.discount || 0);
+                    const newDiscount = isBonusOcr ? 0 : ocrDtoPct;
+                    const quantityChanged = Math.abs(Number(prevRow.addedQuantity) - ocrQty) >= 0.01;
+                    const discountChanged = Math.abs(prevDiscount - newDiscount) >= 0.01;
+                    if (!quantityChanged && !discountChanged) {
                         newList[existIdx].matchStatus = 'match';
                     } else {
-                        newList[existIdx].addedQuantity = ocrQty;
+                        if (quantityChanged) newList[existIdx].addedQuantity = ocrQty;
                         newList[existIdx].matchStatus = 'warning';
                     }
-                    if (ocr.costUnit && Number(ocr.costUnit) > 0) {
+                    if (ocr.costUnit !== undefined && ocr.costUnit !== null) {
+                        // OCR costUnit ya es BASE, incluido un 0 explícito.
                         newList[existIdx].newPurchasePrice = Number(ocr.costUnit);
                     }
+                    // Propagamos SIEMPRE el DTO del OCR, no sólo en la rama
+                    // "producto nuevo": si el cajero escanea dos veces el mismo
+                    // producto y la segunda factura trae DTO distinto, debemos
+                    // reflejarlo. BONUS fuerza 0 (regalo no admite descuento).
+                    newList[existIdx].discount = newDiscount;
                     // Solo sugerimos el PVP si el producto actual no tenia precio, de lo contrario mantenemos el precio anterior
                     // para que la interfaz sugiera el cambio y el usuario lo apruebe.
                     if (ocr.pvpSugerido && Number(ocr.pvpSugerido) > 0 && (!newList[existIdx].newSalePrice || newList[existIdx].newSalePrice === 0)) {
@@ -575,41 +692,60 @@ export default function ReceiveInventoryPage() {
                 } else {
                     const p = products.find(prod => prod.barcode === ocrBarcode || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(ocrBarcode)));
                     if (p) {
-                        // Mapeo lineType (REGULAR/BONUS/RETURN del backend OCR)
-                        // ↤ entryType del carrito (purchase/gift/return).
-                        const lt = String(ocr.lineType || '').toUpperCase();
                         const entryType: 'purchase' | 'gift' | 'return' =
-                            lt === 'BONUS' ? 'gift'
-                            : lt === 'RETURN' ? 'return'
+                            isBonusOcr ? 'gift'
+                            : isReturnOcr ? 'return'
                             : 'purchase';
                         // BONUS: precio se fuerza a 0; el splitter del backend
                         // ya lo entrega asi, pero blindamos por si acaso.
                         const isBonus = entryType === 'gift';
                         const isReturn = entryType === 'return';
                         const baseQty = Math.abs(Number(ocr.quantity) || 0);
+                        // Contrato OCR: costUnit ya es BASE si la propiedad
+                        // existe. Los impuestos OCR (incluido 0) prevalecen
+                        // sobre producto; únicamente purchasePrice es BRUTO.
+                        const iva = resolveEffectivePercentage(ocr.iva, p.iva);
+                        const icui = resolveEffectivePercentage(ocr.icui, p.icui);
+                        const ibua = resolveEffectivePercentage(ocr.ibua, p.ibua);
+                        const basePrice = resolveBasePrice(
+                            ocr.costUnit,
+                            p.purchasePrice,
+                            iva,
+                            icui,
+                            ibua,
+                        );
+                        const fallbackMargin = Number(p.marginPercentage) > 0
+                            ? Number(p.marginPercentage)
+                            : (ocr.marginUsed !== undefined && ocr.marginUsed !== null
+                                ? Number(ocr.marginUsed)
+                                : 30);
                         newList.push({
                             lineId: crypto.randomUUID(),
                             barcode: p.barcode,
                             productName: p.productName,
                             addedQuantity: baseQty,
-                            newPurchasePrice: isBonus
-                                ? 0
-                                : (Number(ocr.costUnit) > 0 ? Number(ocr.costUnit) : Number(p.purchasePrice)),
+                            newPurchasePrice: isBonus ? 0 : basePrice,
                             newSalePrice: Number(p.salePrice) > 0
                                 ? Number(p.salePrice)
                                 : (Number(ocr.pvpSugerido) > 0 ? Number(ocr.pvpSugerido) : 0),
-                            oldPurchasePrice: Number(p.purchasePrice || 0),
-                            oldSalePrice: Number(p.salePrice || 0),
-                            marginPercentage: (Number(p.purchasePrice) > 0 && Number(p.salePrice) > 0) 
-                                ? (((Number(p.salePrice) / (Number(p.purchasePrice) * (1 + Number(p.iva??0)/100 + Number(p.icui??0)/100 + Number(p.ibua??0)/100))) - 1) * 100)
-                                : (Number(p.marginPercentage) > 0 ? Number(p.marginPercentage) : (ocr.marginUsed ? Number(ocr.marginUsed) : 30)),
+                            oldPurchasePrice: Number(p.purchasePrice ?? 0),
+                            oldSalePrice: Number(p.salePrice ?? 0),
+                            // purchasePrice ya es gross: no reaplicar impuestos.
+                            marginPercentage: calculateMarginFromGross(
+                                p.purchasePrice,
+                                p.salePrice,
+                                fallbackMargin,
+                            ),
                             entryType,
-                            iva: Number(ocr.iva ?? p.iva ?? 0),
-                            icui: Number(ocr.icui ?? p.icui ?? 0),
-                            ibua: Number(ocr.ibua ?? p.ibua ?? 0),
-                            // Descuento solo aplica a lineas REGULAR; BONUS y
-                            // RETURN no llevan descuento adicional.
-                            discount: (isBonus || isReturn) ? 0 : Number(ocr.discount_percentage ?? ocr.discount ?? 0),
+                            iva,
+                            icui,
+                            ibua,
+                            // Única fuente de verdad del DTO = porcentaje del OCR
+                            // (ya normalizado backend-side). Nunca mezclar con
+                            // montos monetarios: eso provocaría doble aplicación
+                            // en reception-pricing. BONUS fuerza 0; RETURN
+                            // preserva el DTO original de la factura.
+                            discount: isBonus ? 0 : ocrDtoPct,
                             currentStock: Number(p.quantity || 0),
                             unit: p.isWeighted ? 'KG' : 'UND',
                             isWeighted: Boolean(p.isWeighted),
@@ -684,23 +820,51 @@ export default function ReceiveInventoryPage() {
                 if (existIdx >= 0) {
                     newList[existIdx].addedQuantity = Number(newList[existIdx].addedQuantity) + Number(r.addedQuantity);
                     newList[existIdx].matchStatus = 'match';
+                    // Si el reviewer trajo DTO del OCR, lo propagamos: la segunda
+                    // factura puede traer el DTO que la primera no tenía.
+                    const nextDiscount = Number(r.discount) || 0;
+                    if (nextDiscount > 0) {
+                        newList[existIdx].discount = nextDiscount;
+                        newList[existIdx].matchStatus = 'warning';
+                    }
                 } else {
                     const p = products.find(prod => prod.barcode === r.barcode || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(r.barcode)));
+                    // Contrato WAC: ReceptionRow proyecta el WAC visual usando
+                    // oldPurchasePrice como el bruto persistido en products.
+                    // ResolvedReceiveLine no transporta oldPurchasePrice/oldSalePrice,
+                    // así que si el reviewer asignó el item a un producto existente
+                    // (isNew=false vía suggestion/manual/scan) debemos poblarlos
+                    // desde el catálogo. Sin esto, currentStock>0 con oldPurchasePrice=0
+                    // haría que calculateProjectedWacGross subestime el WAC y
+                    // sugiera un PVP engañosamente bajo. Para productos recién
+                    // creados (isNew=true) p puede no estar aún en memoria y el
+                    // fallback 0 es correcto (no hay histórico contable).
+                    //
+                    // entryType y discount: el reviewer propaga r.lineType +
+                    // r.discount (ambos desde el OCR). BONUS → gift fuerza
+                    // discount=0; RETURN preserva DTO original; purchase lo
+                    // propaga tal cual del OCR.
+                    const resolvedLineType = typeof r.lineType === 'string' ? r.lineType.toUpperCase() : '';
+                    const resolvedEntryType: 'purchase' | 'gift' | 'return' =
+                        resolvedLineType === 'BONUS' ? 'gift'
+                        : resolvedLineType === 'RETURN' ? 'return'
+                        : 'purchase';
+                    const resolvedDiscount = resolvedEntryType === 'gift' ? 0 : Number(r.discount) || 0;
                     newList.push({
                         lineId: crypto.randomUUID(),
                         barcode: r.barcode,
                         productName: r.productName,
                         addedQuantity: Number(r.addedQuantity) || 0,
-                        newPurchasePrice: Number(r.newPurchasePrice) || 0,
+                        newPurchasePrice: resolvedEntryType === 'gift' ? 0 : (Number(r.newPurchasePrice) || 0),
                         newSalePrice: Number(r.newSalePrice) || 0,
-                        oldPurchasePrice: Number(r.oldPurchasePrice) || 0,
-                        oldSalePrice: Number(r.oldSalePrice) || 0,
+                        oldPurchasePrice: Number(p?.purchasePrice ?? r.oldPurchasePrice ?? 0),
+                        oldSalePrice: Number(p?.salePrice ?? r.oldSalePrice ?? 0),
                         marginPercentage: Number(r.marginPercentage) || 20,
-                        entryType: 'purchase',
+                        entryType: resolvedEntryType,
                         iva: Number(r.iva) || 0,
                         icui: Number(r.icui) || 0,
                         ibua: Number(r.ibua) || 0,
-                        discount: 0,
+                        discount: resolvedDiscount,
                         currentStock: p ? Number(p.quantity || 0) : 0,
                         unit: p?.isWeighted ? 'KG' : 'UND',
                         isWeighted: Boolean(p?.isWeighted),
@@ -729,6 +893,9 @@ export default function ReceiveInventoryPage() {
         iva: number;
         ibua: number;
         icui: number;
+        /** Descuento (%) extraído por el OCR; viaja al nuevo producto como
+            `product.discount` para que el margen y PVP respeten el contrato. */
+        discount_percentage: number;
         invoiceQuantity: number;
         invoiceName: string;
     }) => {
@@ -737,7 +904,13 @@ export default function ReceiveInventoryPage() {
             invoiceName: prefill.invoiceName,
         });
 
-        // Pre-llenar newProduct con los datos del OCR
+        // Pre-llenar newProduct con los datos del OCR, incluido el descuento
+        // (clamp defensivo [0, 100]).
+        const clampPct = (v: unknown) => {
+            const n = Number(v);
+            if (!Number.isFinite(n) || n <= 0) return 0;
+            return n > 100 ? 100 : n;
+        };
         setNewProduct({
             barcode: '',
             productName: prefill.productName,
@@ -752,6 +925,7 @@ export default function ReceiveInventoryPage() {
             iva: prefill.iva || 0,
             icui: prefill.icui || 0,
             ibua: prefill.ibua || 0,
+            discount: clampPct(prefill.discount_percentage),
             // Asociar al proveedor de la factura para futuro alias automatico
             supplierId: Number(selectedGlobalSupplier) || undefined,
         } as any);
@@ -892,22 +1066,90 @@ export default function ReceiveInventoryPage() {
     };
 
     // --- SCANNER SIEMPRE ACTIVO HANDLERS ---
-    const handleCodeSubmit = useCallback((code: string) => {
+    // handleCodeSubmit se consulta primero contra el resolver de package-barcode:
+    //  • match="exact"  → código es alias de paquete conocido → abre PackageIntakeModal con unitsPerPack prellenado
+    //  • match="new"    → código resuelve a un producto, pero NO está registrado como paquete.
+    //                     Si el usuario está escaneando el mismo código justo después (doble escaneo
+    //                     intencional), lo tratamos como "quiero recibir el producto normal, 1 unidad".
+    //                     De lo contrario abrimos PackageIntakeModal pidiéndole units_per_pack.
+    //  • match="unknown" → cae al NotFoundDialog clásico.
+    //
+    // Si el backend no está disponible (red caída), cae al matching local
+    // contra `products` y procede como antes para no bloquear la operación.
+    const handleCodeSubmit = useCallback(async (code: string) => {
         const finalCode = code.trim().toUpperCase();
         if (!finalCode) return;
+        setBarcodeInput('');
 
-        const product = products.find(p => p.barcode === finalCode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(finalCode)));
-        if (product) {
-            addToReceive(product);
-            toast({ variant: 'success', title: 'AGREGADO', description: product.productName });
-            playScanSound('success');
-            if (navigator.vibrate) navigator.vibrate(50);
-        } else {
+        // Matching local inmediato como anchor para fallback offline.
+        const localProduct = products.find(p => p.barcode === finalCode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(finalCode)));
+
+        const token = Cookies.get('org-pos-token');
+        let resolved: any = null;
+        try {
+            resolved = await apiFetch<any>(
+                `/inventory/package-barcode/resolve?code=${encodeURIComponent(finalCode)}`,
+                { fallbackError: 'No se pudo verificar código de paquete' },
+                token,
+            );
+        } catch (err) {
+            // Fallback: cae al comportamiento clásico contra products local.
+            if (localProduct) {
+                addToReceive(localProduct);
+                toast({ variant: 'success', title: 'AGREGADO', description: localProduct.productName });
+                playScanSound('success');
+                if (navigator.vibrate) navigator.vibrate(50);
+                return;
+            }
             setScannedNotFoundCode(finalCode);
             setNotFoundDialogOpen(true);
             playScanSound('error');
+            return;
         }
-        setBarcodeInput('');
+
+        if (resolved?.match === 'exact' && resolved.product) {
+            // Alias ya existe → abre modal con units prellenado.
+            setPackageIntakeState({
+                open: true,
+                code: finalCode,
+                product: resolved.product,
+                unitsPerPack: typeof resolved.unitsPerPack === 'number' ? resolved.unitsPerPack : null,
+            });
+            playScanSound('success');
+            if (navigator.vibrate) navigator.vibrate(30);
+            return;
+        }
+
+        if (resolved?.match === 'new' && resolved.product) {
+            // El producto existe pero es la primera vez que escaneamos este
+            // código como paquete. Preguntamos units_per_pack al usuario.
+            // Si el código ES exactamente el barcode principal del producto
+            // (match normal de recepción diaria) saltamos el modal y
+            // agregamos como 1 unidad: no todo escaneo de código conocido
+            // es un paquete.
+            if ((resolved.product.barcode || '').toUpperCase() === finalCode) {
+                addToReceive(resolved.product);
+                toast({ variant: 'success', title: 'AGREGADO', description: resolved.product.productName });
+                playScanSound('success');
+                if (navigator.vibrate) navigator.vibrate(50);
+                return;
+            }
+            // Código alterno conocido: lo tratamos como posible paquete.
+            setPackageIntakeState({
+                open: true,
+                code: finalCode,
+                product: resolved.product,
+                unitsPerPack: null,
+            });
+            playScanSound('success');
+            if (navigator.vibrate) navigator.vibrate(30);
+            return;
+        }
+
+        // match="unknown"
+        setScannedNotFoundCode(finalCode);
+        setNotFoundDialogOpen(true);
+        playScanSound('error');
     }, [products, addToReceive, toast]);
 
     const handleScannerResult = useCallback((code: string) => {
@@ -953,13 +1195,28 @@ export default function ReceiveInventoryPage() {
                 const p = products.find(prod => String(prod.barcode).trim() === searchCode || (prod.alternateCodes && prod.alternateCodes.split(',').map((s: string) => s.trim()).includes(searchCode)));
                 if (p) {
                     const qty = Number(item.quantity || item.expectedQuantity || item.qty || 1);
-                    const cost = Number(item.unit_cost || item.unitCost || p.purchasePrice || 0);
-                    
-                    const newLineId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
                     const iva = Number(p.iva || 0);
                     const icui = Number(p.icui || 0);
                     const ibua = Number(p.ibua || 0);
-                    const basePrice = cost;
+                    // CONTRATO FISCAL (ver src/lib/reception-pricing.mjs):
+                    //   • item.unit_cost / item.unitCost: cuando la orden de
+                    //     compra confirmada trae un costo, YA es la base
+                    //     pre-impuestos (así se guardó al confirmar el pedido).
+                    //   • p.purchasePrice: cuando el fallback apunta al
+                    //     producto maestro, es el BRUTO persistido con impuestos
+                    //     y hay que descomponerlo a base EXACTAMENTE UNA VEZ.
+                    const explicitOrderCost = item.unit_cost !== undefined && item.unit_cost !== null
+                        ? item.unit_cost
+                        : item.unitCost;
+                    const basePrice = resolveBasePrice(
+                        explicitOrderCost,
+                        p.purchasePrice,
+                        iva,
+                        icui,
+                        ibua,
+                    );
+
+                    const newLineId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
                     const neto = basePrice * (1 + iva/100 + icui/100 + ibua/100);
                     const salePrice = applyRounding(Number(p.salePrice || 0));
                     const margin = neto > 0 ? ((salePrice / neto) - 1) * 100 : 30;
@@ -1123,6 +1380,23 @@ export default function ReceiveInventoryPage() {
             return;
         }
 
+        // Guardia de precios inválidos: cualquier línea NO regalo que tenga
+        // base pre-impuestos <= 0 bloquea la sincronización. Previene enviar
+        // silenciosamente un "subtotal anterior" cuando el usuario dejó el
+        // campo vacío o escribió un valor no válido en SUBT. (ver
+        // ReceptionRow.handleSubtotalChange).
+        const invalidLines = receiveList.filter(
+            (it) => it.entryType !== 'gift' && Number(it.newPurchasePrice || 0) <= 0,
+        );
+        if (invalidLines.length > 0) {
+            toast({
+                variant: 'destructive',
+                title: 'SUBTOTAL INVÁLIDO',
+                description: `Hay ${invalidLines.length} ${invalidLines.length === 1 ? 'línea' : 'líneas'} con subtotal vacío o inválido. Corrígelo antes de sincronizar.`,
+            });
+            return;
+        }
+
         setSubmitting(true);
         const token = Cookies.get('org-pos-token');
         try {
@@ -1210,6 +1484,18 @@ export default function ReceiveInventoryPage() {
                 title: "OPERACION EXITOSA",
                 description: (bypassExpense && !leaveAsDebt) ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : leaveAsDebt ? "INVENTARIO ACTUALIZADO — DEUDA REGISTRADA" : "INVENTARIO Y EGRESO SINCRONIZADOS"
             });
+
+            // POST-RECEPCIÓN: snapshot de las líneas con un receptionRef
+            // generado client-side. El backend aún no devuelve un id
+            // persistente desde /products/bulk-receive, así que el ref es
+            // puramente para auditoría de label_print_jobs.meta y para que
+            // ReceptionRow sepa cuándo mostrar el botón Printer. Solo las
+            // líneas REGULAR y BONUS (no RETURN) tiene sentido etiquetar.
+            const receptionRef = `RCV-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+            const stampedLines: ReceiveItem[] = receiveList
+                .filter((it) => it.entryType !== 'return' && Number(it.addedQuantity || 0) > 0)
+                .map((it) => ({ ...it, syncedReceptionId: receptionRef }));
+
             localStorage.removeItem('org-pos-reception-list');
             localStorage.removeItem('org-pos-reception-supplier');
             localStorage.removeItem('org-pos-reception-order-ids');
@@ -1273,6 +1559,16 @@ export default function ReceiveInventoryPage() {
                 }, token).catch(e => console.error("Error al enviar telegram automatico", e));
 
                 // No redirigir aun, la modal se encarga de hacerlo al cerrar
+            } else if (stampedLines.length > 0) {
+                // POST-RECEPCIÓN: ofrecer imprimir etiquetas unitarias para
+                // las líneas que acaban de entrar en stock. Es el ÚNICO
+                // punto del flujo donde se expone el botón Printer; en el
+                // carrito draft nunca aparece (contrato con tests
+                // label-reprint-contract). El redirect al dashboard queda
+                // en espera hasta que el usuario cierre el modal.
+                setPostReceptionLines(stampedLines);
+                setIsPostReceptionOpen(true);
+                setPendingPostReceptionRedirect(true);
             } else {
                 // Retrasar redireccion 1.5s para que se vea la notificacion verde y se escuche el sonido
                 setTimeout(() => {
@@ -1509,12 +1805,22 @@ export default function ReceiveInventoryPage() {
                                 >
                                     <Plus size={12} strokeWidth={3} /> Item Libre
                                 </button>
-                                <button 
-                                    onClick={() => setIsInvoiceReaderOpen(true)}
-                                    className="text-[10px] font-medium text-emerald-500 hover:text-emerald-600 transition-colors uppercase tracking-tight flex items-center gap-1"
-                                >
-                                    <Sparkles size={12} strokeWidth={3} /> Leer Factura
-                                </button>
+                                {/* Admin gate: el OCR consume la API de Claude (vision) y
+                                    sólo administradores deberían disparar lecturas con
+                                    costo asociado + que ingresen productos nuevos al
+                                    carrito. El backend ya exige rol admin para
+                                    /api/inventory/scan-invoice; esto oculta el botón
+                                    para no confundir al cajero con una acción que
+                                    siempre resultaría 403. */}
+                                {showAdminControls && (
+                                    <button
+                                        onClick={() => setIsInvoiceReaderOpen(true)}
+                                        aria-label="Leer factura con OCR (admin)"
+                                        className="text-[10px] font-medium text-emerald-500 hover:text-emerald-600 transition-colors uppercase tracking-tight flex items-center gap-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 rounded-sm"
+                                    >
+                                        <Sparkles size={12} strokeWidth={3} aria-hidden="true" /> Leer Factura
+                                    </button>
+                                )}
                                 <button 
                                     onClick={() => setIsProductModalOpen(true)}
                                     className="text-[10px] font-medium text-zinc-900 dark:text-zinc-100 hover:text-zinc-900 dark:text-zinc-100 transition-colors uppercase tracking-tight flex items-center gap-1"
@@ -1633,6 +1939,11 @@ export default function ReceiveInventoryPage() {
                                             item={item}
                                             onUpdate={updateItem}
                                             onDelete={deleteItem}
+                                            // NO se pasa onPrintLabels: las filas del carrito DRAFT nunca deben
+                                            // ofrecer imprimir etiquetas porque la recepción aún no está
+                                            // confirmada en BD. El botón Printer sólo aparece en el modal
+                                            // post-recepción, cuando cada línea ya tiene syncedReceptionId.
+                                            // Guardián estático en tests/label-reprint-contract.test.mjs.
                                         />
                                     ))}
                                 </div>
@@ -2123,7 +2434,14 @@ export default function ReceiveInventoryPage() {
                                                             barcode: p.barcode,
                                                             productName: p.productName,
                                                             addedQuantity: 1,
-                                                            newPurchasePrice: Number(p.purchasePrice || 0),
+                                                            // Asociación manual: purchasePrice viene gross del maestro;
+                                                            // newPurchasePrice exige BASE.
+                                                            newPurchasePrice: grossToBasePrice(
+                                                                p.purchasePrice,
+                                                                p.iva,
+                                                                p.icui,
+                                                                p.ibua,
+                                                            ),
                                                             newSalePrice: Number(p.salePrice || 0),
                                                             oldPurchasePrice: Number(p.purchasePrice || 0),
                                                             oldSalePrice: Number(p.salePrice || 0),
@@ -2163,12 +2481,90 @@ export default function ReceiveInventoryPage() {
                     )}
                 </ModalContent>
             </Modal>
-            <InvoiceReaderModal
-                isOpen={isInvoiceReaderOpen}
-                onOpenChange={setIsInvoiceReaderOpen}
-                supplierId={selectedGlobalSupplier}
-                onExtractedItems={handleInvoiceMatch}
-            />
+            {/* Defense-in-depth: aun si alguien forzara isInvoiceReaderOpen=true
+                via DevTools, el modal no monta para usuarios sin rol admin. El
+                backend ya rechaza el request con 403, pero evitamos siquiera
+                mostrar la UI que pide la foto. */}
+            {showAdminControls && (
+                <InvoiceReaderModal
+                    isOpen={isInvoiceReaderOpen}
+                    onOpenChange={setIsInvoiceReaderOpen}
+                    supplierId={selectedGlobalSupplier}
+                    onExtractedItems={handleInvoiceMatch}
+                />
+            )}
+            {/* PackageIntakeModal: aparece cuando el resolver detecta un
+                 código que resolvió a un producto, para preguntar
+                 unidades por paquete y paquetes recibidos. Al confirmar
+                 agrega al carrito como entrada regular (NUNCA toca
+                 IsPack del producto). */}
+            {packageIntakeState.open && packageIntakeState.product && (
+                <PackageIntakeModal
+                    isOpen={packageIntakeState.open}
+                    onClose={() => setPackageIntakeState(s => ({ ...s, open: false }))}
+                    packageCode={packageIntakeState.code}
+                    product={packageIntakeState.product}
+                    initialUnitsPerPack={packageIntakeState.unitsPerPack}
+                    supplierId={selectedGlobalSupplier ? Number(selectedGlobalSupplier) : null}
+                    onConfirm={(totalUnits) => {
+                        // Resolvemos el producto en el catálogo local; si no
+                        // está lo construimos a partir del shape del resolver.
+                        const found = products.find(p => p.barcode === packageIntakeState.product.barcode);
+                        const target: any = found || packageIntakeState.product;
+                        addToReceive(target as any, totalUnits);
+                        toast({
+                            variant: 'success',
+                            title: 'AGREGADO (PAQUETE)',
+                            description: `${target.productName} — ${totalUnits} unidades`,
+                        });
+                    }}
+                />
+            )}
+            {/* LabelPrintSheet: se abre desde el botón Printer en cada
+                 ReceptionRow. Usa el flujo /labels/codes + /labels/print-jobs
+                 ya existente; idempotente y audita el trabajo. Si el bridge
+                 local falla, la recepción NO se revierte. */}
+            {labelSheetState.open && (
+                <LabelPrintSheet
+                    isOpen={labelSheetState.open}
+                    onClose={() => setLabelSheetState(s => ({ ...s, open: false }))}
+                    productBarcode={labelSheetState.barcode}
+                    productName={labelSheetState.productName}
+                    defaultCount={labelSheetState.defaultCount}
+                    receptionRef={labelSheetState.receptionRef}
+                />
+            )}
+            {/* POST-RECEPCIÓN: modal que ofrece imprimir etiquetas
+                 unitarias para las líneas que acaban de sincronizarse.
+                 Se abre SOLO después de que /products/bulk-receive
+                 respondió OK (contrato label-reprint-contract.test.mjs).
+                 Cada línea aquí tiene syncedReceptionId; cuando el usuario
+                 presiona Printer, se abre LabelPrintSheet con el ref real
+                 para auditar el trabajo en label_print_jobs.meta. */}
+            {isPostReceptionOpen && postReceptionLines.length > 0 && (
+                <PostReceptionLabelsModal
+                    isOpen={isPostReceptionOpen}
+                    onClose={() => {
+                        setIsPostReceptionOpen(false);
+                        setPostReceptionLines([]);
+                        if (pendingPostReceptionRedirect) {
+                            setPendingPostReceptionRedirect(false);
+                            setTimeout(() => { router.push('/dashboard'); }, 300);
+                        }
+                    }}
+                    lines={postReceptionLines}
+                    onPrintLabels={(line) => {
+                        if (!line.syncedReceptionId) return;
+                        setLabelSheetState({
+                            open: true,
+                            barcode: line.barcode,
+                            productName: line.productName,
+                            defaultCount: Math.max(1, Math.floor(Number(line.addedQuantity) || 1)),
+                            receptionRef: line.syncedReceptionId,
+                        });
+                    }}
+                />
+            )}
             <UnmatchedItemsReviewer
                 isOpen={isReviewerOpen}
                 onOpenChange={setIsReviewerOpen}

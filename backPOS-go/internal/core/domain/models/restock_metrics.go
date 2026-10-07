@@ -352,11 +352,50 @@ type RestockSuggestionResponse struct {
 	DaysUntilNextVisit    *int        `json:"daysUntilNextVisit,omitempty"`
 	LeadTimeSource        string      `json:"leadTimeSource"`
 	AgendaSource          string      `json:"agendaSource"` // "manual" | "learned" | "none"
+
+	// InTransitBreakdown desglosa el total `inTransitQty` por proveedor y
+	// pedido origen. El frontend lo usa para avisar "6 en camino de
+	// HERMARLY · ya pedido" ANTES de confirmar un pedido nuevo.
+	//
+	// El dato se incluye SIEMPRE que haya transito vivo (una sola consulta
+	// batch, sin N+1). Para productos sin transito el array va vacio y
+	// omitempty lo elimina del JSON.
+	//
+	// El nombre Go interno se conserva por retrocompatibilidad del codigo
+	// (tests, repositorios y servicios lo referencian como InTransitBreakdown),
+	// pero el JSON canonico expuesto a la UI es `inTransitSuppliers`, nombre
+	// que consume SuggestionCard y useSmartRestock en FrontPOS-main. Cualquier
+	// cambio del tag JSON rompe el contrato del endpoint
+	// /restock/suggestions-v2 — ver TestRestockSuggestionResponse_InTransitSuppliersJSONTag.
+	InTransitBreakdown []InTransitProduct `json:"inTransitSuppliers,omitempty"`
 }
 
 // InTransitProduct identifies an item that cannot be ordered again while pending.
+//
+// La estructura es compatible hacia atras: ProductID, ProductName y Quantity
+// se devolvieron desde el primer dia. Los campos nuevos (SupplierID,
+// SupplierName, OrderID, ExpectedDate) se agregan para que el 409 de
+// /inventory/restock/confirm pueda indicar al operador CUAL proveedor ya
+// tiene el producto en camino, cuanta cantidad y cuando se espera recibir.
+// Si la informacion no esta disponible (dato historico incompleto), los
+// campos quedan en su zero-value y el frontend degrada a "en camino" sin
+// hablar de proveedor.
+//
+// `omitempty` en los campos nuevos preserva el shape JSON legacy en los
+// casos donde falte el dato.
 type InTransitProduct struct {
-	ProductID   string  `json:"productId" gorm:"column:product_id"`
-	ProductName string  `json:"productName" gorm:"column:product_name"`
-	Quantity    float64 `json:"quantity" gorm:"column:quantity"`
+	ProductID    string  `json:"productId" gorm:"column:product_id"`
+	ProductName  string  `json:"productName" gorm:"column:product_name"`
+	Quantity     float64 `json:"quantity" gorm:"column:quantity"`
+	SupplierID   uint    `json:"supplierId,omitempty" gorm:"column:supplier_id"`
+	SupplierName string  `json:"supplierName,omitempty" gorm:"column:supplier_name"`
+	// OrderID viaja como string para unificar las dos fuentes de pedidos en
+	// transito: UUID textual de confirmed_orders y entero numerico de
+	// purchase_orders. El frontend solo lo usa para enlazar al pedido
+	// original, nunca para calcular.
+	OrderID string `json:"orderId,omitempty" gorm:"column:order_id"`
+	// ExpectedDate es la fecha estimada de llegada, formato "YYYY-MM-DD".
+	// Vacio cuando el pedido no la trae (purchase_orders viejos sin
+	// delivery_date).
+	ExpectedDate string `json:"expectedDate,omitempty" gorm:"column:expected_date"`
 }

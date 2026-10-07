@@ -17,7 +17,8 @@ import {
   Truck,
   X,
 } from "lucide-react";
-import { Autocomplete, AutocompleteItem, Button, Card, CardBody, Input, Skeleton, Switch } from "@heroui/react";
+import { Autocomplete, AutocompleteItem, Button, Card, CardBody, Input, Skeleton } from "@heroui/react";
+import { Switch } from "@/components/ui/switch";
 import { useApi } from "@/hooks/use-api";
 import { useAuth } from "@/lib/auth";
 import { API_URL } from "@/lib/constants";
@@ -70,7 +71,6 @@ const RENDER_INCREMENT = 24;
 
 interface GroupForm {
   expectedDate: string;
-  invoiceRef: string;
   /**
    * Valor del pedido escrito a mano, como texto para no pelear con el input
    * mientras el operador escribe. Permite enviar un pedido SIN desglosar los
@@ -88,6 +88,13 @@ interface SuggestionGroup {
   items: RestockSuggestion[];
 }
 
+// NOTA DE DISEÑO (histórica): el formulario tenía un tercer campo de
+// referencia o factura al momento del pedido. El dueño pidió quitarlo
+// porque en ese instante todavía no hay factura emitida; lo que se usa
+// como valor del pedido es orderValue (campo libre arriba). El backend
+// aún acepta esa columna por histórico (confirmed_orders.invoice_ref +
+// cron_jobs); el frontend ya no la envía.
+
 interface ConfirmOrderItem {
   product_id: string;
   barcode: string;
@@ -98,7 +105,6 @@ interface ConfirmOrderItem {
 interface ConfirmOrderPayload {
   supplier_id: number;
   expected_date: string;
-  invoice_ref: string;
   items: ConfirmOrderItem[];
   estimated_total: number;
   real_invoice_total: number;
@@ -111,6 +117,18 @@ interface TransitWarningProduct {
   productId: string;
   productName: string;
   quantity: number;
+  /**
+   * Proveedor que ya tiene la mercancía en camino. El backend lo devuelve en
+   * el 409 para que el aviso diga exactamente "en camino de HERMARLY" en vez
+   * de un genérico "ya pedido". Si el contrato viejo no lo trae, caemos al
+   * mensaje corto; nada bloquea.
+   */
+  supplierId?: number | null;
+  supplierName?: string | null;
+  /** Fecha estimada de llegada (YYYY-MM-DD, zona Bogotá). */
+  expectedDate?: string | null;
+  /** Id del pedido que trae esa cantidad en tránsito. */
+  orderId?: string | number | null;
 }
 
 interface TransitWarningResponse {
@@ -129,8 +147,6 @@ interface PendingOrder {
   supplier_id?: number;
   expectedDate?: string;
   expected_date?: string;
-  invoiceRef?: string;
-  invoice_ref?: string;
   /**
    * Totales guardados del pedido. Se usan al editar un pedido que se registró
    * SIN desglosar productos: en ese caso el valor es el único contenido del
@@ -404,6 +420,7 @@ function SmartRestockContent() {
     orderTotal,
     orderItemCount,
     selectedItems,
+    foreignCartIndex,
   } = useSmartRestock(selectedSupplier, {
     search: debouncedSearch,
     includeAll: effectiveIncludeAll,
@@ -607,7 +624,6 @@ function SmartRestockContent() {
           ...current,
           [key]: {
             expectedDate: (order.expectedDate ?? order.expected_date ?? "").slice(0, 10),
-            invoiceRef: order.invoiceRef ?? order.invoice_ref ?? "",
             orderValue: !hasSavedItems && savedTotal > 0 ? String(Math.round(savedTotal)) : "",
           },
         }));
@@ -682,19 +698,37 @@ function SmartRestockContent() {
     const current = forms[group.key];
     if (current) return current;
     const resolved = resolveExpectedDeliveryDate(group.items);
-    return { expectedDate: resolved.isoDate, invoiceRef: "", orderValue: "" };
+    return { expectedDate: resolved.isoDate, orderValue: "" };
   }, [forms]);
 
-  const updateForm = useCallback((key: string, patch: Partial<GroupForm>) => {
-    setForms((current) => ({
-      ...current,
-      [key]: {
-        expectedDate: current[key]?.expectedDate ?? dateAfter(7),
-        invoiceRef: current[key]?.invoiceRef ?? "",
-        orderValue: current[key]?.orderValue ?? "",
-        ...patch,
-      },
-    }));
+  // Al editar un campo del formulario (p. ej. "Valor del pedido") NO debemos
+  // reemplazar la fecha derivada de la agenda del proveedor por un fallback
+  // arbitrario (antes dateAfter(7)). Si el grupo todavía no tiene entrada en
+  // `forms`, buscamos primero la fecha calculada desde los items del grupo
+  // (resolveExpectedDeliveryDate), y sólo si no hay items cabe un fallback.
+  // Esto garantiza que escribir en "Valor del pedido" por primera vez NO
+  // muta la fecha predeterminada del proveedor.
+  const updateForm = useCallback((key: string, patch: Partial<GroupForm>, groupItems?: SuggestionGroup["items"]) => {
+    setForms((current) => {
+      const existing = current[key];
+      let baseExpected = existing?.expectedDate;
+      if (!baseExpected) {
+        // Preferir la fecha resuelta desde los items del grupo (agenda real).
+        if (groupItems && groupItems.length > 0) {
+          baseExpected = resolveExpectedDeliveryDate(groupItems).isoDate;
+        } else {
+          baseExpected = dateAfter(7);
+        }
+      }
+      return {
+        ...current,
+        [key]: {
+          expectedDate: baseExpected,
+          orderValue: existing?.orderValue ?? "",
+          ...patch,
+        },
+      };
+    });
   }, []);
 
   const confirmGroup = useCallback(async (group: SuggestionGroup) => {
@@ -742,7 +776,6 @@ function SmartRestockContent() {
     const payload: ConfirmOrderPayload = {
       supplier_id: group.supplierId,
       expected_date: form.expectedDate,
-      invoice_ref: form.invoiceRef,
       items,
       estimated_total: total,
       real_invoice_total: total,
@@ -1271,19 +1304,20 @@ function SmartRestockContent() {
                       onLinkSupplier={setLinkTarget}
                       canUnlink={!isOrphanGroup}
                       canLink={isOrphanGroup}
+                      foreignCartIndex={foreignCartIndex}
                     />
 
                     {!isOrphanGroup && (
                       <div
                         data-order-confirm-form
-                        className="grid gap-3 border-t border-amber-500/20 bg-amber-500/5 p-4 md:grid-cols-[minmax(180px,200px)_minmax(140px,1fr)_minmax(160px,180px)_auto] md:items-end"
+                        className="grid gap-3 border-t border-amber-500/20 bg-amber-500/5 p-4 md:grid-cols-[minmax(180px,220px)_minmax(160px,220px)_auto] md:items-end"
                       >
                       <label className="text-[10px] font-bold uppercase text-zinc-500">
                         Fecha de entrega
                         <input
                           type="date"
                           value={form.expectedDate}
-                          onChange={(event) => updateForm(completeGroup.key, { expectedDate: event.target.value })}
+                          onChange={(event) => updateForm(completeGroup.key, { expectedDate: event.target.value }, completeGroup.items)}
                           className="mt-1 h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm text-zinc-900 dark:border-white/10 dark:bg-zinc-950 dark:text-white"
                           aria-describedby={`fecha-fuente-${completeGroup.key}`}
                         />
@@ -1294,22 +1328,15 @@ function SmartRestockContent() {
                           {dateSourceLabel}
                         </span>
                       </label>
-                      <label className="text-[10px] font-bold uppercase text-zinc-500">
-                        Referencia / factura
-                        <input
-                          type="text"
-                          value={form.invoiceRef}
-                          onChange={(event) => updateForm(completeGroup.key, { invoiceRef: event.target.value })}
-                          placeholder="Opcional"
-                          className="mt-1 h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm font-normal text-zinc-900 dark:border-white/10 dark:bg-zinc-950 dark:text-white"
-                        />
-                      </label>
                       {/*
                         Valor del pedido. Permite enviar el pedido SIN desglosar
                         los productos: el preventista pasa, acuerdan un monto y
                         lo que hay que dejar registrado es el compromiso y la
                         fecha de llegada. Si hay productos seleccionados, este
                         campo corrige el total cuando se cerró en otro número.
+
+                        El campo de referencia/factura se removió a petición
+                        del dueño: en el momento del pedido no hay factura.
                       */}
                       <label className="text-[10px] font-bold uppercase text-zinc-500">
                         Valor del pedido
@@ -1326,7 +1353,7 @@ function SmartRestockContent() {
                             value={formatOrderValueInput(form.orderValue)}
                             onChange={(event) => updateForm(completeGroup.key, {
                               orderValue: normalizeOrderValueInput(event.target.value),
-                            })}
+                            }, completeGroup.items)}
                             placeholder={hasSelection
                               ? `${formatOrderValueInput(String(Math.round(groupTotal)))},00`
                               : "Sin desglosar"}
@@ -1502,19 +1529,38 @@ function SmartRestockContent() {
               </div>
 
               <ul className="space-y-1.5 rounded-2xl border border-sky-500/20 bg-sky-500/5 p-3">
-                {transitPrompt.products.map((product) => (
-                  <li
-                    key={product.productId}
-                    className="flex items-baseline justify-between gap-3 text-sm"
-                  >
-                    <span className="min-w-0 truncate font-bold text-zinc-900 dark:text-white">
-                      {product.productName}
-                    </span>
-                    <span className="shrink-0 font-black text-sky-600 dark:text-sky-300">
-                      {product.quantity} en camino
-                    </span>
-                  </li>
-                ))}
+                {transitPrompt.products.map((product) => {
+                  const supplierLabel = (product.supplierName ?? "").trim();
+                  // Formato pedido por el dueño: "6 en camino de HERMARLY ·
+                  // ya pedido". Si el backend no envió proveedor caemos al
+                  // mensaje corto para no mentir con una fuente inventada.
+                  const detail = supplierLabel
+                    ? `${product.quantity} en camino de ${supplierLabel} · ya pedido`
+                    : `${product.quantity} en camino · ya pedido`;
+                  const expected = typeof product.expectedDate === "string" && product.expectedDate
+                    ? formatIsoDateEs(product.expectedDate)
+                    : "";
+                  return (
+                    <li
+                      key={product.productId}
+                      className="flex flex-col gap-0.5 border-b border-sky-500/10 pb-1 last:border-b-0 last:pb-0"
+                    >
+                      <div className="flex items-baseline justify-between gap-3 text-sm">
+                        <span className="min-w-0 truncate font-bold text-zinc-900 dark:text-white">
+                          {product.productName}
+                        </span>
+                        <span className="shrink-0 font-black text-sky-600 dark:text-sky-300">
+                          {product.quantity}
+                        </span>
+                      </div>
+                      <p className="text-[11px] font-medium text-sky-700 dark:text-sky-200">
+                        {detail}
+                        {expected ? ` · llega ${expected}` : ""}
+                        {product.orderId ? ` · pedido ${product.orderId}` : ""}
+                      </p>
+                    </li>
+                  );
+                })}
               </ul>
 
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">

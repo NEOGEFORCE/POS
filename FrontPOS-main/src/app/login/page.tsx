@@ -1,9 +1,10 @@
-﻿"use client";
+"use client";
 // Cache buster for Turbopack HMR
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth';
+import { resolvePostLoginTarget } from '@/lib/reauth-redirect.mjs';
 import { useToast } from "@/hooks/use-toast";
 import { Eye, EyeOff, Mail, Zap } from 'lucide-react';
 // Importamos los componentes premium de HeroUI
@@ -21,10 +22,56 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useReducedMotionSafe } from "@/components/ui/motion";
 import { RunawayButton } from "@/components/ui/runaway-button";
 
+// ---------------------------------------------------------------------------
+// LoginPage (export default)
+//
+// Next.js 15 con `output: 'export'` prerendera estáticamente todas las
+// páginas, incluido /login. En Next 15 cualquier uso de useSearchParams()
+// durante el prerender exige un <Suspense> en el árbol padre; sin él, el
+// build falla con "useSearchParams() should be wrapped in a suspense
+// boundary at page '/login'".
+//
+// Para no romper el contrato de redirección preservada (?next=<ruta>),
+// extraemos TODO el cuerpo del formulario a LoginForm — que ES quien lee
+// useSearchParams() y llama a resolvePostLoginTarget — y en el export
+// default dejamos un wrapper mínimo con <Suspense fallback={...}>.
+//
+// resolvePostLoginTarget y sanitizeNextParam siguen idénticos: los tests
+// reauth-preserves-route.test.mjs y el guardián login-suspense-boundary
+// quedan verdes.
+// ---------------------------------------------------------------------------
 export default function LoginPage() {
+  return (
+    <Suspense fallback={<LoginFallback />}>
+      <LoginForm />
+    </Suspense>
+  );
+}
+
+// Fallback silencioso: evita el flash blanco cuando el prerender aún no
+// resolvió el search param. Mantiene el background del app para que la
+// transición al form real sea invisible al ojo.
+function LoginFallback() {
+  return (
+    <div className="flex min-h-screen bg-[var(--bg-app)] relative overflow-hidden">
+      <div className="w-full flex items-center justify-center">
+        <div className="h-12 w-12 rounded-2xl bg-[var(--accent-soft)] shadow-[0_0_20px_var(--accent-soft)] border border-[var(--accent-border)] animate-pulse" />
+      </div>
+    </div>
+  );
+}
+
+function LoginForm() {
   const { login, user } = useAuth();
   const { toast } = useToast();
   const router = useRouter();
+  // Preservación de ruta: cuando SessionGuardian expulsa al usuario con
+  // ?reason=timeout&next=/inventory/orders, al autenticarse debemos
+  // devolverlo a esa misma ruta en lugar del dashboard. resolvePostLoginTarget
+  // valida el `next` contra open-redirect y cae al destino por rol si no
+  // existe o no es seguro.
+  const searchParams = useSearchParams();
+  const nextParam = searchParams?.get('next') ?? null;
 
   // Estados de UI y Autenticacion
   const [username, setUsername] = useState('');
@@ -57,9 +104,7 @@ export default function LoginPage() {
 
         if (user) {
           const role = (user.role || user.Role || "").toLowerCase();
-          const target = (role === 'admin' || role === 'administrador' || role === 'superadmin')
-            ? '/dashboard'
-            : '/sales/new';
+          const target = resolvePostLoginTarget(role, nextParam);
 
           // Cortinas: dispara la salida de ambos paneles y navega cuando termine.
           // En reduced-motion el redirect es instantaneo.
@@ -75,7 +120,7 @@ export default function LoginPage() {
       }
     };
     checkSetupAndAuth();
-  }, [user, router, reducedMotion]);
+  }, [user, router, reducedMotion, nextParam]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

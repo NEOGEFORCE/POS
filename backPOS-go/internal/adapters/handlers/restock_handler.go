@@ -209,10 +209,23 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 		return
 	}
 	if needsInTransitConfirmation(conflicts, req.AllowInTransit) {
+		// Marca de "cross-proveedor": al menos uno de los conflictos pertenece
+		// a un proveedor distinto al que se esta pidiendo ahora. El frontend
+		// usa esto para destacar el aviso ("ya hay 6 en camino de HERMARLY").
+		crossSupplier := false
+		for _, p := range conflicts {
+			if p.SupplierID != 0 && p.SupplierID != req.SupplierID {
+				crossSupplier = true
+				break
+			}
+		}
 		c.JSON(http.StatusConflict, gin.H{
-			"code":     "PRODUCTS_IN_TRANSIT_CONFIRMATION_REQUIRED",
-			"error":    "Uno o más productos ya están en camino. Confirma si deseas pedir cantidad adicional",
-			"products": conflicts,
+			"code":              "PRODUCTS_IN_TRANSIT_CONFIRMATION_REQUIRED",
+			"error":             "Uno o más productos ya están en camino. Confirma si deseas pedir cantidad adicional",
+			"products":          conflicts,
+			"targetSupplierId":  req.SupplierID,
+			"crossSupplier":     crossSupplier,
+			"requiresExplicitConfirm": true,
 		})
 		return
 	}

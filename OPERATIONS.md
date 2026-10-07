@@ -240,3 +240,51 @@ Cada release conserva:
 ```
 
 Si el rollback automático no puede operar, detener `POS_Server`, restaurar ambos artefactos de la misma carpeta, iniciar el servicio y repetir healthcheck. No mezclar el binario de un release con el frontend de otro.
+
+
+## Etiquetas y cajón de dinero (migración 016 pendiente)
+
+La migración `016_label_generator_and_cash_drawer.sql` crea cinco tablas:
+`label_size_templates`, `label_printer_profiles`, `label_codes`,
+`label_print_jobs` y `cash_drawer_opens`. **La migración está escrita y
+validada por `go test ./migrations` pero NO está aplicada.** Antes de usar
+en producción las rutas `/api/labels/*` y `/api/cash-drawer/open`, el
+operador debe aplicar la migración durante una ventana aprobada siguiendo
+`backPOS-go/MIGRATIONS.md`.
+
+- Modelos Go: `internal/core/domain/models/labels.go` — definidos fuera de
+  `schemaModels()` a propósito para no alterar el checksum de la migración
+  002 (model_schema). Las tablas físicas las crea exclusivamente la 016.
+- Repositorio: `internal/adapters/repositories/label_repository.go`.
+  - `EnsureCodeForProduct` es idempotente: reimprimir un barcode ya
+    conocido devuelve el mismo `code`.
+  - El generador consulta TRES fuentes de colisión dentro de la misma
+    transacción: `products.barcode`, `products.alternateCodes` y
+    `label_codes.code`.
+  - `RecordCashDrawerOpen` valida las precondiciones del CHECK antes del
+    INSERT para dar errores legibles.
+- Handler: `internal/adapters/handlers/label_handler.go`.
+- Rutas:
+  - `GET  /api/labels/sizes` (empleado) — `POST` sólo admin.
+  - `GET  /api/labels/printers` (empleado) — `POST` sólo admin.
+  - `GET  /api/labels/codes/search?q=...` (empleado).
+  - `POST /api/labels/codes` (empleado) — asegura código idempotente.
+  - `POST /api/labels/print-jobs` (empleado) — audita el lote enviado.
+  - `POST /api/cash-drawer/open` — regla "sin venta → requiere admin":
+    responde `403 { code: "CASH_DRAWER_REQUIRES_SALE_OR_ADMIN" }`.
+
+### Capacidades reales de hardware (importante)
+
+El navegador NO puede escribir directamente a impresoras ESC/POS/TSPL
+por USB ni enviar el pulso de kickout al cajón. Opciones viables:
+
+- **Bridge local** (recomendado): servicio Node en `localhost` que expone
+  `POST /print` y `POST /drawer`. Replicar el patrón de `scale-bridge/`.
+  La pantalla `/labels` detecta `window.posBridge` y lo usa cuando está
+  presente.
+- **WebUSB**: Chromium only, HTTPS obligatorio, permiso explícito del
+  usuario cada sesión. Fuera de alcance de este sprint.
+
+Sin bridge: imprimir cae al diálogo del navegador y la apertura del
+cajón queda **auditada pero no se produce físicamente**. La UI lo
+documenta en pantalla.

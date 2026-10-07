@@ -1,19 +1,20 @@
 package handlers
 
 import (
+	"encoding/csv"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
 	"backPOS-go/internal/infrastructure/sse"
-	"encoding/csv"
-	"io"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
@@ -918,7 +919,24 @@ func (h *ProductHandler) GetReception(c *gin.Context) {
 	c.JSON(http.StatusOK, movements)
 }
 
+// ScanInvoice es el endpoint del lector de facturas.
+//
+// Validaciones de entrada (devuelven 400 o 413 sin consultar a Claude):
+//   - Body JSON acotado a MaxInvoiceBodyBytes (http.MaxBytesReader).
+//   - imageBase64 obligatorio y de tamaño <= MaxInvoiceBase64Chars.
+//     Si pasa el límite se responde 413.
+//   - mimeType se normaliza y debe estar en acceptedInvoiceMIMETypes.
+//   - supplierID obligatorio (> 0). El prompt y los aliases dependen de él.
+//
+// Errores downstream:
+//   - services.ErrInvoiceReaderUnavailable → 503 (timeout, 5xx de Claude,
+//     API key sin configurar). No se filtra texto técnico al cliente.
+//   - cualquier otro error → 500 con mensaje genérico (SendError sanitiza).
 func (h *ProductHandler) ScanInvoice(c *gin.Context) {
+	// Tope del body antes de cualquier parseo. Si el cliente intenta subir
+	// una imagen enorme, cortamos aquí y el 413 llega sin consumir memoria.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, services.MaxInvoiceBodyBytes)
+
 	var req struct {
 		ImageBase64   string                `json:"imageBase64"`
 		MimeType      string                `json:"mimeType"`
@@ -927,13 +945,52 @@ func (h *ProductHandler) ScanInvoice(c *gin.Context) {
 		ExpectedTaxes *models.ExpectedTaxes `json:"expectedTaxes,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
+		// http.MaxBytesReader emite un error con el texto exacto
+		// "http: request body too large"; lo mapeamos a 413.
+		if err != nil && strings.Contains(err.Error(), "request body too large") {
+			SendError(c, http.StatusRequestEntityTooLarge, ErrBadRequest,
+				"La imagen de la factura es demasiado grande, intente con una resolución menor", nil)
+			return
+		}
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos inválido", err)
 		return
 	}
 
-	result, err := h.service.ScanInvoice(req.ImageBase64, req.MimeType, req.SupplierName, req.SupplierID, req.ExpectedTaxes)
+	// --- Validaciones de negocio ---
+	if req.SupplierID == 0 {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Debe seleccionar un proveedor para escanear la factura", nil)
+		return
+	}
+	if strings.TrimSpace(req.ImageBase64) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "La imagen de la factura es obligatoria", nil)
+		return
+	}
+	// Longitud base64 defensiva (http.MaxBytesReader ya corta más arriba,
+	// esto da el 413 incluso si Content-Length miente).
+	if len(req.ImageBase64) > services.MaxInvoiceBase64Chars {
+		SendError(c, http.StatusRequestEntityTooLarge, ErrBadRequest,
+			"La imagen de la factura es demasiado grande, intente con una resolución menor", nil)
+		return
+	}
+	// Validación de MIME: el helper devuelve "" si no está soportado.
+	if services.NormalizeMimeType(req.MimeType) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest,
+			"Tipo de imagen no soportado: use JPEG, PNG, WEBP o GIF", nil)
+		return
+	}
+
+	// Context del cliente: si el navegador cierra la pestaña, cancelamos
+	// la llamada a Claude en lugar de retener el goroutine 90s.
+	result, err := h.service.ScanInvoice(c.Request.Context(),
+		req.ImageBase64, req.MimeType, req.SupplierName, req.SupplierID, req.ExpectedTaxes)
 	if err != nil {
-		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al escanear factura", err)
+		if errors.Is(err, services.ErrInvoiceReaderUnavailable) {
+			SendError(c, http.StatusServiceUnavailable, ErrInternalServer,
+				"El lector de facturas no está disponible, intente de nuevo en unos minutos", nil)
+			return
+		}
+		SendError(c, http.StatusInternalServerError, ErrInternalServer,
+			"No se pudo procesar la factura", err)
 		return
 	}
 

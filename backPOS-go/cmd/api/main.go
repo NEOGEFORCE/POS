@@ -69,6 +69,16 @@ func main() {
 	reportRepo := repositories.NewPostgresReportRepository(repositories.DB)
 	restockRepo := repositories.NewPostgresRestockRepository(repositories.DB)
 	restockMetricsRepo := repositories.NewRestockMetricsRepository(repositories.DB)
+	// Label/cash-drawer repository: usa las tablas creadas por la migración
+	// 016. Se expone a los handlers correspondientes; mantener fuera de
+	// schemaModels() para no romper el checksum de la migración 002.
+	labelRepo := repositories.NewLabelRepository(repositories.DB)
+	// Package barcode alias repository: usa la tabla de la migración 017.
+	// Mantener fuera de schemaModels() por la misma razón que label_repo.
+	packageAliasRepo := repositories.NewPackageBarcodeAliasRepository(repositories.DB)
+	// Loans repository: usa las tablas creadas por la migración 019.
+	// Mantener fuera de schemaModels() por la misma razón que label_repo.
+	loanRepo := repositories.NewPostgresLoanRepository(repositories.DB)
 
 	// Initialize Services
 	emailService := services.NewEmailService()
@@ -92,6 +102,10 @@ func main() {
 	returnService := services.NewReturnService(returnRepo, productRepo, saleRepo, movementRepo)
 	orderService := services.NewPurchaseOrderService(orderRepo, supplierRepo)
 	reportService := services.NewReportService(reportRepo)
+	// Loans service: orquesta migración 019 (préstamos / cuotas / usos).
+	// Depende de expenseRepo para que el pago de cuota cree su Expense
+	// normal (status='PAID') sin tocar la lógica legacy de PRESTAMO.
+	loanService := services.NewLoanService(loanRepo, expenseRepo, auditService)
 
 	// ExportService: PDF/Excel/CSV + nuevos reportes (rentabilidad, mermas, rotaci\u00f3n, cuadre real)
 	exportService := services.NewExportService(repositories.DB, dashboardService)
@@ -100,11 +114,11 @@ func main() {
 	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService, authService)
 	restockHandler := handlers.NewRestockHandler(restockService, inventoryService, telegramService, restockMetricsRepo)
 	restockV2Handler := handlers.NewRestockV2Handler(restockMetricsRepo, restockNightlyService)
-	saleHandler := handlers.NewSaleHandler(saleService, auditService)
+	saleHandler := handlers.NewSaleHandler(saleService, auditService, shiftRepo)
 	authHandler := handlers.NewAuthHandler(authService)
 	categoryHandler := handlers.NewCategoryHandler(categoryService, auditService)
 	supplierHandler := handlers.NewSupplierHandler(supplierService, auditService)
-	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService, repositories.DB)
+	dashboardHandler := handlers.NewDashboardHandler(dashboardService, telegramService, auditService, authService, repositories.DB)
 	dashboardReportHandler := handlers.NewDashboardReportHandler(dashboardService, auditService)
 	dashboardExportHandler := handlers.NewDashboardExportHandler(repositories.DB, exportService, dashboardService, telegramService, auditService)
 	clientHandler := handlers.NewClientHandler(clientService, saleRepo, auditService)
@@ -116,6 +130,13 @@ func main() {
 	notificationHandler := handlers.NewNotificationHandler(telegramService)
 	reportHandler := handlers.NewReportHandler(reportService)
 	sseHandler := handlers.NewSSEHandler()
+	// Módulo de etiquetas + cajón de dinero (migración 016).
+	labelHandler := handlers.NewLabelHandler(labelRepo)
+	// Módulo de alias de código de paquete en recepción (migración 017).
+	packageAliasHandler := handlers.NewPackageBarcodeAliasHandler(packageAliasRepo)
+	// Módulo avanzado de préstamos (migración 019): dashboard, create,
+	// pay-installment y control de gastos.
+	loanHandler := handlers.NewLoanHandler(loanService)
 
 	// Initialize and Start Cron Jobs (orquestador durable sobre PostgreSQL)
 	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService, restockNightlyService)
@@ -284,6 +305,11 @@ func main() {
 		auth.POST("/forgot-password", authHandler.ForgotPassword)
 		auth.POST("/reset-password", authHandler.ResetPassword)
 		auth.POST("/setup", authHandler.Setup)
+		// Autorización server-side de FALTANTES en cierre de caja.
+		// Fix P0 (2026-10-04): reemplaza al re-login client-side del modal
+		// y emite un JWT corto que SaveClosure verifica para no confiar en
+		// `authorizedBy` como string libre.
+		auth.POST("/verify-admin", authHandler.VerifyAdmin)
 
 		// Protected Routes
 		protected := api.Group("/")
@@ -444,6 +470,18 @@ func main() {
 			// Cambiar el medio de pago de una venta ya registrada altera el
 			// cuadre de caja: sólo admin.
 			protected.PUT("/sales/update-payment/:id", middlewares.RoleMiddleware("admin"), saleHandler.UpdatePayment)
+			// Correccion acotada del medio de pago (empleado):
+			// SOLO redistribuye el mismo total entre efectivo y canales de
+			// transferencia; no permite cambiar total, cliente, productos ni
+			// mover plata hacia/desde FIADO. La elegibilidad real
+			// (venta del mismo cajero, turno activo, sin devoluciones ni
+			// abonos) se valida DENTRO del servicio, no aqui — este endpoint
+			// solo garantiza que el requester esta autenticado como empleado.
+			//
+			// Documentado como excepcion en la guia de rutas y en los tests
+			// de ruta: no es una puerta trasera a UpdatePayment, es un
+			// camino auditado y mucho mas estrecho.
+			protected.POST("/sales/correct-payment-channel/:id", middlewares.RoleMiddleware("empleado"), saleHandler.CorrectPaymentChannel)
 			protected.POST("/sales/add-items/:id", middlewares.RoleMiddleware("empleado"), saleHandler.AddItems)
 
 			// Devoluciones: consultas para empleados; mutaciones financieras sólo admin.
@@ -506,6 +544,12 @@ func main() {
 				dashboard.GET("/reports/pnl", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetPnLReport)
 				dashboard.GET("/reports/cashflow", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetCashFlowReport)
 				dashboard.GET("/reports/movements", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetInventoryMovements)
+				// Historial de recepciones agrupado (una tarjeta por RECP-xxx)
+				// con nombre de proveedor ya resuelto. Lectura; alineado al
+				// mismo gate admin que /reports/movements. Si se decide
+				// bajarlo a 'empleado' en el futuro, no requiere cambios de
+				// servicio ni DTO.
+				dashboard.GET("/receptions-history", middlewares.RoleMiddleware("admin"), dashboardReportHandler.GetReceptionsHistory)
 				dashboard.GET("/reports/vault-audit", middlewares.RoleMiddleware("admin"), dashboardHandler.GetVaultAudit)
 				dashboard.GET("/reports/global-debt", middlewares.RoleMiddleware("admin"), dashboardHandler.GetGlobalDebt)
 
@@ -583,9 +627,99 @@ func main() {
 			protected.POST("/notifications/telegram", middlewares.RoleMiddleware("admin"), notificationHandler.SendTelegramPDF)
 			protected.POST("/notifications/telegram/text", middlewares.RoleMiddleware("admin"), notificationHandler.SendTelegramMessage)
 			protected.GET("/notifications/health", notificationHandler.HealthCheck)
+			// Envio de la imagen del recibo generada por el frontend (Canvas 2D
+			// con la misma fuente que la impresora termica). Mantiene el
+			// endpoint de texto `/telegram/ticket` para compatibilidad / fallback.
+			protected.POST("/telegram/ticket-image", notificationHandler.SendTicketImageToTelegram)
 
 			// REAL-TIME EVENT STREAM (Ultra-Instinto)
 			protected.GET("/sse", sseHandler.Stream)
+
+			// ================================================================
+			// LABELS + CASH DRAWER (migración 016)
+			// ================================================================
+			// Las plantillas y perfiles de impresora son admin-only; la
+			// consulta de códigos y la impresión están permitidas a
+			// empleados; la apertura del cajón aplica la regla de negocio
+			// "sin venta → requiere admin" dentro del handler.
+			labels := protected.Group("/labels")
+			{
+				labels.GET("/sizes", labelHandler.ListSizes)
+				labels.GET("/printers", labelHandler.ListPrinters)
+				labels.GET("/codes/search", labelHandler.SearchCodes)
+				labels.GET("/codes/resolve", labelHandler.ResolveCode)
+				labels.POST("/codes", labelHandler.EnsureCode)
+				labels.POST("/print-jobs", labelHandler.RecordPrint)
+				// Cerrar el ciclo del print job (queued → printed|failed|
+				// cancelled). Antes el status quedaba perpetuamente en
+				// queued porque MarkPrintJob no estaba expuesto.
+				// Fix 2026-10-04.
+				labels.PATCH("/print-jobs/:id/status", labelHandler.MarkPrintJobStatus)
+
+				labelsAdmin := labels.Group("/")
+				labelsAdmin.Use(middlewares.RoleMiddleware("admin"))
+				{
+					labelsAdmin.POST("/sizes", labelHandler.UpsertSize)
+					labelsAdmin.POST("/printers", labelHandler.UpsertPrinter)
+					// Anular un código de etiqueta es destructivo:
+					// solo admin. Idempotente. Fix 2026-10-04.
+					labelsAdmin.POST("/codes/:code/void", labelHandler.VoidCode)
+				}
+			}
+			// Cash drawer open: regla "sin venta → requiere admin" se
+			// resuelve DENTRO del handler para que la respuesta sea 403
+			// con code=CASH_DRAWER_REQUIRES_SALE_OR_ADMIN y no 401 genérico.
+			protected.POST("/cash-drawer/open", labelHandler.OpenCashDrawer)
+
+			// ================================================================
+			// PACKAGE BARCODE ALIAS (migración 017)
+			// ================================================================
+			// Alias de código de barras del PAQUETE: productos cuyo código
+			// solo viene impreso en el empaque, no en cada unidad. Nunca
+			// alimenta buildProductLookup de ventas; solo recepción.
+			//
+			// Permisos:
+			//   - GET resolve: empleado+admin (consulta de solo lectura).
+			//   - POST crear/actualizar: empleado+admin (parte del flujo de
+			//     recepción, que ya es accesible a empleados vía
+			//     /products/bulk-receive).
+			//   - POST seen: empleado+admin (telemetría ligera).
+			protected.GET("/inventory/package-barcode/resolve", packageAliasHandler.Resolve)
+			protected.POST("/inventory/package-barcode", packageAliasHandler.Ensure)
+			protected.POST("/inventory/package-barcode/seen", packageAliasHandler.MarkSeen)
+
+			// ================================================================
+			// LOANS — Módulo avanzado de préstamos (migración 019)
+			// ================================================================
+			// Las lecturas (list, detail, preview) están abiertas a empleado +
+			// admin. Las mutaciones financieras (crear, pagar cuota, registrar
+			// uso del principal, cancelar) son admin-only: mueven plata y
+			// afectan "Cuentas por Pagar".
+			loans := protected.Group("/loans")
+			{
+				loans.GET("", loanHandler.List)
+				loans.GET("/:id", loanHandler.GetByID)
+				// Preview NO persiste: lo exponemos a empleado para que la UI
+				// pinte el cronograma antes de que el admin confirme.
+				loans.POST("/preview", loanHandler.Preview)
+
+				loansAdmin := loans.Group("/")
+				loansAdmin.Use(middlewares.RoleMiddleware("admin"))
+				{
+					loansAdmin.POST("", loanHandler.Create)
+					loansAdmin.PUT("/:id", loanHandler.Update)
+					loansAdmin.POST("/:id/installments/:number/pay", loanHandler.Pay)
+					loansAdmin.POST("/:id/expenses", loanHandler.RegisterExpense)
+					// Pagar un egreso/deuda con la plata del préstamo. No sale
+					// de ningún canal de la tienda (regla del dueño); sólo
+					// descuenta del disponible del préstamo via loan_expenses.
+					loansAdmin.POST("/:id/pay-expense", loanHandler.PayExpense)
+					// Repara pagos eliminados antes de la traza 022. El repo sólo
+					// actúa si hay una única deuda original coincidente.
+					loansAdmin.POST("/:id/expenses/:usageId/reverse-orphan", loanHandler.ReverseOrphanedExpense)
+					loansAdmin.DELETE("/:id", loanHandler.Delete)
+				}
+			}
 		}
 	}
 

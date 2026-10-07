@@ -1936,34 +1936,43 @@ Si es otro tipo de imagen:
 	return base
 }
 
-func (s *AIBotService) buildRequest(state *ConversationState, isImage bool) ClaudeRequest {
-	maxTokens := 1024
-	// Inyección dinámica de fecha/hora actual de Bogotá en cada request
-	sysPrompt := buildSystemPrompt(false)
-	model := FastModel()
-
-	if isImage {
-		maxTokens = 4096 // Las facturas pueden tener muchos productos
-		sysPrompt = buildSystemPrompt(true)
-		model = VisionModel()
-	}
-	// Si el último mensaje menciona reporte, detalle o desglose
-	lastMsg := ""
-	if len(state.ConversationHistory) > 0 {
-		if content, ok := state.ConversationHistory[len(state.ConversationHistory)-1].Content.(string); ok {
-			lastMsg = strings.ToLower(content)
+// latestUserText recorre el historial de atrás hacia adelante y devuelve el
+// último mensaje de usuario cuyo Content sea un string plano. Los mensajes
+// con Content []map[string]interface{} (tool_result, imagen) se saltan
+// porque no son texto clasificable. Devuelve "" si no hay candidato.
+//
+// Clasificar sobre el último texto del usuario (no sobre el último mensaje
+// del historial en general) evita un bug sutil: después de un tool_use el
+// último mensaje es tool_result y un cast a string fallaría silenciosamente,
+// dejando el request en el tier barato aun cuando el usuario pidió un
+// reporte dos turnos atrás.
+func latestUserText(history []ClaudeMessage) string {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Role != "user" {
+			continue
+		}
+		if s, ok := history[i].Content.(string); ok {
+			return s
 		}
 	}
-	if strings.Contains(lastMsg, "reporte") ||
-		strings.Contains(lastMsg, "detalle") ||
-		strings.Contains(lastMsg, "desglose") ||
-		strings.Contains(lastMsg, "todos") {
-		maxTokens = 4096
-	}
+	return ""
+}
+
+// buildRequest arma el payload para la API de Anthropic. La selección de
+// modelo y el presupuesto de max_tokens vienen centralizados en
+// ai_models.go: aquí sólo clasificamos y consumimos.
+func (s *AIBotService) buildRequest(state *ConversationState, isImage bool) ClaudeRequest {
+	// Clasificación centralizada. Pasa el último texto del usuario (si lo
+	// hay) y el flag de imagen. ClassifyRequest se encarga del contrato:
+	// imagen SIEMPRE enruta a Vision, aun si el caption dice "reporte".
+	userText := latestUserText(state.ConversationHistory)
+	class := ClassifyRequest(userText, isImage)
+
+	sysPrompt := buildSystemPrompt(isImage)
 
 	return ClaudeRequest{
-		Model:     model,
-		MaxTokens: maxTokens,
+		Model:     SelectModel(class),
+		MaxTokens: MaxTokensFor(class),
 		System:    sysPrompt,
 		Messages:  state.ConversationHistory,
 		Tools:     s.getClaudeTools(),

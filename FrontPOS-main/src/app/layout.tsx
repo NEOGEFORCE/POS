@@ -39,12 +39,16 @@ export const metadata: Metadata = {
   },
 };
 
-// MEJORA UX: Desactivamos el auto-zoom en moviles al hacer focus en inputs
+// MEJORA UX: Desactivamos el auto-zoom en moviles al hacer focus en inputs.
+// `viewportFit: 'cover'` activa las variables CSS env(safe-area-inset-*) en
+// iOS; sin este flag, el modal de cobro quedaba tapado por el home indicator
+// del iPhone y el usuario no podia alcanzar el boton primario.
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
   maximumScale: 1,
   userScalable: false,
+  viewportFit: 'cover',
   themeColor: '#09090b', // Cambiado a oscuro para coincidir con la cabecera
 };
 

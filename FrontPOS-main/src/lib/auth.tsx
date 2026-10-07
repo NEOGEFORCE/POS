@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 
 import { API_URL } from "@/lib/constants";
 import type { User } from "@/lib/definitions";
+import { resolvePostLoginTarget } from "@/lib/reauth-redirect.mjs";
+import { clearClosureStorage } from "@/lib/closures-helpers.mjs";
 import {
   clearSession,
   migrateLegacySession,
@@ -34,11 +36,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return subscribeAuthMessages((message) => {
       if (message.type === "logout") {
+        // Al cerrar sesion, borramos tambien el conteo del cierre en curso.
+        // Si no, el proximo usuario de este PC vería billetes/monedas y notas
+        // del cajero anterior en su propia pantalla de cierre.
+        clearClosureStorage();
         setUser(null);
         router.replace("/login");
         return;
       }
       const refreshed = readSession();
+      // Cambio de usuario entre pestanas: tambien hay que limpiar.
+      const prevDni = typeof window !== "undefined" ? localStorage.getItem("pos_last_user_dni") : null;
+      const nextDni = refreshed?.user?.dni ?? null;
+      if (prevDni && nextDni && prevDni !== nextDni) {
+        clearClosureStorage();
+      }
+      if (nextDni && typeof window !== "undefined") {
+        try {
+          localStorage.setItem("pos_last_user_dni", String(nextDni));
+        } catch {
+          // ignorar: localStorage puede estar bloqueado en modo privado.
+        }
+      }
       setUser(refreshed?.user ?? null);
     });
   }, [router]);
@@ -70,11 +89,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     writeSession(data.token, data.user, { broadcast: false });
     setUser({ ...data.user, token: data.token });
 
+    // Preservar ruta de retorno si el guardián nos trajo con ?next=...
+    // resolvePostLoginTarget valida contra open-redirect y cae al destino
+    // por rol si next no es seguro.
     const role = (data.user.role ?? data.user.Role ?? "").toLowerCase();
-    router.push(["admin", "administrador", "superadmin"].includes(role) ? "/dashboard" : "/sales/new");
+    const nextParam = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("next")
+      : null;
+    const target = resolvePostLoginTarget(role, nextParam);
+    router.push(target);
   };
 
   const logout = () => {
+    // Antes de limpiar la sesion, borramos los datos del cierre en curso.
+    // No queremos que un cajero vea el conteo en billetes/monedas del cajero
+    // anterior en el mismo PC. clearSession dispara el message "logout" en
+    // otras pestanas, pero localStorage es local por pestana, asi que lo
+    // limpiamos aqui tambien.
+    clearClosureStorage();
     clearSession("manual");
     setUser(null);
     router.replace("/login");

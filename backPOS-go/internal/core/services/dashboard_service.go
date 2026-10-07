@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -227,6 +228,14 @@ type StockMovementReportItem struct {
 	Reason   string    `json:"reason"`
 	Employee string    `json:"employee"`
 	Ref      string    `json:"ref"`
+	// Snapshot JSON del movimiento con shape {"entry":{...},"supplierName","employeeName"}.
+	// Antes se recortaba al convertir y la pantalla /inventory/history
+	// renderizaba "SIN PROVEEDOR" en cada tarjeta porque el metadato nunca
+	// cruzaba el DTO. Se incluye aqui como fix minimo retro-compatible; el
+	// endpoint dedicado GET /api/dashboard/receptions-history ya devuelve
+	// el dato ya resuelto. Omitempty para no romper otros consumidores
+	// (grep del repo: ningun otro cliente espera este campo).
+	Metadata string `json:"metadata,omitempty"`
 }
 
 func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string, endDateStr string) (*DashboardOverview, error) {
@@ -1105,65 +1114,99 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 }
 
 func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}) error {
-	closure, err := s.closureRepo.GetByID(id)
-	if err == nil {
+	// FIX P1 (transaccional + fechas efectivas + preservar autorizador,
+	// 2026-10-04): el flujo anterior guardaba egresos olvidados FUERA de
+	// la transacción, releía ventas del rango VIEJO del cierre y recién
+	// al final llamaba a `closureRepo.Update(id, updates)` sin
+	// envolverlo en una tx. Si cualquier paso intermedio fallaba, los
+	// egresos olvidados quedaban persistidos pero el cierre no se
+	// actualizaba.
+	//
+	// Nuevo contrato:
+	//
+	//   1. Toda la operación corre dentro de `closureRepo.Transaction`.
+	//   2. Los egresos olvidados se guardan con `expenseRepo.SaveWithTx`
+	//      para que caigan en el rollback si el UPDATE falla.
+	//   3. Si vinieron `start_date`/`end_date` NUEVAS en el DTO, se
+	//      recomputa el arqueo contra esas ventanas (no las antiguas).
+	//      Antes el cambio de rango dejaba `expected_cash` y
+	//      `difference` desactualizados.
+	//   4. `authorized_by` se preserva si el DTO no lo trae: no se
+	//      sobrescribe con "" ni se pierde el admin original en edites
+	//      sucesivos.
+
+	err := s.closureRepo.Transaction(func(tx interface{}) error {
+		closure, err := s.closureRepo.GetByIDWithTx(tx, id)
+		if err != nil {
+			return fmt.Errorf("obteniendo cierre a editar: %w", err)
+		}
+
+		// 1. Ventana EFECTIVA (fechas del DTO si llegaron, las de la fila
+		//    si no). Se calcula ANTES de guardar los egresos olvidados para
+		//    poder fecharlos dentro de esa ventana.
+		effectiveStart := closure.StartDate
+		effectiveEnd := closure.EndDate
+		if v, ok := updates["start_date"].(time.Time); ok && !v.IsZero() {
+			effectiveStart = v
+		}
+		if v, ok := updates["end_date"].(time.Time); ok && !v.IsZero() {
+			effectiveEnd = v
+		}
+
+		// 2. Procesar egresos "olvidados" dentro de la tx. La fecha se
+		//    acota a la ventana efectiva: closure.Date puede caer antes de
+		//    StartDate en turnos que cruzan medianoche (regla de mayoría),
+		//    y un egreso fechado fuera de la ventana no entraría al arqueo.
 		if forgotten, ok := updates["forgotten_expenses"]; ok {
 			var newExpenses []models.Expense
-			b, _ := json.Marshal(forgotten)
-			json.Unmarshal(b, &newExpenses)
-
-			// Load existing expenses from the closure
-			var existingExpenses []models.Expense
-			if closure.ExpensesDetail != "" {
-				json.Unmarshal([]byte(closure.ExpensesDetail), &existingExpenses)
+			switch typed := forgotten.(type) {
+			case []models.Expense:
+				newExpenses = typed
+			default:
+				b, _ := json.Marshal(forgotten)
+				if err := json.Unmarshal(b, &newExpenses); err != nil {
+					return fmt.Errorf("egresos olvidados con formato inválido: %w", err)
+				}
 			}
-
-			for _, exp := range newExpenses {
-				if exp.Amount > 0 {
-					exp.Date = closure.Date
-					exp.CreatedByDNI = closure.ClosedByDNI
-					exp.Status = "PAID"
-					s.expenseRepo.Save(&exp)
-					existingExpenses = append(existingExpenses, exp)
+			for i := range newExpenses {
+				exp := newExpenses[i]
+				if exp.Amount <= 0 {
+					continue
+				}
+				exp.Date = forgottenExpenseDate(closure.Date, effectiveStart, effectiveEnd)
+				exp.CreatedByDNI = closure.ClosedByDNI
+				exp.Status = "PAID"
+				if err := s.expenseRepo.SaveWithTx(tx, &exp); err != nil {
+					return fmt.Errorf("guardando egreso olvidado: %w", err)
 				}
 			}
 			delete(updates, "forgotten_expenses")
-
 		}
-
-		// ALWAYS refresh expenses detail to capture any out-of-band expense creations
-		expenses, _ := s.expenseRepo.GetByDateRange(closure.StartDate, closure.EndDate)
-		// Normalizar montos por canal antes de serializar (egresos viejos solo tienen PaymentSource)
-		for i := range expenses {
-			e := &expenses[i]
-			if e.Status == "PENDING" {
-				e.CashAmount = 0
-				e.NequiAmount = 0
-				e.DaviplataAmount = 0
-				e.FondoAmount = 0
-				e.CoinsAmount = 0
+		// 3. Leer la materia prima de la ventana efectiva. Los egresos se
+		//    leen DENTRO de la tx para ver los olvidados recién insertados
+		//    (una lectura fuera de la tx no ve filas sin COMMIT). Cualquier
+		//    error de lectura aborta: guardar un arqueo con datos parciales
+		//    es peor que no guardar.
+		var in closureWindowInputs
+		var rerr error
+		if in.Expenses, rerr = s.expenseRepo.GetByDateRangeWithTx(tx, effectiveStart, effectiveEnd); rerr != nil {
+			return fmt.Errorf("leyendo egresos de la ventana efectiva: %w", rerr)
+		}
+		if in.Sales, rerr = s.saleRepo.GetByDateRangeWithoutDetails(effectiveStart, effectiveEnd); rerr != nil {
+			return fmt.Errorf("leyendo ventas de la ventana efectiva: %w", rerr)
+		}
+		if in.Payments, rerr = s.creditRepo.GetByDateRange(effectiveStart, effectiveEnd); rerr != nil {
+			return fmt.Errorf("leyendo abonos de la ventana efectiva: %w", rerr)
+		}
+		if closureWindowChanged(closure, effectiveStart, effectiveEnd) {
+			if in.Returns, rerr = s.returnRepo.GetByDateRange(effectiveStart, effectiveEnd); rerr != nil {
+				return fmt.Errorf("leyendo devoluciones de la ventana efectiva: %w", rerr)
 			}
 		}
-		// Se reutiliza el mismo parser del cierre en lugar de una copia ad-hoc.
-		// La copia anterior forzaba el 100% a FONDO cuando el texto contenía
-		// "FOND", así que un egreso mixto CAJA/FONDO/ALCANCIA perdía el resto
-		// del desglose y la alcancía nunca se descontaba.
-		if err := normalizeClosureExpenses(expenses); err != nil {
-			log.Printf("⚠️ No se pudo normalizar los canales de egreso del cierre %d: %v", closure.ID, err)
-		}
-		if len(expenses) > 0 {
-			eb, _ := json.Marshal(expenses)
-			updates["expenses_detail"] = string(eb)
-		} else {
-			updates["expenses_detail"] = "[]"
-		}
 
-		// FUENTE ÚNICA del arqueo: ComputeClosureMetrics sobre los egresos ya
-		// normalizados. Antes este bloque tenía su propia suma inline.
-		snapshot := *closure
-		snapshot.Expenses = expenses
-		snapshot.ExpensesDetail = ""
-
+		// 4. FUENTE ÚNICA del arqueo (función pura, ver
+		//    closure_edit_recompute.go): TotalCash/TotalReturns de la
+		//    ventana nueva si cambió, egresos de caja, esperado y diferencia.
 		physicalCash := closure.PhysicalCash
 		if pc, ok := updates["physical_cash"]; ok {
 			switch v := pc.(type) {
@@ -1173,60 +1216,23 @@ func (s *DashboardService) UpdateClosure(id uint, updates map[string]interface{}
 				physicalCash = float64(v)
 			}
 		}
-		snapshot.PhysicalCash = physicalCash
+		for k, v := range computeClosureEditUpdates(closure, effectiveStart, effectiveEnd, physicalCash, in) {
+			updates[k] = v
+		}
 
-		m := ComputeClosureMetrics(&snapshot)
-		egresosEfectivo := m.EgresosCaja
-		physicalCash = m.PhysicalCash
-
-		// Recalcular ventas reales del turno desde las ventas grabadas en BD
-		salesInPeriod, _ := s.saleRepo.GetByDateRangeWithoutDetails(closure.StartDate, closure.EndDate)
-		realTotalSales := 0.0
-		for _, sale := range salesInPeriod {
-			status := strings.ToUpper(sale.Status)
-			if status == "PAID" || status == "CREDIT" {
-				netCash := sale.CashAmount - sale.Change
-				if netCash < 0 {
-					netCash = 0
-				}
-				cleanTransfer := sale.TransferAmount
-				if cleanTransfer < 0 {
-					cleanTransfer = 0
-				}
-				realTotalSales += (netCash + cleanTransfer)
+		// 6. Preservar autorizador original. Si el DTO no lo trae,
+		//    `authorized_by` no viaja al UPDATE y se conserva el valor
+		//    previo. Si el DTO lo trae con cadena vacía y había un
+		//    valor previo, también lo conservamos (previene edites
+		//    silenciosos que borren el nombre del admin).
+		if raw, ok := updates["authorized_by"]; ok {
+			if s, isStr := raw.(string); isStr && strings.TrimSpace(s) == "" && strings.TrimSpace(closure.AuthorizedBy) != "" {
+				delete(updates, "authorized_by")
 			}
 		}
-		paymentsInPeriod, _ := s.creditRepo.GetByDateRange(closure.StartDate, closure.EndDate)
-		for _, p := range paymentsInPeriod {
-			realTotalSales += p.TotalPaid
-		}
 
-		// MATEMÁTICA REAL, SIN PISO A CERO.
-		//
-		// Si en un turno los egresos superan las ventas registradas en el POS
-		// (típico al vender productos sin código de barras y pagar gastos con
-		// ese dinero), el esperado da NEGATIVO. Eso es correcto y hay que
-		// mostrarlo: forzarlo a $0 escondía el sobrante real del cajero.
-		//
-		// Ejemplo real del cierre #158: esperado -$72.780 con $16.500 contados
-		// da un sobrante de +$89.280, no de +$16.500.
-		expectedCash := closure.OpeningCash + closure.TotalCash - egresosEfectivo - closure.TotalReturns
-		diferencia := physicalCash - expectedCash
-
-		if realTotalSales > 0 {
-			updates["total_sales"] = realTotalSales
-		} else if closure.TotalSales > 0 {
-			updates["total_sales"] = closure.TotalSales
-		}
-		updates["expected_cash"] = expectedCash
-		updates["difference"] = diferencia
-		// total_expenses es la columna de EGRESOS EN EFECTIVO. Antes aquí se
-		// escribía el total global (efectivo + nequi + davi + FONDO), y como la
-		// vista materializada del mes la suma dentro de las ventas, el recibo de
-		// luz pagado del fondo terminaba contando como venta.
-		updates["total_expenses"] = egresosEfectivo
-	}
-	err = s.closureRepo.Update(id, updates)
+		return s.closureRepo.UpdateWithTx(tx, id, updates)
+	})
 	if err == nil {
 		cache.InvalidateDashboard()
 	}
@@ -1647,9 +1653,94 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 	return &closure, nil
 }
 
-func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error {
+// SaveClosureAuthorization es la evidencia descifrada que viaja desde el
+// handler hacia el servicio. Lo compone `SaveClosure` del handler a
+// partir de un token JWT corto emitido por `/api/auth/verify-admin`.
+//
+// `ActorIsAdmin` dice si el actor autenticado por el middleware es
+// admin/superadmin — en ese caso el servicio toma el nombre del actor
+// como autorizador y no exige el token.
+//
+// `Token*` (DNI, Name) son los campos del claim verificado y sólo se usan
+// cuando el actor NO es admin pero vino un token válido.
+type SaveClosureAuthorization struct {
+	ActorIsAdmin   bool
+	ActorDNI       string
+	ActorName      string
+	TokenAdminDNI  string
+	TokenAdminName string
+}
+
+// SaveClosureResult indica si el POST creó un cierre nuevo (`Created=true`)
+// o devolvió el id previo de uno ya persistido por idempotencia
+// (`Created=false`). El handler usa el flag para fijar el status HTTP
+// (200 vs 201) y para no re-emitir reporte de Telegram/PDF en el replay.
+type SaveClosureResult struct {
+	ID               uint
+	Created          bool
+	ReusedByClientTx bool
+	// Difference recalculada por el servicio tras aplicar la fórmula
+	// canónica. Se expone para que el handler decida si marcar la
+	// auditoría como `isCritical` (faltante autorizado).
+	Difference float64
+}
+
+// ErrAuthorizationRequired devuelve 403 en el handler: el cierre tenía un
+// faltante real pero no se adjuntó un token admin válido.
+var ErrAuthorizationRequired = errors.New("faltante requiere autorización de administrador")
+
+// closureDifferenceTolerance es la tolerancia (en pesos) para considerar
+// un cierre "cuadrado" y no exigir autorización. Es importante porque la
+// aritmética de float64 puede producir -0.0000001 en escenarios cuadrados.
+const closureDifferenceTolerance = 1.0
+
+func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure, authz SaveClosureAuthorization) (SaveClosureResult, error) {
 	now := time.Now()
+	var result SaveClosureResult
 	err := s.closureRepo.Transaction(func(tx interface{}) error {
+		// 1. Idempotencia por client_tx_id (fix P1 — migración 018).
+		//    Si el cliente envió un UUID y ya hay un cierre con el
+		//    mismo UUID, devolvemos el id previo sin tocar la BD. El
+		//    repo es tolerante si la columna no existe (migración 018
+		//    no aplicada): simplemente responde (0, nil, nil).
+		if closureDTO.ClientTxID != nil && strings.TrimSpace(*closureDTO.ClientTxID) != "" {
+			existingID, existing, err := s.closureRepo.FindIDByClientTxID(tx, *closureDTO.ClientTxID)
+			if err != nil {
+				return fmt.Errorf("verificando idempotencia de cierre: %w", err)
+			}
+			if existingID != 0 && existing != nil {
+				result = SaveClosureResult{
+					ID:               existingID,
+					Created:          false,
+					ReusedByClientTx: true,
+					Difference:       existing.Difference,
+				}
+				// IMPORTANTE: hidratar el DTO con los datos del cierre
+				// previo para que el handler pueda construir el reporte
+				// a partir del cierre persistido (sin re-emitir alertas
+				// pero devolviendo las cifras canónicas).
+				closureDTO.ID = existingID
+				closureDTO.Difference = existing.Difference
+				closureDTO.ExpectedCash = existing.ExpectedCash
+				closureDTO.AuthorizedBy = existing.AuthorizedBy
+				return nil
+			}
+		}
+
+		// 2. Lock pessimista del turno OPEN. Si dos cierres entran a la
+		//    vez, el segundo se queda esperando a que el primero haga
+		//    COMMIT, y después ve que ya no hay turno OPEN → aborta.
+		//    Esto cierra el vector del doble-cierre concurrente que el
+		//    `client_tx_id` no cubre (cuando los UUIDs son distintos).
+		shift, err := s.shiftRepo.LockActiveWithTx(tx)
+		if err != nil {
+			return fmt.Errorf("bloqueando turno activo: %w", err)
+		}
+		if shift == nil {
+			return errors.New("no hay turno abierto; recargue la pantalla antes de cerrar")
+		}
+
+		// 3. Guardar egresos manuales que vinieron con ID==0.
 		for i := range closureDTO.Expenses {
 			expense := &closureDTO.Expenses[i]
 			if expense.ID != 0 {
@@ -1683,6 +1774,32 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 		closureDTO.ExpectedCash = closureDTO.OpeningCash + closureDTO.TotalCash - metrics.EgresosCaja - closureDTO.TotalReturns
 		closureDTO.Difference = metrics.PhysicalCash - closureDTO.ExpectedCash
 
+		// 4. Autorización server-side para faltantes. Sólo cuando la
+		//    diferencia es NEGATIVA más allá de la tolerancia por
+		//    aritmética de punto flotante. Sobrantes, cero y balanceados
+		//    cierran sin pedir nada (contrato cristalizado en
+		//    closure_zero_test.go).
+		if closureDTO.Difference < -closureDifferenceTolerance {
+			if authz.ActorIsAdmin {
+				if strings.TrimSpace(authz.ActorName) != "" {
+					closureDTO.AuthorizedBy = authz.ActorName
+				}
+			} else if strings.TrimSpace(authz.TokenAdminName) != "" {
+				closureDTO.AuthorizedBy = authz.TokenAdminName
+			} else {
+				return ErrAuthorizationRequired
+			}
+		} else {
+			// Diferencia balanceada o sobrante: el autorizador es el
+			// propio cajero. Nunca copiamos un string libre del body
+			// (el ataque spoof queda cerrado por este bloque).
+			if authz.ActorIsAdmin && strings.TrimSpace(authz.ActorName) != "" {
+				closureDTO.AuthorizedBy = authz.ActorName
+			} else {
+				closureDTO.AuthorizedBy = authz.ActorName
+			}
+		}
+
 		if err := s.closureRepo.SaveWithTx(tx, closureDTO); err != nil {
 			return fmt.Errorf("guardando cierre: %w", err)
 		}
@@ -1699,13 +1816,18 @@ func (s *DashboardService) SaveClosure(closureDTO *models.CashierClosure) error 
 		if err := s.shiftRepo.SaveWithTx(tx, newShift); err != nil {
 			return fmt.Errorf("abriendo siguiente turno: %w", err)
 		}
+		result = SaveClosureResult{
+			ID:         closureDTO.ID,
+			Created:    true,
+			Difference: closureDTO.Difference,
+		}
 		return nil
 	})
 	if err != nil {
-		return err
+		return SaveClosureResult{}, err
 	}
 	cache.InvalidateDashboard()
-	return nil
+	return result, nil
 }
 
 func normalizeClosureExpenses(expenses []models.Expense) error {
@@ -1762,23 +1884,45 @@ func assignExpenseChannel(expense *models.Expense, source string, value float64)
 	}
 }
 
+// applyCashBreakdown reconstruye el efectivo contado a partir del desglose
+// JSON de billetes y monedas que envía el frontend.
+//
+// TOLERANCIA A CAMPOS VACÍOS (fix P0 — 2026-10-04):
+// El frontend inicializa cada denominación con cadena vacía (`""`) por
+// defecto; si el cajero no toca la grilla el payload llega con `""` en vez
+// de omitir la denominación. Antes esto reventaba el cierre con
+// `strconv.ParseFloat("")` → "cantidad inválida"; ahora `""`/`null` se
+// tratan como el cero legítimo del cajero. Solo se devuelve error cuando
+// la cadena contiene texto no numérico ("abc"). Este contrato es el mismo
+// que `toFloat` aplica en `closure_metrics.go` y lo validan los tests
+// `TestApplyCashBreakdown_ToleraStringsVacios` /
+// `TestSaveClosure_PayloadConDenominacionVacia_NoAborta`.
 func applyCashBreakdown(closure *models.CashierClosure) error {
 	if closure.CashBills == 0 && strings.TrimSpace(closure.CashBreakdown) != "" {
 		var breakdown struct {
-			Bills map[string]string `json:"bills"`
-			Coins map[string]string `json:"coins"`
+			Bills map[string]interface{} `json:"bills"`
+			Coins map[string]interface{} `json:"coins"`
 		}
 		if err := json.Unmarshal([]byte(closure.CashBreakdown), &breakdown); err != nil {
 			return fmt.Errorf("desglose de efectivo inválido: %w", err)
 		}
 		for denomination, rawQuantity := range breakdown.Bills {
-			value, err := strconv.ParseFloat(denomination, 64)
+			denomTrimmed := strings.TrimSpace(denomination)
+			if denomTrimmed == "" {
+				// Clave vacía: ignorar silenciosamente. Nunca llega del
+				// frontend, pero defendemos contra JSON corrupto.
+				continue
+			}
+			value, err := strconv.ParseFloat(denomTrimmed, 64)
 			if err != nil {
 				return fmt.Errorf("denominación inválida %q: %w", denomination, err)
 			}
-			quantity, err := strconv.ParseFloat(rawQuantity, 64)
+			quantity, err := parseBreakdownQuantity(rawQuantity)
 			if err != nil {
 				return fmt.Errorf("cantidad inválida para denominación %q: %w", denomination, err)
+			}
+			if quantity == 0 {
+				continue
 			}
 			closure.CashBills += value * quantity
 		}
@@ -1788,6 +1932,37 @@ func applyCashBreakdown(closure *models.CashierClosure) error {
 		closure.PhysicalCash = closure.CashBills + coinsTotal
 	}
 	return nil
+}
+
+// parseBreakdownQuantity convierte un valor del desglose de efectivo a
+// float64. Trata `""`, `nil` y valores no reconocidos como el cero del
+// cajero que simplemente no digitó esa denominación; sólo devuelve error
+// cuando viene texto no numérico explícito ("abc"). Mantiene la misma
+// semántica tolerante que `toFloat` en `closure_metrics.go`, pero
+// propaga el error de parseo para que un payload corrupto no pase por
+// alto.
+func parseBreakdownQuantity(v interface{}) (float64, error) {
+	switch t := v.(type) {
+	case nil:
+		return 0, nil
+	case float64:
+		return t, nil
+	case int:
+		return float64(t), nil
+	case int64:
+		return float64(t), nil
+	case string:
+		clean := strings.TrimSpace(t)
+		if clean == "" {
+			return 0, nil
+		}
+		// Admite notación "1.000" (miles con punto) y "1,5" (coma decimal).
+		clean = strings.ReplaceAll(clean, ".", "")
+		clean = strings.ReplaceAll(clean, ",", ".")
+		return strconv.ParseFloat(clean, 64)
+	default:
+		return 0, nil
+	}
 }
 
 func (s *DashboardService) GetClosuresHistory() ([]models.CashierClosure, error) {
@@ -2240,6 +2415,7 @@ func (s *DashboardService) GetInventoryMovementsReport(from, to time.Time) ([]St
 			Reason:   m.Reason,
 			Employee: m.EmployeeName,
 			Ref:      m.ReferenceID,
+			Metadata: m.Metadata,
 		})
 	}
 

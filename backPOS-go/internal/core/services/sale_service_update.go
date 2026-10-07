@@ -250,6 +250,18 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 	return nil
 }
 
+// deriveSalePaymentMethod construye el string descriptivo que se persiste en
+// sales.paymentMethod. El orden recorrido garantiza una representacion
+// ESTABLE: EFECTIVO -> NEQUI -> DAVIPLATA -> otras transferencias -> FIADO.
+//
+// Antes esta funcion devolvia el literal "MIXTO" cuando habia dos o mas
+// canales, pero eso rompia la consistencia con CreateSale (que ya persiste
+// "EFECTIVO + NEQUI", "NEQUI + DAVIPLATA", etc.). El historial, el ticket y
+// los reportes mostraban "MIXTO" en vez de los canales reales tras cualquier
+// correccion de pago. Ahora devolvemos el mismo formato unido por " + " y la
+// palabra generica "MIXTO" deja de existir como string escrito por el
+// sistema; se queda solo como fallback historico para ventas antiguas que
+// vinieron asi desde la base.
 func deriveSalePaymentMethod(sale *models.Sale) string {
 	methods := make([]string, 0, 4)
 	if sale.CashAmount > 0 {
@@ -261,9 +273,13 @@ func deriveSalePaymentMethod(sale *models.Sale) string {
 	if sale.TransferDaviplata > 0 {
 		methods = append(methods, "DAVIPLATA")
 	}
+	// "Otra transferencia" existe solo cuando TransferAmount cubre un monto
+	// que no esta explicado por Nequi+Daviplata. Preserva el canal declarado
+	// en TransferSource si viene (p.ej. "BANCOLOMBIA"); si no, cae a
+	// "TRANSFERENCIA" como etiqueta neutra.
 	if sale.TransferAmount > 0 && sale.TransferNequi == 0 && sale.TransferDaviplata == 0 {
 		source := strings.ToUpper(strings.TrimSpace(sale.TransferSource))
-		if source == "" {
+		if source == "" || source == "MIXTO" {
 			source = "TRANSFERENCIA"
 		}
 		methods = append(methods, source)
@@ -277,5 +293,5 @@ func deriveSalePaymentMethod(sale *models.Sale) string {
 	if len(methods) == 1 {
 		return methods[0]
 	}
-	return "MIXTO"
+	return strings.Join(methods, " + ")
 }

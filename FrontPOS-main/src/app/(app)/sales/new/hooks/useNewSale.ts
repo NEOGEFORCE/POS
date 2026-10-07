@@ -153,6 +153,23 @@ export function useNewSale() {
     const submittingRef = useRef(false);
     const hiddenScannerRef = useRef<HTMLInputElement>(null);
 
+    // --- DEDUPE DEL RESOLVER DE ETIQUETAS UNITARIAS (/labels/codes/resolve) ---
+    // El escaneo de un código impreso (LC-xxxxxxxxxxxx) puede llegar desde:
+    //   - El lector USB (keyboard-wedge, puede emitir el buffer dos veces si
+    //     el cajero presiona Enter justo cuando el auto-submit se dispara).
+    //   - La cámara (ScannerOverlay) ya exige doble lectura idéntica, pero
+    //     la segunda confirmación podría colar un segundo onResult si el
+    //     overlay se re-abre antes del cleanup.
+    //   - Enter manual sobre el buffer o el botón "=" del numeric pad.
+    //
+    // El resolver backend es asíncrono; una segunda llamada mientras la
+    // primera sigue in-flight produciría DOS addToCart() y el carrito
+    // recibiría 2 unidades por un sólo escaneo real. Este Set agrupa las
+    // llamadas en vuelo por clave `label:<codigo>` y las descarta tras
+    // 400 ms del fin de la resolución (ventana suficiente para absorber
+    // repeticiones del mismo evento, no para bloquear re-escaneos reales).
+    const inflightResolveRef = useRef<Set<string>>(new Set());
+
     // --- LOGICA DE AUTOREFRESCO DE BASCULA (HFT) ---
     const lastWeightRef = useRef(0);
     
@@ -798,7 +815,7 @@ export function useNewSale() {
         }
     }, [scaleWeight, isScaleOnline, isScaleReloading, returnFocusToScanner, toast, setSearchQuery, setScannerBuffer, reloadScale, playBeep]);
 
-    const handleCodeSubmit = useCallback((code: string) => {
+    const handleCodeSubmit = useCallback(async (code: string) => {
         let finalCode = code.trim();
         let qty = 1;
         const currentKey = activeCartKeyRef.current;
@@ -908,8 +925,90 @@ export function useNewSale() {
             }
             setFeedbackCode(finalCode); setIsFeedbackError(false); setSearchQuery('');
         } else {
-            setFeedbackCode(finalCode); 
-            setIsFeedbackError(true); 
+            // 4. FALLBACK: codigo unitario persistente generado por LabelPrintSheet
+            //    (tabla label_codes, migracion 016). Antes del toast de "no existe"
+            //    consultamos el resolver autenticado del backend. Si el codigo
+            //    corresponde a una etiqueta activa y a un producto vivo, agregamos
+            //    exactamente `qty` unidades (normalmente 1) y abortamos el toast.
+            //
+            //    Invariantes clave (coincide con tests contractuales):
+            //    - Solo se consulta /labels/codes/resolve; NUNCA
+            //      /inventory/package-barcode/resolve (ese alias es exclusivo
+            //      de recepcion).
+            //    - Match EXACTO: el backend hace WHERE lc.code = ?, no ILIKE.
+            //    - Dedupe por inflightResolveRef: si el mismo codigo entra dos
+            //      veces (Enter duplicado, scanner que repite el evento) solo
+            //      la primera llamada agrega al carrito; la segunda es no-op.
+            //    - navigator.onLine: no golpear la red cuando ya sabemos que no
+            //      hay backend disponible. En offline el flujo de "producto no
+            //      existe" se preserva intacto.
+            const normalized = finalCode.trim();
+            const dedupeKey = `label:${normalized}`;
+            const canUseFallback =
+                normalized.length > 0 &&
+                typeof navigator !== 'undefined' &&
+                navigator.onLine &&
+                !inflightResolveRef.current.has(dedupeKey);
+
+            if (canUseFallback) {
+                inflightResolveRef.current.add(dedupeKey);
+                try {
+                    const resp = await apiFetch<{
+                        match?: string;
+                        code?: string;
+                        productBarcode?: string;
+                        product?: {
+                            barcode?: string;
+                            productName?: string;
+                            salePrice?: number;
+                            purchasePrice?: number;
+                            quantity?: number;
+                            isWeighted?: boolean;
+                            isPack?: boolean;
+                            unit?: string;
+                        };
+                    }>(
+                        `/labels/codes/resolve?code=${encodeURIComponent(normalized)}`,
+                        { method: 'GET', timeoutMs: 2500, skipSessionRecovery: true },
+                    );
+
+                    const resolvedBarcode = resp?.productBarcode || resp?.product?.barcode || '';
+                    if (resp?.match === 'label_code' && resolvedBarcode) {
+                        // Preferimos el producto del catalogo local (tiene relaciones,
+                        // categoria, flags completos). Si no esta cargado todavia, usamos
+                        // el brief del backend como best-effort.
+                        const local =
+                            productMap.get(resolvedBarcode) ??
+                            ({ ...(resp.product || {}), barcode: resolvedBarcode } as Product);
+
+                        // El label_code identifica una pieza fisica. Por defecto 1 unidad.
+                        // Si el cajero uso "N*LC-xxx", respetamos la cantidad.
+                        if (isProductWeighted(local) && qty === 1) {
+                            addToCart(local);
+                        } else {
+                            for (let i = 0; i < qty; i++) addToCart(local);
+                        }
+                        setFeedbackCode(normalized);
+                        setIsFeedbackError(false);
+                        setScannerBuffer('');
+                        setSearchQuery('');
+                        // Liberamos la clave tras una ventana corta para absorber
+                        // repeticiones inmediatas del mismo evento (Enter doble,
+                        // scanner que emite el buffer dos veces). Nunca bloqueamos
+                        // re-escaneos reales porque 400ms es menor al tiempo humano
+                        // entre dos escaneos distintos del mismo codigo.
+                        setTimeout(() => inflightResolveRef.current.delete(dedupeKey), 400);
+                        return;
+                    }
+                } catch {
+                    // Red caida, 500 o timeout: caemos al toast de "no existe".
+                    // No bloqueamos la caja porque el flujo manual sigue vivo.
+                }
+                setTimeout(() => inflightResolveRef.current.delete(dedupeKey), 400);
+            }
+
+            setFeedbackCode(finalCode);
+            setIsFeedbackError(true);
             toast({
                 variant: "destructive",
                 title: "PRODUCTO NO EXISTE",
@@ -920,7 +1019,7 @@ export function useNewSale() {
         }
         setScannerBuffer('');
         setSearchQuery('');
-    }, [products, addToCart, toast, returnFocusToScanner, setScannerBuffer]);
+    }, [products, productMap, addToCart, toast, returnFocusToScanner, setScannerBuffer]);
 
     const handleScaleSync = useCallback(() => {
         if (!isScaleOnline || isScaleReloading) return;

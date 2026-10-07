@@ -2,11 +2,19 @@ package repositories
 
 import (
 	"errors"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"backPOS-go/internal/core/domain/models"
 	"gorm.io/gorm"
 )
+
+// atomicLoadInt32 / atomicStoreInt32 son envoltorios finos sobre sync/atomic
+// para que el repositorio exprese de forma legible la bandera cacheada
+// de la migración 018 (ver clientTxIDColumnExists).
+func atomicLoadInt32(ptr *int32) int32     { return atomic.LoadInt32(ptr) }
+func atomicStoreInt32(ptr *int32, v int32) { atomic.StoreInt32(ptr, v) }
 
 type closureRepository struct {
 	db *gorm.DB
@@ -190,4 +198,119 @@ func (r *closureRepository) Delete(id uint) error {
 
 func (r *closureRepository) Update(id uint, updates map[string]interface{}) error {
 	return r.db.Model(&models.CashierClosure{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// UpdateWithTx aplica un UPDATE restringido a un conjunto de columnas
+// dentro de una transacción ya abierta. Replica el patrón de
+// SaveWithTx (interface{} para no romper el port) y permite al servicio
+// recalcular arqueo y escribir en la misma transacción (fix P1 —
+// UpdateClosure transaccional, 2026-10-04).
+func (r *closureRepository) UpdateWithTx(tx interface{}, id uint, updates map[string]interface{}) error {
+	gormTx, ok := tx.(*gorm.DB)
+	if !ok {
+		return gorm.ErrInvalidDB
+	}
+	return gormTx.Model(&models.CashierClosure{}).Where("id = ?", id).Updates(updates).Error
+}
+
+// GetByIDWithTx recarga un cierre dentro de una transacción activa.
+// Permite al servicio releer el registro justo antes del UPDATE sin
+// escaparse de la tx.
+func (r *closureRepository) GetByIDWithTx(tx interface{}, id uint) (*models.CashierClosure, error) {
+	gormTx, ok := tx.(*gorm.DB)
+	if !ok {
+		return nil, gorm.ErrInvalidDB
+	}
+	var closure models.CashierClosure
+	if err := gormTx.First(&closure, id).Error; err != nil {
+		return nil, err
+	}
+	return &closure, nil
+}
+
+// hasClientTxIDColumn es la memoria de arranque sobre si la migración 018
+// (idempotencia anti-doble-cierre) ya está aplicada. -1 = aún no
+// consultado, 0 = ausente, 1 = presente. Protege dos flujos:
+//
+//   - CreateIfNotExistsByClientTxID lo consulta antes de ejecutar la
+//     query: si vale 0, devuelve (0, nil) y el servicio sigue adelante
+//     con el flujo clásico (sin idempotencia a nivel BD, equivalente al
+//     comportamiento pre-018).
+//
+//   - La primera consulta sincroniza vía `information_schema.columns`,
+//     tolerante a `to_regclass('public.cashier_closures')` por si la
+//     tabla no existe aún (caso irrealista pero defensivo).
+//
+// El flag no se refresca en caliente: aplicar la migración 018 requiere
+// reiniciar el binario (lo mismo que ya exige nssm). Esto es intencional
+// — un flip dinámico escondería que la BD cambió sin aviso.
+var clientTxIDColumnPresent int32 = -1
+
+func (r *closureRepository) clientTxIDColumnExists() bool {
+	v := atomicLoadInt32(&clientTxIDColumnPresent)
+	if v == 0 {
+		return false
+	}
+	if v == 1 {
+		return true
+	}
+	// Primera consulta: materializar el estado.
+	var exists bool
+	err := r.db.Raw(`
+		SELECT COALESCE(
+			(SELECT COUNT(*) FROM information_schema.columns
+			  WHERE table_schema = current_schema()
+			    AND table_name = 'cashier_closures'
+			    AND column_name = 'client_tx_id'),
+		0) > 0
+	`).Scan(&exists).Error
+	if err != nil {
+		// Fallo transitorio: no cacheamos. En la próxima petición se
+		// vuelve a consultar. No romper SaveClosure por un hiccup del
+		// information_schema.
+		return false
+	}
+	if exists {
+		atomicStoreInt32(&clientTxIDColumnPresent, 1)
+		return true
+	}
+	atomicStoreInt32(&clientTxIDColumnPresent, 0)
+	return false
+}
+
+// FindIDByClientTxID consulta el cierre existente para un `client_tx_id`
+// dado DENTRO de la transacción `tx`. Devuelve (0, nil, nil) cuando no
+// existe, (id, closure, nil) cuando ya se persistió uno con ese UUID.
+//
+// Tolerante: si la columna `client_tx_id` no existe (migración 018 no
+// aplicada), devuelve (0, nil, nil) sin consultar la BD. Ese es el
+// patrón que viven label_codes/package_barcode_aliases, probado en
+// producción.
+//
+// El SELECT va parametrizado y se ejecuta dentro de la transacción del
+// INSERT: una carrera entre dos pestañas que reenvían el mismo
+// `client_tx_id` queda arbitrada por el UNIQUE parcial de la 018 (el
+// que llegue segundo recibe pq: duplicate key, el servicio lo detecta
+// y responde con el id previo).
+func (r *closureRepository) FindIDByClientTxID(tx interface{}, clientTxID string) (uint, *models.CashierClosure, error) {
+	clean := strings.TrimSpace(clientTxID)
+	if clean == "" {
+		return 0, nil, nil
+	}
+	if !r.clientTxIDColumnExists() {
+		return 0, nil, nil
+	}
+	gormTx, ok := tx.(*gorm.DB)
+	if !ok {
+		return 0, nil, gorm.ErrInvalidDB
+	}
+	var existing models.CashierClosure
+	err := gormTx.Where("client_tx_id = ?", clean).Order("id ASC").First(&existing).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, nil, nil
+		}
+		return 0, nil, err
+	}
+	return existing.ID, &existing, nil
 }

@@ -1,7 +1,7 @@
-﻿"use client";
+"use client";
 
 import React, { memo } from 'react';
-import { TrendingDown, CreditCard, Activity, DollarSign, HandCoins, ChevronRight } from 'lucide-react';
+import { CreditCard, Activity, DollarSign } from 'lucide-react';
 import { AreaChart, Area, ResponsiveContainer } from 'recharts';
 import { MoneyDigits, NumberDigits } from "@/components/ui/motion";
 
@@ -9,8 +9,6 @@ interface StatsProps {
   totalMonth: number;
   topSource: string;
   count: number;
-  totalPending: number;
-  onOpenPending: () => void;
 }
 
 const dummyData = [
@@ -23,31 +21,33 @@ const dummyData = [
     { pv: 3300 },
 ];
 
+// NOTA: La tarjeta de deudas vivas se eliminó de esta pantalla a propósito.
+// El Centro de Pagos vive ahora en /loans (pestaña dedicada a deudas), que
+// es donde se gestiona TODA la deuda (préstamos + facturas vencidas).
+// Mantener la tarjeta aquí llevaba al usuario a dos lugares distintos a abonar
+// la misma plata — ver src/app/(app)/loans/.
 
-const AnalyticalCard = ({ 
-    label, 
-    value, 
-    subValue, 
-    icon: Icon, 
-    color, 
-    chartData, 
+const AnalyticalCard = ({
+    label,
+    value,
+    subValue,
+    icon: Icon,
+    color,
+    chartData,
     isCurrency = false,
-    onClick
-}: { 
-    label: string, 
-    value: string | number, 
-    subValue: string, 
-    icon: any, 
-    color: string, 
-    chartData?: any[],
+}: {
+    label: string,
+    value: string | number,
+    subValue: string,
+    icon: React.ElementType,
+    color: string,
+    chartData?: Array<{ pv: number }>,
     isCurrency?: boolean,
-    onClick?: () => void
 }) => {
     const isNumber = typeof value === 'number';
     return (
-    <div 
-        onClick={onClick}
-        className={`relative group flex-1 card-base border-none dark:bg-[#18181b]/50  p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20 ${onClick ? 'cursor-pointer active:scale-95' : ''}`}
+    <div
+        className={`relative group flex-1 card-base border-none dark:bg-[#18181b]/50  p-3.5 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden shadow-rose-500/5 transition-all hover:scale-[1.02] hover:border-rose-500/20`}
     >
         {/* Background Sparkline */}
         {chartData && (
@@ -60,12 +60,12 @@ const AnalyticalCard = ({
                                 <stop offset="95%" stopColor={color} stopOpacity={0}/>
                             </linearGradient>
                         </defs>
-                        <Area 
-                            type="monotone" 
-                            dataKey="pv" 
-                            stroke={color} 
-                            fillOpacity={1} 
-                            fill={`url(#color-${color.replace('#', '')})`} 
+                        <Area
+                            type="monotone"
+                            dataKey="pv"
+                            stroke={color}
+                            fillOpacity={1}
+                            fill={`url(#color-${color.replace('#', '')})`}
                             strokeWidth={2}
                         />
                     </AreaChart>
@@ -100,11 +100,6 @@ const AnalyticalCard = ({
             <div className="flex flex-col gap-1">
                 <div className="flex justify-between items-center text-[7px] sm:text-[9px] font-medium uppercase tracking-wider">
                     <span className="text-gray-500 dark:text-zinc-500 dark:text-zinc-400 truncate">{subValue}</span>
-                    {onClick && (
-                        <span className="text-[7px] font-medium text-rose-500 flex items-center gap-0.5 animate-pulse">
-                            VER DETALLES <ChevronRight size={8} />
-                        </span>
-                    )}
                 </div>
             </div>
         </div>
@@ -112,10 +107,10 @@ const AnalyticalCard = ({
     );
 };
 
-const ExpenseStats = memo(({ totalMonth, topSource, count, totalPending, onOpenPending }: StatsProps) => {
+const ExpenseStats = memo(({ totalMonth, topSource, count }: StatsProps) => {
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 shrink-0 px-1">
-      <AnalyticalCard 
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 shrink-0 px-1">
+      <AnalyticalCard
         label="Egreso Mensual"
         value={totalMonth}
         isCurrency={true}
@@ -124,24 +119,14 @@ const ExpenseStats = memo(({ totalMonth, topSource, count, totalPending, onOpenP
         color="#f43f5e"
         chartData={dummyData}
       />
-      <AnalyticalCard 
-        label="Cuentas por Pagar"
-        value={totalPending}
-        isCurrency={true}
-        subValue="Deudas Activas"
-        icon={HandCoins}
-        color="#f59e0b"
-        chartData={totalPending > 0 ? dummyData : undefined}
-        onClick={onOpenPending}
-      />
-      <AnalyticalCard 
+      <AnalyticalCard
         label="Fuente Principal"
         value={topSource}
         subValue="Canal preferente"
         icon={CreditCard}
         color="#0ea5e9"
       />
-      <AnalyticalCard 
+      <AnalyticalCard
         label="Operaciones"
         value={count}
         subValue="Registros activos"

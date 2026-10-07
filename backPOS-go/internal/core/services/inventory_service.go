@@ -9,6 +9,7 @@ import (
 
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
+	"backPOS-go/internal/core/services/scheduling"
 )
 
 type InventoryService struct {
@@ -18,6 +19,45 @@ type InventoryService struct {
 
 func NewInventoryService(repo ports.ProductRepository, saleRepo ports.SaleRepository) *InventoryService {
 	return &InventoryService{repo: repo, saleRepo: saleRepo}
+}
+
+// coverageDaysForSupplier devuelve cuantos dias de venta tiene que cubrir el
+// inventario para este producto segun la AGENDA del mejor proveedor.
+//
+// Reglas (regla permanente del dueno — ver scheduling/replenishment_coverage_test.go):
+//   - Si hay dias de visita/entrega utiles, se calcula el peor hueco entre
+//     visitas + el peor lead time segun los dias de entrega. Un proveedor
+//     semanal con visita martes y entrega miercoles da 7+1 = 8.
+//   - Si no hay agenda, se cae al fallback (lead_time_days > visit_frequency_days > 7),
+//     acotado a scheduling.MaxUnknownCycleDays (14). Nunca el viejo "30".
+//
+// Antes el fallback era 30 dias y la demanda se multiplicaba por 14 para
+// sugerir un nuevo minimo. Ambos valores eran arbitrarios y producian pedidos
+// inflados cuando el proveedor en realidad vuelve en una semana. Ahora los dos
+// usos consumen la MISMA funcion y los MISMOS dias configurados.
+func coverageDaysForSupplier(info ports.ProductRestockInfo) int {
+	visitDays := make([]string, 0, len(info.BestSupplierVisitDays)+1)
+	visitDays = append(visitDays, info.BestSupplierVisitDays...)
+	if info.BestSupplierLegacyVisit != nil && *info.BestSupplierLegacyVisit != "" {
+		visitDays = append(visitDays, *info.BestSupplierLegacyVisit)
+	}
+	deliveryDays := make([]string, 0, len(info.BestSupplierDeliveryDays)+1)
+	deliveryDays = append(deliveryDays, info.BestSupplierDeliveryDays...)
+	if info.BestSupplierLegacyDelivery != nil && *info.BestSupplierLegacyDelivery != "" {
+		deliveryDays = append(deliveryDays, *info.BestSupplierLegacyDelivery)
+	}
+
+	// Precedencia del fallback cuando no hay agenda: lead_time explicito del
+	// proveedor > visit_frequency_days aprendido > 7 por defecto. Cualquiera
+	// de los tres se puede inflar (sobre todo visit_frequency_days aprendido);
+	// scheduling.ReplenishmentCoverageDays lo acota a MaxUnknownCycleDays.
+	fallback := 7
+	if info.BestSupplierLeadTimeDays != nil && *info.BestSupplierLeadTimeDays > 0 {
+		fallback = *info.BestSupplierLeadTimeDays
+	} else if info.VisitFrequencyDays > 0 {
+		fallback = info.VisitFrequencyDays
+	}
+	return scheduling.ReplenishmentCoverageDays(visitDays, deliveryDays, fallback)
 }
 
 // Usar StockStatus, StockCritical, StockWarning, StockOptimal desde dashboard_service.go
@@ -126,9 +166,15 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		avgDaily = math.Round(avgDaily*100) / 100
 
 		// --- LÓGICA DE SMART RESTOCK CON FALLBACKS ---
-		diasCobertura := float64(p.VisitFrequencyDays)
+		// coverageDays viene de scheduling.ReplenishmentCoverageDays: el peor
+		// hueco entre visitas + el lead time del proveedor, acotado al tope
+		// MaxUnknownCycleDays cuando no hay agenda. Reemplaza el viejo
+		// fallback de 30 dias que inflaba el pedido para proveedores de
+		// visita semanal.
+		coverageDays := coverageDaysForSupplier(p)
+		diasCobertura := float64(coverageDays)
 		if diasCobertura <= 0 {
-			diasCobertura = 30.0 // Fallback seguro de 1 mes
+			diasCobertura = 7.0 // Blindaje: ReplenishmentCoverageDays ya garantiza >= 1.
 		}
 
 		multiplo := float64(p.OrderMultiple)
@@ -187,9 +233,16 @@ func (s *InventoryService) GetGlobalRestockSuggestions(ignoreStock bool) ([]Sugg
 		// Slow/High-Mover and Min Stock checks. Estas heuristicas SUGIEREN
 		// un nuevo minimo al operador; NUNCA lo escriben (regla permanente,
 		// vigilada por TestNoAutoWriteToMinStock).
+		//
+		// El multiplicador 14 era arbitrario y se desalineaba con el ciclo
+		// real del proveedor: ahora usa coverageDays (= hueco entre visitas
+		// + lead time). Un proveedor semanal con lead 1 queda en 8; uno sin
+		// agenda queda acotado al tope MaxUnknownCycleDays (14). Nunca
+		// propone subir un minimo basado en un mes de inventario.
+		projectedMinByCycle := avgDaily * float64(coverageDays)
 		suggestedMinStock := p.MinStock
-		if avgDaily*14 > p.MinStock+2 {
-			suggestedMinStock = math.Ceil(avgDaily * 14)
+		if projectedMinByCycle > p.MinStock+2 {
+			suggestedMinStock = math.Ceil(projectedMinByCycle)
 			alert = fmt.Sprintf("Aumentar min. a %.0f: Ventas altas", suggestedMinStock)
 			alertType = "INCREASE_MIN_STOCK"
 		} else if p.MinStock >= 10 && sold30d <= 1 {
@@ -398,9 +451,13 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 		avgDaily := float64(sold30d) / 30.0
 		avgDaily = math.Round(avgDaily*100) / 100
 
-		diasCobertura := float64(p.VisitFrequencyDays)
+		// Cobertura: igual que en GetGlobalRestockSuggestions. Deja de ser
+		// un fallback plano de 30 dias y pasa a leer la agenda del mejor
+		// proveedor via scheduling.ReplenishmentCoverageDays.
+		coverageDays := coverageDaysForSupplier(p)
+		diasCobertura := float64(coverageDays)
 		if diasCobertura <= 0 {
-			diasCobertura = 30.0
+			diasCobertura = 7.0
 		}
 
 		multiplo := float64(p.OrderMultiple)
@@ -442,9 +499,12 @@ func (s *InventoryService) GetSuggestedOrders(supplierID uint, ignoreStock bool)
 			alertType = "HIGH_MOVER"
 		}
 
+		// Misma regla que arriba: la sugerencia de minimo tracks el ciclo
+		// real del proveedor en vez del multiplicador fijo de 14 dias.
+		projectedMinByCycle := avgDaily * float64(coverageDays)
 		suggestedMinStock := p.MinStock
-		if avgDaily*14 > p.MinStock+2 {
-			suggestedMinStock = math.Ceil(avgDaily * 14)
+		if projectedMinByCycle > p.MinStock+2 {
+			suggestedMinStock = math.Ceil(projectedMinByCycle)
 			alert = fmt.Sprintf("Aumentar min. a %.0f: Ventas altas", suggestedMinStock)
 			alertType = "INCREASE_MIN_STOCK"
 		} else if p.MinStock >= 10 && sold30d <= 1 {

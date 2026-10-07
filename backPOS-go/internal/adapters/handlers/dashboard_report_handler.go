@@ -150,6 +150,45 @@ func (h *DashboardReportHandler) GetInventoryMovements(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, data)
 }
+
+// GetReceptionsHistory expone /dashboard/receptions-history con el resumen
+// agrupado por recepcion. A diferencia de /reports/movements, los errores
+// REALES del repo se propagan como 500 en vez de disimularse con [],
+// porque la pantalla de historial distingue "no hay datos" de "hubo un
+// fallo real" para no quedarse en loader eterno.
+func (h *DashboardReportHandler) GetReceptionsHistory(c *gin.Context) {
+	from := c.Query("from")
+	to := c.Query("to")
+	if from == "" || to == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Los parámetros 'from' y 'to' son obligatorios", nil)
+		return
+	}
+	loc, err := time.LoadLocation("America/Bogota")
+	if err != nil {
+		loc = time.FixedZone("America/Bogota", -5*60*60)
+	}
+	fromDate, err := time.ParseInLocation("2006-01-02", from, loc)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de 'from' invalido, use YYYY-MM-DD", err)
+		return
+	}
+	startOfToDate, err := time.ParseInLocation("2006-01-02", to, loc)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de 'to' invalido, use YYYY-MM-DD", err)
+		return
+	}
+	toDate := startOfToDate.Add(24 * time.Hour).Add(-time.Nanosecond)
+
+	data, err := h.service.GetReceptionsHistory(fromDate, toDate)
+	if err != nil {
+		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al obtener el historial de recepciones", err)
+		return
+	}
+	if data == nil {
+		data = []services.ReceptionSummary{}
+	}
+	c.JSON(http.StatusOK, data)
+}
 func (h *DashboardReportHandler) GetCashFlowReport(c *gin.Context) {
 	from := c.Query("from")
 	to := c.Query("to")

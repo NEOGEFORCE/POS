@@ -88,6 +88,21 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 		return
 	}
 
+	// Egreso pagado con PRÉSTAMO (ruta /api/loans/:id/pay-expense):
+	// jamás moverle plata a ningún canal de la tienda. El fallback por
+	// defecto de esta función manda `expense.Amount` a `CashAmount` cuando
+	// el source es desconocido, así que sin este short-circuit un
+	// paymentSource="PRESTAMO" vacío de columnas quedaría contado como
+	// efectivo. Centinela: models.IsLoanFundedPaymentSource.
+	if models.IsLoanFundedExpense(expense) {
+		expense.CashAmount = 0
+		expense.NequiAmount = 0
+		expense.DaviplataAmount = 0
+		expense.FondoAmount = 0
+		expense.CoinsAmount = 0
+		return
+	}
+
 	if expense.CashAmount > 0 || expense.NequiAmount > 0 || expense.DaviplataAmount > 0 || expense.FondoAmount > 0 || expense.CoinsAmount > 0 {
 		return
 	}
@@ -160,13 +175,31 @@ func (s *ExpenseService) GetByID(id uint) (*models.Expense, error) {
 	return s.repo.GetByID(id)
 }
 
-func (s *ExpenseService) DeleteExpense(id uint) error {
-	err := s.repo.Delete(id)
+// expenseLoanReversalRepository es una capacidad opcional del repositorio
+// PostgreSQL. Se mantiene fuera de ports.ExpenseRepository para no romper
+// fakes históricos; producción siempre la implementa.
+type expenseLoanReversalRepository interface {
+	DeleteWithLoanReversal(id uint, actorDNI string) (*ports.ExpenseDeleteResult, error)
+}
+
+func (s *ExpenseService) DeleteExpense(id uint, actorDNI string) (*ports.ExpenseDeleteResult, error) {
+	var result *ports.ExpenseDeleteResult
+	var err error
+	if repo, ok := s.repo.(expenseLoanReversalRepository); ok {
+		result, err = repo.DeleteWithLoanReversal(id, actorDNI)
+	} else {
+		// Compatibilidad exclusiva de tests/fakes. La implementación real no
+		// puede caer aquí: perdería la reversión del préstamo.
+		err = s.repo.Delete(id)
+		if err == nil {
+			result = &ports.ExpenseDeleteResult{ExpenseID: id}
+		}
+	}
 	if err == nil {
 		cache.InvalidateDashboard()
 		sse.GetSSEService().BroadcastDashboardUpdate()
 	}
-	return err
+	return result, err
 }
 
 func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {

@@ -6,11 +6,16 @@ import (
 	"backPOS-go/internal/infrastructure/cache"
 	"backPOS-go/internal/infrastructure/refresher"
 	"backPOS-go/internal/infrastructure/sse"
-	"gorm.io/gorm"
+	"errors"
+	"fmt"
 	"log"
+	"math"
 	"sort"
 	"strings"
 	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type PostgresExpenseRepository struct {
@@ -170,8 +175,22 @@ func (r *PostgresExpenseRepository) GetByID(id uint) (*models.Expense, error) {
 }
 
 func (r *PostgresExpenseRepository) GetByDateRange(from, to time.Time) ([]models.Expense, error) {
+	return expensesByDateRange(r.db, from, to)
+}
+
+// GetByDateRangeWithTx es GetByDateRange sobre una tx abierta: ve las filas
+// insertadas en esa misma tx antes del COMMIT.
+func (r *PostgresExpenseRepository) GetByDateRangeWithTx(tx interface{}, from, to time.Time) ([]models.Expense, error) {
+	gormTx, ok := tx.(*gorm.DB)
+	if !ok {
+		return nil, gorm.ErrInvalidDB
+	}
+	return expensesByDateRange(gormTx, from, to)
+}
+
+func expensesByDateRange(db *gorm.DB, from, to time.Time) ([]models.Expense, error) {
 	expenses := []models.Expense{}
-	query := r.db.Model(&models.Expense{})
+	query := db.Model(&models.Expense{})
 	if !from.IsZero() {
 		query = query.Where("date >= ?", from)
 	}
@@ -179,6 +198,26 @@ func (r *PostgresExpenseRepository) GetByDateRange(from, to time.Time) ([]models
 		query = query.Where("date <= ?", to)
 	}
 	err := query.Order("date DESC").Find(&expenses).Error
+	return expenses, err
+}
+
+// GetByReferenceIDs trae los egresos cuyo reference_id figura en el slice,
+// con Preload del proveedor. Se usa como fuente de verdad del nombre del
+// proveedor cuando el metadato JSON del kardex esta vacio (recepciones
+// viejas) o cuando se quiere auditar que una recepcion genero su egreso.
+//
+// Retorna [] silenciosamente si el slice viene vacio para evitar un
+// "WHERE reference_id IN ()" que algunas versiones de Postgres rechazan.
+func (r *PostgresExpenseRepository) GetByReferenceIDs(refs []string) ([]models.Expense, error) {
+	expenses := []models.Expense{}
+	if len(refs) == 0 {
+		return expenses, nil
+	}
+	err := r.db.
+		Preload("Supplier").
+		Where("reference_id IN ?", refs).
+		Order("date DESC").
+		Find(&expenses).Error
 	return expenses, err
 }
 
@@ -190,6 +229,134 @@ func (r *PostgresExpenseRepository) GetPendingRestockExpensesBySupplier(supplier
 
 func (r *PostgresExpenseRepository) Delete(id uint) error {
 	return r.db.Delete(&models.Expense{}, id).Error
+}
+
+// DeleteWithLoanReversal elimina lógicamente un egreso y, si ese egreso es
+// la contrapartida PAID+PRESTAMO creada por PayExpenseAtomic, revierte en la
+// MISMA transacción los demás efectos financieros:
+//   - resta amount_used de paid_amount y lo devuelve a remaining_amount;
+//   - restaura el status de deuda (normalmente PENDING);
+//   - marca loan_expenses.reversed_at para que deje de consumir principal;
+//   - soft-delete del expense de pago.
+//
+// El orden de locks serializa con PayExpenseAtomic: loan -> deuda. El expense
+// de pago y la fila loan_expenses se bloquean antes porque identifican cuál
+// préstamo/deuda tocar. Un error en cualquier paso hace rollback total.
+func (r *PostgresExpenseRepository) DeleteWithLoanReversal(id uint, actorDNI string) (*ports.ExpenseDeleteResult, error) {
+	if id == 0 {
+		return nil, errors.New("expense id requerido")
+	}
+	actor := strings.ToUpper(strings.TrimSpace(actorDNI))
+	if actor == "" {
+		return nil, errors.New("actor requerido para eliminar egreso")
+	}
+
+	result := &ports.ExpenseDeleteResult{ExpenseID: id}
+	err := r.db.Transaction(func(tx *gorm.DB) error {
+		var payment models.Expense
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", id).First(&payment).Error; err != nil {
+			return err
+		}
+
+		var usage models.LoanExpense
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("expense_id = ? AND reversed_at IS NULL", id).
+			First(&usage).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			// Egreso normal: conserva el comportamiento histórico.
+			return tx.Delete(&payment).Error
+		}
+		if err != nil {
+			return err
+		}
+
+		if !models.IsLoanFundedExpense(&payment) {
+			return fmt.Errorf("loan_expense %d apunta a un egreso que no es PRESTAMO", usage.ID)
+		}
+
+		// Mismo primer lock que PayExpenseAtomic/RegisterLoanExpense: evita que
+		// un uso concurrente calcule el disponible mientras reversamos éste.
+		var loan models.Loan
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ?", usage.LoanID).First(&loan).Error; err != nil {
+			return fmt.Errorf("lock préstamo %d: %w", usage.LoanID, err)
+		}
+
+		amountCents := int64(math.Round(usage.AmountUsed * 100))
+		if amountCents <= 0 {
+			return fmt.Errorf("loan_expense %d tiene amount_used inválido", usage.ID)
+		}
+
+		if usage.SourceExpenseID != nil && *usage.SourceExpenseID > 0 {
+			var debt models.Expense
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("id = ?", *usage.SourceExpenseID).First(&debt).Error; err != nil {
+				return fmt.Errorf("deuda original %d no disponible: %w", *usage.SourceExpenseID, err)
+			}
+
+			paidCents := int64(math.Round(debt.PaidAmount * 100))
+			remainingCents := int64(math.Round(debt.RemainingAmount * 100))
+			newPaidCents := paidCents - amountCents
+			if newPaidCents < 0 {
+				newPaidCents = 0
+			}
+			newRemainingCents := remainingCents + amountCents
+
+			// Si no hubo otro abono posterior, los snapshots permiten volver
+			// exactamente al estado anterior, incluso para deuda legacy cuyo
+			// remaining_amount era 0 y se derivó de amount-paid.
+			status := "PENDING"
+			if usage.SourceStatusBefore != nil {
+				status = *usage.SourceStatusBefore
+			}
+			if strings.EqualFold(status, "PAID") || strings.EqualFold(status, "SETTLED") {
+				status = "PENDING"
+			}
+			if usage.SourcePaidBefore != nil && usage.SourceRemainingBefore != nil {
+				beforePaid := int64(math.Round(*usage.SourcePaidBefore * 100))
+				beforeRemaining := int64(math.Round(*usage.SourceRemainingBefore * 100))
+				expectedPaidAfter := beforePaid + amountCents
+				expectedRemainingAfter := beforeRemaining - amountCents
+				if expectedRemainingAfter < 0 {
+					expectedRemainingAfter = 0
+				}
+				if paidCents == expectedPaidAfter && remainingCents == expectedRemainingAfter {
+					newPaidCents = beforePaid
+					newRemainingCents = beforeRemaining
+				}
+			}
+
+			if err := tx.Model(&models.Expense{}).Where("id = ?", debt.ID).Updates(map[string]interface{}{
+				"paid_amount":      float64(newPaidCents) / 100.0,
+				"remaining_amount": float64(newRemainingCents) / 100.0,
+				"status":           status,
+			}).Error; err != nil {
+				return fmt.Errorf("restaurar deuda original: %w", err)
+			}
+			result.RestoredDebtID = usage.SourceExpenseID
+			result.RestoredAmount = float64(amountCents) / 100.0
+		}
+
+		now := time.Now()
+		if err := tx.Model(&models.LoanExpense{}).Where("id = ? AND reversed_at IS NULL", usage.ID).Updates(map[string]interface{}{
+			"reversed_at":     now,
+			"reversed_by_dni": actor,
+		}).Error; err != nil {
+			return fmt.Errorf("marcar uso de préstamo reversado: %w", err)
+		}
+		if err := tx.Delete(&payment).Error; err != nil {
+			return fmt.Errorf("eliminar egreso de pago: %w", err)
+		}
+
+		result.LoanReversed = true
+		result.ReleasedPrincipal = float64(amountCents) / 100.0
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (r *PostgresExpenseRepository) Count() (int64, error) {
@@ -244,6 +411,12 @@ func (r *PostgresExpenseRepository) GetMonthlyTotals() (map[string]float64, erro
 	results := make(map[string]float64)
 	rows, err := r.db.Table("expenses").
 		Select("TO_CHAR(date, 'YYYY-MM') as month, COALESCE(SUM(amount + tax_amount), 0) as total").
+		// Excluir egresos pagados con PRÉSTAMO (opción "pagar con
+		// préstamo"): no son egresos operativos del mes, el gasto real
+		// contra caja aparece cuando se paga la cuota. Mantener alineado
+		// con el resto de getters (GetGlobalTotalPaidExpenses, etc.) y con
+		// el helper único models.LoanFundedExpenseSQLPredicate.
+		Where("NOT (" + models.LoanFundedExpenseSQLPredicate + ")").
 		Group("month").
 		Rows()
 	if err != nil {
@@ -443,6 +616,9 @@ func (r *PostgresExpenseRepository) GetTotalAmountByDateRange(from, to time.Time
 	var total float64
 	err := r.db.Model(&models.Expense{}).
 		Where("date >= ? AND date <= ?", from, to).
+		// Mantener fuera a los egresos pagados con PRÉSTAMO: la plata no
+		// salió aún de ningún canal. Centinela: LoanFundedExpenseSQLPredicate.
+		Where("NOT (" + models.LoanFundedExpenseSQLPredicate + ")").
 		Select("COALESCE(SUM(amount + tax_amount), 0)").
 		Scan(&total).Error
 	if err != nil {

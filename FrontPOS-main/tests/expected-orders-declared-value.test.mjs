@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const inventoryPage = join(here, "..", "src", "app", "(app)", "inventory", "page.tsx");
+const ordersPage = join(here, "..", "src", "app", "(app)", "inventory", "orders", "page.tsx");
 
 // ============================================================================
 // EL VALOR DEL PEDIDO ES EL QUE ESCRIBIO EL DUENO
@@ -79,5 +80,68 @@ test("el tipo documenta que invoiceRef no es plata", async () => {
     bloque,
     /REFERENCIA de la factura|no un monto|NO un monto/,
     "el tipo debe advertir que invoiceRef no es un monto"
+  );
+});
+
+// ============================================================================
+// NO SE PIDE REFERENCIA / FACTURA AL CONFIRMAR UN PEDIDO
+// ============================================================================
+//
+// El dueño pidió quitarlo: "en pedidos quita el campo de referencia o factura
+// (no hay factura todavía)". El pedido se confirma cuando el preventista pasa;
+// la factura real llega después, al recibir la mercancía.
+//
+// El backend conserva la columna por histórico (los jobs y el cron todavía la
+// leen como override del valor cuando el pedido se registró sin ítems), así
+// que una migración 017 posterior la limpiará cuando sea seguro. En el
+// frontend quedó erradicado.
+
+test("el formulario de pedido ya no pide referencia / factura", async () => {
+  const source = await readFile(ordersPage, "utf8");
+
+  // El input visible: su label era "Referencia / factura" con placeholder "Opcional".
+  assert.ok(
+    !/Referencia\s*\/\s*factura/.test(source),
+    "quedó texto 'Referencia / factura' en el formulario: debe eliminarse"
+  );
+  assert.ok(
+    !/value=\{form\.invoiceRef\}/.test(source),
+    "sigue el <input value={form.invoiceRef}> en el formulario; hay que borrarlo"
+  );
+  // Ni el estado ni los helpers deben tocar invoiceRef en el envío.
+  assert.ok(
+    !/updateForm\(.*invoiceRef/.test(source),
+    "updateForm todavía escribe invoiceRef"
+  );
+});
+
+test("el payload que viaja al backend no incluye invoice_ref", async () => {
+  const source = await readFile(ordersPage, "utf8");
+
+  // El campo clave del envío: antes era `invoice_ref: form.invoiceRef`.
+  assert.ok(
+    !/invoice_ref:\s*form\.invoiceRef/.test(source),
+    "el payload volvió a enviar invoice_ref desde el formulario"
+  );
+  // El contrato del payload (ConfirmOrderPayload) no debería declarar invoice_ref.
+  const payloadInterface = source.slice(
+    source.indexOf("interface ConfirmOrderPayload"),
+    source.indexOf("interface TransitWarningProduct"),
+  );
+  assert.ok(
+    !/invoice_ref/.test(payloadInterface),
+    "ConfirmOrderPayload sigue declarando invoice_ref: elimínalo del tipo"
+  );
+});
+
+test("GroupForm ya no declara invoiceRef", async () => {
+  const source = await readFile(ordersPage, "utf8");
+  const formInterface = source.slice(
+    source.indexOf("interface GroupForm"),
+    source.indexOf("interface SuggestionGroup"),
+  );
+  assert.ok(
+    !/invoiceRef/.test(formInterface),
+    "GroupForm todavía tiene invoiceRef: hay que removerlo del estado"
   );
 });

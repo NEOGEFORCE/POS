@@ -1,10 +1,15 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useRef } from 'react';
-import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Spinner } from "@heroui/react";
-import { Upload, Sparkles, AlertTriangle, Check, X, ShieldCheck, Image as ImageIcon, Camera, Receipt, CheckCircle2 } from 'lucide-react';
+import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button, Progress } from "@heroui/react";
+import { Upload, AlertTriangle, X, ShieldCheck, Camera, Receipt, CheckCircle2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import Cookies from 'js-cookie';
+import {
+  fillInvoiceItemDefaults,
+  validateInvoiceFile,
+  INVOICE_FILE_MAX_BYTES,
+} from '@/lib/invoice-reader-helpers.mjs';
 
 interface InvoiceReaderModalProps {
   isOpen: boolean;
@@ -12,6 +17,8 @@ interface InvoiceReaderModalProps {
   supplierId: string;
   onExtractedItems: (items: any[]) => void;
 }
+
+export { INVOICE_FILE_MAX_BYTES };
 
 export default function InvoiceReaderModal({
   isOpen,
@@ -32,19 +39,40 @@ export default function InvoiceReaderModal({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
-      // Validar que sea imagen
-      if (!file.type.startsWith('image/')) {
-        toast({ title: 'Error', description: 'Por favor, selecciona una imagen', variant: 'destructive' });
+      // Validacion centralizada (type + tamaño): se delega a un helper puro
+      // para que los tests contractuales puedan verificar los limites sin DOM.
+      const check = validateInvoiceFile(file);
+      if (!check.ok) {
+        toast({
+          title: check.reason === 'too-large' ? 'Archivo demasiado grande' : 'Formato invalido',
+          description: check.message || 'No pude procesar el archivo seleccionado.',
+          variant: 'destructive',
+        });
+        // Limpia el input para permitir re-seleccionar el mismo archivo
+        if (fileInputRef.current) fileInputRef.current.value = '';
         return;
       }
       setSelectedFile(file);
-      
+
       const reader = new FileReader();
       reader.onload = (event) => {
         setPreviewUrl(event.target?.result as string);
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleClearSelection = () => {
+    if (isProcessing) return; // No permitir reset en pleno OCR
+    setSelectedFile(null);
+    setPreviewUrl(null);
+  };
+
+  const handleModalOpenChange = (open: boolean) => {
+    // No permitir cerrar mientras procesa — evita abortos accidentales que
+    // dejan requests colgados y toasts huerfanos.
+    if (!open && isProcessing) return;
+    onOpenChange(open);
   };
 
   // Valida que la respuesta sea JSON antes de parsearla.
@@ -161,11 +189,11 @@ export default function InvoiceReaderModal({
       const res = await fetch(ocrUrl, { method: 'POST', headers, body: JSON.stringify(payload) });
       const data = await safeJson(res);
 
-      // ── TAREA 1: Auditoria inmediata de la respuesta cruda ──────────────
+      // ── Auditoria inmediata de la respuesta cruda ──────────────────────
       // eslint-disable-next-line no-console
       console.log("📦 RESPUESTA CRUDA DEL OCR:", data);
 
-      // ── TAREA 2: Feedback visual de resultados ──────────────────────────
+      // ── Feedback visual de resultados ──────────────────────────────────
       // El backend retorna { totalDetected, totalMatched, scannedItems, unmatched }.
       // (Algunas versiones legacy pueden usar unmatchedItems en lugar de unmatched.)
       const scannedItems: any[] = Array.isArray(data?.scannedItems) ? data.scannedItems : [];
@@ -203,28 +231,15 @@ export default function InvoiceReaderModal({
         });
       }
 
-      // ── TAREA 3: Inyeccion al padre con shape consistente ───────────────
-      // Pasamos AMBOS arrays con flag isMatched para que el carrito sepa
-      // que pintar en verde (match), amarillo (warning) o rojo (extra).
-      // Defaults fiscales: si el usuario marco "buscar IVA"/"buscar IBUA" y
-      // el OCR no extrajo el porcentaje para algun item, sugerimos los
-      // valores tipicos colombianos (19% IVA, 20% IBUA) como fallback —
-      // el usuario aun puede ajustarlos en el reviewer/carrito.
-      const fillTaxDefaults = (item: any) => {
-        const out = { ...item };
-        const ivaFromOcr = Number(item.iva_percentage ?? item.IVA ?? item.iva ?? 0);
-        const ibuaFromOcr = Number(item.ibua_percentage ?? item.IBUA ?? item.ibua ?? 0);
-        const icuiFromOcr = Number(item.icui_percentage ?? item.ICUI ?? item.icui ?? 0);
-
-        out.iva_percentage = expectIVA ? (ivaFromOcr > 0 ? ivaFromOcr : 19) : 0;
-        out.ibua_percentage = expectIBUA ? (ibuaFromOcr > 0 ? ibuaFromOcr : 20) : 0;
-        out.icui_percentage = expectIBUA ? icuiFromOcr : 0;
-        return out;
-      };
-
+      // ── Inyeccion al padre con shape consistente ───────────────────────
+      // El backend ya normaliza impuestos y descuentos vía normalizeExtractedItem
+      // + splitBonusItems, así que acá no inventamos defaults monetarios. Solo
+      // propagamos los campos tal cual, con clamp defensivo y un identificador
+      // local estable (__ocrLocalId) para que el reviewer pueda deduplicar y
+      // navegar sin depender del invoiceName.
       const itemsToReview = [
-        ...scannedItems.map((item: any) => ({ ...fillTaxDefaults(item), isMatched: true })),
-        ...unmatchedRaw.map((item: any) => ({ ...fillTaxDefaults(item), isMatched: false })),
+        ...scannedItems.map((item: any) => ({ ...fillInvoiceItemDefaults(item), isMatched: true })),
+        ...unmatchedRaw.map((item: any) => ({ ...fillInvoiceItemDefaults(item), isMatched: false })),
       ];
 
       onExtractedItems(itemsToReview);
@@ -245,22 +260,35 @@ export default function InvoiceReaderModal({
 
 
   return (
-    <Modal isOpen={isOpen} onOpenChange={onOpenChange} size="2xl" backdrop="blur" classNames={{
-      base: "bg-white/95 dark:bg-zinc-950/95 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
-      closeButton: "top-4 right-4"
-    }}>
+    <Modal
+      isOpen={isOpen}
+      onOpenChange={handleModalOpenChange}
+      size="2xl"
+      backdrop="blur"
+      // Contrato "modal no descartable durante procesamiento": mientras isProcessing
+      // sea true, el usuario NO puede cerrar con ESC, click fuera o botón X. Esto
+      // evita que un request OCR quede huérfano y que el toast de resultado llegue
+      // a una pantalla sin contexto. UnmatchedItemsReviewer sigue la misma regla.
+      isDismissable={!isProcessing}
+      isKeyboardDismissDisabled={isProcessing}
+      hideCloseButton={isProcessing}
+      classNames={{
+        base: "bg-white/95 dark:bg-zinc-950/95 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]",
+        closeButton: "top-4 right-4"
+      }}
+    >
       <ModalContent>
         {(onClose) => (
           <>
             <ModalHeader className="flex flex-col gap-1 border-b border-gray-100 dark:border-white/5 pb-4">
               <div className="flex items-center gap-3">
                 <div className="h-10 w-10 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-500">
-                  <Camera size={20} />
+                  <Camera size={20} aria-hidden="true" />
                 </div>
                 <div>
                   <h2 className="text-xl font-medium tracking-tight text-zinc-900 dark:text-white uppercase">ESCANEO DE FACTURA</h2>
                   <p className="text-[10px] text-gray-500 uppercase tracking-widest font-medium flex items-center gap-1">
-                    <ShieldCheck size={10} /> Procesamiento OCR
+                    <ShieldCheck size={10} aria-hidden="true" /> Procesamiento OCR
                   </p>
                 </div>
               </div>
@@ -269,24 +297,27 @@ export default function InvoiceReaderModal({
               {!selectedFile ? (
                 <div className="grid grid-cols-2 gap-4">
                   <label className="w-full h-32 border-2 border-dashed border-emerald-500/50 dark:border-emerald-500/30 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950/30 transition-colors relative overflow-hidden group">
-                    <Camera size={28} className="text-emerald-500 mb-2 group-hover:scale-110 transition-transform" />
+                    <Camera size={28} className="text-emerald-500 mb-2 group-hover:scale-110 transition-transform" aria-hidden="true" />
                     <p className="text-[11px] font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-widest text-center">Tomar<br/>Foto</p>
-                    <input 
-                      type="file" 
+                    <input
+                      type="file"
                       capture="environment"
-                      className="absolute inset-0 opacity-0 cursor-pointer" 
-                      accept="image/*" 
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      accept="image/*"
+                      aria-label="Tomar foto de la factura con la camara"
                       onChange={handleFileChange}
                     />
                   </label>
-                  
+
                   <label className="w-full h-32 border-2 border-dashed border-gray-300 dark:border-zinc-700 rounded-2xl flex flex-col items-center justify-center cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-50 dark:bg-zinc-900/50 transition-colors relative overflow-hidden group">
-                    <Upload size={28} className="text-gray-400 mb-2 group-hover:scale-110 transition-transform" />
+                    <Upload size={28} className="text-gray-400 mb-2 group-hover:scale-110 transition-transform" aria-hidden="true" />
                     <p className="text-[11px] font-bold text-gray-600 dark:text-gray-300 uppercase tracking-widest text-center">Subir<br/>Archivo</p>
-                    <input 
-                      type="file" 
-                      className="absolute inset-0 opacity-0 cursor-pointer" 
-                      accept="image/*" 
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      className="absolute inset-0 opacity-0 cursor-pointer"
+                      accept="image/*"
+                      aria-label="Subir imagen de la factura desde el dispositivo"
                       onChange={handleFileChange}
                     />
                   </label>
@@ -294,18 +325,31 @@ export default function InvoiceReaderModal({
               ) : (
                 <div className="flex flex-col items-center gap-4">
                   <div className="relative w-full h-64 bg-gray-100 dark:bg-zinc-900 rounded-2xl overflow-hidden border border-gray-200 dark:border-zinc-800">
-                    <img src={previewUrl!} alt="Preview" className="w-full h-full object-contain" />
-                    <button 
-                      onClick={() => { setSelectedFile(null); setPreviewUrl(null); }}
-                      className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-xl shadow-lg hover:bg-red-600"
-                    >
-                      <X size={16} />
-                    </button>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={previewUrl!} alt="Previsualizacion de la factura" className="w-full h-full object-contain" />
+                    {!isProcessing && (
+                      <button
+                        type="button"
+                        onClick={handleClearSelection}
+                        aria-label="Quitar imagen seleccionada"
+                        className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-xl shadow-lg hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2"
+                      >
+                        <X size={16} aria-hidden="true" />
+                      </button>
+                    )}
                   </div>
                   {isProcessing && (
-                    <div className="flex items-center gap-3 text-emerald-500 bg-emerald-500/10 px-4 py-2 rounded-2xl">
-                      <Spinner size="sm" color="success" />
-                      <span className="text-[10px] font-bold uppercase tracking-widest">Procesando Factura...</span>
+                    <div className="w-full flex flex-col items-center gap-2" role="status" aria-live="polite">
+                      <div className="flex items-center gap-3 text-emerald-500 bg-emerald-500/10 px-4 py-2 rounded-2xl">
+                        <span className="text-[10px] font-bold uppercase tracking-widest">Procesando Factura · No cierres esta ventana</span>
+                      </div>
+                      <Progress
+                        aria-label="Progreso del procesamiento OCR"
+                        isIndeterminate
+                        size="sm"
+                        color="success"
+                        className="w-full max-w-xs"
+                      />
                     </div>
                   )}
                 </div>
@@ -315,7 +359,7 @@ export default function InvoiceReaderModal({
               {selectedFile && !isProcessing && (
                 <div className="mt-4 p-4 rounded-2xl bg-zinc-100 dark:bg-zinc-900/40 border border-zinc-200 dark:border-white/5">
                   <div className="flex items-center gap-2 mb-3">
-                    <Receipt size={14} className="text-emerald-500" />
+                    <Receipt size={14} className="text-emerald-500" aria-hidden="true" />
                     <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-700 dark:text-zinc-300">
                       Impuestos esperados en esta factura
                     </span>
@@ -326,7 +370,8 @@ export default function InvoiceReaderModal({
                       type="button"
                       onClick={() => setExpectIVA(v => !v)}
                       aria-pressed={expectIVA}
-                      className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
+                      aria-label="Pedir al OCR buscar porcentaje de IVA"
+                      className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
                         expectIVA
                           ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
                           : 'bg-gray-100 dark:bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
@@ -337,6 +382,7 @@ export default function InvoiceReaderModal({
                         className={`shrink-0 transition-all ${
                           expectIVA ? 'text-emerald-400 fill-emerald-500/20' : 'text-zinc-600'
                         }`}
+                        aria-hidden="true"
                       />
                       <div className="flex flex-col">
                         <span className={`text-[11px] font-semibold uppercase tracking-tight ${
@@ -357,7 +403,8 @@ export default function InvoiceReaderModal({
                       type="button"
                       onClick={() => setExpectIBUA(v => !v)}
                       aria-pressed={expectIBUA}
-                      className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] ${
+                      aria-label="Pedir al OCR buscar porcentaje de IBUA o ICUI"
+                      className={`group cursor-pointer transition-all border rounded-xl p-3 flex items-center gap-3 text-left active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
                         expectIBUA
                           ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.08)]'
                           : 'bg-gray-100 dark:bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
@@ -368,6 +415,7 @@ export default function InvoiceReaderModal({
                         className={`shrink-0 transition-all ${
                           expectIBUA ? 'text-emerald-400 fill-emerald-500/20' : 'text-zinc-600'
                         }`}
+                        aria-hidden="true"
                       />
                       <div className="flex flex-col">
                         <span className={`text-[11px] font-semibold uppercase tracking-tight ${
@@ -388,6 +436,9 @@ export default function InvoiceReaderModal({
                       ✓ El OCR forzara la extraccion de estos porcentajes por linea
                     </p>
                   )}
+                  <p className="mt-3 text-[9px] font-medium text-gray-500 dark:text-zinc-500 uppercase tracking-widest flex items-center gap-1">
+                    <AlertTriangle size={10} aria-hidden="true" /> Limite de archivo: 10 MB (JPG / PNG)
+                  </p>
                 </div>
               )}
             </ModalBody>
@@ -395,10 +446,11 @@ export default function InvoiceReaderModal({
               <Button variant="light" onPress={onClose} isDisabled={isProcessing} className="rounded-xl text-[10px] uppercase tracking-widest font-medium">
                 Cancelar
               </Button>
-              <Button 
-                color="success" 
+              <Button
+                color="success"
                 onPress={handleProcess}
                 isLoading={isProcessing}
+                isDisabled={!selectedFile || !supplierId || supplierId === 'none'}
                 className="rounded-xl text-[10px] uppercase tracking-widest font-medium text-white shadow-lg"
               >
                 Procesar Factura

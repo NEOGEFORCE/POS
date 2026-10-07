@@ -116,6 +116,27 @@ export interface RestockSuggestion {
   learnedAt?: string | null;
 
   agendaSource?: "manual" | "learned" | "none";
+
+  // ---- CROSS-PROVEEDOR: desglose de "en camino" por proveedor ----
+  //
+  // El backend v2 puede responder, además del total `inTransitQty`, un
+  // desglose por proveedor cuando el mismo producto está pedido en varias
+  // órdenes. La UI lo usa para pintar "6 en camino de HERMARLY · ya pedido".
+  //
+  // Es OPCIONAL: si el backend viejo no lo manda, la tarjeta cae al
+  // comportamiento previo mostrando solo la cantidad total y el proveedor
+  // principal del producto.
+  //
+  // El contrato se cierra con un batch único en el back (JOIN sobre
+  // confirmed_orders / purchase_orders agrupado por producto+proveedor), por
+  // lo que no genera N+1.
+  inTransitSuppliers?: Array<{
+    supplierId: number;
+    supplierName: string;
+    quantity: number;
+    expectedDate?: string | null;
+    orderId?: string | number | null;
+  }>;
 }
 
 interface UseSmartRestockOptions {
@@ -158,8 +179,18 @@ export interface SelectedItem extends SelectedItemSnapshot {
  * equivocacion y vuelvo y entro me tiene que cargar lo que ya tenia
  * seleccionado". Armar un pedido de 40 productos y perderlo por un clic en el
  * menú es inaceptable.
+ *
+ * CAMBIO 2026-10-01: ahora el borrador es POR PROVEEDOR, no uno global. Hasta
+ * entonces había una sola clave `pos_restock_cart_v1` que se descartaba al
+ * cambiar de proveedor; el dueño perdía el pedido a medio armar del proveedor
+ * anterior si se asomaba a otro. La nueva estructura guarda los borradores
+ * en un objeto `{ [supplierKey]: PersistedCart }` bajo la clave
+ * `pos_restock_carts_by_supplier_v1`. La legacy se migra en lectura cuando
+ * se detecta: lo que estaba guardado se re-asigna a `supplierKey` recordado
+ * en el payload.
  */
-const CART_STORAGE_KEY = "pos_restock_cart_v1";
+const CARTS_STORAGE_KEY = "pos_restock_carts_by_supplier_v1";
+const CART_STORAGE_KEY_LEGACY = "pos_restock_cart_v1";
 
 /** El borrador se descarta pasado este tiempo para no revivir pedidos viejos. */
 const CART_MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -171,20 +202,87 @@ interface PersistedCart {
   savedAt: number;
 }
 
-function loadPersistedCart(supplierKey: string): PersistedCart | null {
-  if (typeof window === "undefined") return null;
+type PersistedCartsMap = Record<string, PersistedCart>;
+
+/**
+ * Lee TODOS los borradores guardados (por proveedor). Migra la clave legacy
+ * una sola vez: si existe `pos_restock_cart_v1`, lo convierte al mapa nuevo
+ * y lo borra para no mezclar formatos.
+ */
+function loadAllPersistedCarts(): PersistedCartsMap {
+  if (typeof window === "undefined") return {};
   try {
-    const raw = window.localStorage.getItem(CART_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as PersistedCart;
-    if (!parsed || parsed.supplierKey !== supplierKey) return null;
-    if (!Number.isFinite(parsed.savedAt) || Date.now() - parsed.savedAt > CART_MAX_AGE_MS) return null;
-    if (!parsed.quantities || typeof parsed.quantities !== "object") return null;
-    return parsed;
+    const raw = window.localStorage.getItem(CARTS_STORAGE_KEY);
+    const parsed: PersistedCartsMap = raw ? JSON.parse(raw) : {};
+    if (!parsed || typeof parsed !== "object") {
+      // Payload corrupto: borra y arranca de cero. No destruimos la legacy
+      // porque puede traer datos buenos.
+      return migrateLegacyCart({});
+    }
+    return migrateLegacyCart(parsed);
   } catch {
-    // Un borrador corrupto no puede tumbar la pantalla de pedidos.
-    return null;
+    return migrateLegacyCart({});
   }
+}
+
+function migrateLegacyCart(current: PersistedCartsMap): PersistedCartsMap {
+  if (typeof window === "undefined") return current;
+  try {
+    const legacyRaw = window.localStorage.getItem(CART_STORAGE_KEY_LEGACY);
+    if (!legacyRaw) return current;
+    const legacy = JSON.parse(legacyRaw) as PersistedCart;
+    if (!legacy || typeof legacy !== "object" || !legacy.supplierKey) {
+      // Si estaba corrupta, la borramos y seguimos.
+      window.localStorage.removeItem(CART_STORAGE_KEY_LEGACY);
+      return current;
+    }
+    const merged: PersistedCartsMap = { ...current };
+    // No pisamos un borrador nuevo si ya existe para ese proveedor.
+    if (!merged[legacy.supplierKey]) {
+      merged[legacy.supplierKey] = legacy;
+    }
+    try { window.localStorage.setItem(CARTS_STORAGE_KEY, JSON.stringify(merged)); } catch { /* cuota */ }
+    try { window.localStorage.removeItem(CART_STORAGE_KEY_LEGACY); } catch { /* cuota */ }
+    return merged;
+  } catch {
+    return current;
+  }
+}
+
+function loadPersistedCart(supplierKey: string): PersistedCart | null {
+  const map = loadAllPersistedCarts();
+  const entry = map[supplierKey];
+  if (!entry) return null;
+  if (!Number.isFinite(entry.savedAt) || Date.now() - entry.savedAt > CART_MAX_AGE_MS) return null;
+  if (!entry.quantities || typeof entry.quantities !== "object") return null;
+  return entry;
+}
+
+/**
+ * Devuelve un índice "productId -> supplierKey" con los PRODUCTOS que
+ * aparecen en otros borradores. Se usa en la UI para avisar cuando un
+ * producto que el dueño elige acá ya está puesto en el borrador de otro
+ * proveedor (riesgo de pedirlo dos veces).
+ */
+export function readForeignCartIndex(currentSupplierKey: string): Map<string, { supplierKey: string; supplierName: string; quantity: number }> {
+  const map = loadAllPersistedCarts();
+  const index = new Map<string, { supplierKey: string; supplierName: string; quantity: number }>();
+  for (const [supplierKey, cart] of Object.entries(map)) {
+    if (supplierKey === currentSupplierKey) continue;
+    if (!cart || typeof cart !== "object") continue;
+    if (!Number.isFinite(cart.savedAt) || Date.now() - cart.savedAt > CART_MAX_AGE_MS) continue;
+    for (const [productId, quantity] of Object.entries(cart.quantities ?? {})) {
+      if (!(quantity > 0)) continue;
+      if (index.has(productId)) continue; // El primer borrador que lo cite gana.
+      const snap = (cart.snapshots ?? []).find((s) => s?.productId === productId);
+      index.set(productId, {
+        supplierKey,
+        supplierName: snap?.supplierName || supplierKey,
+        quantity,
+      });
+    }
+  }
+  return index;
 }
 
 // suggestedQuantities prellena las cantidades con lo que sugiere el backend.
@@ -274,15 +372,26 @@ export function useSmartRestock(
     activeSupplierKey.current = supplierKey;
     editedProducts.current.clear();
     selectedSnapshots.current.clear();
-    setOrderQuantities({});
-    // El borrador es POR PROVEEDOR: al cambiar se descarta para no mezclar
-    // pedidos de proveedores distintos.
-    if (typeof window !== "undefined") {
-      try {
-        window.localStorage.removeItem(CART_STORAGE_KEY);
-      } catch {
-        /* sin localStorage el carrito sigue funcionando en memoria */
+
+    // Al cambiar de proveedor NO se descarta el borrador anterior: cada
+    // proveedor tiene su propio borrador y hay que preservarlos para que el
+    // dueño pueda saltar entre proveedores sin perder lo armado.
+    //
+    // Antes aquí se hacía removeItem() de la clave vieja, lo que mataba el
+    // pedido en progreso del proveedor anterior. Ahora solo se carga el del
+    // proveedor nuevo (puede estar vacío) y las cantidades locales se
+    // reemplazan por lo que trae ese borrador.
+    const nextDraft = loadPersistedCart(supplierKey);
+    if (nextDraft) {
+      for (const foto of nextDraft.snapshots ?? []) {
+        if (foto?.productId) selectedSnapshots.current.set(foto.productId, foto);
       }
+      for (const productId of Object.keys(nextDraft.quantities ?? {})) {
+        editedProducts.current.add(productId);
+      }
+      setOrderQuantities(nextDraft.quantities ?? {});
+    } else {
+      setOrderQuantities({});
     }
   }, [supplierKey]);
 
@@ -292,8 +401,14 @@ export function useSmartRestock(
     if (typeof window === "undefined") return;
     const conCantidad = Object.entries(orderQuantities).filter(([, q]) => q > 0);
     try {
+      const map = loadAllPersistedCarts();
       if (conCantidad.length === 0) {
-        window.localStorage.removeItem(CART_STORAGE_KEY);
+        // Al quedar vacío se borra SOLO la entrada del proveedor activo; las
+        // demás se preservan.
+        if (map[supplierKey]) {
+          delete map[supplierKey];
+          window.localStorage.setItem(CARTS_STORAGE_KEY, JSON.stringify(map));
+        }
         return;
       }
       const payload: PersistedCart = {
@@ -306,7 +421,8 @@ export function useSmartRestock(
           .filter((foto): foto is SelectedItemSnapshot => Boolean(foto)),
         savedAt: Date.now(),
       };
-      window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(payload));
+      map[supplierKey] = payload;
+      window.localStorage.setItem(CARTS_STORAGE_KEY, JSON.stringify(map));
     } catch {
       /* cuota llena o modo privado: el carrito sigue vivo en memoria */
     }
@@ -428,6 +544,20 @@ export function useSmartRestock(
 
   const orderItemCount = useMemo(() => selectedItems.length, [selectedItems]);
 
+  // Índice de productos presentes en el borrador de OTRO proveedor. Se
+  // recalcula cada vez que cambian las cantidades locales (y por lo tanto el
+  // storage), para que si el dueño mueve un producto de un proveedor a otro
+  // el aviso desaparezca sin recargar.
+  const foreignCartIndex = useMemo(() => {
+    // La búsqueda es un snapshot sincrónico del localStorage: no hace falta
+    // suscribirse a `storage` porque el guardado del propio hook ya rebota
+    // este useMemo mediante `orderQuantities`.
+    return readForeignCartIndex(supplierKey);
+    // orderQuantities figura como dependencia para refrescar la foto cuando
+    // acabamos de guardar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supplierKey, orderQuantities]);
+
   const categorized = useMemo<Record<ABCCategory, RestockSuggestion[]>>(() => ({
     A: suggestions.filter((item) => item.abcCategory === "A"),
     B: suggestions.filter((item) => item.abcCategory === "B"),
@@ -449,5 +579,6 @@ export function useSmartRestock(
     orderTotal,
     orderItemCount,
     selectedItems,
+    foreignCartIndex,
   };
 }

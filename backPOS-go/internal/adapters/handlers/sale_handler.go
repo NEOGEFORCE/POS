@@ -16,10 +16,11 @@ import (
 type SaleHandler struct {
 	service      *services.SaleService
 	auditService *services.AuditService
+	shiftRepo    ports.ActiveShiftRepository
 }
 
-func NewSaleHandler(s *services.SaleService, a *services.AuditService) *SaleHandler {
-	return &SaleHandler{service: s, auditService: a}
+func NewSaleHandler(s *services.SaleService, a *services.AuditService, sh ports.ActiveShiftRepository) *SaleHandler {
+	return &SaleHandler{service: s, auditService: a, shiftRepo: sh}
 }
 
 func (h *SaleHandler) Create(c *gin.Context) {
@@ -168,6 +169,12 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos de pago inválido", err)
 		return
 	}
+
+	// Snapshot "antes" para la auditoria. Se consulta ANTES de llamar al
+	// servicio para que el campo `changes` del audit log sea significativo
+	// en lugar del placeholder "{}" historico.
+	before := h.loadPaymentSnapshot(uint(id))
+
 	if err := h.service.UpdateSalePayment(uint(id), &sale); err != nil {
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Fallo al actualizar pago", err)
 		return
@@ -175,11 +182,16 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 
 	dniStr, nameStr := GetContextUser(c)
 
+	// Despues: se recarga para capturar lo que realmente quedo (la logica
+	// del servicio normaliza / reconcilia valores).
+	after := h.loadPaymentSnapshot(uint(id))
+	changes := buildPaymentChangesJSON(before, after)
+
 	// Auditoría de Cambio de Pago
 	h.auditService.Log(dniStr, nameStr, "UPDATE_PAYMENT", "SALES",
 		fmt.Sprintf("Actualizado pago venta #%d", id),
-		fmt.Sprintf("Se modificó la información de pago para la venta #%d", id),
-		"{}", c.ClientIP(), c.Request.UserAgent(), true)
+		fmt.Sprintf("Admin cambió medio de pago de la venta #%d", id),
+		changes, c.ClientIP(), c.Request.UserAgent(), true)
 
 	go func() {
 		defer func() { recover() }()
@@ -187,6 +199,111 @@ func (h *SaleHandler) UpdatePayment(c *gin.Context) {
 	}()
 
 	c.JSON(http.StatusOK, gin.H{"message": "Pago actualizado correctamente"})
+}
+
+// CorrectPaymentChannel: endpoint acotado para EMPLEADOS que necesitan
+// corregir un error de medio de pago en una venta propia del turno abierto.
+//
+// Vive aparte de UpdatePayment (que es admin-only) porque las reglas son
+// mucho mas estrictas: no cambia total, cliente, productos ni usa FIADO; solo
+// redistribuye el mismo total entre efectivo y canales de transferencia.
+// Toda la validacion vive en SaleService.CorrectPaymentChannel, documentada
+// en sale_service_correct_payment.go.
+//
+// AUTORIZACION:
+//   - La ruta esta protegida con RoleMiddleware("empleado") (acepta empleado,
+//     admin y superadmin). Un admin que invoque este endpoint queda con un
+//     camino auditado y acotado, pero su atajo real sigue siendo
+//     PUT /sales/update-payment/:id.
+//   - El servicio exige que sale.EmployeeDNI coincida con el requester y que
+//     la venta pertenezca al turno abierto. Esto se verifica DENTRO del
+//     servicio sobre el snapshot bloqueado, no en el handler.
+//   - El guardian estatico TestRutasDestructivasSoloAdmin acepta esta ruta
+//     como excepcion declarada (es POST, no destructivo per se), y las
+//     restricciones viven en nonAdminWriteRoutes y pruebas unitarias del
+//     servicio.
+type CorrectPaymentChannelReq struct {
+	CashAmount        float64 `json:"cashAmount"`
+	TransferAmount    float64 `json:"transferAmount"`
+	TransferNequi     float64 `json:"transferNequi"`
+	TransferDaviplata float64 `json:"transferDaviplata"`
+	TransferSource    string  `json:"transferSource"`
+}
+
+func (h *SaleHandler) CorrectPaymentChannel(c *gin.Context) {
+	saleIDStr := c.Param("id")
+	saleID64, err := strconv.ParseUint(saleIDStr, 10, 32)
+	if err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "ID de venta invalido", err)
+		return
+	}
+	saleID := uint(saleID64)
+
+	var req CorrectPaymentChannelReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		SendError(c, http.StatusBadRequest, ErrBadRequest, "Formato de datos invalido", err)
+		return
+	}
+
+	requesterDNI, requesterName := GetContextUser(c)
+	svcReq := services.CorrectPaymentChannelRequest{
+		CashAmount:        req.CashAmount,
+		TransferAmount:    req.TransferAmount,
+		TransferNequi:     req.TransferNequi,
+		TransferDaviplata: req.TransferDaviplata,
+		TransferSource:    req.TransferSource,
+	}
+
+	result, err := h.service.CorrectPaymentChannel(saleID, svcReq, requesterDNI, h.shiftRepo)
+	if err != nil {
+		status, code := classifyPaymentCorrectionError(err)
+		SendError(c, status, code, err.Error(), err)
+		return
+	}
+
+	// Audit CRITICA con before/after real.
+	changes := buildPaymentSnapshotJSON(result.Before, result.After)
+	h.auditService.Log(
+		requesterDNI, requesterName,
+		"CORRECT_PAYMENT_CHANNEL", "SALES",
+		fmt.Sprintf("Correccion de medio de pago en venta #%d", saleID),
+		fmt.Sprintf("Cajero %s redistribuyo canales de pago de la venta #%d sin cambiar el total",
+			requesterName, saleID),
+		changes, c.ClientIP(), c.Request.UserAgent(), true,
+	)
+
+	go func() {
+		defer func() { recover() }()
+		sse.GetSSEService().BroadcastDashboardUpdate()
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Medio de pago corregido correctamente",
+		"saleId":  result.SaleID,
+		"before":  result.Before,
+		"after":   result.After,
+	})
+}
+
+// classifyPaymentCorrectionError traduce errores de negocio del servicio a
+// codigos HTTP + codigos del contrato.
+//   - 403: la venta pertenece a otro empleado o fuera del turno activo
+//   - 409: la venta esta en un estado incompatible (devoluciones, fiado,
+//     desbalance, suma no cuadra, no hay cambio real).
+//   - 400: payload invalido (montos negativos, breakdown superior al total).
+func classifyPaymentCorrectionError(err error) (int, string) {
+	msg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(msg, "solo el cajero") || strings.Contains(msg, "no pertenece al turno") ||
+		strings.Contains(msg, "no hay un turno abierto"):
+		return http.StatusForbidden, ErrForbidden
+	case strings.Contains(msg, "devoluciones") || strings.Contains(msg, "fiado") ||
+		strings.Contains(msg, "no cambia los canales") || strings.Contains(msg, "no coincide con el total") ||
+		strings.Contains(msg, "desbalance historico") || strings.Contains(msg, "venta no encontrada"):
+		return http.StatusConflict, ErrConflict
+	default:
+		return http.StatusBadRequest, ErrBadRequest
+	}
 }
 
 // AddSaleItemsReq define el contrato del endpoint /sales/add-items/:id.

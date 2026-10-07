@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Button, Input, Pagination, Spinner
@@ -95,10 +95,11 @@ export default function SalesHistoryPage() {
         }
     };
 
-    const handlePrint = useCallback(() => {
-        if (!selectedSale) return;
-        window.print();
-    }, [selectedSale]);
+    // La reimpresión desde el historial vive dentro de `SaleDetailModal`,
+    // que usa `printThermalTicket(saleToTicket(sale))` con la misma plantilla
+    // que la caja. Antes aquí había un `handlePrint = () => window.print()`
+    // que descargaba el DOM completo del POS a la impresora y salía
+    // descuadrado; se eliminó porque el modal ya no lo necesita.
 
     // Debounce busqueda
     useEffect(() => {
@@ -227,7 +228,6 @@ export default function SalesHistoryPage() {
                 isOpen={isPreviewOpen}
                 onOpenChange={setIsPreviewOpen}
                 sale={selectedSale}
-                onPrint={handlePrint}
             />
             <SaleEditModal
                 isOpen={isEditOpen}
