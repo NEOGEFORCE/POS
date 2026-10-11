@@ -103,13 +103,18 @@ test("GUARDIAN) closure/page.tsx importa isAdminUser del helper central", () => 
 });
 
 test("GUARDIAN) labels/page.tsx importa isAdminUser del helper central", () => {
-  const src = readSrc("../src/app/(app)/labels/page.tsx");
-  assert.match(src, /from\s+['"]@\/lib\/auth-helpers\.mjs['"]/);
-  assert.match(src, /isAdminUser\(user\)/);
+  // Tras `frontend-printing-v2`, `/labels/page.tsx` es un wrapper mínimo
+  // que renderiza <LabelsWorkspace mode="thermal" />. La lógica de admin
+  // (y el import de isAdminUser) vive en el componente compartido, que
+  // también gatea `/labels/shelf`. Verificamos ambos para preservar la
+  // garantía original.
+  const workspace = readSrc("../src/app/(app)/labels/components/LabelsWorkspace.tsx");
+  assert.match(workspace, /from\s+['"]@\/lib\/auth-helpers\.mjs['"]/);
+  assert.match(workspace, /isAdminUser\(user\)/);
   assert.doesNotMatch(
-    src,
+    workspace,
     /const\s+isAdmin\s*=\s*role\s*===\s*"admin"\s*\|\|/,
-    "labels/page.tsx NO debe tener la cadena de ORs local",
+    "LabelsWorkspace NO debe tener la cadena de ORs local",
   );
 });
 

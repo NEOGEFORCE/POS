@@ -204,7 +204,11 @@ test("los consumidores esperados importan Switch desde '@/components/ui/switch'"
 
 test("conteo exacto de usos del Switch por consumidor (impide regresiones silenciosas)", async () => {
   const expectedUsageCounts = new Map([
-    ["src/app/(app)/labels/config/page.tsx", 10],
+    // 12 switches tras `frontend-printing-v2`:
+    //   - 10 originales (cajón, logo, impuestos, QR, 4 extras, visible/emphasized del nombre/precio)
+    //   - +1 openDrawerOnSale (abrir cajón automáticamente al completar venta)
+    //   - +1 barcode humanReadable (dígitos legibles bajo el barcode)
+    ["src/app/(app)/labels/config/page.tsx", 12],
     ["src/app/(app)/products/components/ProductFormModal.tsx", 2],
     ["src/app/(app)/inventory/orders/page.tsx", 1],
     ["src/components/shared/UniversalPaymentModal.tsx", 1],
