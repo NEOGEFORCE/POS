@@ -70,6 +70,13 @@ export interface TicketPrintOptions {
     showLogo?: boolean;
     /** Si `true` y hay `data.validationUrl`, el ticket rotula la URL como texto. */
     showValidationQR?: boolean;
+    /**
+     * Hint para el bridge: `true` cuando este payload se dispara por una
+     * venta recién confirmada Y la config tiene `drawer.openDrawerOnSale`
+     * activo. Reimpresión y manual deben dejarlo `undefined` o `false`
+     * para no abrir el cajón físicamente.
+     */
+    openDrawerOnSale?: boolean;
 }
 
 export const STORE: Readonly<StoreHeader>;

@@ -1,5 +1,34 @@
+// =============================================================================
+// scale-bridge/index.js
+//
+// Puente WebSocket ↔ balanza serial + impresión térmica (ESC/POS / TSPL).
+//
+// Compatibilidad total con la versión anterior:
+//   - Mismo WS en localhost:9876, mismo auto-escaneo de puertos serie,
+//     mismos mensajes `type:'status'`, `type:'weight'`, `type:'pong'`.
+//   - Comandos entrantes `type:'ping'` y `type:'command'` con value
+//     `'read'|'refresh'` responden exactamente igual.
+//
+// Qué se agrega:
+//   - Validación de origen (localhost / IP privada) en handshake WS.
+//   - Mensajes `type:'printer.request'` con las acciones
+//     `print|printTestPage|kickDrawer`, respuesta `type:'printer.response'`
+//     con `requestId`, `ok`, `result?`, `error?`.
+//   - Transporte TCP RAW (node:net) y SYSTEM Windows (PowerShell versionado).
+//   - Ninguna dependencia nueva. Toda la lógica testeable vive en
+//     `printer-bridge.js`; los side-effects, en `print-transports.js`.
+// =============================================================================
+
 const { SerialPort } = require('serialport');
 const WebSocket = require('ws');
+
+const {
+    LIMITS,
+    validatePrinterRequest,
+    isLocalOrigin,
+    handlePrinterRequest,
+} = require('./printer-bridge');
+const { sendTcp, sendSystemWindows } = require('./print-transports');
 
 // Configuración
 const PREFERRED_PORT = process.env.SCALE_PORT || 'COM1';
@@ -9,16 +38,39 @@ const RECONNECT_MS   = 2000;
 const WEIGHT_DIFF_THRESHOLD = 0.003; // kg
 
 console.log('====================================================');
-console.log('⚖️  SCALE BRIDGE v2.0 UNIFIED (AUTO-DETECCION)');
+console.log('⚖️  SCALE BRIDGE v2.1 (balanza + impresión térmica)');
 console.log('====================================================');
 console.log(`Puerto preferido: ${PREFERRED_PORT} | Baud: ${BAUD_RATE} | WS: ${WS_PORT}`);
+console.log(`Printer bridge: TCP (9100 default) + Windows RAW spool (print-raw.ps1)`);
 
+// ---------------------------------------------------------------------------
 // Servidor WebSocket
+// ---------------------------------------------------------------------------
+//
+// - `maxPayload` fuerza el límite duro del mensaje JSON entrante. Pasado
+//   ese tamaño, ws cierra la conexión con 1009; el frontend reintenta.
+// - `verifyClient` sincronico corta orígenes no locales. Mantener permisivo
+//   para apps embebidas (sin Origin) y LAN privada.
+// ---------------------------------------------------------------------------
 let wss;
 try {
-    wss = new WebSocket.Server({ port: WS_PORT }, () => {
-        console.log(`✓ Servidor WebSocket escuchando en ws://localhost:${WS_PORT}`);
-    });
+    wss = new WebSocket.Server(
+        {
+            port: WS_PORT,
+            maxPayload: LIMITS.maxMessageBytes,
+            verifyClient: (info) => {
+                const origin = info.origin || info.req.headers?.origin || '';
+                if (!isLocalOrigin(origin)) {
+                    console.warn(`✗ WS rechazado por origin "${origin}"`);
+                    return false;
+                }
+                return true;
+            },
+        },
+        () => {
+            console.log(`✓ Servidor WebSocket escuchando en ws://localhost:${WS_PORT}`);
+        },
+    );
 } catch (e) {
     console.error(`❌ Error iniciando WebSocket en puerto ${WS_PORT}:`, e.message);
 }
@@ -32,52 +84,164 @@ let isScanning = false;
 function broadcast(data) {
     if (!wss) return;
     const msg = JSON.stringify(data);
-    wss.clients.forEach(client => {
+    wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-            try { client.send(msg); } catch (e) {}
+            try { client.send(msg); } catch (e) { /* cliente roto */ }
         }
     });
 }
 
+/**
+ * Convierte el resultado del handler en un mensaje `printer.response`.
+ * Si el handler explota con una excepción no capturada, generamos un
+ * fallback accionable para que el frontend muestre un toast legible.
+ */
+function makeResponseMessage(requestId, result) {
+    if (!result || typeof result !== 'object') {
+        return {
+            type: 'printer.response',
+            requestId,
+            ok: false,
+            error: 'respuesta vacía del bridge',
+            errorCode: 'INVALID_REQUEST',
+        };
+    }
+    const base = { type: 'printer.response', requestId, ok: !!result.ok };
+    if (result.ok) {
+        base.result = result.result ?? {};
+    } else {
+        base.error = result.error || 'error desconocido';
+        base.errorCode = result.errorCode || 'INVALID_REQUEST';
+    }
+    return base;
+}
+
+async function processPrinterMessage(ws, raw) {
+    const validation = validatePrinterRequest(raw);
+    if (!validation.ok) {
+        const requestId = typeof raw?.requestId === 'string' || typeof raw?.requestId === 'number'
+            ? String(raw.requestId).slice(0, 80)
+            : '';
+        safeSend(ws, {
+            type: 'printer.response',
+            requestId,
+            ok: false,
+            error: validation.message,
+            errorCode: validation.code,
+        });
+        return;
+    }
+    const { requestId, action, payload } = validation.request;
+    try {
+        const result = await handlePrinterRequest({ requestId, action, payload }, {
+            sendTcp,
+            sendSystem: sendSystemWindows,
+        });
+        safeSend(ws, makeResponseMessage(requestId, result));
+        const kind = result?.result?.kind || action;
+        if (result?.ok) {
+            console.log(`✓ printer.${action} [${requestId}] via ${result.result?.transport || '?'} (${result.result?.bytes ?? '?'} B) ${kind}`);
+        } else {
+            console.warn(`✗ printer.${action} [${requestId}] ${result.errorCode}: ${result.error}`);
+        }
+    } catch (err) {
+        console.error(`✗ printer.${action} [${requestId}] excepción:`, err?.stack || err);
+        safeSend(ws, {
+            type: 'printer.response',
+            requestId,
+            ok: false,
+            error: err?.message || 'error interno',
+            errorCode: 'INVALID_REQUEST',
+        });
+    }
+}
+
+function safeSend(ws, obj) {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    try { ws.send(JSON.stringify(obj)); } catch (e) { /* conexión caída */ }
+}
+
 if (wss) {
-    wss.on('connection', (ws) => {
+    wss.on('connection', (ws, req) => {
         console.log(`✓ Cliente POS conectado al WebSocket (Total: ${wss.clients.size})`);
-        
-        ws.send(JSON.stringify({ 
-            type: 'status', 
-            connected: isConnected, 
-            port: activePort ? activePort.path : '' 
+
+        // Snapshot inicial: estado del puerto + último peso conocido.
+        ws.send(JSON.stringify({
+            type: 'status',
+            connected: isConnected,
+            port: activePort ? activePort.path : '',
         }));
-        ws.send(JSON.stringify({ 
-            type: 'weight', 
-            value: currentWeight, 
-            display: currentWeight.toFixed(3) 
+        ws.send(JSON.stringify({
+            type: 'weight',
+            value: currentWeight,
+            display: currentWeight.toFixed(3),
         }));
 
         ws.on('message', (message) => {
+            // Guardia extra: ws ya recorta por maxPayload, pero esto evita
+            // JSON.parse sobre buffers enormes si cambiara la config.
+            if (message && message.length > LIMITS.maxMessageBytes) {
+                safeSend(ws, {
+                    type: 'printer.response',
+                    requestId: '',
+                    ok: false,
+                    error: 'mensaje excede el límite',
+                    errorCode: 'PAYLOAD_TOO_LARGE',
+                });
+                return;
+            }
+            let data;
             try {
-                const data = JSON.parse(message);
-                if (data.type === 'ping') {
-                    ws.send(JSON.stringify({ type: 'pong' }));
-                    return;
-                }
-                if (data.type === 'command' && (data.value === 'read' || data.value === 'refresh')) {
-                    ws.send(JSON.stringify({ 
-                        type: 'weight', 
-                        value: currentWeight, 
-                        display: currentWeight.toFixed(3) 
-                    }));
-                }
-            } catch (e) {}
+                data = JSON.parse(message);
+            } catch (e) {
+                // Mensaje no-JSON: lo ignoramos silenciosamente igual que antes.
+                return;
+            }
+
+            // === Protocolo existente — balanza =====================================
+            if (data.type === 'ping') {
+                safeSend(ws, { type: 'pong' });
+                return;
+            }
+            if (data.type === 'command' && (data.value === 'read' || data.value === 'refresh')) {
+                safeSend(ws, {
+                    type: 'weight',
+                    value: currentWeight,
+                    display: currentWeight.toFixed(3),
+                });
+                return;
+            }
+
+            // === Protocolo nuevo — impresión =======================================
+            if (data.type === 'printer.request') {
+                // Fire-and-forget: la promesa interna responde al cliente.
+                processPrinterMessage(ws, data).catch((err) => {
+                    console.error('✗ printer.request error no capturado:', err);
+                });
+                return;
+            }
+            // Mensajes desconocidos → ignorar (compat con clientes viejos).
         });
 
         ws.on('close', () => {
             console.log(`✗ Cliente POS desconectado (Restantes: ${wss.clients.size})`);
         });
+
+        ws.on('error', (err) => {
+            // Normalizamos para no spammear stack traces del wire-protocol.
+            console.warn(`⚠ WS cliente error: ${err?.message || err}`);
+        });
+    });
+
+    wss.on('error', (err) => {
+        console.error('❌ WS server error:', err?.message || err);
     });
 }
 
-// Intentar abrir un puerto específico
+// ---------------------------------------------------------------------------
+// Balanza — intacta respecto a la versión v2.0 unificada.
+// ---------------------------------------------------------------------------
+
 async function tryOpenPort(portPath) {
     return new Promise((resolve) => {
         try {
@@ -88,7 +252,7 @@ async function tryOpenPort(portPath) {
                 dataBits: 8,
                 stopBits: 1,
                 parity: 'none',
-                autoOpen: false
+                autoOpen: false,
             });
 
             p.open((err) => {
@@ -106,31 +270,37 @@ async function tryOpenPort(portPath) {
     });
 }
 
-// Buscar y conectar al puerto de la balanza
 async function scanAndConnect() {
     if (isScanning || (activePort && activePort.isOpen)) return;
     isScanning = true;
 
     try {
         const ports = await SerialPort.list();
-        const portPaths = ports.map(p => p.path);
+        const portPaths = ports.map((p) => p.path);
         console.log(`Puertos COM detectados en el sistema: [${portPaths.join(', ') || 'Ninguno'}]`);
 
-        let targetPorts = [];
+        const targetPorts = [];
         if (PREFERRED_PORT && portPaths.includes(PREFERRED_PORT)) {
             targetPorts.push(PREFERRED_PORT);
         }
 
-        ports.forEach(p => {
+        ports.forEach((p) => {
             const desc = (p.friendlyName || p.manufacturer || '').toLowerCase();
-            if (p.path !== PREFERRED_PORT && (desc.includes('ch340') || desc.includes('usb') || desc.includes('serial') || desc.includes('prolific') || desc.includes('ftdi'))) {
+            if (
+                p.path !== PREFERRED_PORT &&
+                (desc.includes('ch340') ||
+                    desc.includes('usb') ||
+                    desc.includes('serial') ||
+                    desc.includes('prolific') ||
+                    desc.includes('ftdi'))
+            ) {
                 targetPorts.push(p.path);
             }
         });
 
-        portPaths.forEach(path => {
-            if (!targetPorts.includes(path)) {
-                targetPorts.push(path);
+        portPaths.forEach((p) => {
+            if (!targetPorts.includes(p)) {
+                targetPorts.push(p);
             }
         });
 
@@ -174,7 +344,10 @@ function setupPort(p) {
             const latestStr = matches[matches.length - 1];
             const peso = parseFloat(latestStr);
             if (!isNaN(peso) && peso >= 0) {
-                if (Math.abs(peso - currentWeight) >= WEIGHT_DIFF_THRESHOLD || (peso === 0 && currentWeight > 0)) {
+                if (
+                    Math.abs(peso - currentWeight) >= WEIGHT_DIFF_THRESHOLD ||
+                    (peso === 0 && currentWeight > 0)
+                ) {
                     currentWeight = peso;
                     console.log(`⚖️ Peso recibido (${p.path}): ${peso.toFixed(3)} kg`);
                     broadcast({ type: 'weight', value: peso, display: peso.toFixed(3) });
@@ -198,7 +371,7 @@ function handlePortClose() {
     isConnected = false;
     currentWeight = 0;
     if (activePort) {
-        try { activePort.close(); } catch (e) {}
+        try { activePort.close(); } catch (e) { /* ya cerrado */ }
         activePort = null;
     }
     broadcast({ type: 'status', connected: false, port: '' });
@@ -221,7 +394,11 @@ scanAndConnect();
 
 setInterval(() => {
     if (isConnected) {
-        broadcast({ type: 'weight', value: currentWeight, display: currentWeight.toFixed(3) });
+        broadcast({
+            type: 'weight',
+            value: currentWeight,
+            display: currentWeight.toFixed(3),
+        });
     }
 }, 2000);
 
@@ -236,5 +413,3 @@ process.on('SIGTERM', () => {
     if (wss) wss.close();
     process.exit(0);
 });
-
-

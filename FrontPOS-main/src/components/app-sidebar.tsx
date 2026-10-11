@@ -53,7 +53,13 @@ const menuItems = [
   { href: "/customers", label: "Clientes", icon: HeartHandshake },
   { href: "/expenses", label: "Gastos", icon: Receipt },
   { href: "/loans", label: "Prestamos", icon: HandCoins },
-  { href: "/labels", label: "Codigos", icon: Printer },
+  // Tres entradas INDEPENDIENTES para el módulo de etiquetas / impresora.
+  // El flag `exact: true` evita que `pathname.startsWith(item.href)` active
+  // las tres a la vez: `/labels`, `/labels/shelf` y `/labels/config`
+  // comparten prefijo pero son páginas distintas.
+  { href: "/labels", label: "Etiquetas térmicas", icon: Printer, exact: true },
+  { href: "/labels/shelf", label: "Precios góndola", icon: Tag, exact: true },
+  { href: "/labels/config", label: "Configurar impresora", icon: ShieldCheck, adminOnly: true, exact: true },
   { href: "/users", label: "Personal", icon: IdCard, adminOnly: true },
   { href: "/audit", label: "Auditoria", icon: Fingerprint, adminOnly: true },
 ]
@@ -89,9 +95,17 @@ export function AppSidebar() {
           <SidebarMenu className="space-y-0.5">
             {menuItems.map(
               (item) => {
-                const isActive = item.href === "/dashboard" 
-                  ? pathname === "/dashboard" 
-                  : pathname.startsWith(item.href);
+                // Un item `exact` sólo se activa cuando el pathname coincide
+                // literalmente. Esto evita el bug donde `/labels`,
+                // `/labels/shelf` y `/labels/config` se activaban las tres
+                // simultáneamente porque `startsWith("/labels")` matchea a
+                // todas. `/dashboard` ya era un caso explícito para no
+                // iluminarse al navegar a `/dashboard/closure`.
+                const isActive = item.exact
+                  ? pathname === item.href
+                  : item.href === "/dashboard"
+                    ? pathname === "/dashboard"
+                    : pathname.startsWith(item.href);
 
                 return (!item.adminOnly || isAdmin) && (
                   <SidebarMenuItem key={item.href} className="w-full flex">

@@ -262,8 +262,11 @@ test("LabelPrintSheet: payload del bridge incluye connection + labels sanitizada
 });
 
 test("labels/page: handlePrint pasa connection + labels al bridge sin tocar la auditoría", async () => {
-  const src = await read(labelsPage);
-  assert.match(src, /loadPrintingConfig\(\)/, "labels/page debe cargar la config antes de delegar.");
+  // La lógica compartida vive en LabelsWorkspace tras `frontend-printing-v2`.
+  // Las dos páginas (/labels thermal y /labels/shelf) son wrappers mínimos.
+  const workspace = join(here, "..", "src", "app", "(app)", "labels", "components", "LabelsWorkspace.tsx");
+  const src = await read(workspace);
+  assert.match(src, /loadPrintingConfig\(\)/, "El workspace debe cargar la config antes de delegar.");
   const idxAudit = src.indexOf('"/labels/print-jobs"');
   const idxBridge = src.indexOf("w.posBridge?.print");
   assert.ok(idxAudit >= 0 && idxBridge >= 0, "Deben existir auditoría + llamada al bridge.");
@@ -279,4 +282,120 @@ test("LabelPrintSheet: siguen presentes las invariantes previas (no rollback, no
   const src = await read(printSheet);
   assert.ok(!/rollback/i.test(src), "El sheet no debe ejecutar rollback de stock.");
   assert.ok(!/bulk-receive/.test(src), "El sheet no debe tocar la recepción.");
+});
+
+
+
+// =============================================================================
+// Tamaño físico térmico: ancho configurado + altura medida válida.
+// =============================================================================
+
+const thermalPageSize = join(here, "..", "src", "lib", "thermal-page-size.mjs");
+
+test("thermal-ticket: nunca usa el inválido `size: ancho auto` que cae a Letter", async () => {
+  const src = await read(thermalTicket);
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(codeOnly, /@page[^}]*size:[^;}]*\bauto\b/i,
+    "Una dimensión `auto` invalida @page en Chromium y hace que use Letter.");
+  assert.match(src, /buildThermalPageRule/,
+    "El iframe debe generar @page mediante el helper físico compartido.");
+});
+
+test("thermal-ticket: 58/80/custom resuelven el ancho físico antes de imprimir", async () => {
+  const src = await read(thermalTicket);
+  const fnStart = src.indexOf("export function printThermalTicket(");
+  const next = src.indexOf("\n// =====", fnStart + 50);
+  const scope = src.slice(fnStart, next > 0 ? next : fnStart + 7000);
+  assert.match(scope, /customWidthMm[\s\S]*receipt\.paper\s*===\s*"CUSTOM"[\s\S]*receipt\.widthMm/,
+    "El preset CUSTOM debe conservar receipt.widthMm configurado.");
+  assert.match(scope, /pageWidthMm\s*=\s*resolveThermalWidthMm\(effectiveWidth, customWidthMm\)/,
+    "El ancho físico debe resolverse una sola vez desde config/override.");
+  assert.match(scope, /buildThermalPageRule\(pageWidthMm,/,
+    "La misma medida debe alimentar @page.");
+  assert.match(src, /width:\s*\$\{widthValue\}/,
+    "La misma medida debe alimentar html/body, no sólo el contenido.");
+});
+
+test("thermal-ticket: mide contenido y actualiza @page antes de iframe.print", async () => {
+  const src = await read(thermalTicket);
+  const fnStart = src.indexOf("export function printThermalTicket(");
+  const next = src.indexOf("\n// =====", fnStart + 50);
+  const scope = src.slice(fnStart, next > 0 ? next : fnStart + 7000);
+  const measure = scope.indexOf("renderedTicketHeightPx(doc)");
+  const convert = scope.indexOf("resolveThermalPageHeightMm(renderedHeightPx)");
+  const update = scope.indexOf("pageStyle.textContent = buildThermalPageRule(pageWidthMm, pageHeightMm)");
+  const print = scope.indexOf("iframe.contentWindow?.print()");
+  assert.ok(measure >= 0 && convert > measure && update > convert && print > update,
+    "Orden requerido: medir → px a mm → actualizar @page → imprimir.");
+});
+
+test("thermal-page-size helper: @page siempre lleva dos longitudes físicas", async () => {
+  const src = await read(thermalPageSize);
+  assert.match(src, /return `@page \{ size: \$\{roundMm\(width\)\}mm \$\{roundMm\(height, 1\)\}mm; margin: 0; \}`/,
+    "El helper debe emitir ancho y alto explícitos en mm.");
+  assert.match(src, /CSS_PX_PER_INCH\s*=\s*96/,
+    "La conversión debe usar el estándar CSS de 96 px por pulgada.");
+});
+
+test("labels/config: la página de prueba del recibo usa el mismo tamaño físico válido", async () => {
+  const src = await read(configPage);
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  assert.doesNotMatch(codeOnly, /config\.receipt\.widthMm\}mm auto/,
+    "La prueba de configuración tampoco puede caer a Letter.");
+  assert.match(src, /from\s+"@\/lib\/thermal-page-size\.mjs"/,
+    "Config y ticket real deben compartir el helper de tamaño.");
+  const start = src.indexOf("function runIframeTestPrint(");
+  const end = src.indexOf("function buildReceiptTestHtml(", start);
+  const scope = src.slice(start, end);
+  const measure = scope.indexOf("resolveThermalPageHeightMm(renderedHeightPx)");
+  const print = scope.indexOf("iframe.contentWindow?.print()");
+  assert.ok(measure >= 0 && print > measure,
+    "La página de prueba debe medir antes de imprimir.");
+});
+
+
+// =============================================================================
+// Defectos físicos/layout: Guardar bloqueado + controles y preview canónicos.
+// =============================================================================
+
+test("labels/config: Guardar depende de validation.valid y muestra errores accionables", async () => {
+  const src = await read(configPage);
+  assert.match(src, /const\s+canSave\s*=\s*isDirty\s*&&\s*!submitting\s*&&\s*validation\.valid/);
+  assert.match(src, /isDisabled=\{!canSave\}/);
+  assert.match(src, /validation\.errors\.map/);
+});
+
+test("labels/config: expone X/Y/fuente/escala para nombre y precio, X/Y para barcode", async () => {
+  const src = await read(configPage);
+  for (const id of [
+    "labels-config-name-x",
+    "labels-config-name-y",
+    "labels-config-name-font",
+    "labels-config-price-x",
+    "labels-config-price-y",
+    "labels-config-price-font",
+    "labels-config-barcode-x",
+    "labels-config-barcode-y",
+  ]) {
+    assert.ok(src.includes(`data-testid="${id}"`), `Falta control visible ${id}`);
+  }
+  assert.match(src, /label="Escala nombre"/);
+  assert.match(src, /label="Escala precio"/);
+  assert.match(src, /TSPL_BUILTIN_FONTS\.map/);
+});
+
+test("labels/config: preview ubica elementos con layout x/y y refleja barcode actual", async () => {
+  const src = await read(configPage);
+  assert.match(src, /data-name-position=/);
+  assert.match(src, /data-price-position=/);
+  assert.match(src, /data-barcode-position=/);
+  assert.match(src, /rotate\(\$\{config\.labels\.barcode\.rotation\}deg\)/);
+  assert.match(src, /config\.labels\.barcode\.humanReadable/);
+  assert.match(src, /config\.labels\.barcode\.narrow/);
+  assert.match(src, /config\.labels\.barcode\.wide/);
+  assert.match(src, /labels-config-preview-layout-summary/);
 });

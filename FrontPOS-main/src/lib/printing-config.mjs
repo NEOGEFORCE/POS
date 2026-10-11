@@ -80,6 +80,26 @@ export const DRAWER_EVENTS = Object.freeze({
 });
 
 /**
+ * Modo activo del equipo configurado. `RECEIPT` → la impresora activa
+ * trabaja como caja (recibos térmicos). `LABEL` → la impresora activa
+ * imprime etiquetas (TSPL/ESC/ZPL).
+ *
+ * Es un hint para la UI (`/labels/config` resalta la tab relevante) y para
+ * el bridge payload (el bridge puede priorizar hardware). Nunca restringe
+ * capacidades: una misma impresora puede ser RECEIPT y LABEL si lo soporta.
+ */
+export const ACTIVE_MODES = Object.freeze({
+  RECEIPT: "RECEIPT",
+  LABEL: "LABEL",
+});
+
+/** DPI estándar de impresoras térmicas de etiquetas (TSPL/ZPL típicas). */
+export const DEFAULT_DPI = 203;
+
+/** Rotaciones aceptadas para el barcode TSPL (grados). */
+export const BARCODE_ROTATIONS = Object.freeze([0, 90, 180, 270]);
+
+/**
  * Comando ESC/POS literal estándar para abrir el cajón conectado
  * ("ESC p 0 25 250"). Es texto visible por diseño: el bridge local lo
  * interpretará, el frontend NO lo evalúa jamás.
@@ -92,9 +112,36 @@ export const CUT_MODES = Object.freeze({
   NONE: "NONE",
 });
 
+/**
+ * Modo de entrega del recibo térmico impreso desde el POS.
+ *
+ *   - `bridge` → delega al bridge local (`window.posBridge.print`) para
+ *     imprimir SIN abrir el diálogo del navegador. Si el bridge no está
+ *     disponible, el consumidor DEBE mostrar un toast accionable y nunca
+ *     caer silenciosamente al diálogo: la impresión directa no se puede
+ *     fingir. El modo "fingido" era la raíz del bug operativo del cajero.
+ *
+ *   - `browser` → usa el iframe aislado existente y abre el diálogo del
+ *     navegador (compatible con sistemas sin bridge, PDF o export).
+ *
+ * El default es `browser` porque es el único camino que funciona SIEMPRE,
+ * independiente del hardware o del bridge. Admins con bridge configurado
+ * cambian el modo desde `/labels/config` → tab Recibo.
+ */
+export const RECEIPT_DELIVERY_MODES = Object.freeze({
+  BRIDGE: "bridge",
+  BROWSER: "browser",
+});
+
 export const PAPER_PRESETS = Object.freeze({
   WIDTH_80: "80",
   WIDTH_58: "58",
+  // Jaltech JAL-838L: impresora térmica con papel físico 82mm y área
+  // imprimible real 76mm (los 6mm restantes son margen físico muerto que
+  // el cabezal no toca). 48 columnas monoespacio como la familia 80mm.
+  // Al activarse el preset se fija también `cut=MANUAL` porque este modelo
+  // trabaja con cuchilla manual en lugar de cutter automático.
+  JAL_838L: "JAL_838L",
   CUSTOM: "CUSTOM",
 });
 
@@ -102,12 +149,52 @@ export const PAPER_PRESETS = Object.freeze({
 export const PAPER_COLUMNS = Object.freeze({
   "80": 48,
   "58": 32,
+  // 82mm: comparte el conteo de columnas de la familia 80mm porque el
+  // ancho imprimible real (76mm) sigue cabiendo en 48 columnas monoespacio.
+  "82": 48,
+});
+
+/**
+ * Especificación física conocida del modelo Jaltech JAL-838L. Se expone como
+ * constante congelada para que los consumidores (UI, bridge payload, tests)
+ * no inventen números dispares.
+ *
+ * Campos pendientes (`defaultHost`, `defaultPrinterName`) son INTENCIONALMENTE
+ * vacíos: dependen del despliegue físico. El preset preserva lo que ya haya
+ * configurado el admin y nunca inventa un IP ni un nombre de impresora
+ * ("no inventar IP ni printerName y preservarlos si ya existen").
+ */
+export const JALTECH_JAL_838L_SPEC = Object.freeze({
+  brand: "Jaltech",
+  model: "JAL-838L",
+  defaultAlias: "Jaltech JAL-838L",
+  physicalWidthMm: 82,
+  printableWidthMm: 76,
+  columns: 48,
+  cut: "MANUAL",
+  networkPort: 9100,
+  // Campos pendientes de configurar por el admin (preservados si existen):
+  defaultHost: "",
+  defaultPrinterName: "",
+});
+
+/** Modos de conexión disponibles para el preset Jaltech JAL-838L. */
+export const JAL_838L_CONNECTION_MODES = Object.freeze({
+  NETWORK: "NETWORK",
+  SYSTEM: "SYSTEM",
 });
 
 export const LABEL_SIZE_PRESETS = Object.freeze({
   "50X30": "50x30",
   "40X30": "40x30",
   "30X20": "30x20",
+  // Variante dos columnas del mismo troquel 30x20 (cada etiqueta mide 30mm
+  // de ancho; el gap horizontal se usa como separación real entre columnas
+  // y el verticalGapMm actúa también como "sensor gap" para el sensor GAP
+  // del troquel).
+  "30X20_2COL": "30x20-2col",
+  "58X40": "58x40",
+  "76X50": "76x50",
   CUSTOM: "CUSTOM",
 });
 
@@ -116,7 +203,31 @@ export const LABEL_SIZE_DIMENSIONS = Object.freeze({
   "50x30": { widthMm: 50, heightMm: 30 },
   "40x30": { widthMm: 40, heightMm: 30 },
   "30x20": { widthMm: 30, heightMm: 20 },
+  "30x20-2col": { widthMm: 30, heightMm: 20 },
+  "58x40": { widthMm: 58, heightMm: 40 },
+  "76x50": { widthMm: 76, heightMm: 50 },
 });
+
+/**
+ * Config por defecto por preset. `horizontalGapMm` es editable para los
+ * presets de 1 columna (siempre 2 ó 3), fijo para los 2col. `verticalGapMm`
+ * se usa para separar filas y, en el troquel 30x20 2col, también actúa
+ * como "gap" del sensor del rollo.
+ */
+export const LABEL_SIZE_PRESET_DEFAULTS = Object.freeze({
+  "50x30":       { columns: 1, horizontalGapMm: 3, verticalGapMm: 0 },
+  "40x30":       { columns: 1, horizontalGapMm: 2, verticalGapMm: 0 },
+  "30x20":       { columns: 1, horizontalGapMm: 2, verticalGapMm: 0 },
+  "30x20-2col":  { columns: 2, horizontalGapMm: 2, verticalGapMm: 2 },
+  "58x40":       { columns: 1, horizontalGapMm: 2, verticalGapMm: 0 },
+  "76x50":       { columns: 1, horizontalGapMm: 3, verticalGapMm: 0 },
+});
+
+/**
+ * Gap horizontal permitido para 50x30. El troquel soporta 2 o 3 mm sin
+ * desalinear el precio; otros valores se clampean dentro de BOUNDS.
+ */
+export const LABEL_SIZE_50X30_GAPS = Object.freeze([2, 3]);
 
 export const SENSOR_TYPES = Object.freeze({
   GAP: "GAP",
@@ -129,23 +240,68 @@ export const BARCODE_SYMBOLOGIES = Object.freeze({
   CODE39: "CODE39",
 });
 
+/**
+ * IDs de fuentes TSPL built-in SEGURAS para texto en etiquetas.
+ *
+ * Las impresoras TSPL exponen fuentes "1".."8" con familias y tamaños
+ * fijos (bitmap). Fuentes custom cargadas con comandos DOWNLOAD no caben
+ * en el alcance del bridge actual, por eso topamos la UI a este set.
+ *
+ * Se guardan como STRING porque el comando TSPL embebe el ID entre
+ * comillas: `TEXT X,Y,"3",0,sx,sy,"texto"`. Mantenerlo como string evita
+ * conversiones ambiguas en el wire.
+ */
+export const TSPL_BUILTIN_FONTS = Object.freeze(["1", "2", "3", "4", "5", "6", "7", "8"]);
+
+/**
+ * Techo físico del medio soportado por el bridge, en mm. Coincide con
+ * `PHYSICAL_MAX_MM` del label-generator y con el ancho del rollo del
+ * modelo más ancho soportado (Jaltech JAL-838L, 82mm). Lo exponemos como
+ * constante única para que la UI, el import y la validación compartan la
+ * misma fuente de verdad sin duplicar el número.
+ */
+export const PHYSICAL_MAX_MM = 82;
+
 // -----------------------------------------------------------------------------
 // Rangos / bounds (centralizados para que la UI y la validación coincidan).
 // -----------------------------------------------------------------------------
 
 export const BOUNDS = Object.freeze({
   port: { min: 1, max: 65535 },
-  receiptWidthMm: { min: 20, max: 120 },
+  // Techo físico 82mm = Jaltech JAL-838L (el modelo más ancho soportado).
+  // El scale-bridge rechaza cualquier medio > 82mm con LAYOUT_OUT_OF_BOUNDS,
+  // así que el frontend NUNCA debe aceptar un valor por encima: el UI, el
+  // import (DB 016 / perfiles) y el sanitize comparten este techo.
+  receiptWidthMm: { min: 20, max: 82 },
+  // El ancho imprimible comparte min/max con `widthMm`. La restricción
+  // adicional es que NUNCA puede superar al ancho físico — eso se enforce
+  // en `sanitizePrintingConfig`, no acá.
+  printableWidthMm: { min: 20, max: 82 },
   receiptColumns: { min: 20, max: 80 },
-  labelWidthMm: { min: 10, max: 200 },
+  // Alineado al techo físico 82mm. Para 2 columnas, `validatePrintingConfig`
+  // enforce la fórmula completa: marginLeft + cols*width + (cols-1)*gap ≤ 82.
+  labelWidthMm: { min: 20, max: 82 },
   labelHeightMm: { min: 5, max: 200 },
   labelColumns: { min: 1, max: 2 },
   horizontalGapMm: { min: 0, max: 30 },
+  verticalGapMm: { min: 0, max: 30 },
+  marginLeftMm: { min: 0, max: 50 },
   sensorGapMm: { min: 0, max: 20 },
   productNameFontPt: { min: 5, max: 24 },
   productNameMaxChars: { min: 1, max: 200 },
   priceFontPt: { min: 5, max: 48 },
   barcodeHeightMm: { min: 2, max: 60 },
+  // DPI de la cabeza térmica. 203 cubre la mayoría de impresoras del POS;
+  // 300dpi se encuentra en modelos premium. mmToDots usa este valor para
+  // componer el payload TSPL del bridge.
+  dpi: { min: 72, max: 600 },
+  // Posiciones de layout en mm sobre la cara de la etiqueta. El sanitize
+  // las clampea contra el tamaño de la etiqueta.
+  layoutPosMm: { min: 0, max: 200 },
+  layoutFontScale: { min: 0.5, max: 4 },
+  // TSPL `BARCODE` acepta "narrow" y "wide" en dots. Rango seguro para
+  // CODE128/EAN13 a 203dpi.
+  barcodeModule: { min: 1, max: 8 },
   maxStringLength: 200,
 });
 
@@ -200,6 +356,14 @@ export function createDefaultPrintingConfig() {
     version: PRINTING_CONFIG_VERSION,
     updatedAt: null,
     source: "default",
+    /**
+     * Modo activo del equipo: `RECEIPT` arranca la UI como caja, `LABEL`
+     * como punto de etiquetado. Es un hint para `/labels/config` (resalta
+     * la tab relevante) y viaja en el payload del bridge. Nunca restringe
+     * capacidades físicas de la impresora. Default `RECEIPT` porque el
+     * flujo de venta depende de la tirilla.
+     */
+    activeMode: ACTIVE_MODES.RECEIPT,
     connection: {
       alias: "Impresora POS",
       interface: INTERFACES.SYSTEM,
@@ -222,10 +386,29 @@ export function createDefaultPrintingConfig() {
       enabled: false,
       command: DEFAULT_DRAWER_COMMAND,
       event: DRAWER_EVENTS.MANUAL,
+      /**
+       * Flag específico: abrir cajón AUTOMÁTICAMENTE tras una venta
+       * exitosa. El orquestador de `UniversalPaymentModal` usa el kick
+       * audit-first como ÚNICA ruta física, incluso cuando autoPrint está
+       * desactivado. `drawer.event` determina el orden relativo respecto
+       * a la tirilla (BEFORE_PRINT/AFTER_PRINT); MANUAL nunca abre solo.
+       * Reimpresión desde historial, impresión de etiquetas y cambios del
+       * toggle no disparan este flag. El browser NUNCA finge una apertura;
+       * sólo el bridge local tiene capacidad real.
+       */
+      openDrawerOnSale: false,
     },
     receipt: {
       paper: PAPER_PRESETS.WIDTH_80,
       widthMm: 80,
+      /**
+       * Default actualizado: el rollo "80mm genérico" realmente tiene
+       * ~76mm imprimibles (4mm de margen físico muerto que el cabezal no
+       * toca). El rollo "58mm" tiene ~48mm imprimibles. Las instalaciones
+       * que guardaron explícitamente `printableWidthMm` en LocalStorage
+       * preservan su valor (sanitize respeta el input explícito).
+       */
+      printableWidthMm: 76,
       columns: PAPER_COLUMNS["80"],
       header: {
         businessName: "",
@@ -243,13 +426,27 @@ export function createDefaultPrintingConfig() {
         showValidationQR: false,
       },
       cut: CUT_MODES.AUTO,
+      // Default seguro: `browser` siempre funciona (abre diálogo del
+      // navegador). `bridge` queda opt-in explícito para admins con
+      // scale-bridge/equivalente instalado y configurado.
+      deliveryMode: RECEIPT_DELIVERY_MODES.BROWSER,
     },
     labels: {
       sizePreset: LABEL_SIZE_PRESETS["50X30"],
       widthMm: 50,
       heightMm: 30,
       columns: 1,
-      horizontalGapMm: 2,
+      horizontalGapMm: 3,
+      /**
+       * Separación vertical entre filas de etiquetas. En el troquel 30x20
+       * de 2 columnas actúa también como "sensor gap" para que el rollo
+       * se alinee entre páginas lógicas.
+       */
+      verticalGapMm: 0,
+      /** Margen izquierdo del área imprimible dentro de la etiqueta física. */
+      marginLeftMm: 0,
+      /** DPI de la cabeza térmica. 203 cubre casi todas las impresoras TSPL/ZPL. */
+      dpi: DEFAULT_DPI,
       sensor: {
         type: SENSOR_TYPES.GAP,
         gapMm: 3,
@@ -267,6 +464,34 @@ export function createDefaultPrintingConfig() {
       barcode: {
         symbology: BARCODE_SYMBOLOGIES.CODE128,
         heightMm: 10,
+        /** Imprimir dígitos legibles bajo el barcode (TSPL "readable"). */
+        humanReadable: true,
+        /** Ancho de módulo "narrow" en dots (TSPL). */
+        narrow: 2,
+        /** Ancho de módulo "wide" en dots (TSPL). */
+        wide: 2,
+        /** Rotación en grados: 0 horizontal, 90 vertical, 180/270 raros. */
+        rotation: 0,
+      },
+      /**
+       * Posiciones precisas de cada elemento sobre la etiqueta, en mm
+       * desde la esquina superior izquierda del área imprimible (después
+       * de `marginLeftMm`). Permiten al bridge componer TSPL/ZPL sin
+       * recalcular layout en el lado backend.
+       *
+       * Para `name` y `price`:
+       *   - `font` es el ID de una fuente TSPL built-in (`"1".."8"`).
+       *     Default `"3"` para nombre (densa) y `"4"` para precio (grande).
+       *   - `fontScale` multiplica el tamaño (clamp 0.5..4). El bridge lo
+       *     traduce a `scaleX/scaleY` enteros 1..10.
+       *
+       * Para `barcode` solo importan `xMm/yMm`; el tamaño del código se
+       * controla por `labels.barcode.heightMm` + `narrow`/`wide`.
+       */
+      layout: {
+        name:    { xMm: 2, yMm: 2,  font: "3", fontScale: 1 },
+        price:   { xMm: 2, yMm: 10, font: "4", fontScale: 2 },
+        barcode: { xMm: 2, yMm: 18, fontScale: 1 },
       },
       extras: {
         showDate: false,
@@ -317,21 +542,79 @@ export function sanitizePrintingConfig(input) {
   const extras = ensureObject(labels.extras);
 
   const paper = pickEnum(receipt.paper, Object.values(PAPER_PRESETS), defaults.receipt.paper);
-  const receiptWidthMm = paper === PAPER_PRESETS.WIDTH_80
-    ? 80
-    : paper === PAPER_PRESETS.WIDTH_58
-      ? 58
-      : clampInt(receipt.widthMm, BOUNDS.receiptWidthMm.min, BOUNDS.receiptWidthMm.max, defaults.receipt.widthMm);
+  let receiptWidthMm;
+  if (paper === PAPER_PRESETS.WIDTH_80) {
+    receiptWidthMm = 80;
+  } else if (paper === PAPER_PRESETS.WIDTH_58) {
+    receiptWidthMm = 58;
+  } else if (paper === PAPER_PRESETS.JAL_838L) {
+    receiptWidthMm = JALTECH_JAL_838L_SPEC.physicalWidthMm;
+  } else {
+    receiptWidthMm = clampInt(
+      receipt.widthMm,
+      BOUNDS.receiptWidthMm.min,
+      BOUNDS.receiptWidthMm.max,
+      defaults.receipt.widthMm,
+    );
+  }
 
-  // Para 58/80 el conteo de columnas es fijo (coincide con thermal-ticket.ts).
-  // Solo CUSTOM admite un valor libre dentro de los bounds.
+  // Para 58/80/JAL_838L el conteo de columnas es fijo (coincide con
+  // thermal-ticket.ts). Sólo CUSTOM admite un valor libre dentro de los
+  // bounds.
   const defaultColumns = PAPER_COLUMNS[String(receiptWidthMm)]
     || (paper === PAPER_PRESETS.WIDTH_58 ? 32 : 48);
-  const receiptColumns = paper === PAPER_PRESETS.WIDTH_80
-    ? PAPER_COLUMNS["80"]
-    : paper === PAPER_PRESETS.WIDTH_58
-      ? PAPER_COLUMNS["58"]
-      : clampInt(receipt.columns, BOUNDS.receiptColumns.min, BOUNDS.receiptColumns.max, defaultColumns);
+  let receiptColumns;
+  if (paper === PAPER_PRESETS.WIDTH_80) {
+    receiptColumns = PAPER_COLUMNS["80"];
+  } else if (paper === PAPER_PRESETS.WIDTH_58) {
+    receiptColumns = PAPER_COLUMNS["58"];
+  } else if (paper === PAPER_PRESETS.JAL_838L) {
+    receiptColumns = JALTECH_JAL_838L_SPEC.columns;
+  } else {
+    receiptColumns = clampInt(
+      receipt.columns,
+      BOUNDS.receiptColumns.min,
+      BOUNDS.receiptColumns.max,
+      defaultColumns,
+    );
+  }
+
+  // Ancho imprimible real. Nunca puede superar `widthMm`: ésa es la frontera
+  // física real del cabezal térmico, no un número decorativo. `sanitize` es
+  // la única capa que lo recorta: la UI puede ser laxa y el bridge recibe
+  // siempre un valor consistente.
+  //
+  // Default por preset (cuando el input NO trae `printableWidthMm` explícito):
+  //   - WIDTH_80  → 76 mm imprimibles (4 mm de margen físico muerto).
+  //   - WIDTH_58  → 48 mm imprimibles (10 mm de margen físico muerto).
+  //   - JAL_838L  → 76 mm (parte de la especificación del modelo).
+  //   - CUSTOM    → `widthMm` (ninguna diferencia física conocida).
+  //
+  // Las instalaciones que YA guardaron un valor explícito en LocalStorage
+  // (ejemplo: configs CUSTOM con 80mm/80mm imprimibles) preservan ese valor
+  // porque entran por la rama `hasExplicitPrintable`.
+  const rawPrintable = receipt.printableWidthMm;
+  const hasExplicitPrintable = rawPrintable !== undefined
+    && rawPrintable !== null
+    && rawPrintable !== "";
+  let printableWidthMm;
+  if (hasExplicitPrintable) {
+    // Clamp estricto: min respeta BOUNDS, max NUNCA excede el widthMm físico.
+    printableWidthMm = clampInt(
+      rawPrintable,
+      BOUNDS.printableWidthMm.min,
+      receiptWidthMm,
+      receiptWidthMm,
+    );
+  } else if (paper === PAPER_PRESETS.WIDTH_80) {
+    printableWidthMm = 76;
+  } else if (paper === PAPER_PRESETS.WIDTH_58) {
+    printableWidthMm = 48;
+  } else if (paper === PAPER_PRESETS.JAL_838L) {
+    printableWidthMm = JALTECH_JAL_838L_SPEC.printableWidthMm;
+  } else {
+    printableWidthMm = receiptWidthMm;
+  }
 
   const sizePreset = pickEnum(labels.sizePreset, Object.values(LABEL_SIZE_PRESETS), defaults.labels.sizePreset);
   const presetDims = LABEL_SIZE_DIMENSIONS[sizePreset];
@@ -342,15 +625,115 @@ export function sanitizePrintingConfig(input) {
     ? presetDims.heightMm
     : clampInt(labels.heightMm, BOUNDS.labelHeightMm.min, BOUNDS.labelHeightMm.max, defaults.labels.heightMm);
 
+  // Columnas, gaps y margen según preset. Para los presets conocidos los
+  // valores vienen del mapa canónico (`LABEL_SIZE_PRESET_DEFAULTS`). Para
+  // CUSTOM se respeta el input del usuario clampado.
+  const presetGaps = LABEL_SIZE_PRESET_DEFAULTS[sizePreset];
+  let labelColumns;
+  let labelHorizontalGap;
+  let labelVerticalGap;
+  if (presetGaps) {
+    // Los presets 2col fijan columns=2 estrictamente. Los 1col fijan
+    // columns=1 por diseño físico del troquel. El preset 50x30 permite
+    // alternar gap horizontal entre 2 y 3 (ambos valores aparecen en los
+    // troqueles disponibles del mercado); respetamos el input dentro de
+    // ese set permitido.
+    labelColumns = presetGaps.columns;
+    if (sizePreset === "50x30") {
+      const rawGap = Number(labels.horizontalGapMm);
+      const accepted = LABEL_SIZE_50X30_GAPS.includes(rawGap)
+        ? rawGap
+        : presetGaps.horizontalGapMm;
+      labelHorizontalGap = accepted;
+    } else if (sizePreset === "30x20-2col") {
+      // Fijo por diseño: 2 columnas con 2mm de gap horizontal.
+      labelHorizontalGap = presetGaps.horizontalGapMm;
+    } else {
+      // Otros presets 1col aceptan el input dentro de BOUNDS pero caen al
+      // default canónico si no viene nada.
+      labelHorizontalGap = clampInt(
+        labels.horizontalGapMm,
+        BOUNDS.horizontalGapMm.min,
+        BOUNDS.horizontalGapMm.max,
+        presetGaps.horizontalGapMm,
+      );
+    }
+    if (sizePreset === "30x20-2col") {
+      // Vertical fijo por diseño del troquel 2col.
+      labelVerticalGap = presetGaps.verticalGapMm;
+    } else {
+      labelVerticalGap = clampInt(
+        labels.verticalGapMm,
+        BOUNDS.verticalGapMm.min,
+        BOUNDS.verticalGapMm.max,
+        presetGaps.verticalGapMm,
+      );
+    }
+  } else {
+    // CUSTOM: todo editable dentro de BOUNDS.
+    labelColumns = clampInt(labels.columns, BOUNDS.labelColumns.min, BOUNDS.labelColumns.max, defaults.labels.columns);
+    labelHorizontalGap = clampInt(labels.horizontalGapMm, BOUNDS.horizontalGapMm.min, BOUNDS.horizontalGapMm.max, defaults.labels.horizontalGapMm);
+    labelVerticalGap = clampInt(labels.verticalGapMm, BOUNDS.verticalGapMm.min, BOUNDS.verticalGapMm.max, defaults.labels.verticalGapMm);
+  }
+
+  const labelMarginLeftMm = clampInt(
+    labels.marginLeftMm,
+    BOUNDS.marginLeftMm.min,
+    BOUNDS.marginLeftMm.max,
+    defaults.labels.marginLeftMm,
+  );
+  const labelDpi = clampInt(
+    labels.dpi,
+    BOUNDS.dpi.min,
+    BOUNDS.dpi.max,
+    defaults.labels.dpi,
+  );
+
+  // Layout tipado: cada bloque trae xMm/yMm/fontScale. Clampeamos las
+  // posiciones contra las dimensiones físicas de la etiqueta. Los bloques
+  // `name` y `price` admiten además `font` (ID TSPL built-in "1".."8"); el
+  // bloque `barcode` ignora `font` porque su tipografía viene de la
+  // simbología + narrow/wide.
+  const layoutSrc = ensureObject(labels.layout);
+  const defaultLayout = defaults.labels.layout;
+  function sanitizeLayoutBlock(blockSrc, blockDefault, acceptsFont) {
+    const b = ensureObject(blockSrc);
+    const out = {
+      xMm: clampNumber(b.xMm, BOUNDS.layoutPosMm.min, Math.max(labelWidthMm, BOUNDS.layoutPosMm.min), blockDefault.xMm),
+      yMm: clampNumber(b.yMm, BOUNDS.layoutPosMm.min, Math.max(labelHeightMm, BOUNDS.layoutPosMm.min), blockDefault.yMm),
+      fontScale: clampNumber(b.fontScale, BOUNDS.layoutFontScale.min, BOUNDS.layoutFontScale.max, blockDefault.fontScale),
+    };
+    if (acceptsFont) {
+      const rawFont = typeof b.font === "string" || typeof b.font === "number" ? String(b.font) : "";
+      out.font = TSPL_BUILTIN_FONTS.includes(rawFont) ? rawFont : (blockDefault.font || "3");
+    }
+    return out;
+  }
+  const sanitizedLayout = {
+    name: sanitizeLayoutBlock(layoutSrc.name, defaultLayout.name, true),
+    price: sanitizeLayoutBlock(layoutSrc.price, defaultLayout.price, true),
+    barcode: sanitizeLayoutBlock(layoutSrc.barcode, defaultLayout.barcode, false),
+  };
+
   const version = typeof src.version === "number" && Number.isFinite(src.version)
     ? src.version
     : PRINTING_CONFIG_VERSION;
+
+  // activeMode: hint de modo activo. Cualquier valor desconocido cae al
+  // default `RECEIPT` para no corromper configuraciones legacy que nunca
+  // escribieron este campo.
+  const activeMode = pickEnum(
+    src.activeMode,
+    Object.values(ACTIVE_MODES),
+    defaults.activeMode,
+  );
 
   const sanitized = {
     version: PRINTING_CONFIG_VERSION, // forzamos siempre a la versión actual
     updatedAt: cleanString(src.updatedAt, 40) || null,
     source: cleanString(src.source, 40) || "default",
     _ingestedVersion: version,
+    activeMode,
     connection: {
       alias: cleanString(conn.alias, 80) || defaults.connection.alias,
       interface: connInterface,
@@ -374,10 +757,12 @@ export function sanitizePrintingConfig(input) {
       // NUNCA se evalúa. Se guarda como string crudo. Vacío → default literal.
       command: cleanString(drawer.command, 200) || DEFAULT_DRAWER_COMMAND,
       event: pickEnum(drawer.event, Object.values(DRAWER_EVENTS), defaults.drawer.event),
+      openDrawerOnSale: pickBool(drawer.openDrawerOnSale, defaults.drawer.openDrawerOnSale),
     },
     receipt: {
       paper,
       widthMm: receiptWidthMm,
+      printableWidthMm,
       columns: receiptColumns,
       header: {
         businessName: cleanString(header.businessName, 120),
@@ -395,13 +780,25 @@ export function sanitizePrintingConfig(input) {
         showValidationQR: pickBool(content.showValidationQR, defaults.receipt.content.showValidationQR),
       },
       cut: pickEnum(receipt.cut, Object.values(CUT_MODES), defaults.receipt.cut),
+      // deliveryMode: `bridge` o `browser`. Sanitize es la ÚNICA frontera que
+      // acepta/rechaza este enum. Un valor desconocido cae al default seguro
+      // (`browser`) para que el POS nunca intente la ruta directa sin
+      // confirmación explícita del admin.
+      deliveryMode: pickEnum(
+        receipt.deliveryMode,
+        Object.values(RECEIPT_DELIVERY_MODES),
+        defaults.receipt.deliveryMode,
+      ),
     },
     labels: {
       sizePreset,
       widthMm: labelWidthMm,
       heightMm: labelHeightMm,
-      columns: clampInt(labels.columns, BOUNDS.labelColumns.min, BOUNDS.labelColumns.max, defaults.labels.columns),
-      horizontalGapMm: clampInt(labels.horizontalGapMm, BOUNDS.horizontalGapMm.min, BOUNDS.horizontalGapMm.max, defaults.labels.horizontalGapMm),
+      columns: labelColumns,
+      horizontalGapMm: labelHorizontalGap,
+      verticalGapMm: labelVerticalGap,
+      marginLeftMm: labelMarginLeftMm,
+      dpi: labelDpi,
       sensor: {
         type: pickEnum(sensor.type, Object.values(SENSOR_TYPES), defaults.labels.sensor.type),
         gapMm: clampInt(sensor.gapMm, BOUNDS.sensorGapMm.min, BOUNDS.sensorGapMm.max, defaults.labels.sensor.gapMm),
@@ -419,7 +816,14 @@ export function sanitizePrintingConfig(input) {
       barcode: {
         symbology: pickEnum(barcode.symbology, Object.values(BARCODE_SYMBOLOGIES), defaults.labels.barcode.symbology),
         heightMm: clampInt(barcode.heightMm, BOUNDS.barcodeHeightMm.min, BOUNDS.barcodeHeightMm.max, defaults.labels.barcode.heightMm),
+        humanReadable: pickBool(barcode.humanReadable, defaults.labels.barcode.humanReadable),
+        narrow: clampInt(barcode.narrow, BOUNDS.barcodeModule.min, BOUNDS.barcodeModule.max, defaults.labels.barcode.narrow),
+        wide: clampInt(barcode.wide, BOUNDS.barcodeModule.min, BOUNDS.barcodeModule.max, defaults.labels.barcode.wide),
+        rotation: BARCODE_ROTATIONS.includes(Number(barcode.rotation))
+          ? Number(barcode.rotation)
+          : defaults.labels.barcode.rotation,
       },
+      layout: sanitizedLayout,
       extras: {
         showDate: pickBool(extras.showDate, defaults.labels.extras.showDate),
         showInternalCode: pickBool(extras.showInternalCode, defaults.labels.extras.showInternalCode),
@@ -525,6 +929,24 @@ export function validatePrintingConfig(config) {
     });
   }
 
+  // Techo físico 82 mm: el bridge rechaza cualquier medio que exceda
+  // (LAYOUT_OUT_OF_BOUNDS). Validamos la fórmula completa en el frontend
+  // para que Guardar se deshabilite ANTES de intentar imprimir — nada de
+  // esperar a un fallo del scale-bridge en producción.
+  const totalLabelWidth = c.labels.marginLeftMm
+    + c.labels.columns * c.labels.widthMm
+    + Math.max(0, c.labels.columns - 1) * c.labels.horizontalGapMm;
+  if (totalLabelWidth > PHYSICAL_MAX_MM) {
+    errors.push({
+      path: "labels.widthMm",
+      message:
+        `El ancho total de etiquetas (${totalLabelWidth.toFixed(1)} mm) excede el límite físico de ${PHYSICAL_MAX_MM} mm: ` +
+        `margen ${c.labels.marginLeftMm} + ${c.labels.columns}col × ${c.labels.widthMm} mm` +
+        (c.labels.columns > 1 ? ` + ${c.labels.columns - 1} × gap ${c.labels.horizontalGapMm} mm` : "") +
+        `. Reduce ancho, columnas, margen o gap horizontal.`,
+    });
+  }
+
   return { valid: errors.length === 0, errors, warnings };
 }
 
@@ -537,27 +959,116 @@ export function applyReceiptPaperPreset(config, preset) {
   if (preset === PAPER_PRESETS.WIDTH_80) {
     base.receipt.paper = PAPER_PRESETS.WIDTH_80;
     base.receipt.widthMm = 80;
+    // Default actualizado: el rollo 80mm genérico tiene 76mm imprimibles
+    // (4mm de margen físico muerto). El admin puede editar manualmente
+    // desde `/labels/config` si una impresora específica usa otro valor.
+    base.receipt.printableWidthMm = 76;
     base.receipt.columns = PAPER_COLUMNS["80"];
   } else if (preset === PAPER_PRESETS.WIDTH_58) {
     base.receipt.paper = PAPER_PRESETS.WIDTH_58;
     base.receipt.widthMm = 58;
+    // Default actualizado: el rollo 58mm genérico tiene 48mm imprimibles.
+    base.receipt.printableWidthMm = 48;
     base.receipt.columns = PAPER_COLUMNS["58"];
+  } else if (preset === PAPER_PRESETS.JAL_838L) {
+    // Preset físico del modelo Jaltech JAL-838L. El ancho imprimible y el
+    // modo de corte son parte de la especificación — no una preferencia del
+    // usuario. Al activarse se fuerza `cut=MANUAL` porque esta impresora
+    // no trae cutter automático confiable.
+    base.receipt.paper = PAPER_PRESETS.JAL_838L;
+    base.receipt.widthMm = JALTECH_JAL_838L_SPEC.physicalWidthMm;
+    base.receipt.printableWidthMm = JALTECH_JAL_838L_SPEC.printableWidthMm;
+    base.receipt.columns = JALTECH_JAL_838L_SPEC.columns;
+    base.receipt.cut = CUT_MODES.MANUAL;
   } else if (preset === PAPER_PRESETS.CUSTOM) {
     base.receipt.paper = PAPER_PRESETS.CUSTOM;
   }
-  return base;
+  // sanitize garantiza coherencia (printableWidthMm <= widthMm, etc.).
+  return sanitizePrintingConfig(base);
+}
+
+/**
+ * Aplica el preset físico Jaltech JAL-838L + una variante de conexión.
+ *
+ *   - mode="NETWORK": interfaz NETWORK + protocolo escpos + puerto 9100.
+ *     Se PRESERVA el host existente (nunca inventa un IP).
+ *   - mode="SYSTEM":  interfaz SYSTEM + protocolo system + spooler WINDOWS.
+ *     Se PRESERVA el nombre de impresora existente (nunca lo inventa).
+ *
+ * El alias sólo se reemplaza cuando el admin no lo había personalizado
+ * (es decir, cuando sigue siendo el alias por defecto de la app). Si el
+ * admin ya puso "Caja 2 — mostrador" no lo pisamos.
+ *
+ * @param {unknown} config
+ * @param {{ mode?: "NETWORK" | "SYSTEM" }} [options]
+ * @returns {object}
+ */
+export function applyJaltechJAL838LPreset(config, options) {
+  const base = applyReceiptPaperPreset(config, PAPER_PRESETS.JAL_838L);
+  const defaults = createDefaultPrintingConfig();
+  const mode = options && options.mode === JAL_838L_CONNECTION_MODES.SYSTEM
+    ? JAL_838L_CONNECTION_MODES.SYSTEM
+    : JAL_838L_CONNECTION_MODES.NETWORK;
+
+  // Alias: respetar personalización previa. Sólo pisamos el default
+  // genérico "Impresora POS" para que la UI deje claro qué equipo está
+  // activo.
+  const currentAlias = (base.connection.alias || "").trim();
+  if (!currentAlias || currentAlias === defaults.connection.alias) {
+    base.connection.alias = JALTECH_JAL_838L_SPEC.defaultAlias;
+  }
+
+  if (mode === JAL_838L_CONNECTION_MODES.NETWORK) {
+    base.connection.interface = INTERFACES.NETWORK;
+    base.connection.protocol = PROTOCOLS.ESCPOS;
+    // NUNCA inventamos IP: preservamos lo que haya configurado el admin.
+    // El puerto sí es parte de la especificación (9100 ESC/POS raw).
+    base.connection.network.port = JALTECH_JAL_838L_SPEC.networkPort;
+    // base.connection.network.host se queda tal cual (puede estar vacío).
+  } else {
+    base.connection.interface = INTERFACES.SYSTEM;
+    base.connection.protocol = PROTOCOLS.SYSTEM;
+    base.connection.system.spooler = SPOOLERS.WINDOWS;
+    // base.connection.system.printerName se queda tal cual (puede estar vacío).
+  }
+
+  return sanitizePrintingConfig(base);
 }
 
 export function applyLabelSizePreset(config, preset) {
   const base = sanitizePrintingConfig(config);
+  const defaults = createDefaultPrintingConfig();
   if (LABEL_SIZE_DIMENSIONS[preset]) {
     base.labels.sizePreset = preset;
     base.labels.widthMm = LABEL_SIZE_DIMENSIONS[preset].widthMm;
     base.labels.heightMm = LABEL_SIZE_DIMENSIONS[preset].heightMm;
+    const presetGaps = LABEL_SIZE_PRESET_DEFAULTS[preset];
+    if (presetGaps) {
+      base.labels.columns = presetGaps.columns;
+      base.labels.horizontalGapMm = presetGaps.horizontalGapMm;
+      base.labels.verticalGapMm = presetGaps.verticalGapMm;
+      // Sincronización con el GAP físico del troquel: para presets 2 col el
+      // `verticalGapMm` ES el sensor gap del rollo (así lo documenta la UI
+      // "Sensor GAP fijo en 2 mm por diseño del troquel 2 columnas"). Sin
+      // esta sincronización, el bridge emite TSPL `GAP sensor.gapMm` (default
+      // 3 mm) ignorando los 2 mm reales del troquel, y la impresora pierde
+      // alineación entre páginas. Las presets 1 col no tocan sensor.gapMm
+      // porque su gap físico depende del rollo específico del admin.
+      if (presetGaps.columns === 2 && presetGaps.verticalGapMm > 0) {
+        base.labels.sensor.gapMm = presetGaps.verticalGapMm;
+      }
+    }
   } else if (preset === LABEL_SIZE_PRESETS.CUSTOM) {
     base.labels.sizePreset = LABEL_SIZE_PRESETS.CUSTOM;
+    // CUSTOM reinicia a defaults razonables si venía de un preset fijo
+    // y el usuario no ha tocado las dimensiones. No sobrescribimos
+    // marginLeftMm ni layout: pueden traer ajustes del admin.
+    if (!LABEL_SIZE_DIMENSIONS[base.labels.sizePreset]) {
+      // Ya era CUSTOM: no hacemos nada extra.
+    }
   }
-  return base;
+  // Pasamos por sanitize para que clampee contra el nuevo tamaño físico.
+  return sanitizePrintingConfig(base);
 }
 
 // -----------------------------------------------------------------------------
@@ -747,14 +1258,23 @@ export function importConfigFromPrinterProfile(profile, baseConfig) {
     if (Math.round(roll) === 58) {
       base.receipt.paper = PAPER_PRESETS.WIDTH_58;
       base.receipt.widthMm = 58;
+      base.receipt.printableWidthMm = 48;
       base.receipt.columns = PAPER_COLUMNS["58"];
     } else if (Math.round(roll) === 80) {
       base.receipt.paper = PAPER_PRESETS.WIDTH_80;
       base.receipt.widthMm = 80;
+      base.receipt.printableWidthMm = 76;
       base.receipt.columns = PAPER_COLUMNS["80"];
+    } else if (Math.round(roll) === 82) {
+      // Rollo 82mm → Jaltech JAL-838L (único preset conocido con ese ancho).
+      base.receipt.paper = PAPER_PRESETS.JAL_838L;
+      base.receipt.widthMm = JALTECH_JAL_838L_SPEC.physicalWidthMm;
+      base.receipt.printableWidthMm = JALTECH_JAL_838L_SPEC.printableWidthMm;
+      base.receipt.columns = JALTECH_JAL_838L_SPEC.columns;
     } else {
       base.receipt.paper = PAPER_PRESETS.CUSTOM;
       base.receipt.widthMm = clampInt(roll, BOUNDS.receiptWidthMm.min, BOUNDS.receiptWidthMm.max, base.receipt.widthMm);
+      base.receipt.printableWidthMm = base.receipt.widthMm;
     }
   }
 
@@ -795,6 +1315,9 @@ export function receiptWidthKey(config) {
   const c = sanitizePrintingConfig(config);
   if (c.receipt.paper === PAPER_PRESETS.WIDTH_58) return "58mm";
   if (c.receipt.paper === PAPER_PRESETS.WIDTH_80) return "80mm";
+  // JAL_838L es un rollo de 82mm físico — tipográficamente se trata como la
+  // familia 80mm (48 columnas). El ancho físico exacto viaja en widthMm.
+  if (c.receipt.paper === PAPER_PRESETS.JAL_838L) return "80mm";
   return c.receipt.widthMm <= 65 ? "58mm" : "80mm";
 }
 
@@ -810,4 +1333,72 @@ export function printingConfigsEqual(a, b) {
     return copy;
   };
   return JSON.stringify(strip(sa)) === JSON.stringify(strip(sb));
+}
+
+// -----------------------------------------------------------------------------
+// Label-view helpers (consumo por el bridge payload de etiquetas)
+// -----------------------------------------------------------------------------
+
+/**
+ * Conversión canónica mm → dots para la cabeza térmica. 203dpi es el
+ * default; algunos modelos premium usan 300dpi. Puro, sin side-effects:
+ * tanto frontend como backend pueden importarlo del mismo .mjs sin
+ * duplicar la fórmula.
+ *
+ * @param {number} mm   Longitud física en mm.
+ * @param {number} [dpi] Resolución efectiva. Default 203.
+ * @returns {number}    Cantidad de dots redondeada al entero más cercano.
+ */
+export function mmToDots(mm, dpi = DEFAULT_DPI) {
+  const value = Number(mm);
+  const resolution = Number(dpi);
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  if (!Number.isFinite(resolution) || resolution <= 0) return Math.round(value * DEFAULT_DPI / 25.4);
+  return Math.round(value * resolution / 25.4);
+}
+
+/**
+ * Cambia el `activeMode` sin tocar otros campos de la config. Idempotente.
+ *
+ * @param {unknown} config
+ * @param {"RECEIPT"|"LABEL"} mode
+ * @returns {object}
+ */
+export function setActiveMode(config, mode) {
+  const base = sanitizePrintingConfig(config);
+  if (mode === ACTIVE_MODES.RECEIPT || mode === ACTIVE_MODES.LABEL) {
+    base.activeMode = mode;
+  }
+  return sanitizePrintingConfig(base);
+}
+
+/**
+ * Construye el "payload de bridge" canónico derivado de la config: lo que
+ * se adjunta a cada operación térmica/etiqueta/cajón para que el bridge
+ * no tenga que leer LocalStorage por su cuenta.
+ *
+ * @param {unknown} config
+ * @param {{ openDrawerOnSale?: boolean }} [overrides]
+ * @returns {{
+ *   activeMode: "RECEIPT"|"LABEL";
+ *   connection: object;
+ *   receipt: object;
+ *   labels: object;
+ *   drawer: object;
+ *   openDrawerOnSale: boolean;
+ * }}
+ */
+export function buildBridgeConfigPayload(config, overrides) {
+  const c = sanitizePrintingConfig(config);
+  const openDrawerOnSale = overrides && typeof overrides.openDrawerOnSale === "boolean"
+    ? overrides.openDrawerOnSale
+    : !!c.drawer.openDrawerOnSale;
+  return {
+    activeMode: c.activeMode,
+    connection: c.connection,
+    receipt: c.receipt,
+    labels: c.labels,
+    drawer: c.drawer,
+    openDrawerOnSale,
+  };
 }

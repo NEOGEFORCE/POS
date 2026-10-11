@@ -16,6 +16,7 @@ import {
   PRINTING_CONFIG_STORAGE_KEY,
   PRINTING_CONFIG_VERSION,
   PROTOCOLS,
+  RECEIPT_DELIVERY_MODES,
   SENSOR_TYPES,
   SPOOLERS,
   applyLabelSizePreset,
@@ -75,6 +76,9 @@ test("createDefaultPrintingConfig: shape canónico v1", () => {
   assert.equal(def.receipt.columns, PAPER_COLUMNS["80"]);
   assert.equal(def.receipt.columns, 48);
   assert.equal(def.receipt.cut, CUT_MODES.AUTO);
+  // deliveryMode: default seguro — `browser` siempre funciona (abre diálogo).
+  // `bridge` queda opt-in explícito para admins con bridge instalado.
+  assert.equal(def.receipt.deliveryMode, RECEIPT_DELIVERY_MODES.BROWSER);
   assert.equal(def.labels.sizePreset, LABEL_SIZE_PRESETS["50X30"]);
   assert.equal(def.labels.widthMm, 50);
   assert.equal(def.labels.heightMm, 30);
@@ -106,6 +110,35 @@ test("LABEL_SIZE_DIMENSIONS: tres presets físicos", () => {
   assert.deepEqual(LABEL_SIZE_DIMENSIONS["50x30"], { widthMm: 50, heightMm: 30 });
   assert.deepEqual(LABEL_SIZE_DIMENSIONS["40x30"], { widthMm: 40, heightMm: 30 });
   assert.deepEqual(LABEL_SIZE_DIMENSIONS["30x20"], { widthMm: 30, heightMm: 20 });
+});
+
+test("RECEIPT_DELIVERY_MODES: expone bridge y browser con valores canónicos", () => {
+  assert.equal(RECEIPT_DELIVERY_MODES.BRIDGE, "bridge");
+  assert.equal(RECEIPT_DELIVERY_MODES.BROWSER, "browser");
+  // El set EXCLUSIVO: cualquier otro valor es inválido y sanitize debe
+  // caer al default.
+  assert.deepEqual([...Object.values(RECEIPT_DELIVERY_MODES)].sort(), ["bridge", "browser"]);
+});
+
+test("sanitizePrintingConfig: deliveryMode acepta 'bridge' y 'browser', cae al default en otros valores", () => {
+  const bridge = sanitizePrintingConfig({ receipt: { deliveryMode: "bridge" } });
+  assert.equal(bridge.receipt.deliveryMode, "bridge",
+    "El modo 'bridge' explícito debe conservarse (admin lo activó a propósito).");
+  const browser = sanitizePrintingConfig({ receipt: { deliveryMode: "browser" } });
+  assert.equal(browser.receipt.deliveryMode, "browser");
+  // Valores inválidos → default seguro
+  const falsy = sanitizePrintingConfig({ receipt: { deliveryMode: "silent" } });
+  assert.equal(falsy.receipt.deliveryMode, "browser",
+    "Un modo desconocido NUNCA puede activar la ruta directa — sanitize cae a 'browser'.");
+  const nope = sanitizePrintingConfig({ receipt: { deliveryMode: null } });
+  assert.equal(nope.receipt.deliveryMode, "browser",
+    "null/undefined debe caer al default seguro.");
+});
+
+test("sanitizePrintingConfig: deliveryMode se preserva en roundtrip de JSON", () => {
+  const original = sanitizePrintingConfig({ receipt: { deliveryMode: "bridge" } });
+  const roundtripped = migratePrintingConfig(JSON.stringify(original));
+  assert.equal(roundtripped.receipt.deliveryMode, "bridge");
 });
 
 // ============================================================================
@@ -442,4 +475,96 @@ test("printingConfigsEqual: ignora updatedAt/source", () => {
   assert.equal(printingConfigsEqual(a, b), true);
   const c = sanitizePrintingConfig({ connection: { alias: "B" } });
   assert.equal(printingConfigsEqual(a, c), false);
+});
+
+
+
+// ============================================================================
+// Defectos de contrato físico/layout (revisión 2026-10)
+// ============================================================================
+
+test("BOUNDS físicos: receiptWidthMm/printableWidthMm/labelWidthMm son exactamente 20..82", () => {
+  assert.deepEqual(BOUNDS.receiptWidthMm, { min: 20, max: 82 });
+  assert.deepEqual(BOUNDS.printableWidthMm, { min: 20, max: 82 });
+  assert.deepEqual(BOUNDS.labelWidthMm, { min: 20, max: 82 });
+});
+
+test("sanitizePrintingConfig: widths CUSTOM se clampean a 20..82", () => {
+  const high = sanitizePrintingConfig({
+    receipt: { paper: "CUSTOM", widthMm: 999, printableWidthMm: 999 },
+    labels: { sizePreset: "CUSTOM", widthMm: 999 },
+  });
+  assert.equal(high.receipt.widthMm, 82);
+  assert.equal(high.receipt.printableWidthMm, 82);
+  assert.equal(high.labels.widthMm, 82);
+
+  const low = sanitizePrintingConfig({
+    receipt: { paper: "CUSTOM", widthMm: 1, printableWidthMm: 1 },
+    labels: { sizePreset: "CUSTOM", widthMm: 1 },
+  });
+  assert.equal(low.receipt.widthMm, 20);
+  assert.equal(low.receipt.printableWidthMm, 20);
+  assert.equal(low.labels.widthMm, 20);
+});
+
+test("importConfigFromPrinterProfile: rollWidthMm externo nunca supera 82mm", () => {
+  const imported = importConfigFromPrinterProfile({
+    name: "Perfil ancho",
+    protocol: "escpos",
+    target: "usb:demo",
+    rollWidthMm: 200,
+  }, createDefaultPrintingConfig());
+  assert.equal(imported.receipt.paper, PAPER_PRESETS.CUSTOM);
+  assert.equal(imported.receipt.widthMm, 82);
+  assert.equal(imported.receipt.printableWidthMm, 82);
+});
+
+test("validatePrintingConfig: ancho total de etiquetas >82 es error accionable", () => {
+  const result = validatePrintingConfig({
+    labels: {
+      sizePreset: "CUSTOM",
+      widthMm: 40,
+      columns: 2,
+      horizontalGapMm: 3,
+      marginLeftMm: 0,
+    },
+  });
+  assert.equal(result.valid, false);
+  const issue = result.errors.find((e) => e.path === "labels.widthMm");
+  assert.ok(issue, "debe bloquear Guardar mediante validation.valid=false");
+  assert.match(issue.message, /83\.0 mm/);
+  assert.match(issue.message, /límite físico de 82 mm/);
+  assert.match(issue.message, /Reduce ancho, columnas, margen o gap horizontal/);
+});
+
+test("validatePrintingConfig: ancho total exactamente 82mm es válido", () => {
+  const result = validatePrintingConfig({
+    labels: {
+      sizePreset: "CUSTOM",
+      widthMm: 40,
+      columns: 2,
+      horizontalGapMm: 2,
+      marginLeftMm: 0,
+    },
+  });
+  assert.equal(result.valid, true);
+  assert.ok(!result.errors.some((e) => e.path === "labels.widthMm"));
+});
+
+test("sanitizePrintingConfig: layout canónico conserva X/Y/fontScale y limita fuentes TSPL a 1..8", () => {
+  const config = sanitizePrintingConfig({
+    labels: {
+      sizePreset: "CUSTOM",
+      widthMm: 50,
+      heightMm: 30,
+      layout: {
+        name: { xMm: 3, yMm: 4, font: "8", fontScale: 1.5 },
+        price: { xMm: 6, yMm: 10, font: "99", fontScale: 3 },
+        barcode: { xMm: 2.5, yMm: 17, fontScale: 1 },
+      },
+    },
+  });
+  assert.deepEqual(config.labels.layout.name, { xMm: 3, yMm: 4, font: "8", fontScale: 1.5 });
+  assert.deepEqual(config.labels.layout.price, { xMm: 6, yMm: 10, font: "4", fontScale: 3 });
+  assert.deepEqual(config.labels.layout.barcode, { xMm: 2.5, yMm: 17, fontScale: 1 });
 });

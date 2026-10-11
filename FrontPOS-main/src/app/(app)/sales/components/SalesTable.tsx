@@ -4,7 +4,7 @@ import React, { useRef } from 'react';
 import { 
     Chip, Button, Tooltip 
 } from "@heroui/react";
-import { Eye, Edit3, Calendar, User, DollarSign, Trash2, Landmark, Shuffle } from 'lucide-react';
+import { Eye, Edit3, Calendar, User, DollarSign, Trash2, Landmark, Shuffle, Printer } from 'lucide-react';
 import { Sale } from '@/lib/definitions';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
@@ -21,6 +21,16 @@ interface SalesTableProps {
     onOpenEdit: (sale: Sale) => void;
     onOpenAddItems: (sale: Sale) => void;
     onOpenDelete: (sale: Sale) => void;
+    /**
+     * Reimpresión explícita de la factura desde la fila. El padre
+     * (`sales/page.tsx`) usa `printThermalTicket(saleToTicket(sale))` para
+     * mantener el contrato con la caja: misma plantilla térmica, mismo
+     * iframe aislado, respeta `receipt.deliveryMode` cuando pasa por la
+     * ruta estratégica. La reimpresión también sigue disponible dentro
+     * de `SaleDetailModal` (vía ojo → modal) para auditoría de la fila
+     * completa.
+     */
+    onOpenReprint: (sale: Sale) => void;
 }
 
 const formatCurrency = (amount: number) => {
@@ -39,6 +49,7 @@ const SaleRow = React.memo(({
     onEdit,
     onAddItems,
     onDelete,
+    onReprint,
     isAdmin,
     canCorrectPayment,
 }: { 
@@ -48,6 +59,7 @@ const SaleRow = React.memo(({
     onEdit: (s: Sale) => void,
     onAddItems: (s: Sale) => void,
     onDelete: (s: Sale) => void,
+    onReprint: (s: Sale) => void,
     isAdmin: boolean,
     canCorrectPayment: boolean,
 }) => {
@@ -100,10 +112,23 @@ const SaleRow = React.memo(({
                     {formatCurrency(sale.total)}
                 </span>
             </div>
-            <div className="w-[140px] flex items-center justify-center gap-1">
+            <div className="w-[170px] flex items-center justify-center gap-1">
                 <Tooltip content="AUDITAR DETALLE" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-zinc-900 dark:bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
                     <Button isIconOnly size="sm" variant="light" className="text-gray-400 hover:text-emerald-600 dark:text-zinc-500 dark:hover:text-gray-600 dark:text-zinc-300 transition-colors p-2" onPress={() => onPreview(sale)}>
                         <Eye size={20} strokeWidth={2.5} />
+                    </Button>
+                </Tooltip>
+                {/* Reimpresión explícita: queda disponible SIEMPRE (empleado y
+                    admin), sin esperar a abrir el detalle. El contrato con la
+                    caja es el mismo helper térmico. */}
+                <Tooltip content="REIMPRIMIR FACTURA" closeDelay={0} classNames={{ content: "font-medium text-[10px] uppercase tracking-widest bg-zinc-900 dark:bg-[#18181b] text-white border border-zinc-200 dark:border-white/10 rounded-2xl" }}>
+                    <Button
+                        isIconOnly size="sm" variant="light"
+                        aria-label={`Reimprimir factura ${sale.id}`}
+                        className="text-gray-400 hover:text-sky-500 dark:text-zinc-500 dark:hover:text-sky-400 transition-colors p-2"
+                        onPress={() => onReprint(sale)}
+                    >
+                        <Printer size={20} strokeWidth={2.5} />
                     </Button>
                 </Tooltip>
                 {isAdmin && (
@@ -138,7 +163,7 @@ const SaleRow = React.memo(({
 
 SaleRow.displayName = 'SaleRow';
 
-export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAddItems, onOpenDelete }: SalesTableProps) {
+export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAddItems, onOpenDelete, onOpenReprint }: SalesTableProps) {
     const parentRef = useRef<HTMLDivElement>(null);
     const { user } = useAuth();
     
@@ -179,7 +204,7 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
                 <div className="w-[230px] font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 text-left">Cliente / DNI</div>
                 <div className="w-[110px] font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400">Metodo</div>
                 <div className="flex-1 font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 text-right pr-8">Total</div>
-                <div className="w-[140px] text-center font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400">Acciones</div>
+                <div className="w-[170px] text-center font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400">Acciones</div>
             </div>
 
             {/* Contenedor Virtual */}
@@ -208,6 +233,7 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
                                 onEdit={onOpenEdit}
                                 onAddItems={onOpenAddItems}
                                 onDelete={onOpenDelete}
+                                onReprint={onOpenReprint}
                                 isAdmin={isAdmin}
                                 canCorrectPayment={canCorrectBySaleId.get(sale.id) ?? false}
                             />

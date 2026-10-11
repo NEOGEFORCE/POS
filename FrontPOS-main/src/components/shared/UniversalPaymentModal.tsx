@@ -18,13 +18,17 @@ import { API_URL } from "@/lib/constants";
 import { getSessionToken } from "@/lib/session";
 import {
   type TicketData,
+  DIRECT_PRINT_UNAVAILABLE,
   getAutoPrint as readAutoPrint,
-  setAutoPrint as persistAutoPrint,
+  hasPosBridgePrint,
   printThermalTicket,
+  printThermalTicketDirect,
   saleToTicket,
   sendTicketImageToTelegram,
+  setAutoPrint as persistAutoPrint,
   shareTicketImage,
 } from "@/lib/thermal-ticket";
+import { loadPrintingConfig, RECEIPT_DELIVERY_MODES, DRAWER_EVENTS } from "@/lib/printing-config.mjs";
 
 /* ============================================================================
  * TIPOGRAFÍA — REGLA DE ORO PARA UNA CAJA REGISTRADORA
@@ -546,15 +550,211 @@ export default function UniversalPaymentModal({
     }
   }, [buildTicketData, toast]);
 
-  // Efecto de Auto-Impresión persistente — usa la MISMA plantilla térmica.
+  // Impresión directa por bridge local (sin diálogo del navegador).
+  // Solo tiene sentido cuando el admin configuró el modo "bridge" en
+  // `/labels/config` y el navegador expone `window.posBridge.print`.
+  //
+  // Si el bridge no está disponible NO abrimos el diálogo silenciosamente:
+  // esa confusión fue el bug raíz que el sprint resuelve. Mostramos un
+  // toast accionable y el cajero decide usar el botón separado de
+  // "Navegador/PDF".
+  const [bridgeAvailableState, setBridgeAvailableState] = useState(false);
   useEffect(() => {
-    if (showSuccessScreen && autoPrint) {
-      const timer = setTimeout(() => {
-        try { printThermalTicket(buildTicketData()); } catch { /* no debe tumbar la UI */ }
-      }, 200);
-      return () => clearTimeout(timer);
+    // Sondeo liviano al abrir la pantalla de éxito: así los botones
+    // bridge/navegador reflejan la realidad del navegador en vivo. En
+    // SSR o sin pantalla de éxito queda `false` por defecto.
+    if (!showSuccessScreen) return;
+    setBridgeAvailableState(hasPosBridgePrint());
+  }, [showSuccessScreen]);
+
+  const handleBridgePrint = useCallback(async () => {
+    try {
+      await printThermalTicketDirect(buildTicketData());
+      toast({ title: "ENVIADO AL BRIDGE", description: "Impresión directa, sin diálogo." });
+    } catch (err: any) {
+      const msg = err?.message || "";
+      if (typeof msg === "string" && msg.startsWith(DIRECT_PRINT_UNAVAILABLE)) {
+        toast({
+          variant: "destructive",
+          title: "BRIDGE NO DISPONIBLE",
+          description: 'El bridge local no respondió. Usa "Navegador / PDF" si necesitas imprimir ahora.',
+        });
+      } else {
+        toast({ variant: "destructive", title: "IMPRESIÓN DIRECTA", description: msg || "No se pudo imprimir." });
+      }
     }
-  }, [showSuccessScreen, autoPrint, buildTicketData]);
+  }, [buildTicketData, toast]);
+
+  // Dispatcher central del auto-print: aplica el mismo contrato que los
+  // botones manuales. Vive aquí porque consumen el mismo `buildTicketData`
+  // y comparten lógica de fallback. NO abre diálogo cuando el admin eligió
+  // bridge y el bridge no está — en ese caso notifica al cajero.
+  //
+  // IMPORTANTE: este dispatcher NO embebe `openDrawerOnSale` en el payload
+  // del recibo. El flujo UI usa UNA sola ruta física para abrir el cajón
+  // al vender: `dispatchDrawerKickOnSale` audit-first (ver el useEffect
+  // "Cajón al completar venta"). Combinar ambos mecanismos abría el cajón
+  // dos veces (bug reportado antes de printing-v2 defects). El
+  // `buildReceiptBytes` del bridge sigue siendo capaz de incluir el pulso
+  // del cajón para callers explícitos (p.ej. un futuro flujo ESC/POS-only),
+  // pero este path UI jamás lo activa.
+  const dispatchAutoPrint = useCallback(async () => {
+    let mode: "bridge" | "browser" = "browser";
+    try {
+      const persisted = loadPrintingConfig();
+      mode = persisted.receipt.deliveryMode === RECEIPT_DELIVERY_MODES.BRIDGE ? "bridge" : "browser";
+    } catch {
+      // Sin storage válido asumimos el camino seguro.
+      mode = "browser";
+    }
+
+    if (mode === "bridge") {
+      try {
+        // Sin `openDrawerOnSale`: la apertura la hace el kick separado.
+        await printThermalTicketDirect(buildTicketData());
+      } catch (err: any) {
+        const msg = err?.message || "";
+        if (typeof msg === "string" && msg.startsWith(DIRECT_PRINT_UNAVAILABLE)) {
+          toast({
+            variant: "destructive",
+            title: "AUTOIMPRESIÓN DIRECTA FALLÓ",
+            description: 'El bridge local no respondió. Usa "Navegador / PDF" para imprimir manualmente.',
+          });
+        } else {
+          toast({ variant: "destructive", title: "AUTOIMPRESIÓN", description: msg || "No se pudo imprimir." });
+        }
+      }
+      return;
+    }
+    try {
+      // Modo navegador: no tiene sentido mandar `openDrawerOnSale` (ni
+      // podría abrir el cajón físicamente). El kick post-venta es
+      // responsabilidad del `dispatchDrawerKickOnSale` separado.
+      printThermalTicket(buildTicketData());
+    } catch { /* no debe tumbar la UI */ }
+  }, [buildTicketData, toast]);
+
+  // ---------------------------------------------------------------------------
+  // Dispatcher del kick al cajón POS-VENTA.
+  //
+  // Es la ÚNICA ruta física automática por venta: `dispatchAutoPrint` nunca
+  // embebe el pulso dentro del recibo, por diseño. El browser NUNCA puede
+  // abrir físicamente el cajón, así que si no hay bridge, auditamos y
+  // notificamos al cajero (sin fingir nada). Si hay bridge, le pasamos:
+  //   - `drawer`: comando ESC/POS literal + evento (BEFORE_PRINT /
+  //     AFTER_PRINT / MANUAL — MANUAL ya quedó filtrado antes de llegar).
+  //   - `connection`: a qué impresora enviar el pulso.
+  //   - `openDrawerOnSale: true`: hint explícito de que este kick viene
+  //     disparado por una venta recién confirmada. El bridge aplica
+  //     `resolveAutoDrawerBytes` para enforce enabled/event/MANUAL como
+  //     segunda línea de defensa; con `openDrawerOnSale: false` o ausente,
+  //     el bridge ejecuta el pulso directo (botón admin "Probar cajón").
+  // La auditoría a `/cash-drawer/open` se hace primero (audit-first) con
+  // `override: false`: el backend acepta porque hay una venta reciente
+  // asociada al token del cajero (CASH_DRAWER_REQUIRES_SALE_OR_ADMIN).
+  const dispatchDrawerKickOnSale = useCallback(async (
+    cfg: ReturnType<typeof loadPrintingConfig>,
+  ) => {
+    try {
+      await apiFetch("/cash-drawer/open", {
+        method: "POST",
+        body: JSON.stringify({
+          override: false,
+          note: "Autoapertura tras venta exitosa",
+          source: "universal-payment-modal",
+          event: cfg.drawer.event,
+        }),
+      });
+    } catch (err: any) {
+      // La auditoría puede fallar (p.ej. CASH_DRAWER_REQUIRES_SALE_OR_ADMIN
+      // si la sesión perdió contexto). Avisamos pero NO interrumpimos la
+      // UX de éxito de la venta.
+      const msg = err?.message || "La auditoría del cajón falló.";
+      toast({
+        variant: "destructive",
+        title: "CAJÓN BLOQUEADO",
+        description: msg,
+      });
+      return;
+    }
+    const w = window as any;
+    if (!w.posBridge?.kickDrawer) {
+      // Sin bridge, el navegador no puede abrir físicamente. Honestidad
+      // operativa: dejamos un toast informativo. NO fingimos la apertura.
+      toast({
+        variant: "default",
+        title: "CAJÓN AUDITADO",
+        description: "Sin bridge local — el pulso físico no salió. Verifica scale-bridge.",
+      });
+      return;
+    }
+    try {
+      await w.posBridge.kickDrawer({
+        command: cfg.drawer.command,
+        event: cfg.drawer.event,
+        connection: cfg.connection,
+        drawer: cfg.drawer,
+        openDrawerOnSale: true,
+      });
+    } catch {
+      // El bridge rechazó el pulso. La auditoría ya quedó registrada.
+    }
+  }, [toast]);
+
+  // Auto-impresión persistente y cajón al completar venta — ORQUESTADOR
+  // ÚNICO, SINGLE-FIRE por venta.
+  //
+  // Una sola guardia evita carreras entre dos effects. El toggle sólo
+  // persiste preferencia y nunca re-dispara porque no está en deps. El kick
+  // audit-first es la ÚNICA ruta física del cajón; `dispatchAutoPrint` no
+  // embebe `openDrawerOnSale` en el recibo.
+  //
+  // Orden:
+  //   - BEFORE_PRINT: kick audit-first → autoimpresión (si está activa).
+  //   - AFTER_PRINT:  autoimpresión (si está activa) → kick audit-first.
+  //   - MANUAL:       nunca hay kick automático.
+  // Si autoPrint está desactivado, BEFORE/AFTER todavía abren el cajón tras
+  // la venta (la ruta separada no depende de que exista una tirilla).
+  // Reimpresiones y botones manuales no pasan por este efecto.
+  const didSaleCompletionEffectsRef = useRef(false);
+  useEffect(() => {
+    if (!showSuccessScreen) {
+      didSaleCompletionEffectsRef.current = false;
+      return;
+    }
+    if (didSaleCompletionEffectsRef.current) return;
+    didSaleCompletionEffectsRef.current = true;
+
+    const shouldAutoPrint = readAutoPrint();
+    let cfg: ReturnType<typeof loadPrintingConfig> | null = null;
+    try {
+      cfg = loadPrintingConfig();
+    } catch {
+      // Una config corrupta no bloquea la impresión con defaults.
+    }
+    const shouldKick = !!cfg
+      && cfg.drawer.enabled
+      && cfg.drawer.openDrawerOnSale
+      && cfg.drawer.event !== DRAWER_EVENTS.MANUAL;
+
+    const runSaleCompletionEffects = async () => {
+      if (cfg && shouldKick && cfg.drawer.event === DRAWER_EVENTS.BEFORE_PRINT) {
+        await dispatchDrawerKickOnSale(cfg);
+      }
+      if (shouldAutoPrint) {
+        await dispatchAutoPrint();
+      }
+      if (cfg && shouldKick && cfg.drawer.event === DRAWER_EVENTS.AFTER_PRINT) {
+        await dispatchDrawerKickOnSale(cfg);
+      }
+    };
+
+    // Conserva el pequeño margen histórico para que lastReceipt termine de
+    // hidratarse antes de componer la tirilla, sin crear un segundo trigger.
+    const timer = setTimeout(() => { void runSaleCompletionEffects(); }, 200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSuccessScreen]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -685,7 +885,7 @@ export default function UniversalPaymentModal({
 
                   {/* FACTURA Y COMPARTIR ACCIONES */}
                   <div className="w-full flex flex-col gap-3 pt-3 border-t border-gray-200 dark:border-white/10">
-                    <div className="grid grid-cols-3 gap-2 w-full">
+                    <div className="grid grid-cols-2 gap-2 w-full">
                       <Button
                         size="sm"
                         isLoading={isSharing}
@@ -703,14 +903,40 @@ export default function UniversalPaymentModal({
                       >
                         <Send size={15} /> Telegram
                       </Button>
+                    </div>
+
+                    {/* Separación clara entre canales digitales (arriba) y
+                        canales físicos de impresión (abajo). El cajero
+                        elige explícitamente Bridge vs Navegador/PDF: el
+                        POS NO decide por él. */}
+                    <div className="grid grid-cols-2 gap-2 w-full">
                       <Button
                         size="sm"
+                        aria-label="Imprimir directo con bridge local sin diálogo"
+                        isDisabled={!bridgeAvailableState}
+                        className={`h-11 border rounded-xl font-semibold uppercase text-[11px] tracking-wider flex items-center justify-center gap-1.5 ${
+                          bridgeAvailableState
+                            ? "bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
+                            : "bg-zinc-500/5 text-zinc-400 dark:text-zinc-500 border-zinc-500/20 cursor-not-allowed"
+                        }`}
+                        onPress={handleBridgePrint}
+                      >
+                        <Printer size={15} /> Impresora (bridge)
+                      </Button>
+                      <Button
+                        size="sm"
+                        aria-label="Imprimir en navegador o guardar como PDF"
                         className="h-11 bg-zinc-500/10 hover:bg-zinc-500/20 text-zinc-700 dark:text-zinc-300 border border-zinc-500/30 rounded-xl font-semibold uppercase text-[11px] tracking-wider flex items-center justify-center gap-1.5"
                         onPress={handlePrintTicket}
                       >
-                        <Printer size={15} /> Imprimir
+                        <Printer size={15} /> Navegador / PDF
                       </Button>
                     </div>
+                    {!bridgeAvailableState && (
+                      <p className="text-[10px] text-center text-zinc-500 dark:text-zinc-400 leading-tight">
+                        Sin bridge local detectado. La ruta directa queda deshabilitada; usa Navegador / PDF.
+                      </p>
+                    )}
 
                     {/* INTERRUPTOR DE IMPRESION AUTOMATICA PERSISTENTE */}
                     <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-zinc-900/60 rounded-xl border border-gray-200 dark:border-white/5">

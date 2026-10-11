@@ -1,0 +1,196 @@
+"use client";
+
+// =============================================================================
+// src/app/(app)/labels/components/ShelfLabelsPreview.tsx
+//
+// Preview paginado en pantalla (NO impresión). Replica la grilla 2x6 con las
+// mismas dimensiones físicas y bordes dashed que el documento aislado, pero
+// renderizando dentro del árbol React para que el admin pueda verificar antes
+// de imprimir. Reutiliza los helpers puros de `@/lib/shelf-labels.mjs` para
+// evitar que la métrica (mm) se duplique y se desvíe.
+//
+// La impresión real NUNCA pasa por este componente: el iframe aislado usa
+// `buildShelfLabelsPrintHtml` directamente para no heredar nada del DOM.
+// =============================================================================
+
+import { useMemo } from "react";
+
+import {
+    COLUMNS,
+    LABEL_HEIGHT_MM,
+    LABEL_WIDTH_MM,
+    LABELS_PER_PAGE,
+    PAGE_PADDING_X_MM,
+    PAGE_PADDING_Y_MM,
+    ROWS,
+    SHEET_HEIGHT_MM,
+    SHEET_WIDTH_MM,
+    expandItemsToSlots,
+    formatCOP,
+    formatPrintDate,
+    paginateSlots,
+    truncate,
+} from "@/lib/shelf-labels.mjs";
+import type { ShelfLabelItem, ShelfLabelSlot } from "@/lib/shelf-labels.d.mts";
+
+interface ShelfLabelsPreviewProps {
+    items: ReadonlyArray<Partial<ShelfLabelItem>>;
+    /** Escala visual. 0.5 = 50% del tamaño real; útil para pantallas chicas. */
+    scale?: number;
+    /** Fecha a pintar en el footer (por defecto, "ahora"). */
+    now?: Date | string | number;
+    /** Clase extra para el contenedor exterior. */
+    className?: string;
+}
+
+/**
+ * Devuelve un objeto estilo con las propiedades mm → px escaladas. Mantiene
+ * la unidad `mm` para que el navegador respete la proporción cuando se
+ * imprime desde "Vista preliminar" directamente (aunque la impresión real
+ * va por el iframe aislado).
+ */
+function mm(value: number, scale: number): string {
+    return `${(value * scale).toFixed(3)}mm`;
+}
+
+export function ShelfLabelsPreview({ items, scale = 0.5, now, className }: ShelfLabelsPreviewProps) {
+    const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 0.5;
+
+    const pages = useMemo(() => {
+        const slots = expandItemsToSlots(items);
+        return paginateSlots(slots);
+    }, [items]);
+
+    const dateLabel = useMemo(() => formatPrintDate(now), [now]);
+
+    if (pages.length === 0) {
+        return (
+            <div
+                className={className}
+                role="status"
+                aria-live="polite"
+            >
+                <p className="text-[10px] uppercase tracking-widest text-zinc-500">
+                    Agrega productos para ver la vista previa de la hoja.
+                </p>
+            </div>
+        );
+    }
+
+    return (
+        <div
+            className={className}
+            role="group"
+            aria-label={`Vista previa de ${pages.length} hoja(s) de etiquetas de góndola, ${LABELS_PER_PAGE} etiquetas por hoja.`}
+        >
+            {pages.map((page, pageIdx) => (
+                <article
+                    key={pageIdx}
+                    className="mx-auto mb-4 shadow-md ring-1 ring-zinc-200 dark:ring-white/10 bg-white"
+                    style={{
+                        width: mm(SHEET_WIDTH_MM, safeScale),
+                        height: mm(SHEET_HEIGHT_MM, safeScale),
+                        padding: `${mm(PAGE_PADDING_Y_MM, safeScale)} ${mm(PAGE_PADDING_X_MM, safeScale)}`,
+                        display: "grid",
+                        gridTemplateColumns: `repeat(${COLUMNS}, ${mm(LABEL_WIDTH_MM, safeScale)})`,
+                        gridTemplateRows: `repeat(${ROWS}, ${mm(LABEL_HEIGHT_MM, safeScale)})`,
+                        gap: 0,
+                        boxSizing: "border-box",
+                    }}
+                    aria-label={`Hoja ${pageIdx + 1} de ${pages.length}`}
+                >
+                    {page.map((slot, slotIdx) => (
+                        <SlotPreview
+                            key={slotIdx}
+                            slot={slot}
+                            dateLabel={dateLabel}
+                            scale={safeScale}
+                        />
+                    ))}
+                </article>
+            ))}
+        </div>
+    );
+}
+
+interface SlotPreviewProps {
+    slot: ShelfLabelSlot | null;
+    dateLabel: string;
+    scale: number;
+}
+
+function SlotPreview({ slot, dateLabel, scale }: SlotPreviewProps) {
+    const style: React.CSSProperties = {
+        width: mm(LABEL_WIDTH_MM, scale),
+        height: mm(LABEL_HEIGHT_MM, scale),
+        border: `${Math.max(0.5, 0.2 * scale)}px dashed #c4c4c4`,
+        padding: `${(2.5 * scale).toFixed(3)}mm ${(3 * scale).toFixed(3)}mm`,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "space-between",
+        overflow: "hidden",
+        color: "#000",
+        boxSizing: "border-box",
+        fontFamily: "'Helvetica Neue', Arial, Helvetica, sans-serif",
+    };
+
+    if (!slot) {
+        return <div style={style} aria-hidden="true" />;
+    }
+
+    const price = formatCOP(slot.salePrice);
+    const footerLeft = truncate(slot.sku ? slot.sku : slot.code || "", 20);
+    const footerRight = `${truncate(slot.unit || "UND", 10)} · ${dateLabel}`;
+    const nameFontSize = `${(11 * scale).toFixed(2)}pt`;
+    const priceFontSize = `${(26 * scale).toFixed(2)}pt`;
+    const footerFontSize = `${(7.5 * scale).toFixed(2)}pt`;
+
+    return (
+        <div style={style}>
+            <div
+                style={{
+                    fontSize: nameFontSize,
+                    fontWeight: 700,
+                    lineHeight: 1.1,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                    wordBreak: "break-word",
+                    maxHeight: "2.6em",
+                }}
+            >
+                {truncate(slot.productName, 64)}
+            </div>
+            <div
+                style={{
+                    fontSize: priceFontSize,
+                    fontWeight: 900,
+                    textAlign: "center",
+                    lineHeight: 1,
+                    letterSpacing: "-0.5px",
+                }}
+            >
+                {price}
+            </div>
+            <div
+                style={{
+                    fontSize: footerFontSize,
+                    fontWeight: 600,
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: `${(2 * scale).toFixed(3)}mm`,
+                }}
+            >
+                <span style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", minWidth: 0 }}>
+                    {footerLeft}
+                </span>
+                <span style={{ overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis", minWidth: 0, textAlign: "right" }}>
+                    {footerRight}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+export default ShelfLabelsPreview;

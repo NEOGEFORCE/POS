@@ -1,6 +1,6 @@
 ﻿'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { 
     Modal, 
     ModalContent, 
@@ -30,7 +30,14 @@ import { Sale } from '@/lib/definitions';
 import { getPaymentDescription, getPaymentColor } from '@/lib/payment-helpers';
 import { formatCurrency } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
-import { printThermalTicket, saleToTicket, shareTicketImage } from '@/lib/thermal-ticket';
+import {
+    DIRECT_PRINT_UNAVAILABLE,
+    hasPosBridgePrint,
+    printThermalTicket,
+    printThermalTicketDirect,
+    saleToTicket,
+    shareTicketImage,
+} from '@/lib/thermal-ticket';
 
 interface SaleDetailModalProps {
     isOpen: boolean;
@@ -52,7 +59,16 @@ export default function SaleDetailModal({
 }: SaleDetailModalProps) {
     const [copied, setCopied] = useState(false);
     const [sharing, setSharing] = useState(false);
+    const [bridgeAvailable, setBridgeAvailable] = useState(false);
     const { toast } = useToast();
+
+    // Sondeo liviano del bridge al abrir el modal: el estado alimenta el
+    // enabled/disabled del botón "Imprimir directo (bridge)". Fuera del
+    // modal queda `false`; en SSR también.
+    useEffect(() => {
+        if (!isOpen) return;
+        setBridgeAvailable(hasPosBridgePrint());
+    }, [isOpen]);
 
     // Los hooks DEBEN declararse antes de cualquier early return para no
     // violar las reglas de hooks. El `if (!sale) return null;` queda abajo.
@@ -78,6 +94,8 @@ export default function SaleDetailModal({
         }
     }, [sale, toast]);
 
+    // Reimpresión por NAVEGADOR (diálogo). Camino siempre disponible. Si el
+    // padre provee `onPrint`, respetamos ese contrato.
     const handlePrint = useCallback(() => {
         if (onPrint) {
             onPrint();
@@ -94,6 +112,28 @@ export default function SaleDetailModal({
             });
         }
     }, [onPrint, sale, toast]);
+
+    // Reimpresión por BRIDGE (directo, sin diálogo). Solo tiene sentido con
+    // bridge local disponible. Si el bridge rechaza, NO caemos silenciosamente
+    // al diálogo — mostramos toast accionable para que el cajero elija.
+    const handlePrintBridge = useCallback(async () => {
+        if (!sale) return;
+        try {
+            await printThermalTicketDirect(saleToTicket(sale, getPaymentDescription(sale)));
+            toast({ title: "ENVIADO AL BRIDGE", description: "Reimpresión directa, sin diálogo." });
+        } catch (err: any) {
+            const msg = err?.message || "";
+            if (typeof msg === "string" && msg.startsWith(DIRECT_PRINT_UNAVAILABLE)) {
+                toast({
+                    variant: "destructive",
+                    title: "BRIDGE NO DISPONIBLE",
+                    description: 'El bridge local no respondió. Usa "Navegador / PDF".',
+                });
+            } else {
+                toast({ variant: "destructive", title: "IMPRESIÓN DIRECTA", description: msg || "No se pudo imprimir." });
+            }
+        }
+    }, [sale, toast]);
 
     if (!sale) return null;
 
@@ -352,14 +392,33 @@ export default function SaleDetailModal({
                             >
                                 ENVIAR POR WHATSAPP
                             </Button>
+                            {/* REIMPRIMIR: dos acciones explícitas. El bridge
+                                queda habilitado SOLO si hay bridge local; sin
+                                él, el botón se desactiva en vez de "fingir"
+                                impresión directa. "Navegador / PDF" siempre
+                                funciona. */}
+                            <Button
+                                variant="flat"
+                                aria-label="Reimprimir factura con bridge local sin diálogo"
+                                isDisabled={!bridgeAvailable}
+                                className={`h-12 flex-1 rounded-2xl font-bold uppercase text-[11px] tracking-wider ${
+                                    bridgeAvailable
+                                        ? "bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-600/20"
+                                        : "bg-zinc-200 dark:bg-zinc-800 text-zinc-400 dark:text-zinc-500 cursor-not-allowed"
+                                }`}
+                                startContent={<Printer size={18} />}
+                                onPress={handlePrintBridge}
+                            >
+                                REIMPRIMIR (BRIDGE)
+                            </Button>
                             <Button
                                 color="primary"
-                                aria-label="Imprimir factura en impresora térmica"
+                                aria-label="Reimprimir factura por navegador o PDF"
                                 className="h-12 flex-1 rounded-2xl font-bold uppercase text-[11px] bg-indigo-600 hover:bg-indigo-500 text-white shadow-lg shadow-indigo-600/20 tracking-wider"
                                 startContent={<Printer size={18} />}
                                 onPress={handlePrint}
                             >
-                                IMPRIMIR FACTURA
+                                REIMPRIMIR (NAVEGADOR / PDF)
                             </Button>
                         </ModalFooter>
                     </>

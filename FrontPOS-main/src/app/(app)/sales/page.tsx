@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import {
     Button, Input, Pagination, Spinner
@@ -14,6 +14,8 @@ import { Sale } from '@/lib/definitions';
 import { useApiWithPagination, useApi } from '@/hooks/use-api';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { useAuth } from '@/lib/auth';
+import { getPaymentDescription } from '@/lib/payment-helpers';
+import { printThermalTicket, saleToTicket } from '@/lib/thermal-ticket';
 
 // COMPONENTES MODULARIADOS
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
@@ -100,6 +102,22 @@ export default function SalesHistoryPage() {
     // que la caja. Antes aquí había un `handlePrint = () => window.print()`
     // que descargaba el DOM completo del POS a la impresora y salía
     // descuadrado; se eliminó porque el modal ya no lo necesita.
+    //
+    // ACTUALIZACIÓN: ahora cada fila expone un botón "Reimprimir factura"
+    // explícito. Esta función es el handler único que dispara la misma
+    // plantilla térmica desde el botón de fila, para que el cajero no tenga
+    // que abrir el modal cuando sólo quiere reimprimir.
+    const handleReprint = useCallback((sale: Sale) => {
+        try {
+            printThermalTicket(saleToTicket(sale, getPaymentDescription(sale)));
+        } catch (err) {
+            toast({
+                variant: "destructive",
+                title: "NO SE PUDO REIMPRIMIR",
+                description: err instanceof Error ? err.message : "Error desconocido al reimprimir el ticket.",
+            });
+        }
+    }, [toast]);
 
     // Debounce busqueda
     useEffect(() => {
@@ -195,6 +213,7 @@ export default function SalesHistoryPage() {
                         onOpenEdit={(s) => { setSelectedSale(s); setIsEditOpen(true); }}
                         onOpenAddItems={handleAddItems}
                         onOpenDelete={(s) => { setSelectedSale(s); setIsDeleteOpen(true); }}
+                        onOpenReprint={handleReprint}
                     />
 
                     {/* Footer Paginacion - RESTAURACION CRITICA */}

@@ -40,10 +40,22 @@
 
 import {
     PRINTING_CONFIG_STORAGE_KEY,
+    RECEIPT_DELIVERY_MODES,
     loadPrintingConfig,
     receiptWidthKey,
+    sanitizePrintingConfig,
     type PrintingConfig,
 } from "./printing-config.mjs";
+
+import { hasPosBridgePrint } from "./pos-bridge";
+
+
+import {
+    MIN_THERMAL_PAGE_HEIGHT_MM,
+    buildThermalPageRule,
+    resolveThermalPageHeightMm,
+    resolveThermalWidthMm,
+} from "./thermal-page-size.mjs";
 
 import {
     STORE,
@@ -101,16 +113,24 @@ function resolveStoreFromConfig(cfg: PrintingConfig): Partial<StoreHeader> | und
     };
 }
 
-/** CSS de impresión para rollo térmico. */
+/**
+ * CSS de contenido para rollo térmico; @page se inyecta tras medir.
+ *
+ * `pageWidthMm` → ancho físico (lo que mide la cuchilla/papel; va a @page y a
+ * `html/body`). `printableWidthMm` → ancho real imprimible (lo que llega al
+ * cabezal); se usa para acotar el `<pre>` y dejar un margen físico igual al
+ * borde no-imprimible. Para los presets históricos (80/58/CUSTOM) ambos
+ * valores coinciden, así la salida visual no cambia.
+ */
 function ticketCSS(
     width: TicketWidth,
-    customWidthMm?: number,
+    pageWidthMm: number,
+    printableWidthMm: number,
     fontSizePx?: number,
     cut?: TicketCutMode,
 ): string {
-    const widthValue = customWidthMm && Number.isFinite(customWidthMm) && customWidthMm > 0
-        ? `${Math.round(customWidthMm)}mm`
-        : width;
+    const widthValue = `${pageWidthMm}mm`;
+    const printableWidthValue = `${printableWidthMm}mm`;
     const defaultFont = width === "58mm" ? "10px" : "11.5px";
     const fontSize = fontSizePx && Number.isFinite(fontSizePx) && fontSizePx >= 7 && fontSizePx <= 20
         ? `${fontSizePx}px`
@@ -126,12 +146,16 @@ function ticketCSS(
             ? `pre { padding-bottom: 10mm; }`
             : "";
     return `
-        @page { size: ${widthValue} auto; margin: 0; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         html, body {
             width: ${widthValue};
             background: #fff;
             color: #000;
+        }
+        body {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
         pre {
             font-family: "Courier New", Consolas, monospace;
@@ -140,12 +164,16 @@ function ticketCSS(
             font-weight: 700;           /* alto contraste en térmica */
             white-space: pre;
             padding: 2mm 1mm 6mm 1mm;   /* margen inferior para el corte */
+            width: ${printableWidthValue};
+            max-width: ${printableWidthValue};
             -webkit-font-smoothing: none;
         }
         .ticket-logo {
             display: flex;
             justify-content: center;
             padding: 2mm 1mm 1mm 1mm;
+            width: ${printableWidthValue};
+            max-width: ${printableWidthValue};
         }
         .ticket-logo img {
             max-width: 90%;
@@ -157,6 +185,26 @@ function ticketCSS(
             html, body { width: ${widthValue}; }
         }
     `;
+}
+
+/**
+ * Altura renderizada real del ticket en CSS px. El iframe mide el contenido
+ * ya maquetado (incluido logo y padding) y luego convierte esa cifra a mm.
+ * No usamos una altura fija: tickets cortos y largos producen páginas del
+ * largo correcto sin volver a caer al tamaño Letter del driver.
+ */
+function renderedTicketHeightPx(doc: Document): number {
+    const body = doc.body;
+    const root = doc.documentElement;
+    const pre = doc.querySelector("pre");
+    return Math.max(
+        body?.scrollHeight ?? 0,
+        body?.offsetHeight ?? 0,
+        body?.getBoundingClientRect().height ?? 0,
+        root?.scrollHeight ?? 0,
+        pre?.scrollHeight ?? 0,
+        pre?.getBoundingClientRect().height ?? 0,
+    );
 }
 
 /**
@@ -193,6 +241,26 @@ function logoHtmlOrEmpty(options: TicketPrintOptions, data: TicketData): string 
 }
 
 /**
+ * Resuelve el ancho imprimible real en mm. Backward-compat: cuando la config
+ * persistida no trae `printableWidthMm` o cuando iguala a `widthMm`, se
+ * devuelve `pageWidthMm` sin cambio — por eso los presets históricos (80/58
+ * y CUSTOM "normal") imprimen idéntico a antes. El preset `JAL_838L` fija
+ * 76mm imprimibles con 82mm físicos.
+ *
+ * El resultado NUNCA excede `pageWidthMm`: si por alguna razón se cuela un
+ * valor fuera de rango lo capamos aquí (segunda línea de defensa; sanitize
+ * ya cumple la primera).
+ */
+function resolvePrintableWidthMm(persisted: PrintingConfig | null, pageWidthMm: number): number {
+    if (!persisted) return pageWidthMm;
+    const raw = persisted.receipt.printableWidthMm;
+    const n = typeof raw === "number" && Number.isFinite(raw) ? raw : pageWidthMm;
+    if (n <= 0) return pageWidthMm;
+    if (n > pageWidthMm) return pageWidthMm;
+    return n;
+}
+
+/**
  * printThermalTicket imprime el ticket en un iframe oculto. No abre
  * ventanas nuevas (los bloqueadores de pop-ups las matan) y no toca el
  * DOM visible de la app.
@@ -215,6 +283,12 @@ export function printThermalTicket(
     const customWidthMm = persisted && persisted.receipt.paper === "CUSTOM"
         ? persisted.receipt.widthMm
         : undefined;
+    const pageWidthMm = resolveThermalWidthMm(effectiveWidth, customWidthMm);
+    // Ancho imprimible real. Backward-compat: cuando no hay config persistida
+    // o cuando el preset es 58/80/CUSTOM "normal", `printableWidthMm === pageWidthMm`
+    // y la salida visual no cambia. Sólo el preset JAL_838L (82mm físico /
+    // 76mm imprimible) produce una diferencia real.
+    const printableWidthMm = resolvePrintableWidthMm(persisted, pageWidthMm);
 
     const mergedOptions = composeEffectiveOptions(options, persisted);
 
@@ -243,14 +317,25 @@ export function printThermalTicket(
     doc.write(
         `<!DOCTYPE html><html><head><meta charset="utf-8">` +
         `<title>Ticket ${titleSafe}</title>` +
-        `<style>${ticketCSS(effectiveWidth, customWidthMm, mergedOptions.fontSizePx, mergedOptions.cut)}</style></head>` +
+        `<style id="thermal-page-size">${buildThermalPageRule(pageWidthMm, MIN_THERMAL_PAGE_HEIGHT_MM)}</style>` +
+        `<style>${ticketCSS(effectiveWidth, pageWidthMm, printableWidthMm, mergedOptions.fontSizePx, mergedOptions.cut)}</style></head>` +
         `<body${cutAttr}>${logoHtml}<pre>${escapedText}</pre></body></html>`,
     );
     doc.close();
 
-    // Se imprime tras el load para que la fuente monoespaciada ya esté
-    // aplicada; si no, la primera impresión sale descuadrada.
+    // Se imprime tras el load para que logo y tipografía ya estén maquetados.
+    // Antes de abrir el diálogo convertimos la altura real CSS px → mm y
+    // reemplazamos la regla @page inicial. Así Chromium recibe dos longitudes
+    // válidas (`80mm 123.4mm`, por ejemplo) y no cae a Letter.
     const fire = () => {
+        const pageStyle = doc.getElementById("thermal-page-size");
+        const renderedHeightPx = renderedTicketHeightPx(doc);
+        const pageHeightMm = resolveThermalPageHeightMm(renderedHeightPx);
+        if (pageStyle) {
+            pageStyle.textContent = buildThermalPageRule(pageWidthMm, pageHeightMm);
+            // Fuerza el recálculo de estilo antes de invocar el diálogo.
+            void doc.body.offsetHeight;
+        }
         try {
             iframe.contentWindow?.focus();
             iframe.contentWindow?.print();
@@ -263,6 +348,204 @@ export function printThermalTicket(
     };
     if (iframe.contentWindow?.document.readyState === "complete") fire();
     else iframe.onload = fire;
+}
+
+// =============================================================
+// Impresión directa por bridge local (sin diálogo)
+// =============================================================
+//
+// Cuando el admin configuró `receipt.deliveryMode = "bridge"` y el navegador
+// expone `window.posBridge.print`, el POS debe entregar el recibo al bridge
+// SIN abrir el diálogo del navegador. Esta ruta es honesta: NUNCA cae
+// silenciosamente a `iframe.print()` si el bridge falta o falla — el
+// consumidor recibe el error y decide (toast accionable + botón manual
+// de "Imprimir por navegador/PDF").
+//
+// El payload del bridge enriquece el texto del ticket con la configuración
+// sanitizada: así el bridge toma decisiones físicas (puerto, protocolo,
+// cutter) sin tener que leer LocalStorage por su cuenta.
+
+/**
+ * Re-export público del helper centralizado de bridge. Mantener aquí para
+ * que los consumidores sigan pudiendo importar todo desde
+ * `@/lib/thermal-ticket` sin referenciar un segundo módulo.
+ */
+export { hasPosBridgePrint };
+
+/**
+ * Payload del bridge para recibos térmicos. Shape estable que puede evolucionar
+ * añadiendo campos opcionales SIN romper al bridge: ningún consumidor del
+ * frontend lo serializa a storage.
+ */
+export interface ThermalBridgePayload {
+    readonly type: "thermal-receipt";
+    readonly ticketNumber: string | number;
+    /** Texto monoespaciado ya compuesto por `buildTicketText`. */
+    readonly ticketText: string;
+    /** Datos crudos del ticket por si el bridge quiere renderizar en vez de reusar el texto. */
+    readonly ticket: TicketData;
+    /** Preset de ancho tipográfico (58mm/80mm) usado al componer el texto. */
+    readonly width: TicketWidth;
+    /** Ancho físico resuelto en mm (incluye preset CUSTOM y JAL_838L=82mm). */
+    readonly widthMm: number;
+    /**
+     * Ancho imprimible real en mm. Para los presets históricos (80/58) y
+     * CUSTOM "normal" coincide con `widthMm`. Para el preset Jaltech JAL-838L
+     * es 76mm (contra 82mm físicos). El bridge debe usar este valor para
+     * centrar la impresión y respetar el margen físico muerto del cabezal.
+     */
+    readonly printableWidthMm: number;
+    /** Columnas monoespacio con las que se compuso el texto. */
+    readonly columns: number;
+    /** Modo de corte textual que llegó al compositor. */
+    readonly cut?: TicketCutMode;
+    /** Rama `connection` sanitizada de la config persistida. */
+    readonly connection: PrintingConfig["connection"];
+    /** Rama `receipt` sanitizada: paper/columns/header/footer/content/cut/printableWidthMm. */
+    readonly receipt: PrintingConfig["receipt"];
+    /**
+     * Rama `drawer` sanitizada (comando ESC/POS literal + event + flag
+     * openDrawerOnSale). Opcional por retrocompatibilidad: bridges viejos
+     * ignoran el campo si no lo reconocen.
+     */
+    readonly drawer?: PrintingConfig["drawer"];
+    /**
+     * Hint explícito al bridge: `true` cuando el payload lo dispara una
+     * venta recién confirmada y la config tiene `drawer.openDrawerOnSale`
+     * activo. El bridge, al recibirlo, debe:
+     *   - Honrar `drawer.event === BEFORE_PRINT` abriendo ANTES de la impresión.
+     *   - Honrar `drawer.event === AFTER_PRINT` abriendo DESPUÉS.
+     *   - Dejar MANUAL sin abrir (el usuario pulsa el botón explícitamente).
+     * Reimpresión y manual nunca envían este flag en `true`.
+     */
+    readonly openDrawerOnSale?: boolean;
+    /**
+     * Modo activo del equipo. Permite al bridge priorizar la impresora
+     * cuando hay varias instaladas (p.ej. una térmica para recibos y una
+     * TSPL dedicada a etiquetas).
+     */
+    readonly activeMode?: PrintingConfig["activeMode"];
+}
+
+/**
+ * Error sentinel que el consumidor debe inspeccionar para decidir si cae
+ * al fallback de navegador o si muestra toast accionable. Nunca enmascarar
+ * esta falla: romper el contrato "directo = sin diálogo" fue el bug raíz.
+ */
+export const DIRECT_PRINT_UNAVAILABLE = "DIRECT_PRINT_UNAVAILABLE";
+
+/**
+ * printThermalTicketDirect delega la impresión del recibo al bridge local
+ * SIN abrir el diálogo del navegador. Rechaza con error sentinel
+ * `DIRECT_PRINT_UNAVAILABLE` cuando el bridge no está (o el usuario tiene
+ * configurado `deliveryMode: "bridge"` pero no instaló el bridge). Es
+ * responsabilidad del llamador presentar la acción manual separada
+ * (navegador/PDF) tras el fallo.
+ */
+export async function printThermalTicketDirect(
+    data: TicketData,
+    width?: TicketWidth,
+    options?: TicketPrintOptions,
+): Promise<void> {
+    if (typeof window === "undefined") {
+        throw new Error(DIRECT_PRINT_UNAVAILABLE);
+    }
+    if (!hasPosBridgePrint()) {
+        throw new Error(DIRECT_PRINT_UNAVAILABLE);
+    }
+    const bridge = window.posBridge;
+    if (!bridge || typeof bridge.print !== "function") {
+        throw new Error(DIRECT_PRINT_UNAVAILABLE);
+    }
+
+    const persisted = readPersistedConfig();
+    const sanitized = persisted ? sanitizePrintingConfig(persisted) : sanitizePrintingConfig({});
+    const effectiveWidth: TicketWidth = width || (persisted ? receiptWidthKey(persisted) : "58mm");
+    const customWidthMm = persisted && persisted.receipt.paper === "CUSTOM"
+        ? persisted.receipt.widthMm
+        : undefined;
+    const pageWidthMm = resolveThermalWidthMm(effectiveWidth, customWidthMm);
+    // Ancho imprimible real. Inline (en vez de llamar a `resolvePrintableWidthMm`)
+    // para preservar la lista acotada de dependencias del harness dinámico
+    // de `tests/thermal-ticket-direct.test.mjs`. Backward-compat: cuando
+    // `printableWidthMm` iguala a `widthMm` el bridge recibe exactamente lo
+    // de siempre.
+    const sanitizedPrintable = typeof sanitized.receipt.printableWidthMm === "number"
+        && Number.isFinite(sanitized.receipt.printableWidthMm)
+        && sanitized.receipt.printableWidthMm > 0
+        && sanitized.receipt.printableWidthMm <= pageWidthMm
+        ? sanitized.receipt.printableWidthMm
+        : pageWidthMm;
+    const mergedOptions = composeEffectiveOptions(options, persisted);
+    const ticketText = buildTicketText(data, effectiveWidth, mergedOptions);
+
+    const payload: ThermalBridgePayload = {
+        type: "thermal-receipt",
+        ticketNumber: data.ticketNumber,
+        ticketText,
+        ticket: data,
+        width: effectiveWidth,
+        widthMm: pageWidthMm,
+        printableWidthMm: sanitizedPrintable,
+        columns: mergedOptions.columns ?? charsPerLine(effectiveWidth),
+        cut: mergedOptions.cut,
+        connection: sanitized.connection,
+        receipt: sanitized.receipt,
+        drawer: sanitized.drawer,
+        activeMode: sanitized.activeMode,
+        // Soporte para callers explícitos que necesiten un recibo ESC/POS
+        // con pulso embebido. El flujo UI de venta NO lo activa: usa
+        // `kickDrawer` audit-first como única ruta física. Reimpresión y
+        // botones manuales también lo omiten.
+        openDrawerOnSale: options?.openDrawerOnSale === true,
+    };
+
+    // Un rechazo del bridge se propaga tal cual: el llamador decide si
+    // mostrar el toast accionable con la acción manual (navegador/PDF).
+    // NUNCA cambiamos silenciosamente al iframe: eso rompería el contrato.
+    try {
+        await bridge.print(payload);
+    } catch (err) {
+        // Preservamos el mensaje original para debugging pero marcamos el
+        // sentinel al principio para que el consumidor pueda detectarlo con
+        // `err.message.startsWith(DIRECT_PRINT_UNAVAILABLE)`.
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`${DIRECT_PRINT_UNAVAILABLE}: ${detail}`);
+    }
+}
+
+/**
+ * printThermalTicketAuto consulta `receipt.deliveryMode` de la config
+ * persistida y despacha al camino correcto:
+ *
+ *   - `bridge` + bridge disponible → `printThermalTicketDirect` (sin diálogo).
+ *   - `bridge` + bridge ausente     → `throw DIRECT_PRINT_UNAVAILABLE` para
+ *     que el consumidor presente una acción manual explícita. NUNCA abrir
+ *     el diálogo automáticamente: eso enmascara la configuración elegida
+ *     por el admin.
+ *   - `browser` (o cualquier otro)  → `printThermalTicket` (diálogo navegador).
+ *
+ * Es la orquestación que la caja (`UniversalPaymentModal`) y el historial
+ * (`SaleDetailModal`, `SalesTable`) usan como punto de entrada único.
+ */
+export async function printThermalTicketAuto(
+    data: TicketData,
+    width?: TicketWidth,
+    options?: TicketPrintOptions,
+): Promise<"bridge" | "browser"> {
+    const persisted = readPersistedConfig();
+    const mode = persisted?.receipt.deliveryMode === RECEIPT_DELIVERY_MODES.BRIDGE
+        ? RECEIPT_DELIVERY_MODES.BRIDGE
+        : RECEIPT_DELIVERY_MODES.BROWSER;
+
+    if (mode === RECEIPT_DELIVERY_MODES.BRIDGE) {
+        // Si el admin eligió bridge, EXIGIMOS bridge. No fingimos silencio.
+        // El consumidor atrapa el throw y muestra el fallback manual.
+        await printThermalTicketDirect(data, width, options);
+        return "bridge";
+    }
+    printThermalTicket(data, width, options);
+    return "browser";
 }
 
 // =============================================================
