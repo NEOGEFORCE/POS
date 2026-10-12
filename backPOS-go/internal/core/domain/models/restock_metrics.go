@@ -304,6 +304,27 @@ type RestockSuggestionResponse struct {
 	AvgDailySales14d float64 `json:"avgDailySales14d"`
 	DaysZeroStock14d int     `json:"daysZeroStock14d"`
 
+	// ========================================================================
+	// EMPAQUE HABITUAL APRENDIDO (regla 2026-10)
+	// ========================================================================
+	// HabitualOrderQty expone al frontend el tamaño del empaque aprendido
+	// (packSize) para que la UI pueda escribir "pedir UNA caja de 12" en
+	// vez de un numero crudo. Es 0 cuando el producto no tiene empaque
+	// aprendido (LearnPackSize sobre stock_movements reason=RECEPTION dio
+	// 0 por falta de evidencia o por tratarse de un pesable).
+	//
+	// HabitualReorderThreshold expone el umbral del 20% del empaque
+	// (ceil(packSize*PackReorderRatio)) que dispara la sugerencia habitual.
+	// El umbral REAL del disparador puede ser mayor (ver
+	// PackReorderThreshold, que toma el max con 25% del minimo), pero el
+	// numero expuesto se queda con la pata del habitual porque la UI lo
+	// usa para explicar la logica del empaque, no la del minimo.
+	//
+	// Ambos campos usan omitempty porque la mayoria de productos no tienen
+	// empaque aprendido y no vale la pena inflar la respuesta con ceros.
+	HabitualOrderQty         float64 `json:"habitualOrderQty,omitempty"`
+	HabitualReorderThreshold float64 `json:"habitualReorderThreshold,omitempty"`
+
 	// Fechas derivadas de los DIAS DE LA SEMANA. Reemplazan el "hoy + N días"
 	// que antes salía de visit_frequency_days y quedaba demasiado lejos.
 	//

@@ -204,11 +204,12 @@ test("los consumidores esperados importan Switch desde '@/components/ui/switch'"
 
 test("conteo exacto de usos del Switch por consumidor (impide regresiones silenciosas)", async () => {
   const expectedUsageCounts = new Map([
-    // 12 switches tras `frontend-printing-v2`:
-    //   - 10 originales (cajón, logo, impuestos, QR, 4 extras, visible/emphasized del nombre/precio)
-    //   - +1 openDrawerOnSale (abrir cajón automáticamente al completar venta)
-    //   - +1 barcode humanReadable (dígitos legibles bajo el barcode)
-    ["src/app/(app)/labels/config/page.tsx", 12],
+    // 10 switches tras ocultar la configuración visible del cajón:
+    //   - logo, impuestos, QR (3 del recibo)
+    //   - visible / emphasized del precio (2) + visible del nombre (1)
+    //   - 3 extras (fecha, código interno, categoría)
+    //   - barcode humanReadable (dígitos legibles bajo el barcode)
+    ["src/app/(app)/labels/config/page.tsx", 10],
     ["src/app/(app)/products/components/ProductFormModal.tsx", 2],
     ["src/app/(app)/inventory/orders/page.tsx", 1],
     ["src/components/shared/UniversalPaymentModal.tsx", 1],
@@ -274,7 +275,6 @@ test("ProductFormModal: los switches de Pesable y Pack preservan sus setters", a
 test("labels/config: los switches de recibo/etiquetas siguen controlando las claves correctas del store", async () => {
   const src = await readSrc("src/app/(app)/labels/config/page.tsx");
   const keys = [
-    "config.drawer.enabled",
     "config.receipt.content.showLogo",
     "config.receipt.content.showTaxes",
     "config.receipt.content.showValidationQR",

@@ -140,14 +140,14 @@ export const parseCOP = (val: string): number => {
  * Lo que sí es propio de estas pantallas y se conserva a propósito:
  *
  *   - stock === -1 es el centinela de "no se controla existencia" → OPTIMAL.
- *   - Sin mínimo configurado (minStock <= 0), un stock en 0 se considera
- *     INTENCIÓN del dueño (producto descontinuado que no quiere reponer) y
- *     se pinta OPTIMAL, no rojo. Solo el stock negativo, que es un dato
- *     imposible, sale CRITICAL.
- *     Ojo: acá divergimos a propósito de getStockHealth, que en ese caso
- *     devuelve CRITICO/Agotado. La pantalla de pedidos SÍ quiere ver los
- *     agotados sin mínimo; el catálogo y el dashboard NO, porque son miles
- *     de productos descontinuados y ahogarían la vista.
+ *   - Sin mínimo configurado (minStock <= 0) SIEMPRE devuelve OPTIMAL
+ *     (neutral), independiente del stock. Esta API triestado
+ *     (CRITICAL/WARNING/OPTIMAL) no tiene un valor para "sin mínimo"; la
+ *     elección correcta en catálogo y dashboard es tratarlo como neutral
+ *     (nunca rojo), porque un stock 0 con mínimo 0 es una decisión del
+ *     dueño (descontinuado), no una alerta.
+ *     Regla dura (2026-10-08): JAMÁS devolver CRITICAL cuando minStock <= 0,
+ *     ni siquiera con stock negativo. Esto se audita por test.
  */
 export const calculateStockHealth = (stock: number, minStock: number): 'CRITICAL' | 'WARNING' | 'OPTIMAL' => {
     const s = Number(stock) || 0;
@@ -155,9 +155,14 @@ export const calculateStockHealth = (stock: number, minStock: number): 'CRITICAL
 
     if (s === -1) return 'OPTIMAL';
 
-    // Sin mínimo configurado: ver el bloque de arriba. Divergencia deliberada.
+    // Sin mínimo configurado: SIEMPRE neutral (OPTIMAL), incluso con
+    // stock 0 o negativo. En la API triestado no hay un valor dedicado
+    // para "sin mínimo", y pintar en rojo un producto que el dueño dejó
+    // sin configurar genera falsas alertas en catálogo/dashboard. La
+    // pantalla de pedidos usa el helper canónico `getStockHealth` que sí
+    // distingue UNSET.
     if (m <= 0) {
-        return s < 0 ? 'CRITICAL' : 'OPTIMAL';
+        return 'OPTIMAL';
     }
 
     // Con mínimo configurado, mandan los cortes canónicos del dueño.

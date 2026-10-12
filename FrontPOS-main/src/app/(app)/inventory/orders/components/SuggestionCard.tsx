@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, DollarSign, Pencil, Sparkles, Trash2, Truck, Wand2, X } from "lucide-react";
+import { BookOpenCheck, Check, DollarSign, Pencil, Sparkles, Trash2, Truck, Wand2, X } from "lucide-react";
 import { Button } from "@heroui/react";
 
 import { formatPrice } from "@/lib/utils";
 import { STOCK_HEALTH, getCoverageDays, getStockHealth } from "@/lib/stock-health.mjs";
 import { LEAD_TIME_SOURCE, describeLeadTimeSource } from "@/lib/order-scheduling.mjs";
 import { isAlreadyOrdered } from "@/lib/restock-ordering.mjs";
+import { describeHabitualOrder, getHabitualOrderMetadata } from "@/lib/habitual-order.mjs";
 
 import type { ABCCategory, RestockSuggestion } from "../hooks/useSmartRestock";
 
@@ -545,6 +546,51 @@ export function SuggestionCard({
             </span>
           </div>
         )}
+
+        {/*
+          APRENDIZAJE DE CANTIDAD HABITUAL (contrato backend 2026-10).
+          -----------------------------------------------------------
+          Dos campos opcionales — habitualOrderQty, habitualReorderThreshold
+          — vienen del motor de pedidos. Mostramos una explicación compacta
+          lejos del botón de "Sugerencia IA" para que el operador no
+          confunda este aprendizaje INFORMATIVO con la cantidad accionable
+          (`suggestedOrderQty`), que sigue siendo la autoridad.
+
+          Si el backend no manda estos campos (contrato viejo) o solo manda
+          uno vacío, el helper devuelve null y este bloque desaparece sin
+          dejar hueco. "Degrada limpio" según la regla del dueño.
+        */}
+        {(() => {
+          const habitualMetadata = getHabitualOrderMetadata(item);
+          const habitualText = describeHabitualOrder(item);
+          if (!habitualMetadata || !habitualText) return null;
+          const { habitualOrderQty, habitualReorderThreshold } = habitualMetadata;
+          const ariaBits: string[] = [];
+          if (habitualOrderQty !== null) {
+            ariaBits.push(`cantidad habitual ${habitualOrderQty}`);
+          }
+          if (habitualReorderThreshold !== null) {
+            ariaBits.push(`punto de reposición aproximado ${habitualReorderThreshold}`);
+          }
+          return (
+            <div
+              className="flex max-w-2xl items-start gap-2 rounded-xl border border-sky-500/30 bg-sky-500/5 p-2 text-[11px] text-sky-800 dark:text-sky-200"
+              role="note"
+              aria-label={`Aprendizaje de recepciones para ${item.productName}: ${ariaBits.join(" y ")}`}
+            >
+              <BookOpenCheck size={14} className="mt-0.5 shrink-0" aria-hidden="true" />
+              <span>
+                <strong className="font-black uppercase tracking-wide text-[10px]">
+                  Aprendizaje de recepciones ·
+                </strong>{" "}
+                {habitualText}.{" "}
+                <span className="opacity-70">
+                  Informativo: la cantidad a pedir sigue siendo la Sugerencia IA de arriba.
+                </span>
+              </span>
+            </div>
+          );
+        })()}
 
         <p className="text-[10px] text-zinc-400 dark:text-zinc-500">{item.productId}</p>
       </div>

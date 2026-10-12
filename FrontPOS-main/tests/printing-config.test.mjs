@@ -6,7 +6,9 @@ import {
   BOUNDS,
   CUT_MODES,
   DEFAULT_DRAWER_COMMAND,
+  DEFAULT_GONDOLA_FORMAT,
   DRAWER_EVENTS,
+  GONDOLA_FORMATS,
   INTERFACE_PROTOCOLS,
   INTERFACES,
   LABEL_SIZE_DIMENSIONS,
@@ -19,6 +21,7 @@ import {
   RECEIPT_DELIVERY_MODES,
   SENSOR_TYPES,
   SPOOLERS,
+  applyGondolaFormatPreset,
   applyLabelSizePreset,
   applyReceiptPaperPreset,
   clearPrintingConfig,
@@ -567,4 +570,112 @@ test("sanitizePrintingConfig: layout canónico conserva X/Y/fontScale y limita f
   assert.deepEqual(config.labels.layout.name, { xMm: 3, yMm: 4, font: "8", fontScale: 1.5 });
   assert.deepEqual(config.labels.layout.price, { xMm: 6, yMm: 10, font: "4", fontScale: 3 });
   assert.deepEqual(config.labels.layout.barcode, { xMm: 2.5, yMm: 17, fontScale: 1 });
+});
+
+
+// ============================================================================
+// Rama góndola: formato de hoja persistido + preset + sanitize
+// ============================================================================
+
+test("GONDOLA_FORMATS: expone LETTER y LEGAL con default LETTER", () => {
+  assert.equal(GONDOLA_FORMATS.LETTER, "LETTER");
+  assert.equal(GONDOLA_FORMATS.LEGAL, "LEGAL");
+  assert.equal(DEFAULT_GONDOLA_FORMAT, "LETTER");
+  assert.deepEqual([...Object.values(GONDOLA_FORMATS)].sort(), ["LEGAL", "LETTER"]);
+});
+
+test("createDefaultPrintingConfig: incluye gondola.format = LETTER", () => {
+  const def = createDefaultPrintingConfig();
+  assert.ok(def.gondola, "la rama gondola debe existir");
+  assert.equal(def.gondola.format, "LETTER",
+    "El default debe ser Carta (Letter): no exige opt-in del admin.");
+});
+
+test("sanitizePrintingConfig: gondola.format acepta LETTER/LEGAL y alias en español", () => {
+  const letter = sanitizePrintingConfig({ gondola: { format: "LETTER" } });
+  assert.equal(letter.gondola.format, "LETTER");
+  const letterLow = sanitizePrintingConfig({ gondola: { format: "letter" } });
+  assert.equal(letterLow.gondola.format, "LETTER", "case-insensitive");
+  const carta = sanitizePrintingConfig({ gondola: { format: "CARTA" } });
+  assert.equal(carta.gondola.format, "LETTER", "alias español");
+  const legal = sanitizePrintingConfig({ gondola: { format: "LEGAL" } });
+  assert.equal(legal.gondola.format, "LEGAL");
+  const oficio = sanitizePrintingConfig({ gondola: { format: "oficio" } });
+  assert.equal(oficio.gondola.format, "LEGAL", "alias español");
+});
+
+test("sanitizePrintingConfig: gondola.format desconocido/basura cae al default LETTER", () => {
+  for (const bad of [null, undefined, "", "A4", "LEGAL-OVERSIZE", 42, { nope: true }]) {
+    const c = sanitizePrintingConfig({ gondola: { format: bad } });
+    assert.equal(c.gondola.format, "LETTER",
+      `El valor ${JSON.stringify(bad)} debe caer a LETTER (default seguro).`);
+  }
+});
+
+test("sanitizePrintingConfig: gondola se preserva en roundtrip JSON (migrate)", () => {
+  const original = sanitizePrintingConfig({ gondola: { format: "LEGAL" } });
+  const round = migratePrintingConfig(JSON.stringify(original));
+  assert.equal(round.gondola.format, "LEGAL");
+});
+
+test("sanitize es idempotente para gondola: sanitize(sanitize(x)) === sanitize(x)", () => {
+  const once = sanitizePrintingConfig({ gondola: { format: "LEGAL" } });
+  const twice = sanitizePrintingConfig(once);
+  assert.deepEqual(twice, once);
+});
+
+test("applyGondolaFormatPreset: LETTER ↔ LEGAL idempotente y sin tocar otras ramas", () => {
+  const base = sanitizePrintingConfig({
+    connection: { interface: "NETWORK", protocol: "escpos", network: { host: "10.0.0.5", port: 9100 } },
+    drawer: { enabled: true, event: "AFTER_PRINT" },
+    receipt: { paper: "58", widthMm: 58 },
+    labels: { sizePreset: "40x30" },
+    gondola: { format: "LETTER" },
+  });
+
+  const toLegal = applyGondolaFormatPreset(base, "LEGAL");
+  assert.equal(toLegal.gondola.format, "LEGAL");
+  // El resto queda intacto:
+  assert.equal(toLegal.connection.network.host, "10.0.0.5");
+  assert.equal(toLegal.drawer.enabled, true);
+  assert.equal(toLegal.drawer.event, "AFTER_PRINT");
+  assert.equal(toLegal.receipt.paper, "58");
+  assert.equal(toLegal.labels.widthMm, 40);
+  assert.equal(toLegal.labels.heightMm, 30);
+
+  const toLetter = applyGondolaFormatPreset(toLegal, "LETTER");
+  assert.equal(toLetter.gondola.format, "LETTER");
+
+  // Un valor desconocido deja la rama intacta.
+  const noop = applyGondolaFormatPreset(toLetter, "A4");
+  assert.equal(noop.gondola.format, "LETTER");
+});
+
+test("applyGondolaFormatPreset: acepta alias en español", () => {
+  const base = createDefaultPrintingConfig();
+  const legal = applyGondolaFormatPreset(base, "OFICIO");
+  assert.equal(legal.gondola.format, "LEGAL");
+  const letter = applyGondolaFormatPreset(legal, "CARTA");
+  assert.equal(letter.gondola.format, "LETTER");
+});
+
+test("loadPrintingConfig: config sin rama gondola legacy sigue cargándose con el default", () => {
+  const store = mockStorage({
+    [PRINTING_CONFIG_STORAGE_KEY]: JSON.stringify({
+      version: 1,
+      connection: { interface: "SYSTEM" },
+      // sin gondola → sanitize debe inyectar el default
+    }),
+  });
+  const cfg = loadPrintingConfig(store);
+  assert.equal(cfg.gondola.format, "LETTER",
+    "Configuraciones previas sin rama gondola deben seguir cargando y recibir el default seguro.");
+});
+
+test("printingConfigsEqual: dos configs con gondola distinto son diferentes", () => {
+  const a = sanitizePrintingConfig({ gondola: { format: "LETTER" } });
+  const b = sanitizePrintingConfig({ gondola: { format: "LEGAL" } });
+  assert.equal(printingConfigsEqual(a, b), false);
+  const c = sanitizePrintingConfig({ gondola: { format: "LEGAL" } });
+  assert.equal(printingConfigsEqual(b, c), true);
 });

@@ -80,15 +80,28 @@ function normalizeBand(raw) {
  * mandar el backend en la respuesta v2; si no llega, se calcula localmente
  * con getStockHealth para cubrir contratos viejos.
  *
+ * REGLA DURA (2026-10-08): si minStock <= 0 SIEMPRE devolvemos UNSET,
+ * incluso si el backend mandó RED/YELLOW/GREEN. Un producto sin mínimo
+ * configurado nunca puede aparecer en rojo o crítico en el frontend:
+ * la clasificación se neutraliza para que no haya falsas alertas sobre
+ * productos que el dueño dejó deliberadamente sin mínimo. Este override
+ * se audita por test (ver tests/restock-ordering.test.mjs).
+ *
  * @param {object} item sugerencia
  * @returns {string} una de las constantes STOCK_HEALTH
  */
 export function resolveBand(item) {
   if (!item || typeof item !== "object") return STOCK_HEALTH.UNSET;
+  // Override hard: minStock <= 0 jamás puede clasificar como rojo/crítico
+  // ni amarillo, independientemente de lo que diga el backend.
+  const rawMin = Number(item.minStock);
+  if (!Number.isFinite(rawMin) || rawMin <= 0) {
+    return STOCK_HEALTH.UNSET;
+  }
   const fromBackend = normalizeBand(item.stockBand);
   if (fromBackend) return fromBackend;
   const stock = typeof item.liveStock === "number" ? item.liveStock : item.currentStock;
-  const health = getStockHealth(stock, item.minStock ?? 0);
+  const health = getStockHealth(stock, rawMin);
   return health.level;
 }
 

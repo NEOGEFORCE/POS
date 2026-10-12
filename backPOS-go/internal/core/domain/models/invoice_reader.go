@@ -1,4 +1,4 @@
-﻿package models
+package models
 
 import "time"
 
@@ -9,8 +9,8 @@ type SupplierProductAlias struct {
 	InvoiceName    string    `gorm:"not null" json:"invoiceName"`
 	ProductBarcode string    `gorm:"not null" json:"productBarcode"`
 	UsesCount      int       `gorm:"default:1" json:"usesCount"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 
 	Supplier *Supplier `gorm:"foreignKey:SupplierID" json:"supplier,omitempty"`
 }
@@ -110,43 +110,58 @@ type ExpectedTaxes struct {
 	ICUI bool `json:"icui"`
 }
 
-// ScannedItem represents a matched product from the invoice
+// ScannedItem represents a matched product from the invoice.
+//
+// PackHintUnits / RequiresPackConfirmation implementan la regla "siempre en
+// unidades individuales": si el nombre de la factura trae un multiplicador
+// explícito (`CAP*20`, `DP X 24`, `CAP×24UN`) el backend lo DETECTA pero NO
+// convierte Quantity/UnitPrice/CostUnit — es la UI la que debe confirmar
+// con el operador antes de multiplicar. Si se omiten (0/false), la línea no
+// trae pistas de empaque.
 type ScannedItem struct {
-	ProductID    uint    `json:"productId"`
-	Barcode      string  `json:"barcode"`
-	ProductName  string  `json:"productName"`
-	InvoiceName  string  `json:"invoiceName"`
-	Quantity     float64 `json:"quantity"`
-	LineType           string  `json:"lineType,omitempty"` // REGULAR | BONUS | RETURN
-	BonusQuantity      float64 `json:"bonus_quantity,omitempty"`
-	DiscountPercentage float64 `json:"discount_percentage,omitempty"`
-	CostUnit     float64 `json:"costUnit"`
-	CostoReal    float64 `json:"costoReal"`
-	PVPActual    float64 `json:"pvpActual"`
-	PVPSugerido  float64 `json:"pvpSugerido"`
-	MarginUsed   float64 `json:"marginUsed"`
-	MarginSource string  `json:"marginSource"`
-	IVA          float64 `json:"iva"`
-	ICUI         float64 `json:"icui"`
-	IBUA         float64 `json:"ibua"`
-	CurrentStock float64 `json:"currentStock"`
-	CurrentWAC   float64 `json:"currentWac"`
-	Confidence   float64 `json:"confidence"`
-	MatchType    string  `json:"matchType"` // "alias" | "similarity"
+	ProductID                uint    `json:"productId"`
+	Barcode                  string  `json:"barcode"`
+	ProductName              string  `json:"productName"`
+	InvoiceName              string  `json:"invoiceName"`
+	Quantity                 float64 `json:"quantity"`
+	LineType                 string  `json:"lineType,omitempty"` // REGULAR | BONUS | RETURN
+	BonusQuantity            float64 `json:"bonus_quantity,omitempty"`
+	DiscountPercentage       float64 `json:"discount_percentage,omitempty"`
+	PackHintUnits            int     `json:"packHintUnits,omitempty"`
+	RequiresPackConfirmation bool    `json:"requiresPackConfirmation,omitempty"`
+	CostUnit                 float64 `json:"costUnit"`
+	CostoReal                float64 `json:"costoReal"`
+	PVPActual                float64 `json:"pvpActual"`
+	PVPSugerido              float64 `json:"pvpSugerido"`
+	MarginUsed               float64 `json:"marginUsed"`
+	MarginSource             string  `json:"marginSource"`
+	IVA                      float64 `json:"iva"`
+	ICUI                     float64 `json:"icui"`
+	IBUA                     float64 `json:"ibua"`
+	CurrentStock             float64 `json:"currentStock"`
+	CurrentWAC               float64 `json:"currentWac"`
+	Confidence               float64 `json:"confidence"`
+	MatchType                string  `json:"matchType"` // "alias" | "similarity"
 }
 
-// UnmatchedItem represents a product from the invoice that could not be matched automatically
+// UnmatchedItem represents a product from the invoice that could not be matched automatically.
+//
+// Comparte el contrato de PackHintUnits / RequiresPackConfirmation con
+// ScannedItem: el detector corre en ambos flujos y la UI debe pedir
+// confirmación antes de convertir cantidades.
 type UnmatchedItem struct {
-	InvoiceName        string          `json:"invoiceName"`
-	Quantity           float64         `json:"quantity"`
-	LineType           string          `json:"lineType,omitempty"` // REGULAR | BONUS | RETURN
-	BonusQuantity      float64         `json:"bonus_quantity,omitempty"`
-	DiscountPercentage float64         `json:"discount_percentage,omitempty"`
-	UnitPrice          float64         `json:"unitPrice"`
-	IvaPercentage      float64         `json:"iva_percentage,omitempty"`
-	IbuaPercentage     float64         `json:"ibua_percentage,omitempty"`
-	IcuiPercentage     float64         `json:"icui_percentage,omitempty"`
-	Suggestions        []ProductSearch `json:"suggestions"`
+	InvoiceName              string          `json:"invoiceName"`
+	Quantity                 float64         `json:"quantity"`
+	LineType                 string          `json:"lineType,omitempty"` // REGULAR | BONUS | RETURN
+	BonusQuantity            float64         `json:"bonus_quantity,omitempty"`
+	DiscountPercentage       float64         `json:"discount_percentage,omitempty"`
+	PackHintUnits            int             `json:"packHintUnits,omitempty"`
+	RequiresPackConfirmation bool            `json:"requiresPackConfirmation,omitempty"`
+	UnitPrice                float64         `json:"unitPrice"`
+	IvaPercentage            float64         `json:"iva_percentage,omitempty"`
+	IbuaPercentage           float64         `json:"ibua_percentage,omitempty"`
+	IcuiPercentage           float64         `json:"icui_percentage,omitempty"`
+	Suggestions              []ProductSearch `json:"suggestions"`
 }
 
 // ProductSearch is a lightweight struct for returning suggestions

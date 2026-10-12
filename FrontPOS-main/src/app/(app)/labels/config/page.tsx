@@ -13,14 +13,18 @@
 //      al preset activo. Si existe `window.posBridge.printTestPage` o
 //      `posBridge.print({type:'test-page', config})` delega al bridge; sino,
 //      cae a `iframe.print()`.
-//   4. Botón "Probar cajón" que hace POST auditado a /cash-drawer/open con
-//      override admin, y acto seguido llama `posBridge.kickDrawer({...})`.
-//   5. Importa best-effort desde GET /labels/printers y GET /labels/sizes
+//   4. Importa best-effort desde GET /labels/printers y GET /labels/sizes
 //      (DB 016) cuando existan. Al guardar intenta POST al mismo endpoint
 //      como proyección: si el backend no tiene la migración, el guardado
 //      LocalStorage no falla.
 //
 // Toda la pantalla exige rol admin: usamos `isAdminUser` del helper central.
+//
+// La configuración visible del cajón (toggle, prueba y auditoría manual) se
+// retiró de esta pantalla. La rama JSON `drawer` sigue viva en el schema para
+// que `buildBridgeConfigPayload` + `posBridge.kickDrawer` sigan funcionando
+// desde callers internos (ej. autoapertura post-venta cuando una config
+// legacy la trae activa). Fallos del bridge en ese flujo son silenciosos.
 // =============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -45,9 +49,9 @@ import { Switch } from "@/components/ui/switch";
 import {
   AlertTriangle,
   CheckCircle2,
-  DoorOpen,
   Download,
   FilePenLine,
+  FileText,
   Printer,
   RotateCcw,
   Save,
@@ -69,7 +73,7 @@ import {
   BARCODE_SYMBOLOGIES,
   BOUNDS,
   CUT_MODES,
-  DRAWER_EVENTS,
+  GONDOLA_FORMATS,
   INTERFACES,
   INTERFACE_PROTOCOLS,
   JAL_838L_CONNECTION_MODES,
@@ -82,6 +86,7 @@ import {
   SENSOR_TYPES,
   SPOOLERS,
   TSPL_BUILTIN_FONTS,
+  applyGondolaFormatPreset,
   applyJaltechJAL838LPreset,
   applyLabelSizePreset,
   applyReceiptPaperPreset,
@@ -101,6 +106,7 @@ import {
   buildThermalPageRule,
   resolveThermalPageHeightMm,
 } from "@/lib/thermal-page-size.mjs";
+import { resolveGondolaLayout } from "@/lib/shelf-labels.mjs";
 import type {
   PrintingConfig,
   PrinterInterface,
@@ -110,10 +116,10 @@ import type {
   BarcodeSymbology,
   SensorType,
   CutMode,
-  DrawerEvent,
   ReceiptDeliveryMode,
   ActiveMode,
   BarcodeRotation,
+  GondolaFormat,
 } from "@/lib/printing-config.d.mts";
 
 // -----------------------------------------------------------------------------
@@ -141,7 +147,7 @@ interface SizeTemplateRow {
   columnsCount?: number;
 }
 
-type TabKey = "perfil" | "recibo" | "etiquetas";
+type TabKey = "perfil" | "recibo" | "etiquetas" | "gondola";
 
 // -----------------------------------------------------------------------------
 // Helpers de escape — nunca inyectamos strings del usuario sin escapar.
@@ -195,7 +201,6 @@ export default function LabelsConfigPage() {
   const [tab, setTab] = useState<TabKey>("perfil");
   const [submitting, setSubmitting] = useState(false);
   const [testing, setTesting] = useState(false);
-  const [drawerBusy, setDrawerBusy] = useState(false);
   const [hydrated, setHydrated] = useState(false);
 
   // Al montar, hidratamos desde LocalStorage. No lo hacemos en el initializer
@@ -366,53 +371,6 @@ export default function LabelsConfigPage() {
     }
   }, [config, tab, testing, toast]);
 
-  const testDrawer = useCallback(async () => {
-    if (!config.drawer.enabled) {
-      toast({
-        variant: "destructive",
-        title: "CAJÓN DESHABILITADO",
-        description: "Activa el cajón en la pestaña Perfil antes de probar.",
-      });
-      return;
-    }
-    if (drawerBusy) return;
-    setDrawerBusy(true);
-    try {
-      await apiFetch("/cash-drawer/open", {
-        method: "POST",
-        body: JSON.stringify({
-          override: true,
-          note: "Prueba de cajón desde /labels/config",
-          source: "labels-config",
-        }),
-      });
-      const w = window as Window & { posBridge?: {
-        kickDrawer?: (data: unknown) => Promise<unknown>;
-      } };
-      if (w.posBridge && typeof w.posBridge.kickDrawer === "function") {
-        try {
-          await w.posBridge.kickDrawer({
-            command: config.drawer.command,
-            event: config.drawer.event,
-            connection: config.connection,
-          });
-        } catch (err) {
-          console.warn("[labels/config] kickDrawer falló tras auditoría", err);
-        }
-      }
-      toast({
-        variant: "success",
-        title: "PULSO ENVIADO",
-        description: "Verifica físicamente si el cajón se abrió.",
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "No se pudo auditar la apertura.";
-      toast({ variant: "destructive", title: "Error al probar cajón", description: msg });
-    } finally {
-      setDrawerBusy(false);
-    }
-  }, [config, drawerBusy, toast]);
-
   // ---------------------------------------------------------------------------
   // Early return: acceso restringido
   // ---------------------------------------------------------------------------
@@ -449,7 +407,7 @@ export default function LabelsConfigPage() {
           <div>
             <h1 className="text-sm font-bold uppercase tracking-widest">Configuración de impresora y formatos</h1>
             <p className="text-[10px] uppercase tracking-widest text-zinc-500">
-              Perfil · Recibo · Etiquetas · Cajón
+              Perfil · Recibo · Etiquetas
             </p>
           </div>
         </div>
@@ -473,18 +431,6 @@ export default function LabelsConfigPage() {
             className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
           >
             Restablecer
-          </Button>
-          <Button
-            size="sm"
-            color="warning"
-            variant="flat"
-            isDisabled={!config.drawer.enabled || drawerBusy}
-            onPress={testDrawer}
-            startContent={<DoorOpen size={14} />}
-            isLoading={drawerBusy}
-            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
-          >
-            Probar cajón
           </Button>
           <Button
             size="sm"
@@ -577,6 +523,7 @@ export default function LabelsConfigPage() {
                   <Tab key="perfil" title="Perfil" />
                   <Tab key="recibo" title="Recibo" />
                   <Tab key="etiquetas" title="Etiquetas" />
+                  <Tab key="gondola" title="Góndola" />
                 </Tabs>
               </CardHeader>
               <CardBody className="p-5 space-y-5">
@@ -593,6 +540,9 @@ export default function LabelsConfigPage() {
                 )}
                 {tab === "etiquetas" && (
                   <EtiquetasTab config={config} update={update} dbSizes={dbSizes} />
+                )}
+                {tab === "gondola" && (
+                  <GondolaTab config={config} update={update} />
                 )}
               </CardBody>
             </Card>
@@ -881,67 +831,6 @@ function PerfilTab({ config, update, dbProfiles, onImportProfile }: PerfilTabPro
         </div>
       </Section>
 
-      <Divider className="opacity-50" />
-
-      <Section title="Cajón de dinero" icon={<DoorOpen size={14} />}>
-        <div className="flex flex-wrap items-center gap-4">
-          <Switch
-            isSelected={config.drawer.enabled}
-            onValueChange={(v) => update((d) => { d.drawer.enabled = v; })}
-            size="sm"
-            aria-label="Cajón conectado a esta impresora"
-          >
-            <span className="text-[11px] uppercase tracking-widest">Cajón conectado</span>
-          </Switch>
-          <Select
-            label="Evento de apertura"
-            selectedKeys={new Set([config.drawer.event])}
-            onSelectionChange={(keys) => {
-              const next = Array.from(keys as Set<string>)[0] as DrawerEvent | undefined;
-              if (!next) return;
-              update((d) => { d.drawer.event = next; });
-            }}
-            classNames={{ trigger: "rounded-2xl" }}
-            aria-label="Evento que dispara el pulso al cajón"
-            isDisabled={!config.drawer.enabled}
-            className="flex-1 min-w-[220px]"
-          >
-            <SelectItem key={DRAWER_EVENTS.BEFORE_PRINT}>Antes de imprimir</SelectItem>
-            <SelectItem key={DRAWER_EVENTS.AFTER_PRINT}>Después de imprimir</SelectItem>
-            <SelectItem key={DRAWER_EVENTS.MANUAL}>Manual (solo con botón)</SelectItem>
-          </Select>
-        </div>
-        <Input
-          label="Comando del cajón (ESC/POS literal)"
-          value={config.drawer.command}
-          onValueChange={(v) => update((d) => { d.drawer.command = v; })}
-          classNames={{ inputWrapper: "rounded-2xl" }}
-          description={'El valor por defecto `\\x1B\\x70\\x00\\x19\\xFA` es la secuencia ESC p 0 25 250. El frontend lo guarda como texto y NO lo evalúa.'}
-          isDisabled={!config.drawer.enabled}
-          aria-label="Comando literal del cajón"
-        />
-        <div className="rounded-2xl border border-zinc-200 dark:border-white/5 bg-zinc-50 dark:bg-zinc-900/40 p-3 flex flex-col gap-2">
-          <Switch
-            isSelected={config.drawer.openDrawerOnSale}
-            onValueChange={(v) => update((d) => { d.drawer.openDrawerOnSale = v; })}
-            size="sm"
-            isDisabled={!config.drawer.enabled}
-            aria-label="Abrir cajón automáticamente al completar venta"
-            data-testid="labels-config-drawer-open-on-sale"
-          >
-            <span className="text-[11px] uppercase tracking-widest">
-              Abrir cajón automáticamente al completar venta
-            </span>
-          </Switch>
-          <p className="text-[10px] leading-snug text-zinc-500">
-            Aplica al completar una venta, haya o no autoimpresión. Antes / después
-            define el orden respecto a la tirilla; Manual nunca abre automáticamente.
-            Reimpresiones y cambios del toggle no lo disparan. Sólo el bridge local
-            puede enviar el pulso físico.
-          </p>
-        </div>
-      </Section>
-
       {dbProfiles.length > 0 && (
         <>
           <Divider className="opacity-50" />
@@ -960,9 +849,6 @@ function PerfilTab({ config, update, dbProfiles, onImportProfile }: PerfilTabPro
                       {p.name}
                       {p.isDefault && (
                         <Chip size="sm" variant="flat" color="success" className="ml-2 rounded-xl">default</Chip>
-                      )}
-                      {p.drawerConnected && (
-                        <Chip size="sm" variant="flat" color="warning" className="ml-2 rounded-xl">cajón</Chip>
                       )}
                     </p>
                     <p className="text-[9px] text-zinc-500 truncate">
@@ -1751,6 +1637,170 @@ function EtiquetasTab({ config, update, dbSizes }: EtiquetasTabProps) {
           </Section>
         </>
       )}
+    </div>
+  );
+}
+
+// =============================================================================
+// Góndola (hoja de precios con impresora normal)
+// =============================================================================
+
+/**
+ * Tab de configuración de la hoja de precios de góndola. La impresión
+ * vive 100% en el navegador: iframe aislado + `window.print()` sin pasar
+ * por el bridge térmico. El admin elige entre:
+ *
+ *   - Carta  (Letter)   → landscape 279.4 × 215.9 mm · grid 3 × 5 = 15.
+ *   - Oficio (Legal)    → landscape 355.6 × 215.9 mm · grid 4 × 5 = 20.
+ *
+ * El default es Carta. El valor se persiste en
+ * `pos_printing_config_v1 → gondola.format` y lo consume
+ * `/labels/shelf` (vía `LabelsWorkspace`).
+ */
+function GondolaTab({ config, update }: TabProps) {
+  const activeFormat = config.gondola?.format ?? "LETTER";
+  const activeLayout = resolveGondolaLayout(activeFormat);
+
+  const options: Array<{
+    key: GondolaFormat;
+    title: string;
+    sheet: string;
+    grid: string;
+    perSheet: number;
+  }> = [
+    {
+      key: GONDOLA_FORMATS.LETTER,
+      title: "Carta (Letter)",
+      sheet: "279.4 × 215.9 mm · landscape",
+      grid: "3 × 5",
+      perSheet: 15,
+    },
+    {
+      key: GONDOLA_FORMATS.LEGAL,
+      title: "Oficio (Legal)",
+      sheet: "355.6 × 215.9 mm · landscape",
+      grid: "4 × 5",
+      perSheet: 20,
+    },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <Section title="Formato de hoja de precios" icon={<FileText size={14} />}>
+        <p className="text-[11px] leading-snug text-zinc-700 dark:text-zinc-300">
+          Las etiquetas de góndola se imprimen SIEMPRE con impresora normal
+          (hoja de papel) mediante el diálogo del navegador. Nunca se envían
+          al bridge térmico. Cada etiqueta mide{" "}
+          <span className="font-mono">80 × 40 mm</span>; la orientación es
+          siempre <span className="font-bold">landscape</span> para maximizar
+          la cantidad por hoja.
+        </p>
+        <div
+          role="radiogroup"
+          aria-label="Formato de hoja de precios de góndola"
+          className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          data-testid="labels-config-gondola-format-group"
+        >
+          {options.map((opt) => {
+            const selected = activeFormat === opt.key;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`Formato ${opt.title}. ${opt.sheet}. Grid ${opt.grid}. ${opt.perSheet} etiquetas por hoja.`}
+                data-testid={`labels-config-gondola-format-${opt.key.toLowerCase()}`}
+                onClick={() =>
+                  update((d) => Object.assign(d, applyGondolaFormatPreset(d, opt.key)))
+                }
+                className={`text-left rounded-2xl border p-4 transition-all duration-300 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 ${
+                  selected
+                    ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/20 shadow-sm"
+                    : "border-zinc-200 dark:border-white/5 bg-white dark:bg-zinc-900 hover:border-emerald-500/40"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p
+                      className={`text-[11px] uppercase tracking-widest font-bold ${
+                        selected
+                          ? "text-emerald-700 dark:text-emerald-300"
+                          : "text-zinc-700 dark:text-zinc-200"
+                      }`}
+                    >
+                      {opt.title}
+                    </p>
+                    <p className="text-[10px] text-zinc-500 mt-1 font-mono">{opt.sheet}</p>
+                  </div>
+                  <Chip
+                    size="sm"
+                    variant="flat"
+                    color={selected ? "success" : "default"}
+                    className="rounded-xl"
+                  >
+                    {opt.perSheet} etiquetas
+                  </Chip>
+                </div>
+                <ul className="mt-2 text-[11px] text-zinc-700 dark:text-zinc-300 space-y-0.5 list-disc pl-4">
+                  <li>Grid <span className="font-mono">{opt.grid}</span> (columnas × filas).</li>
+                  <li>Impresora normal · diálogo del navegador · nunca bridge térmico.</li>
+                </ul>
+              </button>
+            );
+          })}
+        </div>
+      </Section>
+
+      <Divider className="opacity-50" />
+
+      <Section title="Resumen del formato activo">
+        <div
+          className="rounded-2xl border border-emerald-500/30 bg-emerald-50 dark:bg-emerald-950/20 p-3 grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]"
+          data-testid="labels-config-gondola-active-summary"
+          data-gondola-format={activeLayout.format}
+          data-gondola-layout={activeLayout.layoutMetaId}
+        >
+          <div>
+            <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+              Formato
+            </p>
+            <p className="font-mono">{activeLayout.label}</p>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+              Hoja
+            </p>
+            <p className="font-mono">
+              {activeLayout.sheetWidthMm} × {activeLayout.sheetHeightMm} mm · landscape
+            </p>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+              Grid
+            </p>
+            <p className="font-mono">
+              {activeLayout.columns} × {activeLayout.rows} · {activeLayout.labelsPerPage} etiquetas
+            </p>
+          </div>
+          <div>
+            <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+              Etiqueta
+            </p>
+            <p className="font-mono">
+              {activeLayout.labelWidthMm} × {activeLayout.labelHeightMm} mm
+            </p>
+          </div>
+          <div className="sm:col-span-2">
+            <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+              Identificador de auditoría
+            </p>
+            <p className="font-mono text-[10px] break-all">
+              {activeLayout.layoutMetaId}
+            </p>
+          </div>
+        </div>
+      </Section>
     </div>
   );
 }

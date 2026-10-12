@@ -248,6 +248,63 @@ func clampTaxPct(v float64) float64 {
 }
 
 // ============================================================================
+// applyExpectedTaxesAllowlist / zeroCatalogRatesForDeselected
+// ============================================================================
+//
+// Modelo de allowlist estricta: la UI envía `expectedTaxes` como pistas de
+// qué impuestos BUSCAR y CONSERVAR. Un impuesto no marcado (nil o false)
+// debe neutralizarse a 0 en TODO el flujo:
+//
+//   1. En la respuesta del OCR aunque Claude lo haya devuelto por error.
+//   2. En el fallback de catálogo del producto (no debe reaparecer por el
+//      IVA guardado en products.iva).
+//   3. En los cálculos de costo real / impuestos efectivos que forma
+//      calculateItemDetails.
+//
+// Importante: ESTAS FUNCIONES NO PERSISTEN NADA. No tocan la columna del
+// producto ni los parámetros del proveedor. El catálogo se corrige por el
+// flujo normal de edición / recepción, no por el lector.
+
+// applyExpectedTaxesAllowlist anula en sitio los porcentajes de impuesto
+// de un item extraído cuyo impuesto no esté marcado como esperado. Si
+// `expected` es nil, se trata como "ninguno seleccionado" y los tres
+// quedan en 0 — regla deliberada: la UI es la única fuente de verdad
+// sobre qué impuestos buscar.
+func applyExpectedTaxesAllowlist(e *models.ExtractedItem, expected *models.ExpectedTaxes) {
+	if e == nil {
+		return
+	}
+	if expected == nil || !expected.IVA {
+		e.IvaPercentage = 0
+	}
+	if expected == nil || !expected.IBUA {
+		e.IbuaPercentage = 0
+	}
+	if expected == nil || !expected.ICUI {
+		e.IcuiPercentage = 0
+	}
+}
+
+// zeroCatalogRatesForDeselected anula los porcentajes de catálogo que
+// correspondan a impuestos NO seleccionados. Se llama sobre una copia local
+// (no sobre el modelo persistido). Si `expected` es nil, los tres quedan
+// en 0.
+func zeroCatalogRatesForDeselected(rates *models.TaxRates, expected *models.ExpectedTaxes) {
+	if rates == nil {
+		return
+	}
+	if expected == nil || !expected.IVA {
+		rates.IvaPct = 0
+	}
+	if expected == nil || !expected.IBUA {
+		rates.IbuaPct = 0
+	}
+	if expected == nil || !expected.ICUI {
+		rates.IcuiPct = 0
+	}
+}
+
+// ============================================================================
 // splitBonusItems
 // ============================================================================
 
@@ -364,8 +421,18 @@ func buildInvoicePrompt(supplierName string, params *models.SupplierInvoiceParam
 	sb.WriteString("- Encabezados, pie de página, subtotales acumulados, totales generales, impuestos agregados, fletes y abonos.\n")
 	sb.WriteString("- NO incluyas productos con cantidad 0.\n\n")
 
-	// Pistas fiscales condicionales.
-	if expectedTaxes != nil && (expectedTaxes.IVA || expectedTaxes.IBUA || expectedTaxes.ICUI) {
+	// Pistas fiscales condicionales (allowlist estricta).
+	//
+	// Reglas del contrato:
+	//   - Si al menos un impuesto está seleccionado, se emite la sección
+	//     "PISTAS FISCALES DEL USUARIO" mencionando ÚNICAMENTE los
+	//     impuestos seleccionados, junto con una instrucción explícita de
+	//     poner en 0 u omitir los NO seleccionados.
+	//   - Si no hay ninguno seleccionado, se emite una sección "IMPUESTOS"
+	//     que PROHÍBE buscar columnas fiscales. Nunca se instruye al
+	//     modelo a buscar IVA/IBUA/ICUI "si aparecen".
+	anySelected := expectedTaxes != nil && (expectedTaxes.IVA || expectedTaxes.IBUA || expectedTaxes.ICUI)
+	if anySelected {
 		sb.WriteString("PISTAS FISCALES DEL USUARIO (OBLIGATORIAS)\n")
 		if expectedTaxes.IVA {
 			sb.WriteString("- IVA: esta factura DEBE traer IVA por línea. Busca la columna \"IVA %\" o \"% IVA\". Los valores típicos en Colombia son 5 o 19. Emítelos en iva_percentage de cada línea.\n")
@@ -376,10 +443,26 @@ func buildInvoicePrompt(supplierName string, params *models.SupplierInvoiceParam
 		if expectedTaxes.ICUI {
 			sb.WriteString("- ICUI: busca columna \"ICUI\" o \"IMP ULTRAPROCESADO\". Si aparece por línea, emítelo en icui_percentage.\n")
 		}
+		// Enumerar explícitamente los NO seleccionados para que Claude los
+		// omita aunque los vea en la factura. Es la mitad del contrato de
+		// allowlist que no puede delegarse al post-procesado.
+		var skipped []string
+		if !expectedTaxes.IVA {
+			skipped = append(skipped, "iva_percentage")
+		}
+		if !expectedTaxes.IBUA {
+			skipped = append(skipped, "ibua_percentage")
+		}
+		if !expectedTaxes.ICUI {
+			skipped = append(skipped, "icui_percentage")
+		}
+		if len(skipped) > 0 {
+			sb.WriteString(fmt.Sprintf("- NO busques ni emitas %s. Déjalos en 0 u omítelos del JSON de la línea, aunque la factura muestre esas columnas.\n", strings.Join(skipped, ", ")))
+		}
 		sb.WriteString("- Si un impuesto está marcado como esperado y NO aparece en una línea concreta, deja ese campo en 0 (no inventes).\n\n")
 	} else {
 		sb.WriteString("IMPUESTOS\n")
-		sb.WriteString("- Sólo emite iva_percentage/ibua_percentage/icui_percentage si aparecen explícitamente por línea en la factura. Si no, deja los campos en 0 o omítelos.\n\n")
+		sb.WriteString("- NO busques columnas fiscales (IVA, IBUA, ICUI) en esta factura. Deja iva_percentage, ibua_percentage e icui_percentage en 0 u omítelos del JSON, aunque aparezcan impresos.\n\n")
 	}
 
 	// Hint específico del proveedor (lo que ya existía).
@@ -411,9 +494,31 @@ func (e *claudeAPIError) Error() string {
 	return e.message
 }
 
-// ErrInvoiceReaderUnavailable se usa cuando Claude no respondió a tiempo o
-// devolvió error 5xx. El handler lo mapea a 503.
-var ErrInvoiceReaderUnavailable = errors.New("lector de facturas no disponible, intente de nuevo en unos minutos")
+const claudeVisionMaxAttempts = 2
+
+var (
+	// ErrInvoiceReaderUnavailable se usa cuando Claude no respondió a tiempo o
+	// devolvió error 5xx. El handler lo mapea a 503.
+	ErrInvoiceReaderUnavailable = errors.New("lector de facturas no disponible, intente de nuevo en unos minutos")
+
+	// ErrInvoiceReaderIncomplete indica que Claude respondió HTTP 200, pero la
+	// salida quedó vacía, truncada o no fue JSON completo incluso tras un
+	// reintento. Es distinto de indisponibilidad: el handler lo traduce a 502
+	// con una instrucción accionable y nunca expone el contenido de la factura.
+	ErrInvoiceReaderIncomplete = errors.New("respuesta incompleta del lector de facturas")
+
+	// errClaudeOutputRetryable es interno: autoriza exactamente un reintento.
+	// No se usa para errores HTTP, credenciales, cancelaciones ni red.
+	errClaudeOutputRetryable = errors.New("salida OCR de Claude incompleta o inválida")
+)
+
+type claudeVisionResponse struct {
+	StopReason string `json:"stop_reason"`
+	Content    []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	} `json:"content"`
+}
 
 func (s *ProductService) callClaudeVision(
 	ctx context.Context,
@@ -436,9 +541,63 @@ func (s *ProductService) callClaudeVision(
 		return nil, &claudeAPIError{status: http.StatusBadRequest, message: "tipo de imagen no soportado"}
 	}
 
-	reqBody := map[string]interface{}{
-		"model":      SelectModel(ClassVision),
-		"max_tokens": MaxTokensFor(ClassVision),
+	// Un único presupuesto de tiempo cubre ambos intentos. Así el reintento no
+	// puede duplicar los 90 segundos ni sobrevivir a una pestaña cerrada.
+	callCtx, cancel := context.WithTimeout(ctx, claudeVisionTimeout)
+	defer cancel()
+
+	baseTokenBudget := MaxTokensFor(ClassVision)
+	for attempt := 1; attempt <= claudeVisionMaxAttempts; attempt++ {
+		tokenBudget := baseTokenBudget
+		attemptPrompt := prompt
+		if attempt > 1 {
+			// El segundo intento sólo ocurre si el primero fue vacío/truncado o
+			// no estructurado. Duplicar el techo no duplica el costo: Anthropic
+			// cobra tokens realmente emitidos, y evita cortar facturas largas.
+			tokenBudget *= 2
+			attemptPrompt += "\nREINTENTO DE FORMATO: devuelve el arreglo JSON completo en un único bloque de texto. No escribas explicación antes ni después.\n"
+		}
+
+		items, err := doClaudeVisionAttempt(callCtx, apiKey, cleanBase64, cleanMime, attemptPrompt, tokenBudget)
+		if err == nil {
+			return items, nil
+		}
+		if !errors.Is(err, errClaudeOutputRetryable) {
+			return nil, err
+		}
+		log.Printf("[invoice_reader] salida OCR inválida/incompleta en intento %d/%d: %v",
+			attempt, claudeVisionMaxAttempts, err)
+	}
+
+	return nil, ErrInvoiceReaderIncomplete
+}
+
+// buildClaudeVisionRequestBody arma el map que se serializa como body de la
+// llamada POST /v1/messages de Anthropic para OCR de facturas.
+//
+// Se mantiene como función PURA (sin I/O, sin estado, sin globals) para que
+// las pruebas verifiquen el shape exacto del payload sin tener que montar un
+// servidor HTTP. Es el único lugar del backend donde se construye el request
+// a Claude Vision; cualquier campo nuevo debe pasar por aquí y por sus tests.
+//
+// Decisiones intencionales del shape:
+//
+//   - NO se envía el campo `temperature`. Anthropic rechazó requests con
+//     HTTP 400 invalid_request_error apuntando a este campo (y a `model`)
+//     en los modelos vigentes del tier de visión; dejar que el modelo use
+//     su temperatura por defecto es seguro para OCR estructurado, porque el
+//     prompt ya exige un arreglo JSON determinista y el pipeline reintenta
+//     si la salida vuelve truncada o inválida. Reintroducir `temperature`
+//     volvería a romper el lector de facturas en producción.
+//
+//   - `model`, `max_tokens` y `messages` son los únicos campos obligatorios
+//     del protocolo Messages API para esta ruta. El resto (system,
+//     stop_sequences, top_k, top_p, tools, metadata) queda ausente a
+//     propósito para minimizar la superficie que Anthropic puede rechazar.
+func buildClaudeVisionRequestBody(model, imageBase64, mimeType, prompt string, maxTokens int) map[string]interface{} {
+	return map[string]interface{}{
+		"model":      model,
+		"max_tokens": maxTokens,
 		"messages": []map[string]interface{}{
 			{
 				"role": "user",
@@ -447,8 +606,8 @@ func (s *ProductService) callClaudeVision(
 						"type": "image",
 						"source": map[string]interface{}{
 							"type":       "base64",
-							"media_type": cleanMime,
-							"data":       cleanBase64,
+							"media_type": mimeType,
+							"data":       imageBase64,
 						},
 					},
 					{
@@ -459,19 +618,23 @@ func (s *ProductService) callClaudeVision(
 			},
 		},
 	}
+}
+
+// doClaudeVisionAttempt realiza una sola llamada. Mantenerla separada permite
+// que callClaudeVision decida el reintento sin repetir manejo HTTP ni parseo.
+func doClaudeVisionAttempt(
+	ctx context.Context,
+	apiKey, imageBase64, mimeType, prompt string,
+	maxTokens int,
+) ([]models.ExtractedItem, error) {
+	reqBody := buildClaudeVisionRequestBody(SelectModel(ClassVision), imageBase64, mimeType, prompt, maxTokens)
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, fmt.Errorf("[invoice_reader] no se pudo serializar el request: %w", err)
 	}
 
-	// Contexto con timeout de servicio. Encadenamos el ctx del handler
-	// para que si el cliente HTTP se desconecta, abortamos la llamada
-	// a Claude en vez de retener el goroutine por hasta 90 segundos.
-	callCtx, cancel := context.WithTimeout(ctx, claudeVisionTimeout)
-	defer cancel()
-
-	httpReq, err := http.NewRequestWithContext(callCtx, http.MethodPost,
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		"https://api.anthropic.com/v1/messages", bytes.NewReader(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("[invoice_reader] no se pudo construir request: %w", err)
@@ -484,7 +647,10 @@ func (s *ProductService) callClaudeVision(
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
-			return nil, fmt.Errorf("[invoice_reader] solicitud cancelada por el cliente")
+			// Se preserva el sentinel con %w para que las capas superiores
+			// puedan reconocer la cancelación del cliente con errors.Is sin
+			// depender del texto del mensaje.
+			return nil, fmt.Errorf("[invoice_reader] solicitud cancelada por el cliente: %w", err)
 		}
 		if errors.Is(err, context.DeadlineExceeded) {
 			log.Printf("[invoice_reader] timeout llamando a Claude: %v", err)
@@ -502,48 +668,210 @@ func (s *ProductService) callClaudeVision(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Loguear el status y el payload de error para debug; al cliente
-		// sólo le llega un mensaje genérico.
-		log.Printf("[invoice_reader] Claude respondió %d: %s", resp.StatusCode, string(body))
-		if resp.StatusCode >= 500 || resp.StatusCode == 429 {
+		// Observabilidad segura: NUNCA se loguea `string(body)` crudo ni el
+		// mensaje de error upstream. Un payload de error de Anthropic puede
+		// citar el request que lo originó (`messages`, `metadata`), y en
+		// esta ruta ese request transporta la imagen y los datos de la
+		// factura. Sólo se loguea el status + el `error.type` reportado por
+		// Anthropic + las categorías de campo mencionadas, filtradas por
+		// una allowlist estricta de campos del protocolo.
+		errorType, fieldCats := summarizeClaudeUpstreamError(body)
+		log.Printf("[invoice_reader] Claude respondió %d error_type=%q fields=%v",
+			resp.StatusCode, errorType, fieldCats)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
 			return nil, ErrInvoiceReaderUnavailable
 		}
 		return nil, &claudeAPIError{status: resp.StatusCode, message: "no se pudo procesar la factura"}
 	}
 
-	var claudeResp struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
+	return parseClaudeInvoiceResponse(body)
+}
+
+// ============================================================================
+// summarizeClaudeUpstreamError — observabilidad segura de errores Anthropic
+// ============================================================================
+
+// claudeUpstreamErrorEnvelope es la forma mínima de un error 4xx/5xx que
+// Anthropic emite. Sólo capturamos `type` y `error.{type,message}`; cualquier
+// otro campo que agreguen en el futuro queda intencionalmente fuera del
+// unmarshal para no arrastrarlo al log.
+type claudeUpstreamErrorEnvelope struct {
+	Type  string `json:"type"`
+	Error struct {
+		Type    string `json:"type"`
+		Message string `json:"message"`
+	} `json:"error"`
+}
+
+// claudeErrorFieldAllowlist enumera, en orden estable, los nombres de campos
+// del protocolo Messages API cuya mención en un error de Anthropic sí es
+// seguro registrar. El contenido de factura jamás vive en estos nombres —
+// son identificadores del protocolo, no datos del negocio— y el orden
+// estable deja los logs deterministas para los operadores.
+//
+// Cualquier substring del mensaje de error que no coincida con esta lista
+// se descarta: no se intenta "inferir" el campo, para no acabar logueando
+// fragmentos de la factura que Anthropic pudo citar al explicar el error.
+var claudeErrorFieldAllowlist = []string{
+	"model",
+	"max_tokens",
+	"messages",
+	"temperature",
+	"system",
+	"stop_sequences",
+	"top_k",
+	"top_p",
+	"metadata",
+	"tools",
+	"tool_choice",
+	"anthropic-version",
+	"anthropic-beta",
+}
+
+// summarizeClaudeUpstreamError extrae del body de error de Anthropic sólo
+// la información que es segura de loguear: el `error.type` y las CATEGORÍAS
+// de campo mencionadas en el mensaje (contrastadas contra una allowlist
+// estricta de nombres del protocolo). Devuelve las categorías en MAYÚSCULAS
+// para que un operador distinga de un vistazo un rechazo por MODEL vs. uno
+// por TEMPERATURE sin tener que leer el cuerpo original.
+//
+// La función es pura y robusta ante cualquier basura: body vacío, body no-JSON
+// o body con un shape distinto al esperado devuelven ("", nil) silenciosamente,
+// que es la señal "no sé, no se puede resumir" para el llamador. Nunca
+// devuelve el mensaje original ni fragmentos del body — ésa es la garantía
+// que mantiene el log libre de contenido de factura.
+func summarizeClaudeUpstreamError(body []byte) (errorType string, fieldCategories []string) {
+	if len(body) == 0 {
+		return "", nil
 	}
-	if err := json.Unmarshal(body, &claudeResp); err != nil {
-		log.Printf("[invoice_reader] respuesta de Claude no es JSON válido: %v", err)
-		return nil, fmt.Errorf("respuesta inválida del lector de facturas")
+	var env claudeUpstreamErrorEnvelope
+	if err := json.Unmarshal(body, &env); err != nil {
+		return "", nil
 	}
-	if len(claudeResp.Content) == 0 {
-		log.Printf("[invoice_reader] Claude devolvió content vacío")
-		return nil, fmt.Errorf("respuesta vacía del lector de facturas")
+	errorType = env.Error.Type
+	msg := strings.ToLower(env.Error.Message)
+	if msg == "" {
+		return errorType, nil
+	}
+	seen := make(map[string]struct{}, len(claudeErrorFieldAllowlist))
+	for _, field := range claudeErrorFieldAllowlist {
+		if _, dup := seen[field]; dup {
+			continue
+		}
+		if strings.Contains(msg, field) {
+			seen[field] = struct{}{}
+			fieldCategories = append(fieldCategories, strings.ToUpper(field))
+		}
+	}
+	return errorType, fieldCategories
+}
+
+// parseClaudeInvoiceResponse interpreta el envelope de Messages API y
+// reconstruye el flujo combinado y ordenado de TODOS los bloques `text`.
+// Nunca devuelve el contenido de un bloque individual ignorando el resto:
+// si Claude emite dos arreglos completos en bloques distintos, el flujo
+// combinado NO es un único JSON seguro y se pide reintento sin fusionar
+// datos. La única manipulación admisible es el saneo de prosa accidental
+// y cercos markdown; jamás se completan llaves ni se concatenan arreglos
+// a mano.
+func parseClaudeInvoiceResponse(body []byte) ([]models.ExtractedItem, error) {
+	var response claudeVisionResponse
+	if err := json.Unmarshal(body, &response); err != nil {
+		return nil, fmt.Errorf("%w: envelope JSON inválido: %v", errClaudeOutputRetryable, err)
 	}
 
-	text := claudeResp.Content[0].Text
-	text = strings.TrimSpace(text)
-	text = strings.TrimPrefix(text, "```json")
-	text = strings.TrimPrefix(text, "```")
-	text = strings.TrimSuffix(text, "```")
-	text = strings.TrimSpace(text)
+	// Aunque el texto alcance a cerrar un arreglo, max_tokens no garantiza que
+	// Claude haya terminado de enumerar TODAS las líneas. No aceptamos una
+	// factura posiblemente parcial: se reintenta con mayor presupuesto.
+	if response.StopReason == "max_tokens" {
+		return nil, fmt.Errorf("%w: stop_reason=max_tokens", errClaudeOutputRetryable)
+	}
 
-	var items []models.ExtractedItem
-	if err := json.Unmarshal([]byte(text), &items); err != nil {
-		log.Printf("[invoice_reader] JSON de Claude inválido: %v. Raw[:200]=%q", err, truncateForLog(text, 200))
-		return nil, fmt.Errorf("respuesta no estructurada del lector de facturas")
+	textBlocks := make([]string, 0, len(response.Content))
+	for _, block := range response.Content {
+		if block.Type != "text" {
+			continue
+		}
+		if text := strings.TrimSpace(block.Text); text != "" {
+			textBlocks = append(textBlocks, text)
+		}
+	}
+	if len(textBlocks) == 0 {
+		return nil, fmt.Errorf("%w: sin bloques de texto (stop_reason=%q)",
+			errClaudeOutputRetryable, response.StopReason)
+	}
+
+	// Concatenación directa sin separador: la segmentación de Messages API
+	// ocurre a nivel de token (puede partir un string JSON entre dos bloques)
+	// y cualquier separador que inyectemos corre el riesgo de corromperlo.
+	// La única excepción es la cancelación por max_tokens, atrapada arriba.
+	combined := strings.Join(textBlocks, "")
+	items, err := decodeInvoiceItemsCandidate(combined)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", errClaudeOutputRetryable, err)
 	}
 	return items, nil
 }
 
-func truncateForLog(s string, max int) string {
-	if len(s) <= max {
-		return s
+// decodeInvoiceItemsCandidate aplica saneo mínimo (cercos markdown y prosa
+// accidental alrededor del arreglo) y exige que el string resultante contenga
+// EXACTAMENTE un arreglo JSON de ítems. Si quedan datos residuales (otro
+// arreglo, prosa, basura) devuelve error, para que el llamador active el
+// reintento sin inventar la fusión de dos facturas distintas.
+func decodeInvoiceItemsCandidate(raw string) ([]models.ExtractedItem, error) {
+	candidate := strings.TrimSpace(raw)
+	if strings.HasPrefix(candidate, "```") {
+		if newline := strings.IndexByte(candidate, '\n'); newline >= 0 {
+			candidate = candidate[newline+1:]
+		}
+		if fence := strings.LastIndex(candidate, "```"); fence >= 0 {
+			candidate = candidate[:fence]
+		}
+		candidate = strings.TrimSpace(candidate)
 	}
-	return s[:max] + "...<truncado>"
+
+	if items, err := strictDecodeInvoiceArray(candidate); err == nil {
+		return items, nil
+	}
+
+	// Compat defensiva: una frase accidental antes y/o después del arreglo
+	// se recorta por la primera '[' y la última ']'. Si entre esas marcas
+	// hay más de un arreglo (ej. "[arr1] prose [arr2]"), el decodificador
+	// estricto detectará contenido residual y volverá a fallar sin aceptar
+	// solo la primera porción.
+	start := strings.IndexByte(candidate, '[')
+	end := strings.LastIndexByte(candidate, ']')
+	if start >= 0 && end > start {
+		return strictDecodeInvoiceArray(candidate[start : end+1])
+	}
+
+	return nil, errors.New("JSON de ítems inválido o incompleto")
+}
+
+// strictDecodeInvoiceArray decodifica un string que debe contener UN único
+// arreglo JSON de ítems. Si queda contenido no-blanco tras ese arreglo
+// (otro arreglo completo, prosa residual, otra factura), devuelve error
+// en vez de aceptar silenciosamente la primera porción como válida: ese
+// comportamiento era el que permitía que la respuesta se tomara como una
+// factura parcial cuando Claude emitía dos arreglos en bloques distintos.
+func strictDecodeInvoiceArray(s string) ([]models.ExtractedItem, error) {
+	trimmed := strings.TrimSpace(s)
+	if trimmed == "" || trimmed == "null" {
+		return nil, errors.New("la salida fue vacía o null")
+	}
+
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	var items []models.ExtractedItem
+	if err := dec.Decode(&items); err != nil {
+		return nil, err
+	}
+	if items == nil {
+		return nil, errors.New("la salida no contiene un arreglo")
+	}
+
+	remaining := strings.TrimSpace(trimmed[dec.InputOffset():])
+	if remaining != "" {
+		return nil, errors.New("contenido JSON extra tras el primer arreglo (se requiere un único arreglo)")
+	}
+	return items, nil
 }

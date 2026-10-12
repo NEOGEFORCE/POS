@@ -3,8 +3,9 @@ package services
 import "testing"
 
 // TestClassifyStockHealth verifica que el mapeo historico
-// (CRITICAL/WARNING/OPTIMAL) siga los cortes nuevos del semaforo del dueno
-// (agosto 2026): ROJO < 25%, AMARILLO 25%–75%, VERDE >= 75%.
+// (CRITICAL/WARNING/OPTIMAL) siga los cortes del semaforo del dueno (agosto
+// 2026, actualizada 2026-10): ROJO < 25%, AMARILLO 25%–75%, VERDE >= 75%, y
+// OPTIMAL cuando minStock<=0 (sin minimo configurado, incluso con stock=0).
 //
 // Los umbrales viven en models.ClassifyStockBand y aca se prueban solo por
 // el adaptador. Si aca cambian, la consulta SQL de GetProductStatsAggregate
@@ -16,13 +17,14 @@ func TestClassifyStockHealth(t *testing.T) {
 		minStock float64
 		want     string
 	}{
-		// minStock <= 0: solo CRITICAL cuando quantity <= 0.
-		{name: "sin minimo y sin stock", quantity: 0, minStock: 0, want: StockHealthCritical},
-		{name: "sin minimo y stock negativo", quantity: -1, minStock: 0, want: StockHealthCritical},
+		// minStock <= 0: SIEMPRE OPTIMAL (banda UNSET se mapea a Optimal).
+		// Regla 2026-10: un producto sin minimo no se cuenta como critico.
+		{name: "sin minimo y sin stock -> optimo (regla 2026-10)", quantity: 0, minStock: 0, want: StockHealthOptimal},
+		{name: "sin minimo y stock negativo -> optimo (regla 2026-10)", quantity: -1, minStock: 0, want: StockHealthOptimal},
 		{name: "sin minimo y stock positivo", quantity: 5, minStock: 0, want: StockHealthOptimal},
 		{name: "sin minimo y stock 0.5", quantity: 0.5, minStock: 0, want: StockHealthOptimal},
 		{name: "minimo negativo cuenta como sin minimo", quantity: 3, minStock: -2, want: StockHealthOptimal},
-		{name: "minimo negativo con stock cero es critico", quantity: 0, minStock: -2, want: StockHealthCritical},
+		{name: "minimo negativo con stock cero -> optimo (regla 2026-10)", quantity: 0, minStock: -2, want: StockHealthOptimal},
 
 		// minStock > 0: ratio = quantity/minStock. Fronteras EXACTAS 0.25 y 0.75.
 		{name: "stock 0 con minimo 10 -> 0%% critico", quantity: 0, minStock: 10, want: StockHealthCritical},

@@ -1,16 +1,58 @@
 // Declaraciones TS para src/lib/shelf-labels.mjs.
 // El módulo real es puro JS para que corra en `node --test` sin bundler.
 
-export const SHEET_WIDTH_MM: 215.9;
-export const SHEET_HEIGHT_MM: 279.4;
+export type GondolaFormat = "LETTER" | "LEGAL";
+
 export const LABEL_WIDTH_MM: 80;
 export const LABEL_HEIGHT_MM: 40;
-export const COLUMNS: 2;
-export const ROWS: 6;
-export const LABELS_PER_PAGE: 12;
+
+export const GONDOLA_FORMATS: Readonly<Record<"LETTER" | "LEGAL", GondolaFormat>>;
+export const DEFAULT_GONDOLA_FORMAT: "LETTER";
+
+export interface GondolaFormatSpec {
+    readonly id: GondolaFormat;
+    readonly label: string;
+    readonly sheetWidthMm: number;
+    readonly sheetHeightMm: number;
+    readonly columns: number;
+    readonly rows: number;
+    readonly labelsPerPage: number;
+    readonly cssPageSize: string;
+    readonly layoutMetaId: string;
+    readonly sheetLabel: string;
+}
+
+export const GONDOLA_FORMAT_SPECS: Readonly<Record<GondolaFormat, GondolaFormatSpec>>;
+
+export interface GondolaLayout {
+    format: GondolaFormat;
+    label: string;
+    sheetWidthMm: number;
+    sheetHeightMm: number;
+    labelWidthMm: 80;
+    labelHeightMm: 40;
+    columns: number;
+    rows: number;
+    labelsPerPage: number;
+    paddingXMm: number;
+    paddingYMm: number;
+    cssPageSize: string;
+    layoutMetaId: string;
+    sheetLabel: string;
+}
+
+export function resolveGondolaFormat(input: unknown): GondolaFormat;
+export function resolveGondolaLayout(format?: unknown): GondolaLayout;
+
+// Alias retrocompatibles basados en el formato DEFAULT (Letter landscape).
+export const SHEET_WIDTH_MM: 279.4;
+export const SHEET_HEIGHT_MM: 215.9;
+export const COLUMNS: 3;
+export const ROWS: 5;
+export const LABELS_PER_PAGE: 15;
 export const PAGE_PADDING_X_MM: number;
 export const PAGE_PADDING_Y_MM: number;
-export const LAYOUT_META_ID: "gondola-80x40-letter-2x6";
+export const LAYOUT_META_ID: "gondola-80x40-letter-landscape-3x5";
 
 /**
  * Item lógico de la cola de etiquetas de góndola. Representa un producto
@@ -44,21 +86,27 @@ export interface ShelfLabelSlot {
 }
 
 /**
- * Resumen contable que alimenta la UI y el payload de auditoría.
+ * Resumen contable que alimenta la UI y el payload de auditoría. Incluye
+ * el formato activo y su layout canónico para que el consumidor NO vuelva
+ * a resolverlos por su cuenta.
  */
 export interface ShelfLabelsSummary {
+    /** Formato activo que produjo este resumen. */
+    format: GondolaFormat;
     /** Total de etiquetas físicas (ya expandidas por cantidad). */
     totalLabels: number;
-    /** Páginas completas (12 etiquetas). */
+    /** Páginas completas (labelsPerPage etiquetas). */
     fullPages: number;
-    /** Etiquetas sobrantes en la última página (0..11). */
+    /** Etiquetas sobrantes en la última página (0..labelsPerPage-1). */
     remainder: number;
-    /** Total de páginas que la impresora producirá (fullPages + (remainder > 0 ? 1 : 0)). */
+    /** Total de páginas que la impresora producirá. */
     totalPages: number;
-    /** Blanks que la última página añade para completar las 12 guías. */
+    /** Blanks que la última página añade para completar las guías. */
     blanks: number;
-    /** Siempre 12, expuesto para que el consumidor no hardcodee. */
-    labelsPerPage: 12;
+    /** Slots por página del formato activo (15 Letter / 20 Legal). */
+    labelsPerPage: number;
+    /** Identificador del layout canónico (ej. `gondola-80x40-letter-landscape-3x5`). */
+    layout: string;
 }
 
 export function escapeHtml(s: unknown): string;
@@ -76,19 +124,36 @@ export function expandItemsToSlots(
 
 export function paginateSlots(
     slots: ReadonlyArray<ShelfLabelSlot>,
+    format?: unknown,
 ): Array<Array<ShelfLabelSlot | null>>;
 
 export function summarizeShelfLabels(
     items: ReadonlyArray<Partial<ShelfLabelItem>>,
+    format?: unknown,
 ): ShelfLabelsSummary;
 
-export function buildShelfLabelsCss(): string;
+export function buildShelfLabelsCss(format?: unknown): string;
 export function buildSlotHtml(slot: ShelfLabelSlot | null, dateLabel: string): string;
 export function buildShelfLabelsPrintHtml(
     items: ReadonlyArray<Partial<ShelfLabelItem>>,
-    opts?: { now?: Date | string | number },
+    opts?: { now?: Date | string | number; format?: unknown },
 ): string;
 
+export interface ShelfLabelsAuditMeta {
+    layout: string;
+    format: GondolaFormat;
+    sheet: string;
+    sheetWidthMm: number;
+    sheetHeightMm: number;
+    labelWidthMm: 80;
+    labelHeightMm: 40;
+    columns: number;
+    rows: number;
+    labelsPerPage: number;
+    [extraKey: string]: unknown;
+}
+
 export function buildAuditMeta(
-    extra?: Record<string, unknown>,
-): { layout: typeof LAYOUT_META_ID } & Record<string, unknown>;
+    extra?: Record<string, unknown> | null,
+    format?: unknown,
+): ShelfLabelsAuditMeta;

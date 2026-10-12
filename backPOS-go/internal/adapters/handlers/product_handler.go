@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"backPOS-go/internal/core/aliasnorm"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/core/services"
@@ -984,13 +986,27 @@ func (h *ProductHandler) ScanInvoice(c *gin.Context) {
 	result, err := h.service.ScanInvoice(c.Request.Context(),
 		req.ImageBase64, req.MimeType, req.SupplierName, req.SupplierID, req.ExpectedTaxes)
 	if err != nil {
+		if errors.Is(err, services.ErrInvoiceReaderIncomplete) {
+			SendError(c, http.StatusBadGateway, ErrInternalServer,
+				"Claude devolvió una lectura incompleta. Intente procesar la factura nuevamente; si persiste, tome una foto más nítida", nil)
+			return
+		}
 		if errors.Is(err, services.ErrInvoiceReaderUnavailable) {
 			SendError(c, http.StatusServiceUnavailable, ErrInternalServer,
 				"El lector de facturas no está disponible, intente de nuevo en unos minutos", nil)
 			return
 		}
+		// Fallback genérico: el detalle técnico ya se registró en el log del
+		// servicio; se pasa nil al cuerpo HTTP para no filtrar errores
+		// internos de Claude ni mensajes de parseo al cliente.
+		//
+		// Observabilidad segura: NO se loguea err.Error(). En esta ruta el
+		// error puede acarrear fragmentos del JSON que Claude extrajo de la
+		// factura (nombres de productos, precios, codigos de barra); el
+		// único dato que es seguro trazar aquí es la clase del error en Go.
+		log.Printf("[scan-invoice] error no clasificado tipo=%T", err)
 		SendError(c, http.StatusInternalServerError, ErrInternalServer,
-			"No se pudo procesar la factura", err)
+			"No se pudo procesar la factura", nil)
 		return
 	}
 
@@ -1008,14 +1024,41 @@ func (h *ProductHandler) SaveAlias(c *gin.Context) {
 		return
 	}
 
+	// Validación temprana para responder 400 sin tocar el servicio. Las
+	// mismas reglas se repiten en el servicio (defensa en profundidad vía
+	// aliasnorm.ValidateAndCanonicalize) para que llamadas internas también
+	// fallen temprano.
+	if req.SupplierID == 0 {
+		SendError(c, http.StatusBadRequest, ErrBadRequest,
+			"Debe seleccionar un proveedor para guardar el alias", nil)
+		return
+	}
+	if strings.TrimSpace(req.InvoiceName) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest,
+			"El nombre del producto en la factura es obligatorio", nil)
+		return
+	}
+	if strings.TrimSpace(req.ProductBarcode) == "" {
+		SendError(c, http.StatusBadRequest, ErrBadRequest,
+			"El código del producto es obligatorio", nil)
+		return
+	}
+
 	alias := &models.SupplierProductAlias{
 		SupplierID:     req.SupplierID,
 		InvoiceName:    req.InvoiceName,
 		ProductBarcode: req.ProductBarcode,
 	}
 
-	err := h.service.SaveSupplierAlias(alias)
-	if err != nil {
+	if err := h.service.SaveSupplierAlias(alias); err != nil {
+		// Validación de aliasnorm → 400 (defensa en profundidad por si el
+		// payload supera la validación temprana pero la canonicalización
+		// termina vaciando el nombre).
+		if errors.Is(err, aliasnorm.ErrSupplierAliasInvalid) {
+			SendError(c, http.StatusBadRequest, ErrBadRequest,
+				"Alias inválido: revise proveedor, nombre y código del producto", nil)
+			return
+		}
 		SendError(c, http.StatusInternalServerError, ErrInternalServer, "Error al guardar el alias", err)
 		return
 	}

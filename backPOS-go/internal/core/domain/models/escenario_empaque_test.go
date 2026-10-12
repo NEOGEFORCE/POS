@@ -55,21 +55,31 @@ func TestPackOrder_LoQueVieneEnCaminoEvitaPedirOtraCaja(t *testing.T) {
 	}
 }
 
-func TestPackOrder_MinimoGrandeConCajaChicaPideVariasCajas(t *testing.T) {
-	// Minimo 100, caja de 12, stock 0. Umbral rojo 25; objetivo 75.
-	// Necesidad 75 -> 7 cajas = 84.
+func TestPackOrder_MinimoGrandeConCajaChicaPideUnaCajaHabitual(t *testing.T) {
+	// Minimo 100, caja de 12, stock 0.
+	//
+	// Umbral de reposicion habitual = max(ceil(12*0.20), ceil(100*0.25)) = max(3, 25)
+	// = 25. Dispara en cuanto el stock+transito cae por debajo de 25.
+	//
+	// Regla 2026-10: aunque la "necesidad" del minimo sea grande (75%), la
+	// sugerencia habitual es UNA caja. Pedir multiples cajas de golpe cuando
+	// el proveedor vuelve en 1-2 dias inmoviliza plata; el operador puede
+	// aumentar la cantidad a mano si lo necesita.
 	got := PackOrderQuantity(0, 0, 0, 100, 12)
-	if got != 84 {
-		t.Fatalf("pide %v; want 84 (7 cajas de 12 para cubrir 75)", got)
+	if got != 12 {
+		t.Fatalf("pide %v; want 12 (una caja habitual, aunque el minimo sea grande)", got)
 	}
 }
 
-func TestPackOrder_SinMinimoMandaLaDemanda(t *testing.T) {
-	// Sin minimo no hay umbral rojo que medir. Con ideal 20 y stock 0, la
-	// necesidad es 20 -> 2 cajas de 12 = 24.
+func TestPackOrder_SinMinimoDispara_UmbralEnVeintePorCientoDelEmpaque(t *testing.T) {
+	// Sin minimo (minStock=0), caja de 12.
+	//
+	// Umbral = max(ceil(12*0.20), 0) = 3. El 20% del empaque es la unica
+	// señal cuando no hay minimo. En stock 0 dispara y sugiere UNA caja de 12,
+	// no "cantidades que cubran la demanda" como hacia antes.
 	got := PackOrderQuantity(20, 0, 0, 0, 12)
-	if got != 24 {
-		t.Fatalf("pide %v; want 24", got)
+	if got != 12 {
+		t.Fatalf("pide %v; want 12 (una caja habitual, el 20%% del empaque es el umbral sin minimo)", got)
 	}
 }
 

@@ -21,6 +21,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api-error';
 import { broadcastRevalidate } from '@/lib/revalidate';
+import { persistAlias } from '@/lib/alias-persistence.mjs';
+import { API_URL } from '@/lib/constants';
 import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
 
@@ -30,9 +32,18 @@ interface ReceptionRowProps {
     item: ReceiveItem;
     onUpdate: (lineId: string, updates: Partial<ReceiveItem>) => void;
     onDelete: (lineId: string) => void;
+    /**
+     * supplierId REAL vigente en el estado del padre (`selectedGlobalSupplier`).
+     * SOLO se usa en el camino secundario de `handleSaveQuickEdit` cuando
+     * `item.isMatched === false` para persistir el alias contra el endpoint
+     * `/inventory/save-alias`. NUNCA se lee de `localStorage` ni se cae a 0
+     * como fallback: si viene vacío, la persistencia del alias aborta sin
+     * pegarle al backend y la UI avisa al usuario que no se recordará.
+     */
+    supplierId?: string | number | null;
 }
 
-const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
+const ReceptionRow = memo(({ item, onUpdate, onDelete, supplierId }: ReceptionRowProps) => {
     const { toast } = useToast();
     const { user } = useAuth();
     const isAdmin = useMemo(() => {
@@ -372,30 +383,43 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
             const token = Cookies.get('org-pos-token');
             
             if (item.isMatched === false) {
-                // Logica especial para emparejar manualmente un item no reconocido por IA
+                // Logica especial para emparejar manualmente un item no reconocido por IA.
+                //
+                // Contrato con el helper compartido `persistAlias`:
+                //   - supplierId REAL viene por prop desde page.tsx (estado
+                //     `selectedGlobalSupplier`). Nunca leemos localStorage ni
+                //     caemos a 0: si falta, `persistAlias` devuelve un
+                //     veredicto `missing-supplier` sin pegarle al backend.
+                //   - El invoiceName se preserva del item (fallback a
+                //     productName solo si el OCR no lo decoró).
+                //   - La actualización del carrito ocurre SIEMPRE: aunque la
+                //     persistencia del alias falle, el usuario ya emparejó
+                //     el producto manualmente y el contrato de edición/
+                //     carrito debe cumplirse.
+                //   - Solo afirmamos "el sistema lo recordará" cuando el
+                //     veredicto es ok; si falla, mostramos un toast
+                //     destructive con el mensaje humano del helper.
                 const productUrl = `${process.env.NEXT_PUBLIC_API_URL || '/api'}/products/get-products/${normalizeText(editBarcode)}`;
                 const prodRes = await fetch(productUrl, { headers: { 'Authorization': `Bearer ${token}` } });
-                
+
                 if (!prodRes.ok) {
                     throw new Error("El codigo de barras ingresado no existe en el sistema. Crea el producto primero.");
                 }
                 const realProduct = await prodRes.json();
 
-                // Intentar guardar el alias
-                const supplierId = localStorage.getItem('org-pos-reception-supplier') || localStorage.getItem('selectedSupplierId') || "0"; 
-                // We don't have supplierId in ReceptionRow natively unless passed, but we can assume the user can map it later or we just pass it if possible.
-                // Actually the API expects supplierId. We can pull it from the DOM or ignore it if the backend allows 0. 
-                // For now let's just call it.
-                await fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api'}/inventory/save-alias`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                    body: JSON.stringify({
-                        supplierId: Number(supplierId), // Ideally we need the real supplier ID, but backend can fallback
-                        invoiceName: (item as any).invoiceName || item.productName,
-                        productBarcode: realProduct.barcode
-                    })
+                const aliasVerdict = await persistAlias({
+                    supplierId,
+                    invoiceName: (item as any).invoiceName || item.productName,
+                    productBarcode: realProduct.barcode,
+                    token,
+                    apiBase: API_URL,
                 });
 
+                // Actualizamos la fila ANTES de hablar del veredicto: el
+                // emparejamiento al carrito es independiente del aprendizaje
+                // del OCR. Perder el alias es recuperable (reintento o
+                // alias manual en la siguiente factura), perder el
+                // emparejamiento sería frustrante.
                 onUpdate(item.lineId, {
                     productName: realProduct.productName,
                     barcode: realProduct.barcode,
@@ -407,7 +431,19 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
                     currentStock: realProduct.quantity
                 });
 
-                toast({ variant: 'success', title: 'EMPAREJADO', description: 'El producto fue emparejado y el sistema lo recordara la proxima vez.' });
+                if (aliasVerdict.ok) {
+                    toast({
+                        variant: 'success',
+                        title: 'EMPAREJADO',
+                        description: 'El producto fue emparejado y el sistema lo recordara la proxima vez.',
+                    });
+                } else {
+                    toast({
+                        variant: 'destructive',
+                        title: 'EMPAREJADO SIN RECORDAR',
+                        description: aliasVerdict.message || 'El producto se emparejo en el carrito, pero el alias no se guardo y el OCR volvera a pedirlo.',
+                    });
+                }
                 setIsEditModalOpen(false);
                 return;
             }

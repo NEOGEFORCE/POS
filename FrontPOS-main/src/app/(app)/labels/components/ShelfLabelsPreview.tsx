@@ -3,7 +3,7 @@
 // =============================================================================
 // src/app/(app)/labels/components/ShelfLabelsPreview.tsx
 //
-// Preview paginado en pantalla (NO impresión). Replica la grilla 2x6 con las
+// Preview paginado en pantalla (NO impresión). Replica la grilla con las
 // mismas dimensiones físicas y bordes dashed que el documento aislado, pero
 // renderizando dentro del árbol React para que el admin pueda verificar antes
 // de imprimir. Reutiliza los helpers puros de `@/lib/shelf-labels.mjs` para
@@ -11,27 +11,24 @@
 //
 // La impresión real NUNCA pasa por este componente: el iframe aislado usa
 // `buildShelfLabelsPrintHtml` directamente para no heredar nada del DOM.
+//
+// El formato (Carta / Oficio) se recibe como prop; si viene vacío, cae al
+// default (`LETTER`). `resolveGondolaLayout` entrega toda la geometría
+// (dimensiones de hoja, grid, padding, cantidad de slots por página).
 // =============================================================================
 
 import { useMemo } from "react";
 
 import {
-    COLUMNS,
-    LABEL_HEIGHT_MM,
-    LABEL_WIDTH_MM,
-    LABELS_PER_PAGE,
-    PAGE_PADDING_X_MM,
-    PAGE_PADDING_Y_MM,
-    ROWS,
-    SHEET_HEIGHT_MM,
-    SHEET_WIDTH_MM,
     expandItemsToSlots,
     formatCOP,
     formatPrintDate,
     paginateSlots,
+    resolveGondolaLayout,
     truncate,
 } from "@/lib/shelf-labels.mjs";
 import type { ShelfLabelItem, ShelfLabelSlot } from "@/lib/shelf-labels.d.mts";
+import type { GondolaFormat } from "@/lib/printing-config.d.mts";
 
 interface ShelfLabelsPreviewProps {
     items: ReadonlyArray<Partial<ShelfLabelItem>>;
@@ -41,6 +38,8 @@ interface ShelfLabelsPreviewProps {
     now?: Date | string | number;
     /** Clase extra para el contenedor exterior. */
     className?: string;
+    /** Formato de hoja activo. Default `LETTER` cuando no se provee. */
+    format?: GondolaFormat;
 }
 
 /**
@@ -53,13 +52,21 @@ function mm(value: number, scale: number): string {
     return `${(value * scale).toFixed(3)}mm`;
 }
 
-export function ShelfLabelsPreview({ items, scale = 0.5, now, className }: ShelfLabelsPreviewProps) {
+export function ShelfLabelsPreview({
+    items,
+    scale = 0.5,
+    now,
+    className,
+    format,
+}: ShelfLabelsPreviewProps) {
     const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 0.5;
+
+    const layout = useMemo(() => resolveGondolaLayout(format), [format]);
 
     const pages = useMemo(() => {
         const slots = expandItemsToSlots(items);
-        return paginateSlots(slots);
-    }, [items]);
+        return paginateSlots(slots, layout.format);
+    }, [items, layout.format]);
 
     const dateLabel = useMemo(() => formatPrintDate(now), [now]);
 
@@ -69,6 +76,7 @@ export function ShelfLabelsPreview({ items, scale = 0.5, now, className }: Shelf
                 className={className}
                 role="status"
                 aria-live="polite"
+                data-gondola-format={layout.format}
             >
                 <p className="text-[10px] uppercase tracking-widest text-zinc-500">
                     Agrega productos para ver la vista previa de la hoja.
@@ -81,19 +89,21 @@ export function ShelfLabelsPreview({ items, scale = 0.5, now, className }: Shelf
         <div
             className={className}
             role="group"
-            aria-label={`Vista previa de ${pages.length} hoja(s) de etiquetas de góndola, ${LABELS_PER_PAGE} etiquetas por hoja.`}
+            aria-label={`Vista previa de ${pages.length} hoja(s) de etiquetas de góndola en formato ${layout.label}, ${layout.labelsPerPage} etiquetas por hoja.`}
+            data-gondola-format={layout.format}
+            data-gondola-layout={layout.layoutMetaId}
         >
             {pages.map((page, pageIdx) => (
                 <article
                     key={pageIdx}
                     className="mx-auto mb-4 shadow-md ring-1 ring-zinc-200 dark:ring-white/10 bg-white"
                     style={{
-                        width: mm(SHEET_WIDTH_MM, safeScale),
-                        height: mm(SHEET_HEIGHT_MM, safeScale),
-                        padding: `${mm(PAGE_PADDING_Y_MM, safeScale)} ${mm(PAGE_PADDING_X_MM, safeScale)}`,
+                        width: mm(layout.sheetWidthMm, safeScale),
+                        height: mm(layout.sheetHeightMm, safeScale),
+                        padding: `${mm(layout.paddingYMm, safeScale)} ${mm(layout.paddingXMm, safeScale)}`,
                         display: "grid",
-                        gridTemplateColumns: `repeat(${COLUMNS}, ${mm(LABEL_WIDTH_MM, safeScale)})`,
-                        gridTemplateRows: `repeat(${ROWS}, ${mm(LABEL_HEIGHT_MM, safeScale)})`,
+                        gridTemplateColumns: `repeat(${layout.columns}, ${mm(layout.labelWidthMm, safeScale)})`,
+                        gridTemplateRows: `repeat(${layout.rows}, ${mm(layout.labelHeightMm, safeScale)})`,
                         gap: 0,
                         boxSizing: "border-box",
                     }}
@@ -105,6 +115,8 @@ export function ShelfLabelsPreview({ items, scale = 0.5, now, className }: Shelf
                             slot={slot}
                             dateLabel={dateLabel}
                             scale={safeScale}
+                            labelWidthMm={layout.labelWidthMm}
+                            labelHeightMm={layout.labelHeightMm}
                         />
                     ))}
                 </article>
@@ -117,12 +129,20 @@ interface SlotPreviewProps {
     slot: ShelfLabelSlot | null;
     dateLabel: string;
     scale: number;
+    labelWidthMm: number;
+    labelHeightMm: number;
 }
 
-function SlotPreview({ slot, dateLabel, scale }: SlotPreviewProps) {
+function SlotPreview({
+    slot,
+    dateLabel,
+    scale,
+    labelWidthMm,
+    labelHeightMm,
+}: SlotPreviewProps) {
     const style: React.CSSProperties = {
-        width: mm(LABEL_WIDTH_MM, scale),
-        height: mm(LABEL_HEIGHT_MM, scale),
+        width: `${(labelWidthMm * scale).toFixed(3)}mm`,
+        height: `${(labelHeightMm * scale).toFixed(3)}mm`,
         border: `${Math.max(0.5, 0.2 * scale)}px dashed #c4c4c4`,
         padding: `${(2.5 * scale).toFixed(3)}mm ${(3 * scale).toFixed(3)}mm`,
         display: "flex",

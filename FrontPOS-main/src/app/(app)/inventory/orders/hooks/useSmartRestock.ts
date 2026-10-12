@@ -103,6 +103,24 @@ export interface RestockSuggestion {
     | "visit_frequency_learned"
     | "default";
 
+  /**
+   * Aprendizaje de la CANTIDAD HABITUAL de recepción, provisto por el
+   * backend. Dos campos opcionales (contrato puede faltar en servidores
+   * viejos; la UI degrada limpio):
+   *
+   *   - habitualOrderQty: cantidad habitual que llega del proveedor por
+   *     visita, aprendida de las últimas recepciones.
+   *   - habitualReorderThreshold: punto de reposición calculado por el
+   *     backend al 20 % de la cantidad habitual.
+   *
+   * EL FRONTEND NO CALCULA LA REGLA. Estos valores son INFORMATIVOS; la
+   * cantidad accionable sigue siendo `suggestedOrderQty`. La UI muestra
+   * una explicación compacta ("Habitual: 12 · reorden ≈ 3") lejos del
+   * botón de Sugerencia IA para que no se confundan.
+   */
+  habitualOrderQty?: number | null;
+  habitualReorderThreshold?: number | null;
+
   // ---- BLOQUE 1: AGENDA MANUAL (lo que el dueno escribio) ----
   visitDays?: string[];
   deliveryDays?: string[];

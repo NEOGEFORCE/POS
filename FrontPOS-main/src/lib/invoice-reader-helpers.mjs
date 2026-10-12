@@ -165,3 +165,244 @@ export function resolveCartDiscountFromOcr({ lineType, discount_percentage }) {
   if (entryType === 'gift') return 0;
   return clampPercentage(discount_percentage);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// IMPUESTOS ESPERADOS: Neutralización defensiva por item
+// ─────────────────────────────────────────────────────────────────────────
+//
+// El modal de OCR deja al usuario marcar explícitamente qué impuestos espera
+// (IVA, IBUA, ICUI) antes de llamar a Claude. El backend respeta esas
+// pistas pero, por paranoia, el frontend neutraliza los campos que el
+// usuario NO marcó antes de pasar los items al padre:
+//
+//   - unmatched: `iva_percentage`, `ibua_percentage`, `icui_percentage`
+//   - matched:   `iva`, `ibua`, `icui`
+//
+// La política es simple y binaria: si el checkbox está apagado, el OCR no
+// debió detectar ese impuesto para esta factura. Cualquier valor residual se
+// aplana a 0 para que ningún recálculo aguas abajo lo multiplique por un
+// porcentaje "fantasma".
+
+/**
+ * Devuelve un item nuevo con los campos de impuesto neutralizados en función
+ * de `expectedTaxes`. Nunca mutila el objeto original ni descarta otros
+ * campos. Si `expectedTaxes` es undefined/null, deja los valores tal cual.
+ *
+ * Soporta la coexistencia de los dos shapes del backend:
+ *   - unmatched: `*_percentage`
+ *   - matched:   nombre pelado (`iva`, `ibua`, `icui`)
+ *
+ * Ambos se neutralizan en paralelo porque los items pueden propagarse en
+ * cualquiera de los dos formatos entre el modal y el reviewer.
+ */
+export function neutralizeTaxFields(item, expectedTaxes) {
+  if (!item || typeof item !== 'object') return item;
+  if (!expectedTaxes || typeof expectedTaxes !== 'object') return { ...item };
+  const next = { ...item };
+  if (!expectedTaxes.iva) {
+    next.iva_percentage = 0;
+    next.iva = 0;
+  }
+  if (!expectedTaxes.ibua) {
+    next.ibua_percentage = 0;
+    next.ibua = 0;
+  }
+  if (!expectedTaxes.icui) {
+    next.icui_percentage = 0;
+    next.icui = 0;
+  }
+  return next;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EMPAQUES: Confirmación obligatoria del multiplicador y conversión a
+//           unidades individuales
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Contrato con el backend:
+//   - Cuando el OCR detecta en el nombre del producto una pista de empaque
+//     (p.ej. "COCA COLA PAQUETE X 24" o "GASEOSA 1.5L x12") devuelve dos
+//     campos adicionales por item: `packHintUnits` (entero >= 2) y
+//     `requiresPackConfirmation` (bool). NUNCA muta `quantity` ni `costUnit`
+//     ni `unitPrice`; es responsabilidad del frontend confirmar con el
+//     operario cuántas unidades trae el empaque antes de cargar al carrito.
+//   - La política del negocio es que las recepciones viajen SIEMPRE en
+//     unidades individuales (no en paquetes), para que el stock y el costo
+//     unitario queden coherentes con la venta en caja. No se ofrece opción
+//     de "conservar paquete".
+
+/**
+ * Mínimo de unidades por paquete que acepta el modal. Si el OCR sugiere 1
+ * o cualquier valor < 2 lo consideramos "sin pista" y el item fluye como
+ * un producto normal sin requerir confirmación.
+ */
+export const PACK_MIN_UNITS = 2;
+
+/**
+ * Máximo defensivo para evitar tecleos accidentales (p.ej. 24000). El
+ * negocio nunca ha visto empaques por encima de 999 unidades.
+ */
+export const PACK_MAX_UNITS = 999;
+
+/**
+ * Extrae el hint entero del backend (`packHintUnits`, admite también la
+ * variante snake_case por si el backend evolucionó). Retorna 0 si no es un
+ * entero finito >= 2.
+ */
+export function getPackHintUnits(item) {
+  if (!item || typeof item !== 'object') return 0;
+  const raw = item.packHintUnits !== undefined
+    ? item.packHintUnits
+    : item.pack_hint_units;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < PACK_MIN_UNITS) return 0;
+  return Math.floor(n);
+}
+
+/**
+ * `true` cuando el backend marcó el item con `requiresPackConfirmation=true`
+ * Y el hint es un entero >= 2. Si falta cualquiera de las dos piezas, el
+ * item fluye como individual sin requerir confirmación.
+ *
+ * Nunca mira el nombre del producto desde el frontend: la detección vive en
+ * el backend, aquí sólo honramos el contrato.
+ */
+export function itemRequiresPackConfirmation(item) {
+  if (!item || typeof item !== 'object') return false;
+  const flag = item.requiresPackConfirmation !== undefined
+    ? item.requiresPackConfirmation
+    : item.requires_pack_confirmation;
+  if (!flag) return false;
+  return getPackHintUnits(item) >= PACK_MIN_UNITS;
+}
+
+/**
+ * `true` si al menos un item de la lista necesita confirmación de empaque.
+ * Es la bandera que el modal usa para decidir si abre la etapa interna de
+ * revisión antes de llamar a `onExtractedItems`.
+ */
+export function anyItemRequiresPackConfirmation(items) {
+  if (!Array.isArray(items)) return false;
+  for (const it of items) {
+    if (itemRequiresPackConfirmation(it)) return true;
+  }
+  return false;
+}
+
+/**
+ * Valida que el valor tecleado por el usuario sea un entero dentro del rango
+ * [PACK_MIN_UNITS, PACK_MAX_UNITS]. Tolera strings numéricos ("24") pero NO
+ * decimales ("24.5"): un paquete no puede traer 24.5 unidades.
+ */
+export function isValidUnitsPerPack(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= PACK_MIN_UNITS && value <= PACK_MAX_UNITS;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '' || !/^\d+$/.test(trimmed)) return false;
+    const n = Number(trimmed);
+    return Number.isInteger(n) && n >= PACK_MIN_UNITS && n <= PACK_MAX_UNITS;
+  }
+  return false;
+}
+
+/**
+ * Divide un precio por el multiplicador de empaque preservando la lógica de
+ * "nunca conservar precio de paquete como precio unitario".
+ *
+ * Para precios tipo COSTO (costUnit, unitPrice, costoReal, totalPrice): se
+ * divide sin redondear a enteros para no perder decimales relevantes en el
+ * cuadre fiscal; el renglón del carrito guarda el BASE pre-impuestos.
+ * Para PVP sugerido (pvpSugerido): se divide y se redondea a entero porque
+ * los precios de venta en Colombia siempre se expresan en pesos sin
+ * decimales. El redondeo "coherente" (HALF_AWAY_FROM_ZERO) evita el bias
+ * sistemático de Math.round en valores negativos — aquí nunca pasa, pero
+ * dejamos la implementación simétrica por si algún día aparecen devoluciones.
+ */
+function dividePrice(value, unitsPerPack) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  if (!Number.isFinite(unitsPerPack) || unitsPerPack <= 0) return n;
+  return n / unitsPerPack;
+}
+
+function roundHalfAway(n) {
+  if (!Number.isFinite(n)) return 0;
+  return n >= 0 ? Math.floor(n + 0.5) : -Math.floor(-n + 0.5);
+}
+
+/**
+ * Convierte un item OCR cuyo precio y cantidad vienen expresados en PAQUETES
+ * a su representación en UNIDADES INDIVIDUALES, preservando el valor total
+ * de la línea (quantity × costo).
+ *
+ * Reglas por campo (sólo se tocan si existen; nada se inventa):
+ *
+ *   Cantidades
+ *     quantity   = quantity * unitsPerPack
+ *     bonus_quantity = bonus_quantity * unitsPerPack  (si > 0)
+ *
+ *   Costos (BASE pre-impuestos — se divide sin redondear)
+ *     unitPrice  /= unitsPerPack      (shape unmatched)
+ *     costUnit   /= unitsPerPack      (shape matched)
+ *     costoReal  /= unitsPerPack      (shape matched extendido, defensivo)
+ *     totalPrice NO se divide porque es "paquete × precio" y YA representa
+ *                la línea completa; se preserva intacto.
+ *
+ *   Precio de venta sugerido (PVP, pesos enteros)
+ *     pvpSugerido /= unitsPerPack, redondeado al entero más cercano
+ *
+ *   Preservados sin modificar (vienen por producto, no por paquete)
+ *     pvpActual, currentStock, currentWac, marginUsed
+ *
+ *   Trazabilidad (añadidos siempre que la conversión aplicó)
+ *     invoicePackageQuantity = quantity ANTES de multiplicar (lo que trae
+ *                              la factura en paquetes)
+ *     confirmedUnitsPerPack  = unitsPerPack confirmado por el usuario
+ *
+ * La función NUNCA toca el objeto original: siempre retorna una copia.
+ * Si `unitsPerPack` no es entero >= 2, retorna una copia superficial sin
+ * modificar — así el llamador puede delegar la validación en este helper
+ * sin riesgo de corromper datos cuando el input es basura.
+ */
+export function convertItemToIndividualUnits(item, unitsPerPack) {
+  if (!item || typeof item !== 'object') return item;
+  if (!isValidUnitsPerPack(unitsPerPack)) return { ...item };
+  const n = typeof unitsPerPack === 'string' ? Number(unitsPerPack) : unitsPerPack;
+  const next = { ...item };
+
+  const originalQuantity = Number(next.quantity);
+  if (Number.isFinite(originalQuantity)) {
+    next.quantity = originalQuantity * n;
+    next.invoicePackageQuantity = originalQuantity;
+  }
+  next.confirmedUnitsPerPack = n;
+
+  if (next.unitPrice !== undefined && next.unitPrice !== null) {
+    next.unitPrice = dividePrice(next.unitPrice, n);
+  }
+  if (next.costUnit !== undefined && next.costUnit !== null) {
+    next.costUnit = dividePrice(next.costUnit, n);
+  }
+  if (next.costoReal !== undefined && next.costoReal !== null) {
+    next.costoReal = dividePrice(next.costoReal, n);
+  }
+  if (next.pvpSugerido !== undefined && next.pvpSugerido !== null) {
+    const divided = dividePrice(next.pvpSugerido, n);
+    next.pvpSugerido = roundHalfAway(divided);
+  }
+  // bonus_quantity: si viene positiva, escala por paquete. Un BONUS de "1
+  // paquete gratis" sobre una factura de 2 paquetes × 24 unidades se
+  // convierte en 24 unidades regaladas por paquete; después se multiplicó
+  // ya `quantity` por N y aquí hacemos lo propio con el bonus.
+  const bonus = Number(next.bonus_quantity);
+  if (Number.isFinite(bonus) && bonus > 0) {
+    next.bonus_quantity = bonus * n;
+  }
+  // Marcamos que el item ya ha sido convertido para que ningún punto
+  // aguas abajo multiplique de nuevo accidentalmente.
+  next.packConversionApplied = true;
+
+  return next;
+}

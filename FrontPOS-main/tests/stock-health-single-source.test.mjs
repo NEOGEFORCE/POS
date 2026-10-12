@@ -63,3 +63,33 @@ test('utils.ts importa el semaforo canonico', async () => {
     'src/lib/utils.ts debe importar los helpers de @/lib/stock-health.mjs'
   );
 });
+
+/**
+ * GUARDIAN (2026-10-08): el helper triestado JAMAS puede devolver CRITICAL
+ * cuando minStock <= 0. Esta promesa se audita de dos formas:
+ *
+ *   1. Dinamicamente: el test unitario en stock-health.test.mjs ejerce la
+ *      funcion con stock=0, positivo y negativo con minStock=0 y verifica
+ *      que todas las ramas devuelven OPTIMAL.
+ *   2. Estaticamente: este guardian lee el codigo y falla si alguien
+ *      vuelve a escribir "return 'CRITICAL'" dentro de la rama m <= 0.
+ */
+test('calculateStockHealth nunca retorna CRITICAL cuando minStock <= 0', async () => {
+  const source = await readFile(utilsPath, 'utf8');
+  const start = source.indexOf('export const calculateStockHealth');
+  const end = source.indexOf('export const getStockStatus', start);
+  const body = source.slice(start, end);
+  const branchStart = body.indexOf('if (m <= 0)');
+  assert.notEqual(branchStart, -1, 'no se encontró la rama m <= 0 en calculateStockHealth');
+  const nextIf = body.indexOf('const { level } = getStockHealth', branchStart);
+  const branch = nextIf !== -1 ? body.slice(branchStart, nextIf) : body.slice(branchStart);
+  assert.ok(
+    !/return\s+['"]CRITICAL['"]/.test(branch),
+    'calculateStockHealth volvió a pintar rojo con minStock<=0. ' +
+    'Regla del dueño: sin minimo configurado jamás se marca crítico, ni siquiera con stock 0 o negativo.',
+  );
+  assert.ok(
+    !/return\s+['"]WARNING['"]/.test(branch),
+    'calculateStockHealth volvió a pintar amarillo con minStock<=0.',
+  );
+});

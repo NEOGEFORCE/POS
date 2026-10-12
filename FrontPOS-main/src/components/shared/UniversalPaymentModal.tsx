@@ -640,7 +640,9 @@ export default function UniversalPaymentModal({
   // Es la ÚNICA ruta física automática por venta: `dispatchAutoPrint` nunca
   // embebe el pulso dentro del recibo, por diseño. El browser NUNCA puede
   // abrir físicamente el cajón, así que si no hay bridge, auditamos y
-  // notificamos al cajero (sin fingir nada). Si hay bridge, le pasamos:
+  // seguimos silenciosamente (sin notificar al cajero: la configuración
+  // visible del cajón se retiró de la UI, así que cualquier fallo del
+  // bridge no debe estorbar la venta). Si hay bridge, le pasamos:
   //   - `drawer`: comando ESC/POS literal + evento (BEFORE_PRINT /
   //     AFTER_PRINT / MANUAL — MANUAL ya quedó filtrado antes de llegar).
   //   - `connection`: a qué impresora enviar el pulso.
@@ -648,7 +650,7 @@ export default function UniversalPaymentModal({
   //     disparado por una venta recién confirmada. El bridge aplica
   //     `resolveAutoDrawerBytes` para enforce enabled/event/MANUAL como
   //     segunda línea de defensa; con `openDrawerOnSale: false` o ausente,
-  //     el bridge ejecuta el pulso directo (botón admin "Probar cajón").
+  //     el bridge ejecuta el pulso directo.
   // La auditoría a `/cash-drawer/open` se hace primero (audit-first) con
   // `override: false`: el backend acepta porque hay una venta reciente
   // asociada al token del cajero (CASH_DRAWER_REQUIRES_SALE_OR_ADMIN).
@@ -665,27 +667,16 @@ export default function UniversalPaymentModal({
           event: cfg.drawer.event,
         }),
       });
-    } catch (err: any) {
-      // La auditoría puede fallar (p.ej. CASH_DRAWER_REQUIRES_SALE_OR_ADMIN
-      // si la sesión perdió contexto). Avisamos pero NO interrumpimos la
-      // UX de éxito de la venta.
-      const msg = err?.message || "La auditoría del cajón falló.";
-      toast({
-        variant: "destructive",
-        title: "CAJÓN BLOQUEADO",
-        description: msg,
-      });
+    } catch {
+      // Si la auditoría falla (sesión caída, backend sin endpoint, etc.)
+      // seguimos silenciosamente: nunca interrumpimos la UX de éxito de la
+      // venta por un flujo lateral que ni siquiera está visible al cajero.
       return;
     }
     const w = window as any;
     if (!w.posBridge?.kickDrawer) {
-      // Sin bridge, el navegador no puede abrir físicamente. Honestidad
-      // operativa: dejamos un toast informativo. NO fingimos la apertura.
-      toast({
-        variant: "default",
-        title: "CAJÓN AUDITADO",
-        description: "Sin bridge local — el pulso físico no salió. Verifica scale-bridge.",
-      });
+      // Sin bridge, el navegador no puede abrir físicamente. Devolvemos
+      // sin ruido: la auditoría quedó registrada.
       return;
     }
     try {
@@ -699,7 +690,7 @@ export default function UniversalPaymentModal({
     } catch {
       // El bridge rechazó el pulso. La auditoría ya quedó registrada.
     }
-  }, [toast]);
+  }, []);
 
   // Auto-impresión persistente y cajón al completar venta — ORQUESTADOR
   // ÚNICO, SINGLE-FIRE por venta.

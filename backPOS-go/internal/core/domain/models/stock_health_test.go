@@ -2,9 +2,11 @@ package models
 
 import "testing"
 
-// TestClassifyStockBand cubre la regla nueva del semaforo (agosto 2026):
-// ROJO < 25%, AMARILLO 25% – 75%, VERDE >= 75%. Es el contrato con las
-// consultas SQL de stats/paginacion y con el dashboard.
+// TestClassifyStockBand cubre la regla del semaforo (agosto 2026,
+// actualizada 2026-10): ROJO < 25%, AMARILLO 25% – 75%, VERDE >= 75%,
+// y UNSET cuando minStock<=0 (SIEMPRE, incluso con stock<=0). Un producto
+// sin minimo no incumple nada contra el minimo porque no hay minimo. Es el
+// contrato con las consultas SQL de stats/paginacion y con el dashboard.
 func TestClassifyStockBand(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -12,13 +14,15 @@ func TestClassifyStockBand(t *testing.T) {
 		minStock float64
 		want     string
 	}{
-		// Sin minimo: la banda no juzga contra el minimo.
-		{name: "sin minimo y sin stock", stock: 0, minStock: 0, want: StockBandRed},
-		{name: "sin minimo y stock negativo", stock: -1, minStock: 0, want: StockBandRed},
+		// Sin minimo (minStock<=0): SIEMPRE UNSET. La banda no se activa en
+		// rojo aunque el stock sea 0 — la urgencia por agotado se emite en
+		// BuildRestockRecommendation, no aca. Regla 2026-10.
+		{name: "sin minimo y sin stock -> UNSET (regla 2026-10)", stock: 0, minStock: 0, want: StockBandUnset},
+		{name: "sin minimo y stock negativo -> UNSET (regla 2026-10)", stock: -1, minStock: 0, want: StockBandUnset},
 		{name: "sin minimo y stock positivo", stock: 5, minStock: 0, want: StockBandUnset},
 		{name: "sin minimo y stock 0.5", stock: 0.5, minStock: 0, want: StockBandUnset},
 		{name: "minimo negativo cuenta como sin minimo", stock: 3, minStock: -2, want: StockBandUnset},
-		{name: "minimo negativo con stock cero es rojo", stock: 0, minStock: -2, want: StockBandRed},
+		{name: "minimo negativo con stock cero -> UNSET (regla 2026-10)", stock: 0, minStock: -2, want: StockBandUnset},
 
 		// Con minimo: ratio = stock/minStock. Fronteras exactas 0.25 y 0.75.
 		{name: "stock 0 con minimo 10 -> 0%% rojo", stock: 0, minStock: 10, want: StockBandRed},

@@ -826,6 +826,52 @@ func resolveWithinRoot(root, requestPath string) (string, bool) {
 	return absCandidate, true
 }
 
+// isNextRSCFetch reporta si la petición HTTP viene del router interno de
+// Next.js (prefetch, streaming de React Server Components, etc.) y NO es una
+// navegación de documento del navegador.
+//
+// Si el cliente envía cualquiera de las señales RSC conocidas, se considera
+// fetch interno y hay que servirle el payload `.txt` real. Si en cambio llega
+// con `Sec-Fetch-Dest: document` o un `Accept: text/html` limpio, se trata de
+// un usuario que pegó la URL con `.txt` en la barra de direcciones y conviene
+// redirigirlo a la ruta sin extensión para que la SPA tome el control.
+func isNextRSCFetch(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("RSC"), "1") {
+		return true
+	}
+	if r.Header.Get("Next-Router-State-Tree") != "" {
+		return true
+	}
+	if r.Header.Get("Next-Router-Prefetch") != "" {
+		return true
+	}
+	if dest := r.Header.Get("Sec-Fetch-Dest"); dest != "" && !strings.EqualFold(dest, "document") {
+		return true
+	}
+	return false
+}
+
+// isDocumentNavigationForTxt decide si una GET/HEAD a un `.txt` debe tratarse
+// como navegación de documento (y por tanto redirigirse). Hereda de
+// isNextRSCFetch el short-circuit RSC.
+func isDocumentNavigationForTxt(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	if isNextRSCFetch(r) {
+		return false
+	}
+	if strings.EqualFold(r.Header.Get("Sec-Fetch-Dest"), "document") {
+		return true
+	}
+	// Sin Sec-Fetch-Dest (navegador viejo, curl, telegram preview): nos
+	// apoyamos en el Accept. Los fetch internos de Next piden
+	// `text/x-component`; una navegación real pide `text/html` en primera
+	// posición.
+	accept := r.Header.Get("Accept")
+	return strings.Contains(strings.ToLower(accept), "text/html")
+}
+
 func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
@@ -843,6 +889,28 @@ func spaFallbackMiddleware(publicPath string) gin.HandlerFunc {
 					"message": "Ruta de API no encontrada",
 				},
 			})
+			return
+		}
+
+		// 0.5 Payloads `.txt` de Next: cuando un humano navega directamente a
+		// `/dashboard.txt` (document request, Accept text/html) el navegador
+		// muestra texto plano o pide descargarlo. Redirigimos TEMPORARIAMENTE a
+		// la ruta sin extensión para que la SPA tome el control. Los fetch
+		// internos del router (RSC, prefetch) deben seguir recibiendo el
+		// archivo real.
+		if strings.HasSuffix(path, ".txt") && isDocumentNavigationForTxt(c.Request) {
+			target := strings.TrimSuffix(path, ".txt")
+			if target == "" {
+				target = "/"
+			}
+			if raw := c.Request.URL.RawQuery; raw != "" {
+				target += "?" + raw
+			}
+			c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+			c.Redirect(http.StatusTemporaryRedirect, target)
+			c.Abort()
 			return
 		}
 

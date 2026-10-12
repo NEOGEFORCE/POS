@@ -15,6 +15,7 @@ export type CutMode = "AUTO" | "MANUAL" | "NONE";
 export type ReceiptDeliveryMode = "bridge" | "browser";
 export type PaperPreset = "80" | "58" | "JAL_838L" | "CUSTOM";
 export type ActiveMode = "RECEIPT" | "LABEL";
+export type GondolaFormat = "LETTER" | "LEGAL";
 export type LabelSizePreset =
   | "50x30"
   | "40x30"
@@ -35,6 +36,8 @@ export const SPOOLERS: Readonly<Record<"WINDOWS" | "CUPS", PrinterSpooler>>;
 export const DRAWER_EVENTS: Readonly<Record<"BEFORE_PRINT" | "AFTER_PRINT" | "MANUAL", DrawerEvent>>;
 export const CUT_MODES: Readonly<Record<"AUTO" | "MANUAL" | "NONE", CutMode>>;
 export const RECEIPT_DELIVERY_MODES: Readonly<Record<"BRIDGE" | "BROWSER", ReceiptDeliveryMode>>;
+export const GONDOLA_FORMATS: Readonly<Record<"LETTER" | "LEGAL", GondolaFormat>>;
+export const DEFAULT_GONDOLA_FORMAT: "LETTER";
 export const PAPER_PRESETS: Readonly<{ WIDTH_80: "80"; WIDTH_58: "58"; JAL_838L: "JAL_838L"; CUSTOM: "CUSTOM" }>;
 export const PAPER_COLUMNS: Readonly<Record<"80" | "58" | "82", number>>;
 export const ACTIVE_MODES: Readonly<Record<"RECEIPT" | "LABEL", ActiveMode>>;
@@ -248,6 +251,18 @@ export interface PrintingLabels {
   extras: PrintingLabelExtras;
 }
 
+/**
+ * Rama góndola: configuración persistida para precios de góndola en hoja
+ * de impresora normal. El default es "LETTER" (Carta). "LEGAL" (Oficio)
+ * es la variante extendida con grid 4×5 = 20 etiquetas por hoja. La
+ * geometría exacta (dimensiones físicas, padding, columnas, filas,
+ * `@page size`) se calcula en `shelf-labels.mjs` para no duplicar
+ * números físicos aquí.
+ */
+export interface PrintingGondola {
+  format: GondolaFormat;
+}
+
 export interface PrintingConfig {
   version: 1;
   updatedAt: string | null;
@@ -257,6 +272,7 @@ export interface PrintingConfig {
   drawer: PrintingDrawer;
   receipt: PrintingReceipt;
   labels: PrintingLabels;
+  gondola: PrintingGondola;
 }
 
 export interface ValidationIssue {
@@ -293,6 +309,16 @@ export function applyLabelSizePreset(config: unknown, preset: LabelSizePreset): 
 export function applyJaltechJAL838LPreset(
   config: unknown,
   options?: { mode?: JaltechJAL838LConnectionMode },
+): PrintingConfig;
+
+/**
+ * Mutador puro del formato de hoja de góndola. Idempotente. Un valor
+ * desconocido deja la rama intacta (sanitize ya aplicó el default
+ * cuando se cargó la config).
+ */
+export function applyGondolaFormatPreset(
+  config: unknown,
+  format: GondolaFormat,
 ): PrintingConfig;
 
 export interface StorageLike {

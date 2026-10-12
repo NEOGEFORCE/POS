@@ -492,7 +492,23 @@ WITH candidatos AS (
 	  AND COALESCE(UPPER(sa.status), '') NOT IN ('CANCELED', 'CANCELLED')
 	GROUP BY sd.barcode
 ), empaque_aprendido AS (
-	-- EMPAQUE APRENDIDO DE LAS RECEPCIONES (2026-09-05).
+	-- EMPAQUE APRENDIDO DE LAS RECEPCIONES (2026-09-05, actualizado 2026-10).
+	--
+	-- FUENTE UNICA: stock_movements con reason='RECEPTION'. No se mira
+	-- confirmed_order_items (pedir no es recibir) ni existe migracion. La
+	-- unica evidencia es lo que entro al kardex como RECEPTION real.
+	--
+	-- EXCLUSIONES explicitas:
+	--   * reason='RECEPTION_BONUS'   (bonificaciones del proveedor).
+	--   * reason='PACK_RECEPTION_BULK' (efecto sobre el producto base de una paca).
+	--   * reason='PRICE_UPDATE_NO_STOCK' (actualizacion de precio sin stock).
+	--   * reason libre con type='ADJUSTMENT_UP/DOWN' (ajustes de recepcion).
+	--   * reason='RETURN' / 'RETURN_REVERT' (devoluciones).
+	--   * productos pesables (p.isWeighted=TRUE): un kardex de peso real nunca
+	--     califica como caja; se filtra en SQL para no depender de que
+	--     LearnPackSize vea decimales.
+	--   * cantidades <= 1: un empaque de 1 es lo mismo que no tener empaque,
+	--     y las recepciones de 1 suelen ser ajustes.
 	--
 	-- Se agrupan las cantidades recibidas por producto, se cuenta cuantas veces
 	-- se repitio cada una, y se entrega el resumen como JSON: una fila por
@@ -510,8 +526,11 @@ WITH candidatos AS (
 		       COUNT(*)::integer AS times
 		FROM stock_movements sm
 		JOIN candidatos c ON c.product_id = sm.barcode
+		JOIN products p ON p.barcode = sm.barcode
 		WHERE sm.reason = 'RECEPTION'
 		  AND sm.quantity > 1
+		  AND COALESCE(p."isWeighted", FALSE) = FALSE
+		  AND p.deleted_at IS NULL
 		GROUP BY sm.barcode, sm.quantity
 	) recepciones_agrupadas
 	GROUP BY product_id
@@ -1009,27 +1028,33 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 		metric.ABCCategory,
 	)
 	// EMPAQUE APRENDIDO: si el producto siempre llega en cajas de N, se pide UNA
-	// CAJA COMPLETA, pero SOLO cuando el stock cae a la banda ROJA.
+	// CAJA COMPLETA cuando el stock + transito cae al umbral de reposicion
+	// habitual (PackReorderThreshold = MAX de 20% del empaque y 25% del minimo).
 	//
-	// REGLA DEL DUEÑO (2026-09-05), textual:
+	// REGLA DEL DUEÑO (2026-09-05 + 2026-10), textual original:
 	//
 	//	"no me gusta porque quedariamos con mucho producto de uno y faltando el
 	//	 otro, entonces es mejor que si llega a 3 o menos ahi si pedir porque los
 	//	 productos normalmente llegan entre 1 y 2 dias entonces esos 3 aguantan y
 	//	 ya cuando lleguen quedamos en 15"
 	//
-	// EL RAZONAMIENTO ES DE CAJA, NO DE INVENTARIO: comprar por caja siempre
-	// termina por encima del minimo, asi que el objetivo del 75% no ahorra nada en
-	// productos empacados — solo adelanta el gasto. Si el proveedor repone en 1-2
-	// dias, 3 unidades aguantan, y la plata que no se inmoviliza en este producto
-	// alcanza para otro que si esta faltando.
+	// Con minStock=12 y pack=12 el umbral queda en 3 (max(ceil(2.4), ceil(3)) =
+	// 3), se dispara en 3 y queda en 15 — exactamente como se describio.
 	//
-	// Por eso el disparador es el umbral ROJO (25% del minimo), no el objetivo del
-	// 75%. Con minimo 12 dispara en 3 y queda en 15, exactamente como lo describio.
+	// Con minStock=0 (sin minimo configurado) el umbral queda en ceil(pack*0.20):
+	// pack=12 dispara en 3, pack=24 dispara en 5. Antes se usaba la demanda
+	// para calcular cajas sueltas; ahora siempre se sugiere UNA caja habitual.
 	//
-	// El 75% se conserva para los productos que se piden POR UNIDAD, donde pedir
-	// menos si ahorra plata.
+	// EL RAZONAMIENTO SIGUE SIENDO DE FLUJO DE CAJA: comprar por caja siempre
+	// termina por encima del minimo, asi que adelantar no ahorra nada. El
+	// operador puede aumentar la cantidad en la tarjeta si lo necesita.
+	//
+	// La existencia que ya viene en camino se descuenta via el "disponible"
+	// (stock + transito) y asi se evitan los duplicados: si una caja ya esta
+	// en transito, el disponible esta por encima del umbral y no se pide otra.
 	packSize := learnPackSizeFromHistory(row.PackHistory)
+	habitualOrderQty := 0.0
+	habitualReorderThreshold := 0.0
 	if packSize > 1 {
 		liveSuggestion = models.PackOrderQuantity(
 			metric.IdealStock,
@@ -1038,6 +1063,13 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 			row.MinStock,
 			packSize,
 		)
+		habitualOrderQty = packSize
+		// El umbral expuesto al frontend se queda con la pata del habitual
+		// (20% del empaque). El umbral real del disparador puede ser mayor
+		// (PackReorderThreshold toma el max con 25% del minimo), pero la UI
+		// lo usa para explicar el habitual, no la banda del minimo — esa
+		// ya la expone stockBand.
+		habitualReorderThreshold = math.Ceil(packSize * models.PackReorderRatio)
 	}
 
 	metric.SuggestedOrderQty = liveSuggestion
@@ -1188,6 +1220,11 @@ func buildRestockSuggestion(row restockSuggestionRow, nowInBogota time.Time) mod
 		TotalSold14d:     row.LiveTotalSold14d,
 		AvgDailySales14d: demand14,
 		DaysZeroStock14d: row.LiveDaysZero14d,
+		// Empaque habitual aprendido (regla 2026-10): se expone al frontend
+		// aunque la UI prefiera un formato distinto. 0 cuando el producto
+		// no tiene empaque aprendido con evidencia suficiente.
+		HabitualOrderQty:         habitualOrderQty,
+		HabitualReorderThreshold: habitualReorderThreshold,
 		// Bloque MANUAL. Se preservan los dias tal como el dueno los
 		// escribio para que la UI pueda compararlos con los aprendidos.
 		VisitDays:             row.EffectiveVisitDays,

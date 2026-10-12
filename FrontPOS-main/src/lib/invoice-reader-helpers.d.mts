@@ -9,18 +9,31 @@ export interface InvoiceItemLike {
   invoiceName?: string;
   name?: string;
   barcode?: string;
+  productName?: string;
   quantity?: number;
   unitPrice?: number;
   totalPrice?: number;
   costUnit?: number;
+  /** Costo real por paquete en facturas con empaques detectados. */
+  costoReal?: number;
   pvpSugerido?: number;
+  pvpActual?: number;
   marginUsed?: number;
+  /** Stock actual del producto (viaja de catálogo a modal; no se divide). */
+  currentStock?: number;
+  /** WAC actual del producto (viaja de catálogo a modal; no se divide). */
+  currentWac?: number;
+  iva?: number;
+  ibua?: number;
+  icui?: number;
   iva_percentage?: number;
   ibua_percentage?: number;
   icui_percentage?: number;
   discount_percentage?: number;
   line_type?: string;
+  lineType?: string;
   bonus_quantity?: number;
+  isMatched?: boolean;
   suggestions?: Array<{ barcode: string; productName: string; confidence: number }>;
   __ocrLocalId?: string;
   [key: string]: any;
@@ -60,3 +73,57 @@ export function resolveCartDiscountFromOcr(input: {
   lineType?: unknown;
   discount_percentage?: unknown;
 }): number;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Impuestos esperados: neutralización defensiva
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface ExpectedTaxes {
+  iva: boolean;
+  ibua: boolean;
+  icui: boolean;
+}
+
+export function neutralizeTaxFields<T extends InvoiceItemLike>(
+  item: T | null | undefined,
+  expectedTaxes?: ExpectedTaxes | null,
+): T;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Empaques: confirmación obligatoria y conversión a unidades individuales
+// ─────────────────────────────────────────────────────────────────────────
+
+export const PACK_MIN_UNITS: number;
+export const PACK_MAX_UNITS: number;
+
+export interface PackHintItemLike extends InvoiceItemLike {
+  packHintUnits?: number;
+  /** Variante defensiva por si el backend evoluciona a snake_case. */
+  pack_hint_units?: number;
+  requiresPackConfirmation?: boolean;
+  /** Variante defensiva por si el backend evoluciona a snake_case. */
+  requires_pack_confirmation?: boolean;
+}
+
+export function getPackHintUnits(item: PackHintItemLike | null | undefined): number;
+export function itemRequiresPackConfirmation(
+  item: PackHintItemLike | null | undefined,
+): boolean;
+export function anyItemRequiresPackConfirmation(
+  items: Array<PackHintItemLike | null | undefined> | null | undefined,
+): boolean;
+export function isValidUnitsPerPack(value: unknown): boolean;
+
+export interface PackConvertedItem extends InvoiceItemLike {
+  /** Cantidad original en paquetes (antes de multiplicar). */
+  invoicePackageQuantity?: number;
+  /** N confirmado por el usuario. */
+  confirmedUnitsPerPack?: number;
+  /** Marca que la conversión ya corrió — evita doble multiplicación. */
+  packConversionApplied?: boolean;
+}
+
+export function convertItemToIndividualUnits<T extends InvoiceItemLike>(
+  item: T | null | undefined,
+  unitsPerPack: number | string,
+): T & PackConvertedItem;

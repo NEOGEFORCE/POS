@@ -190,26 +190,17 @@ test("workspace: el bridgePayload incluye connection + labels + labelItems (los 
     "El bridgePayload debe incluir labelItems (detalle por item con productName+salePrice).");
 });
 
-test("workspace: handleOpenDrawer envía connection + drawer al bridge.kickDrawer", async () => {
+test("workspace: ya no expone handleOpenDrawer ni la apertura manual del cajón", async () => {
   const src = await read(workspace);
-  const idx = src.indexOf("const handleOpenDrawer = useCallback");
-  assert.ok(idx > 0);
-  const scope = src.slice(idx, idx + 2000);
-  // Conserva la auditoría primero.
-  assert.match(scope, /"\/cash-drawer\/open"/,
-    "La auditoría POST /cash-drawer/open debe seguir ocurriendo primero.");
-  // Y luego llama al bridge enriquecido.
-  assert.match(scope, /w\.posBridge\.kickDrawer\(\{/,
-    "Debe seguir existiendo la llamada al bridge para el pulso físico.");
-  // El payload del kick ahora lleva connection y drawer de la config persistida.
-  const kickIdx = scope.indexOf("w.posBridge.kickDrawer({");
-  const kickScope = scope.slice(kickIdx, kickIdx + 600);
-  assert.match(kickScope, /command:\s*printingConfig\.drawer\.command/,
-    "El kick debe llevar el comando ESC/POS literal del drawer.");
-  assert.match(kickScope, /connection:\s*printingConfig\.connection/,
-    "El kick debe llevar la rama connection sanitizada.");
-  assert.match(kickScope, /drawer:\s*printingConfig\.drawer/,
-    "El kick debe llevar la rama drawer sanitizada.");
+  assert.ok(!src.includes("handleOpenDrawer"),
+    "handleOpenDrawer debe estar completamente eliminado del workspace.");
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  assert.ok(!/Abrir cajón/.test(codeOnly),
+    "El botón visible 'Abrir cajón' debe estar fuera de la UI.");
+  assert.ok(!/caj[oó]n/i.test(codeOnly),
+    "Ninguna cadena visible del workspace puede mencionar al cajón.");
 });
 
 test("workspace: la hoja góndola sigue 100% separada — handlePrintShelfSheet NO toca labelItems", async () => {

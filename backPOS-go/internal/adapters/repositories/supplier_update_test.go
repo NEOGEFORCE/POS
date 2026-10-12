@@ -139,7 +139,9 @@ func TestUpdateManualScheduleSoloTocaColumnasAutorizadas(t *testing.T) {
 	}
 
 	re := regexp.MustCompile(`func \(r \*PostgresSupplierRepository\) UpdateManualSchedule\([\s\S]*?return &updated, nil\n}`)
-	method := re.FindString(string(data))
+	// Normaliza CRLF a LF para que el patron con "\n}" literal funcione
+	// cuando el worktree esta checkout-eado con core.autocrlf.
+	method := re.FindString(strings.ReplaceAll(string(data), "\r\n", "\n"))
 	if method == "" {
 		t.Fatal("no se encontró UpdateManualSchedule")
 	}

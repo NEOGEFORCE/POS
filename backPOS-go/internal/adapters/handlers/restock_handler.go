@@ -50,9 +50,25 @@ func (h *RestockHandler) GetCritical(c *gin.Context) {
 		return
 	}
 
+	// REGLA 2026-10: la banda del semaforo es la unica fuente de verdad para
+	// clasificar un producto como critico. item.Status ya se calcula con
+	// models.ClassifyStockBand en inventory_service, que respeta la regla
+	// "sin minimo (minStock<=0) nunca es critico, aunque stock<=0".
+	//
+	// El fallback historico (comparacion directa stock vs. minStock) se
+	// eliminó porque clasificaba como critico cualquier producto con
+	// stock<=0 Y minStock<=0, es decir el caso textual "sin minimo
+	// configurado y agotado" — que por decision del dueno es neutral
+	// (producto descontinuado, estacional, consignacion), no critico.
+	// Ademas, con minStock>0 esa misma condicion capturaba productos
+	// exactamente al minimo (stock=minStock=10, ratio=1.0), que la banda
+	// clasifica como VERDE: era un sobre-reporte.
+	//
+	// Un guardian estatico (TestGetCriticalDoesNotFallBackToStockLeMinStock)
+	// vigila que no vuelva a introducirse el patron.
 	var critical []services.SuggestedOrder
 	for _, item := range suggestions {
-		if item.Status == services.StockCritical || item.Stock <= item.MinStock {
+		if item.Status == services.StockCritical {
 			critical = append(critical, item)
 		}
 	}
@@ -220,11 +236,11 @@ func (h *RestockHandler) ConfirmOrder(c *gin.Context) {
 			}
 		}
 		c.JSON(http.StatusConflict, gin.H{
-			"code":              "PRODUCTS_IN_TRANSIT_CONFIRMATION_REQUIRED",
-			"error":             "Uno o más productos ya están en camino. Confirma si deseas pedir cantidad adicional",
-			"products":          conflicts,
-			"targetSupplierId":  req.SupplierID,
-			"crossSupplier":     crossSupplier,
+			"code":                    "PRODUCTS_IN_TRANSIT_CONFIRMATION_REQUIRED",
+			"error":                   "Uno o más productos ya están en camino. Confirma si deseas pedir cantidad adicional",
+			"products":                conflicts,
+			"targetSupplierId":        req.SupplierID,
+			"crossSupplier":           crossSupplier,
 			"requiresExplicitConfirm": true,
 		})
 		return

@@ -57,11 +57,19 @@ test("labels/config: tiene las tres pestañas Perfil/Recibo/Etiquetas", async ()
   }
 });
 
-test("labels/config: 'Probar cajón' sigue haciendo POST /cash-drawer/open con override:true", async () => {
+test("labels/config: la configuración visible del cajón quedó retirada de /labels/config", async () => {
   const src = await read(configPage);
-  assert.ok(src.includes("Probar cajón"), "Debe existir el botón 'Probar cajón'.");
-  assert.ok(src.includes('"/cash-drawer/open"'), "Debe hacer POST /cash-drawer/open.");
-  assert.ok(/override:\s*true/.test(src), "La auditoría del cajón requiere override admin explícito.");
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  assert.ok(!codeOnly.includes("Probar cajón"),
+    "Ya no debe existir el botón 'Probar cajón' visible.");
+  assert.ok(!/caj[oó]n/i.test(codeOnly),
+    "Ninguna cadena visible de /labels/config puede mencionar al cajón.");
+  assert.ok(!/testDrawer\b/.test(codeOnly),
+    "El callback `testDrawer` quedó sin referencias y debe estar eliminado.");
+  assert.ok(!codeOnly.includes('"/cash-drawer/open"'),
+    "/labels/config ya no debe disparar auditoría del cajón desde la UI.");
 });
 
 test("labels/config: tiene botón 'Imprimir página de prueba' con fallback iframe", async () => {

@@ -119,10 +119,12 @@ func BuildRestockRecommendation(input RestockDecisionInput) (string, string) {
 		return message, RestockLevelWait
 	}
 
-	// Banda roja sin transito y sin sugerencia: solo puede pasar cuando no
-	// hay minimo configurado y el stock es 0 con demanda 0. El caller no
-	// sabe cuanto pedir, pero la banda dice que el producto esta agotado.
-	if band == StockBandRed {
+	// Banda roja sin transito, o producto AGOTADO sin minimo configurado:
+	// la señal de urgencia por agotado tiene que seguir existiendo aunque
+	// la banda sea UNSET (regla 2026-10: minStock<=0 nunca pinta rojo). Si
+	// hay ventas registradas, se recomienda pedir urgente; si no, se marca
+	// skip porque no hay evidencia de rotacion.
+	if band == StockBandRed || (input.MinStock <= 0 && input.CurrentStock <= 0) {
 		if input.AvgDailySales > 0 {
 			return "Pedir urgente: agotado con venta de " +
 				formatQuantity(input.AvgDailySales) + " al día", RestockLevelUrgent

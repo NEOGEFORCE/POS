@@ -15,9 +15,11 @@ import (
 //
 // IMPORTANTE: las expresiones CASE reproducen EXACTAMENTE la clasificación
 // de models.ClassifyStockBand (ver internal/core/domain/models/stock_health.go
-// y su test de tabla). Regla permanente del dueño (agosto 2026):
-// ROJO < 25% del mínimo, AMARILLO 25%–75%, VERDE >= 75%. Una divergencia
-// daría cifras distintas y sería un bug, no una optimización.
+// y su test de tabla). Regla permanente del dueño (agosto 2026, actualizada
+// 2026-10): ROJO < 25% del mínimo configurado, AMARILLO 25%–75%, VERDE >= 75%.
+// Un producto sin mínimo (minStock<=0) NUNCA se cuenta como crítico, aunque
+// el stock sea 0: la banda UNSET gana y se mapea a Optimal. Una divergencia
+// con models.ClassifyStockBand sería un bug.
 //
 // El agregado sigue devolviendo solo dos columnas (critical / warning). Bajo
 // la regla nueva "warning" es la banda AMARILLA completa (25%–75%); la banda
@@ -34,16 +36,16 @@ func (r *PostgresProductRepository) GetProductStatsAggregate() (float64, float64
 	var r0 row
 	// COALESCE("minStock", 0) protege contra NULL histórico. NULLIF evita
 	// división por cero en el ratio. FILTER es más legible que SUM(CASE)
-	// para el conteo.
+	// para el conteo. Un minStock<=0 jamas suma a critical porque no hay
+	// umbral que violar (regla 2026-10).
 	err := r.db.Raw(`
 		SELECT
 			COALESCE(SUM(quantity * "purchasePrice"), 0)::numeric AS total_cost,
 			COALESCE(SUM(quantity * "salePrice"), 0)::numeric     AS total_retail,
 			COUNT(*)::bigint                                       AS total_items,
 			COUNT(*) FILTER (
-				WHERE (COALESCE("minStock", 0) <= 0 AND quantity <= 0)
-				   OR (COALESCE("minStock", 0) > 0
-				       AND (quantity / NULLIF("minStock", 0)) < 0.25)
+				WHERE COALESCE("minStock", 0) > 0
+				  AND (quantity / NULLIF("minStock", 0)) < 0.25
 			)::bigint AS critical_stock,
 			COUNT(*) FILTER (
 				WHERE COALESCE("minStock", 0) > 0

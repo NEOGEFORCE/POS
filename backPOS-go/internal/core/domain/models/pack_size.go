@@ -24,6 +24,21 @@ import "math"
 // ser tres pedidos sueltos distintos. La repeticion es evidencia de que el
 // proveedor SIEMPRE entrega esa cantidad, que es justo lo que el dueño describio.
 //
+// FUENTE UNICA: stock_movements con reason='RECEPTION'. No se mira
+// confirmed_order_items (pedidos confirmados pueden no reflejar lo que llego)
+// ni se crea migracion para persistir el empaque. La verdad vive en el
+// historial real de recepciones.
+//
+// EXCLUSIONES al calcular el empaque (en el CTE empaque_aprendido):
+//   - RECEPTION_BONUS (bonificaciones) → distinto reason.
+//   - PACK_RECEPTION_BULK (actualizacion de pacas) → distinto reason.
+//   - PRICE_UPDATE_NO_STOCK (precio sin stock)   → distinto reason.
+//   - ADJUSTMENT_UP/DOWN (ajustes de recepcion)  → distinto reason (texto libre).
+//   - RETURN / RETURN_REVERT (devoluciones)      → distinto reason.
+//   - Productos pesables (isWeighted=TRUE)       → filtrados en SQL.
+//   - Cantidades <= 1 (ajustes de un peso)       → filtradas en SQL y Go.
+//   - Cantidades fraccionarias (peso real)       → filtradas por LearnPackSize.
+//
 // PARA QUE SIRVE: un producto con empaque de 12 no puede sugerir "pedir 1". Se
 // redondea hacia arriba al multiplo, asi que cuando el stock baja lo suficiente
 // se pide la caja completa. Esto ademas resuelve por si solo la queja de "muchos
@@ -40,6 +55,25 @@ const (
 	// recepcion suelta (un faltante, un ajuste) sin perder el patron, pero no se
 	// acepta un empaque cuando las cantidades son mayormente distintas.
 	PackLearnDominanceRatio = 0.6
+
+	// PackReorderRatio es la fraccion del empaque que marca el umbral de
+	// reposicion habitual: cuando el stock + transito queda a menos del 20%
+	// del tamaño del empaque, se dispara una caja habitual completa.
+	//
+	// Convive con StockBandRedRatio (25% del minimo configurado) a traves de
+	// PackReorderThreshold, que toma el MAYOR entre los dos umbrales. Asi:
+	//
+	//   - Si el dueno no puso minimo (minStock<=0) manda PackReorderRatio sola:
+	//     cuando el stock cae al 20% del empaque, se pide una caja.
+	//   - Si el minimo es GRANDE (ej. minStock=100 con empaque de 12) gana el
+	//     25% del minimo (25) sobre el 20% del empaque (3): el pedido sale
+	//     cuando el stock cae a 25, no cuando llega a 3. Asi el minimo del
+	//     dueno no queda ignorado por un empaque chico.
+	//   - Si el minimo es CHICO (ej. minStock=4 con empaque de 12) gana el 20%
+	//     del empaque (3) sobre el 25% del minimo (1). El habitual no se
+	//     dispara en 1 cuando el proveedor entrega 12: pedir casi 2 cajas
+	//     tarde cuesta mas que pedir 1 caja temprano.
+	PackReorderRatio = 0.20
 )
 
 // ReceptionQuantityCount es una cantidad recibida y cuantas veces se repitio.
@@ -132,55 +166,86 @@ func LearnPackSize(history []ReceptionQuantityCount) float64 {
 	return bestQty
 }
 
+// PackReorderThreshold devuelve el stock (existencia + transito) a partir del
+// cual se dispara una reposicion por empaque habitual.
+//
+// Es el MAYOR entre:
+//   - ceil(packSize * PackReorderRatio) → 20% de la caja.
+//   - ceil(minStock * StockBandRedRatio) → 25% del minimo configurado.
+//
+// Convive con el umbral rojo del semaforo: el 25% del minimo sigue siendo la
+// senal del dueno de "estamos en apuros"; el 20% del empaque se agrega para
+// cubrir el caso en que no hay minimo configurado o es muy chico frente al
+// tamaño de la caja. El MAX asegura que ninguna de las dos reglas quede
+// anulada por la otra.
+//
+// Para packSize <= 1 devuelve 0 porque no hay empaque que disparar; en ese caso
+// el llamador cae al pedido unitario (SuggestedOrderQty).
+func PackReorderThreshold(packSize, minStock float64) float64 {
+	if packSize <= 1 {
+		return 0
+	}
+	byPack := math.Ceil(packSize * PackReorderRatio)
+	byMin := 0.0
+	if minStock > 0 {
+		byMin = math.Ceil(minStock * StockBandRedRatio)
+	}
+	return math.Max(byPack, byMin)
+}
+
 // PackOrderQuantity decide cuanto pedir de un producto que solo llega en cajas.
 //
-// REGLA DEL DUEÑO (2026-09-05), textual:
+// REGLA DEL DUEÑO (actualizada 2026-10), textual del origen (2026-09-05):
 //
 //	"no me gusta porque quedariamos con mucho producto de uno y faltando el otro,
 //	 entonces es mejor que si llega a 3 o menos ahi si pedir porque los productos
 //	 normalmente llegan entre 1 y 2 dias entonces esos 3 aguantan y ya cuando
 //	 lleguen quedamos en 15"
 //
-// Se pide UNA CAJA COMPLETA, pero SOLO cuando el stock cae al umbral ROJO (25%
-// del minimo). Con minimo 12 eso es 3: dispara en 3 y queda en 15.
+// Se pide UNA CAJA COMPLETA (packSize), nunca el faltante bruto. Cuando se
+// dispara, el tamaño del pedido es exactamente el empaque aprendido: con
+// cajas de 12 se pide 12. Si la necesidad real supera una caja, el operador
+// tiene libertad para subir la cantidad a mano en la tarjeta; el sistema
+// sugiere la cantidad habitual.
 //
-// EL MOTIVO ES DE FLUJO DE CAJA, NO DE INVENTARIO. Comprar por caja siempre deja
-// el stock por encima del minimo, asi que adelantar la compra no ahorra nada:
-// solo inmoviliza plata que otro producto puede estar necesitando. Como el
-// proveedor repone en 1-2 dias, 3 unidades aguantan hasta que llegue.
+// EL DISPARADOR es PackReorderThreshold: la union del umbral rojo del semaforo
+// (25% del minimo configurado) con el 20% del empaque, tomando el MAYOR.
 //
-// El objetivo del 75% (RestockTargetRatio) se conserva para los productos que se
-// piden POR UNIDAD, donde pedir menos si ahorra plata.
+//   - Con minStock=12, pack=12 (umbral=max(3,3)=3): se dispara al llegar a 3
+//     y queda en 15, exactamente como lo describio el dueno.
+//   - Con minStock=100, pack=12 (umbral=max(3,25)=25): se dispara al llegar
+//     a 25; se sigue pidiendo UNA caja de 12 porque el flujo de caja manda,
+//     aunque el minimo del dueno sea grande. (Ajustar el pedido manual queda
+//     a cargo del operador si quiere pedir mas de una caja.)
+//   - Con minStock=0, pack=12 (umbral=max(3,0)=3): sin minimo configurado, el
+//     20% del empaque es la unica señal; dispara a 3 y pide una caja de 12.
+//   - Con minStock=4, pack=12 (umbral=max(3,1)=3): el habitual gana al minimo
+//     chico; no se espera a que caiga a 1 para pedir una caja de 12.
 //
-// Detalles:
-//   - Lo que viene EN CAMINO cuenta como disponible: no se pide otra caja si ya
-//     hay una en transito.
-//   - Sin minimo configurado no hay umbral rojo que medir, asi que manda la
-//     demanda. Un producto sin minimo pero con rotacion no puede quedar sin
-//     pedirse.
-//   - Si no hace falta nada, no se pide caja.
+// EL TRANSITO SE DESCUENTA y BLOQUEA DUPLICADOS: disponible = stock + transito.
+// Si una caja ya viene en camino, el disponible supera el umbral y no se pide
+// otra. No existe un camino en que se pidan dos cajas por error.
+//
+// Si packSize <= 1 la funcion devuelve 0: no hay empaque aprendido y el
+// llamador debe decidir con SuggestedOrderQty (pedido unitario). Esto conserva
+// el comportamiento historico para productos sin caja aprendida.
+//
+// El parametro idealStock queda por retrocompatibilidad de firma: con empaque
+// la cantidad sugerida es siempre una caja, no la demanda bruta. El caller
+// consume PackOrderQuantity cuando learnPackSize > 1 y SuggestedOrderQty en
+// caso contrario, asi que no hay perdida de informacion.
 func PackOrderQuantity(idealStock, currentStock, inTransitQty, minStock, packSize float64) float64 {
+	_ = idealStock // Con empaque, el pedido es una caja habitual; la demanda
+	//              no infla el tamano del pedido (regla 2026-10).
 	if packSize <= 1 {
 		return 0
 	}
 	disponible := currentStock + inTransitQty
-
-	if minStock > 0 {
-		// Disparador: solo en banda ROJA (stock <= 25% del minimo).
-		if disponible > minStock*StockBandRedRatio {
-			return 0
-		}
-		// En rojo se pide al menos una caja. Si la necesidad real es mayor
-		// (minimo grande con caja chica) se piden las cajas que hagan falta.
-		necesidad := RawOrderNeed(idealStock, currentStock, inTransitQty, minStock)
-		if necesidad < packSize {
-			necesidad = packSize
-		}
-		return RoundToPackSize(necesidad, packSize)
+	threshold := PackReorderThreshold(packSize, minStock)
+	if disponible > threshold {
+		return 0
 	}
-
-	// Sin minimo: manda la demanda.
-	return RoundToPackSize(RawOrderNeed(idealStock, currentStock, inTransitQty, 0), packSize)
+	return packSize
 }
 
 // RoundToPackSize lleva una cantidad a pedir al siguiente multiplo del empaque.
@@ -190,6 +255,10 @@ func PackOrderQuantity(idealStock, currentStock, inTransitQty, minStock, packSiz
 //
 //   - packSize <= 1 (sin empaque conocido) devuelve la cantidad tal cual.
 //   - quantity <= 0 devuelve 0: si no hace falta nada, no se pide una caja.
+//
+// Se conserva como helper para callers externos (editor de pedidos, ajustes
+// manuales); PackOrderQuantity ya no lo usa internamente porque la nueva regla
+// sugiere exactamente una caja habitual.
 func RoundToPackSize(quantity, packSize float64) float64 {
 	if packSize <= 1 || quantity <= 0 {
 		return math.Max(0, quantity)

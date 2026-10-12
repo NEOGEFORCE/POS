@@ -14,13 +14,20 @@
  * ya están casi al mínimo.
  *
  * Cuando el producto NO tiene mínimo configurado (mínimo <= 0) no hay
- * criterio contra el cual juzgar:
+ * criterio contra el cual juzgar y SIEMPRE se devuelve SIN_MINIMO,
+ * cualquiera sea la existencia:
  *
- *   - existencia <= 0 → CRITICO (agotado siempre es rojo, aunque no se
- *                       haya definido mínimo).
- *   - existencia  > 0 → SIN_MINIMO (no se pinta rojo ni amarillo; se le
- *                       muestra al operador "sin mínimo definido" para
- *                       que decida configurarlo).
+ *   - existencia <= 0 → SIN_MINIMO. Un producto sin mínimo configurado
+ *                       en 0 es INTENCIÓN del dueño (descontinuado,
+ *                       estacional, consignación). Pintarlo rojo
+ *                       "crítico" miente: no hay nada de qué alertar.
+ *   - existencia  > 0 → SIN_MINIMO (misma razón; neutral).
+ *
+ * REGLA DURA (2026-10-08): si minStock <= 0 el helper NUNCA puede
+ * devolver CRITICAL/WARNING, ni siquiera con stock negativo. Esa
+ * promesa está cubierta por tests contractuales en
+ * `tests/stock-health.test.mjs` para evitar que una regresión futura
+ * vuelva a pintar en rojo productos sin mínimo configurado.
  */
 
 export const STOCK_HEALTH = {
@@ -48,11 +55,12 @@ export function getStockHealth(stock, minStock) {
   const existencia = Number.isFinite(Number(stock)) ? Number(stock) : 0;
   const minimo = Number.isFinite(Number(minStock)) ? Number(minStock) : 0;
 
-  // Sin mínimo configurado: solo se puede juzgar el caso "agotado".
+  // Sin mínimo configurado: NO se juzga contra el mínimo. Devolvemos
+  // SIN_MINIMO siempre, incluso con stock 0 o negativo. Un producto sin
+  // mínimo en 0 refleja una decisión del dueño (producto descontinuado,
+  // estacional o de consignación), no una emergencia que haya que pintar
+  // en rojo.
   if (minimo <= 0) {
-    if (existencia <= 0) {
-      return { level: STOCK_HEALTH.CRITICAL, label: "Agotado", ratio: null };
-    }
     return { level: STOCK_HEALTH.UNSET, label: "Sin mínimo definido", ratio: null };
   }
 

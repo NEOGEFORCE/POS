@@ -12,7 +12,7 @@
 //
 // Entradas de menú relacionadas (sidebar):
 //   - "Etiquetas térmicas"  → /labels           (esta pantalla)
-//   - "Precios góndola"     → /labels/shelf     (hoja Letter 2×6)
+//   - "Precios góndola"     → /labels/shelf     (hoja Carta u Oficio landscape — configurable en /labels/config)
 //   - "Configurar impresora"→ /labels/config    (admin)
 // =============================================================================
 

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   Modal,
   ModalContent,
@@ -24,11 +24,29 @@ import {
   Search,
   Camera,
   ArrowLeft,
+  Loader2,
+  Pencil,
+  Link2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 
 import { useToast } from "@/hooks/use-toast";
 import { makeOcrLocalId } from "@/lib/invoice-reader-helpers.mjs";
+import {
+  validateProposedName,
+} from "@/lib/product-rename.mjs";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 
@@ -54,6 +72,17 @@ export interface UnmatchedItem {
   lineType?: 'REGULAR' | 'BONUS' | 'RETURN' | string;
   /** Unidades regaladas si vino un patrón combinado "pague X lleve Y". */
   bonus_quantity?: number;
+  /**
+   * Trazabilidad del empaque convertido en el modal: cantidad original en
+   * paquetes (antes de multiplicar) y multiplicador N confirmado por el
+   * usuario. Si `packConversionApplied` es true, `quantity` y `unitPrice`
+   * ya están expresados en UNIDADES INDIVIDUALES y no deben re-multiplicarse
+   * aguas abajo. Son opcionales porque no todos los items pasan por la
+   * revisión de empaques.
+   */
+  invoicePackageQuantity?: number;
+  confirmedUnitsPerPack?: number;
+  packConversionApplied?: boolean;
   /**
    * Identidad estable aguas arriba del OCR. Permite deduplicar entradas con
    * el mismo invoiceName (facturas con saltos de página, líneas BONUS) y
@@ -129,6 +158,70 @@ export interface ExternalResolution {
   resolutionId: number;
 }
 
+/**
+ * Veredicto que el reviewer espera recibir del callback `onSaveAlias` para
+ * decidir si surface un toast al operario. Se mantiene plano para que el
+ * reviewer no dependa del tipo exacto del helper puro.
+ */
+export interface AliasSaveOutcome {
+  ok: boolean;
+  reason?: string;
+  message?: string;
+}
+
+export interface AliasLinkRequest {
+  invoiceName: string;
+  productBarcode: string;
+  /** True = producto recién creado en este flujo. */
+  isNew: boolean;
+  /**
+   * Origen del enlace, para que el padre pueda diferenciar auditorías o
+   * banderas. Nunca cambia el payload del endpoint.
+   */
+  source: 'suggestion' | 'manual' | 'scanner' | 'created';
+}
+
+/**
+ * Request que el reviewer envía al padre cuando el operario pulsa
+ * "Actualizar nombre y enlazar" en el diálogo de confirmación. El padre es
+ * responsable de ejecutar el PUT a `/products/update-products/:barcode`
+ * con `sanitizeProductPayload`, actualizar el estado local de productos y
+ * emitir el broadcast `PRODUCT_UPDATE` SÓLO si el PUT fue exitoso.
+ *
+ * El reviewer no construye el payload del PUT: tipea la intención y espera
+ * un `RenameOutcome` del padre para decidir si avanza o mantiene el
+ * diálogo abierto.
+ */
+export interface RenameLinkRequest {
+  /** Código de barras del producto existente en catálogo. */
+  productBarcode: string;
+  /** Nombre que viene en la factura (contexto para auditoría/UX). */
+  invoiceName: string;
+  /** Nombre que el operario escribió en el input, ya normalizado. */
+  newName: string;
+  /** Nombre que tenía el producto en el catálogo antes del rename. */
+  previousName: string;
+  /**
+   * Origen del enlace. 'created' nunca aparece aquí: los productos recién
+   * creados no reciben prompt de rename.
+   */
+  source: 'suggestion' | 'manual' | 'scanner';
+}
+
+/**
+ * Resultado que el reviewer espera recibir del padre tras el PUT. Mantiene
+ * paralelismo con `AliasSaveOutcome` para que la UI del diálogo decida si
+ * avanza (`ok: true`) o si mantiene abierto con mensaje (`ok: false`).
+ */
+export interface RenameOutcome {
+  ok: boolean;
+  /** Nombre final del producto (puede diferir del enviado si el backend
+   *  lo normaliza aún más). Si el padre no lo devuelve, el reviewer usa
+   *  el que escribió el usuario. */
+  productName?: string;
+  message?: string;
+}
+
 interface UnmatchedItemsReviewerProps {
   isOpen: boolean;
   onOpenChange: (open: boolean) => void;
@@ -144,6 +237,39 @@ interface UnmatchedItemsReviewerProps {
   /** El reviewer marca cuando "consumio" la externalResolution para que el padre
       la limpie y no re-aplique. */
   onExternalResolutionConsumed?: () => void;
+  /**
+   * Persistencia inmediata del alias de proveedor hacia
+   * `POST /inventory/save-alias`. El padre inyecta esta función con acceso
+   * al supplierId real y al token para que:
+   *   1. Se dispare EN EL MOMENTO del enlace explícito (sugerencia, búsqueda
+   *      manual, escáner, producto recién creado) y no al cerrar el modal.
+   *   2. El reviewer pueda surfacer un toast si el aprendizaje falla sin
+   *      perderlo silenciosamente.
+   * Devuelve el veredicto `{ ok, reason?, message? }` o nada si el padre
+   * no quiere delegar feedback. En producción el padre ya muestra el toast,
+   * así que el reviewer solo loggea cuando el callback retorna `ok: false`.
+   */
+  onSaveAlias?: (
+    link: AliasLinkRequest,
+  ) => Promise<AliasSaveOutcome | void> | AliasSaveOutcome | void;
+  /**
+   * Callback tipado que ejecuta el PUT a
+   * `/products/update-products/:barcode` para renombrar el producto
+   * existente. El reviewer sólo lo invoca cuando el operario pulsa
+   * deliberadamente "Actualizar nombre y enlazar"; nunca hace rename
+   * automático.
+   *
+   * Contrato:
+   *   - El padre debe usar `sanitizeProductPayload` para armar el PUT.
+   *   - Solo tras `response.ok` el padre actualiza su estado local de
+   *     productos y emite `broadcastRevalidate('PRODUCT_UPDATE')`.
+   *   - Debe retornar `{ ok: true, productName? }` en éxito o
+   *     `{ ok: false, message }` en error; nunca lanzar.
+   *   - El reviewer, al recibir `{ ok: true }`, guarda el alias y avanza.
+   *     Si recibe `{ ok: false }`, mantiene el diálogo abierto y muestra
+   *     el mensaje para que el operario reintente o pulse "Volver".
+   */
+  onRenameProduct?: (req: RenameLinkRequest) => Promise<RenameOutcome>;
   products?: any[]; // Products passed from parent for manual search
 }
 
@@ -189,6 +315,8 @@ export default function UnmatchedItemsReviewer({
   onRequestCreateNewProduct,
   externalResolution,
   onExternalResolutionConsumed,
+  onSaveAlias,
+  onRenameProduct,
   products = [],
 }: UnmatchedItemsReviewerProps) {
   const { toast } = useToast();
@@ -202,14 +330,118 @@ export default function UnmatchedItemsReviewer({
   // Para el escaner
   const [isScannerOpen, setIsScannerOpen] = useState(false);
 
+  // ───────────────────────────────────────────────────────────────────
+  // Estado del diálogo "Rename-and-link"
+  // ───────────────────────────────────────────────────────────────────
+  //
+  // Cuando el operario enlaza un producto EXISTENTE desde cualquiera de las
+  // tres ramas (sugerencia, búsqueda manual o escáner) NO avanzamos
+  // inmediatamente al siguiente item. En cambio, capturamos el producto
+  // emparejado + el item del OCR en `pendingLink` y abrimos el diálogo
+  // para que el operario decida:
+  //   - "Solo enlazar"               → scheduleAliasSave + advanceTo
+  //   - "Actualizar nombre y enlazar" → onRenameProduct + (si ok)
+  //                                     scheduleAliasSave + advanceTo
+  //   - "Volver"                     → cierra diálogo sin cambios
+  //
+  // El rename nunca es automático; depende de un click explícito.
+  interface PendingLink {
+    source: 'suggestion' | 'manual' | 'scanner';
+    product: any; // Producto resuelto del catálogo (barcode, productName…)
+    item: UnmatchedItem;
+    /** Snapshot del índice del item en el momento del click — para que el
+     *  diálogo pueda avanzar aunque el padre refresque `products` entre
+     *  medias. */
+    itemIdx: number;
+  }
+  const [pendingLink, setPendingLink] = useState<PendingLink | null>(null);
+  const [draftName, setDraftName] = useState<string>('');
+  const [isRenaming, setIsRenaming] = useState<boolean>(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  // Ref anti-doble-submit: aunque React 18 StrictMode re-renderice,
+  // bloqueamos el handler imperativamente.
+  const renameInFlight = useRef<boolean>(false);
+
   // Reset al abrir
   useEffect(() => {
     if (isOpen) {
       setCurrentIdx(0);
       setResolvedItems([]);
       setLastResolutionId(null);
+      // Al reabrir una revisión limpiamos cualquier residuo del diálogo
+      // de rename para que no quede "pegado" al próximo item.
+      setPendingLink(null);
+      setDraftName('');
+      setIsRenaming(false);
+      setRenameError(null);
+      renameInFlight.current = false;
     }
   }, [isOpen]);
+
+  /**
+   * Dispara la persistencia del alias en el momento del enlace explícito.
+   *
+   * Reglas:
+   *   - NUNCA fuerza una entrada en setState (que puede duplicarse en React
+   *     18 Strict Mode); vive fuera del updater.
+   *   - Si el padre no proporcionó `onSaveAlias` o la invoiceName/barcode
+   *     viajan vacíos, salta sin ruido. El supplierId=0 se filtra en el
+   *     helper puro aguas abajo.
+   *   - Si el callback retorna un veredicto con `ok:false`, surface un toast
+   *     informativo (no destructivo del flujo) para que el aprendizaje no se
+   *     pierda silenciosamente. El padre tiene permitido mostrar su propio
+   *     toast también; si lo hace, retorna `void` o `{ok:true}` y aquí
+   *     no se agrega ruido extra.
+   */
+  const scheduleAliasSave = (link: AliasLinkRequest) => {
+    if (typeof onSaveAlias !== 'function') return;
+    if (!link.invoiceName || !link.productBarcode) return;
+    try {
+      const outcome = onSaveAlias(link);
+      if (outcome && typeof (outcome as Promise<unknown>).then === 'function') {
+        (outcome as Promise<AliasSaveOutcome | void>)
+          .then((verdict) => {
+            if (verdict && verdict.ok === false) {
+              toast({
+                variant: 'destructive',
+                title: 'No se pudo recordar el alias',
+                description:
+                  verdict.message ||
+                  'El producto quedó en el carrito, pero el OCR volverá a pedirlo. Intenta de nuevo cuando haya conexión.',
+              });
+            }
+          })
+          .catch((err) => {
+            // Último paracaídas: el helper puro ya atrapa network errors y
+            // devuelve verdict en lugar de lanzar, pero por si el padre
+            // envuelve en algo que sí lanza, aquí no perdemos la señal.
+            console.error('[UnmatchedReviewer] onSaveAlias threw:', err);
+            toast({
+              variant: 'destructive',
+              title: 'No se pudo recordar el alias',
+              description:
+                'El producto quedó en el carrito, pero el OCR volverá a pedirlo. Intenta de nuevo cuando haya conexión.',
+            });
+          });
+      } else if (outcome && (outcome as AliasSaveOutcome).ok === false) {
+        toast({
+          variant: 'destructive',
+          title: 'No se pudo recordar el alias',
+          description:
+            (outcome as AliasSaveOutcome).message ||
+            'El producto quedó en el carrito, pero el OCR volverá a pedirlo.',
+        });
+      }
+    } catch (err) {
+      console.error('[UnmatchedReviewer] onSaveAlias threw synchronously:', err);
+      toast({
+        variant: 'destructive',
+        title: 'No se pudo recordar el alias',
+        description:
+          'El producto quedó en el carrito, pero el OCR volverá a pedirlo. Intenta de nuevo cuando haya conexión.',
+      });
+    }
+  };
 
   const current = items[currentIdx];
   const progressPct = items.length > 0 ? ((currentIdx + 1) / items.length) * 100 : 0;
@@ -322,6 +554,17 @@ export default function UnmatchedItemsReviewer({
       bonus_quantity: Number(current.bonus_quantity) || 0,
     };
 
+    // RAMA 4: producto recién creado. También dispara save-alias para que la
+    // próxima factura del mismo proveedor reconozca el invoiceName sin que
+    // el OCR tenga que proponerlo. El guard `!r.isNew` del padre quedó
+    // eliminado precisamente por esto: aprender al momento de crear.
+    scheduleAliasSave({
+      invoiceName: current.invoiceName,
+      productBarcode: externalResolution.barcode,
+      isNew: true,
+      source: 'created',
+    });
+
     advanceTo(resolved);
     onExternalResolutionConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -330,6 +573,52 @@ export default function UnmatchedItemsReviewer({
   // ============================================================
   // Acciones
   // ============================================================
+
+  // ============================================================
+  // Rename-and-link: helpers compartidos por las 3 ramas
+  // ============================================================
+
+  /**
+   * Abre el diálogo de confirmación "Solo enlazar / Actualizar nombre y
+   * enlazar / Volver" para una rama existente. Nunca avanza por su cuenta:
+   * la decisión queda en manos del operario.
+   *
+   * El producto puede llegar hidratado (manual, scanner) o parcialmente
+   * (sugerencia sin match completo contra el catálogo). En ambos casos
+   * capturamos su `productName` actual como "nombre actual" para el
+   * diálogo.
+   */
+  const openRenamePrompt = (
+    source: 'suggestion' | 'manual' | 'scanner',
+    product: any,
+    item: UnmatchedItem,
+  ) => {
+    if (!product || !item) return;
+    const currentName = typeof product.productName === 'string' ? product.productName : '';
+    const invoiceName = typeof item.invoiceName === 'string' ? item.invoiceName : '';
+    // El input se pre-llena con el invoiceName tal cual (el operario
+    // decide si lo deja o lo edita). La normalización se aplica al
+    // momento de validar/enviar.
+    setDraftName(invoiceName);
+    setRenameError(null);
+    setIsRenaming(false);
+    renameInFlight.current = false;
+    setPendingLink({
+      source,
+      product: { ...product, productName: currentName },
+      item,
+      itemIdx: currentIdx,
+    });
+  };
+
+  /** Cierra y limpia estado del diálogo de rename. */
+  const closeRenamePrompt = () => {
+    setPendingLink(null);
+    setDraftName('');
+    setIsRenaming(false);
+    setRenameError(null);
+    renameInFlight.current = false;
+  };
 
   // Asignar el item actual a una sugerencia existente (sin crear producto nuevo)
   const handleAssignToSuggestion = (suggestion: NonNullable<UnmatchedItem["suggestions"]>[number]) => {
@@ -347,7 +636,12 @@ export default function UnmatchedItemsReviewer({
       icui: 0,
       ibua: 0,
     };
-    advanceTo(buildResolvedForExisting(prod, current));
+    // RAMA 1: sugerencia del OCR. NO avanzamos inmediatamente: abrimos el
+    // diálogo para que el operario confirme si solo enlaza o también
+    // actualiza el nombre del producto en catálogo. El alias se persiste
+    // dentro del handler del diálogo (handleLinkOnly / handleRenameAndLink)
+    // justo antes de advanceTo.
+    openRenamePrompt('suggestion', prod, current);
   };
 
   // Asignar el item actual a un producto buscado manualmente
@@ -355,8 +649,10 @@ export default function UnmatchedItemsReviewer({
     if (!key || !current) return;
     const selectedProd = findProductByBarcode(String(key));
     if (!selectedProd) return;
-    advanceTo(buildResolvedForExisting(selectedProd, current));
+    // RAMA 2: búsqueda manual en el autocomplete. Mismo contrato que la
+    // sugerencia — nunca advance directo.
     setManualSearchKey(null);
+    openRenamePrompt('manual', selectedProd, current);
   };
 
   const handleScanResult = (code: string) => {
@@ -371,8 +667,142 @@ export default function UnmatchedItemsReviewer({
       });
       return;
     }
-    advanceTo(buildResolvedForExisting(selectedProd, current));
+    // RAMA 3: escaneo del código físico sobre el producto. Igual que las
+    // otras ramas, confirmamos primero vía diálogo.
+    openRenamePrompt('scanner', selectedProd, current);
   };
+
+  // ============================================================
+  // Rename-and-link: handlers del diálogo
+  // ============================================================
+
+  /**
+   * "Solo enlazar": no toca el nombre del producto, sólo guarda el alias
+   * del proveedor (OCR → producto) y avanza al siguiente item.
+   *
+   * Flujo:
+   *   1. scheduleAliasSave con source original (suggestion/manual/scanner)
+   *      → el padre persiste contra POST /inventory/save-alias
+   *   2. advanceTo(buildResolvedForExisting(product, item))
+   *   3. closeRenamePrompt()
+   *
+   * Nunca hace PUT a /products/update-products. El contrato con el padre
+   * es claro: rename sólo si el operario lo pidió explícitamente.
+   */
+  const handleLinkOnly = useCallback(() => {
+    if (!pendingLink) return;
+    if (renameInFlight.current) return; // Doble click defensivo.
+    const { source, product, item } = pendingLink;
+    scheduleAliasSave({
+      invoiceName: item.invoiceName,
+      productBarcode: product.barcode,
+      isNew: false,
+      source,
+    });
+    advanceTo(buildResolvedForExisting(product, item));
+    closeRenamePrompt();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLink]);
+
+  /**
+   * "Actualizar nombre y enlazar": pide al padre ejecutar el PUT a
+   * /products/update-products/:barcode. Si falla, mantiene el diálogo
+   * abierto con el mensaje de error. Si tiene éxito, guarda el alias
+   * (con el invoiceName original, no el nuevo nombre) y avanza.
+   *
+   * Importante:
+   *   - El rename se dispara una sola vez por click: `renameInFlight` +
+   *     `isRenaming` bloquean doble submit.
+   *   - El reviewer usa el `newName` del input tras `validateProposedName`;
+   *     si el usuario dejó el input idéntico al nombre actual, se avisa en
+   *     el diálogo y no se pega al endpoint.
+   *   - El alias se guarda con el `invoiceName` original porque el
+   *     backend indexa el aprendizaje OCR por ese texto, no por el
+   *     productName canónico.
+   */
+  const handleRenameAndLink = useCallback(async () => {
+    if (!pendingLink) return;
+    if (renameInFlight.current || isRenaming) return;
+    const { source, product, item } = pendingLink;
+    if (!product?.barcode) {
+      setRenameError('El producto no tiene código de barras válido.');
+      return;
+    }
+    const validation = validateProposedName(draftName, product.productName);
+    if (!validation.ok) {
+      setRenameError(validation.message);
+      return;
+    }
+    if (typeof onRenameProduct !== 'function') {
+      // Sin callback no podemos ejecutar el PUT: degradamos a "solo enlazar"
+      // y avisamos. Mejor que silenciar el click.
+      setRenameError('No se puede actualizar el nombre en este flujo. Pulsa "Solo enlazar".');
+      return;
+    }
+    renameInFlight.current = true;
+    setIsRenaming(true);
+    setRenameError(null);
+    try {
+      const outcome = await onRenameProduct({
+        productBarcode: product.barcode,
+        invoiceName: item.invoiceName,
+        newName: validation.name,
+        previousName: product.productName || '',
+        source,
+      });
+      if (!outcome || outcome.ok !== true) {
+        // Mantenemos el diálogo abierto para que el operario reintente o
+        // pulse "Volver".
+        setRenameError(
+          (outcome && outcome.message)
+            || 'No se pudo actualizar el nombre; vuelve a intentarlo.',
+        );
+        return;
+      }
+      // ÉXITO: el padre ya hizo el PUT, actualizó estado y emitió el
+      // broadcast. Nosotros usamos el nombre devuelto (o, en su defecto,
+      // el que escribió el usuario) para componer la línea del carrito.
+      const resolvedName = typeof outcome.productName === 'string' && outcome.productName.trim()
+        ? outcome.productName
+        : validation.name;
+      scheduleAliasSave({
+        invoiceName: item.invoiceName,
+        productBarcode: product.barcode,
+        isNew: false,
+        source,
+      });
+      advanceTo(buildResolvedForExisting(
+        { ...product, productName: resolvedName },
+        item,
+      ));
+      closeRenamePrompt();
+    } catch (err: any) {
+      // Último paracaídas: el padre no debería lanzar porque el contrato
+      // pide retornar `{ ok: false, message }`. Si lo hace, surface el
+      // mensaje y mantenemos el diálogo abierto.
+      setRenameError(
+        (err && typeof err.message === 'string' && err.message.trim())
+          ? err.message
+          : 'No se pudo actualizar el nombre; vuelve a intentarlo.',
+      );
+    } finally {
+      renameInFlight.current = false;
+      setIsRenaming(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLink, draftName, isRenaming, onRenameProduct]);
+
+  /**
+   * "Volver": cierra el diálogo sin enlazar ni cambiar el producto. El
+   * item sigue sin resolver, el cursor permanece en el mismo índice y el
+   * operario puede elegir otra sugerencia / buscar manualmente / escanear
+   * / abrir el protocolo de nuevo producto.
+   */
+  const handleCancelRename = useCallback(() => {
+    if (isRenaming) return; // No se puede cancelar en medio del PUT.
+    closeRenamePrompt();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRenaming]);
 
   // Pedir al padre que abra el ProductFormModal con datos pre-llenados
   const handleOpenProtocol = () => {
@@ -690,6 +1120,201 @@ export default function UnmatchedItemsReviewer({
           title="ESCANEAR PARA ASIGNAR"
         />
       )}
+      {/*
+        Diálogo de confirmación "Rename-and-link".
+
+        Se abre al enlazar un producto EXISTENTE (sugerencia, búsqueda manual
+        o escáner). NO se abre para productos recién creados vía Protocolo
+        — esos ya fueron bautizados en el ProductFormModal y la rama
+        `externalResolution` avanza por su cuenta.
+
+        El diálogo es blocante (nunca se descarta por click fuera) mientras
+        el PUT está en curso para no quedar en estado inconsistente. Las
+        tres acciones:
+          · "Solo enlazar"               → scheduleAliasSave + advanceTo
+          · "Actualizar nombre y enlazar" → onRenameProduct → éxito: idem
+                                            · falla: mantener diálogo abierto
+          · "Volver"                     → cerrar sin cambios
+      */}
+      <AlertDialog
+        open={pendingLink !== null}
+        onOpenChange={(open) => {
+          if (!open) handleCancelRename();
+        }}
+      >
+        <AlertDialogContent
+          aria-describedby="unmatched-rename-desc"
+          className={cn(
+            'bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50',
+            'border border-blue-500/40 dark:border-blue-500/40',
+            'rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)]',
+            'max-w-lg',
+          )}
+        >
+          <AlertDialogHeader>
+            <div className="flex items-start gap-3">
+              <div
+                className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-600 dark:text-blue-400"
+                aria-hidden="true"
+              >
+                <Link2 size={20} />
+              </div>
+              <div className="min-w-0">
+                <AlertDialogTitle className="text-base font-medium uppercase tracking-tight text-zinc-900 dark:text-zinc-50">
+                  Enlazar con producto existente
+                </AlertDialogTitle>
+                <AlertDialogDescription
+                  id="unmatched-rename-desc"
+                  className="mt-1 text-sm text-zinc-600 dark:text-zinc-300"
+                >
+                  Confirma si quieres solo enlazar este producto o también
+                  actualizar su nombre en el catálogo con el de la factura.
+                  Nada se guarda sin tu confirmación.
+                </AlertDialogDescription>
+              </div>
+            </div>
+          </AlertDialogHeader>
+
+          {pendingLink && (
+            <div className="mt-1 grid gap-3">
+              <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-white/10 dark:bg-zinc-900">
+                <p className="text-[10px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500">
+                  Nombre actual del producto
+                </p>
+                <p className="mt-1 break-words text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  {pendingLink.product.productName || '— sin nombre —'}
+                </p>
+                <p className="mt-1 font-mono text-[11px] text-gray-500 dark:text-zinc-500">
+                  {pendingLink.product.barcode}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="text-[10px] font-medium uppercase tracking-widest text-amber-600 dark:text-amber-400">
+                  Nombre en la factura (OCR)
+                </p>
+                <p className="mt-1 break-words text-sm font-medium text-zinc-900 dark:text-zinc-50">
+                  {pendingLink.item.invoiceName}
+                </p>
+              </div>
+
+              <div className="rounded-2xl border border-blue-500/30 bg-blue-500/5 p-3">
+                <label
+                  htmlFor="unmatched-rename-input"
+                  className="text-[10px] font-medium uppercase tracking-widest text-blue-600 dark:text-blue-400"
+                >
+                  Nombre que se guardaría si eliges "Actualizar nombre y enlazar"
+                </label>
+                <Input
+                  id="unmatched-rename-input"
+                  value={draftName}
+                  onChange={(e) => {
+                    setDraftName(e.target.value);
+                    if (renameError) setRenameError(null);
+                  }}
+                  disabled={isRenaming}
+                  autoFocus
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="text"
+                  maxLength={120}
+                  aria-invalid={renameError ? 'true' : 'false'}
+                  aria-describedby={renameError ? 'unmatched-rename-error' : undefined}
+                  className={cn(
+                    'mt-2 h-12 w-full text-base font-medium uppercase',
+                    'bg-white dark:bg-[#121214]',
+                    'border-blue-500/30 dark:border-blue-500/40',
+                    'focus-visible:ring-blue-500',
+                  )}
+                  style={{ textTransform: 'uppercase' }}
+                />
+                {renameError && (
+                  <p
+                    id="unmatched-rename-error"
+                    role="alert"
+                    className="mt-2 text-xs font-medium text-rose-600 dark:text-rose-400"
+                  >
+                    {renameError}
+                  </p>
+                )}
+                <p className="mt-2 text-[10px] text-gray-500 dark:text-zinc-500">
+                  Se enviará como PUT a <code className="font-mono">/products/update-products/{pendingLink.product.barcode}</code>.
+                  Si falla, el diálogo se mantiene abierto y nada se enlaza.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <AlertDialogFooter className="mt-3 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-2">
+            <AlertDialogCancel
+              disabled={isRenaming}
+              onClick={(event) => {
+                // Radix cierra por sí mismo; preventDefault es defensivo
+                // para que no cerremos mientras `isRenaming` esté activo.
+                if (isRenaming) {
+                  event.preventDefault();
+                  return;
+                }
+                handleCancelRename();
+              }}
+              className={cn(
+                'h-11 min-w-[120px] rounded-2xl',
+                'border-zinc-200 bg-white text-zinc-900 hover:bg-zinc-100',
+                'dark:border-white/10 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-white/5',
+              )}
+            >
+              <ArrowLeft size={14} aria-hidden="true" />
+              <span>Volver</span>
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isRenaming || !pendingLink}
+              onClick={(event) => {
+                // Mantener el AlertDialog abierto hasta que terminemos de
+                // avanzar — luego cerramos manualmente con
+                // closeRenamePrompt() desde handleLinkOnly.
+                event.preventDefault();
+                handleLinkOnly();
+              }}
+              className={cn(
+                'h-11 min-w-[140px] rounded-2xl',
+                'border border-emerald-500/30 bg-white text-emerald-600',
+                'hover:bg-emerald-500/10 hover:text-emerald-700',
+                'dark:border-emerald-500/40 dark:bg-zinc-900 dark:text-emerald-400 dark:hover:bg-emerald-500/10',
+                'disabled:opacity-60',
+              )}
+            >
+              <Link2 size={14} aria-hidden="true" />
+              <span>Solo enlazar</span>
+            </AlertDialogAction>
+            <AlertDialogAction
+              disabled={isRenaming || !pendingLink}
+              aria-busy={isRenaming}
+              onClick={(event) => {
+                event.preventDefault();
+                void handleRenameAndLink();
+              }}
+              className={cn(
+                'h-11 min-w-[200px] rounded-2xl',
+                'bg-blue-600 text-white hover:bg-blue-500',
+                'focus-visible:ring-blue-500 disabled:opacity-60',
+              )}
+            >
+              {isRenaming ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                  <span>Actualizando…</span>
+                </>
+              ) : (
+                <>
+                  <Pencil size={14} aria-hidden="true" />
+                  <span>Actualizar nombre y enlazar</span>
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Modal>
   );
 }

@@ -133,6 +133,22 @@ export const RECEIPT_DELIVERY_MODES = Object.freeze({
   BROWSER: "browser",
 });
 
+/**
+ * Formatos canónicos de hoja de góndola. Carta y Oficio/Legal son los
+ * únicos soportados: ambos usan orientación landscape para maximizar la
+ * cantidad de etiquetas 80×40 mm por hoja (15 vs 20). El default es Carta.
+ *
+ * La geometría exacta vive en `shelf-labels.mjs` (`GONDOLA_FORMAT_SPECS` +
+ * `resolveGondolaLayout`); acá sólo declaramos el enum para que sanitize
+ * tenga una sola fuente de verdad.
+ */
+export const GONDOLA_FORMATS = Object.freeze({
+  LETTER: "LETTER",
+  LEGAL: "LEGAL",
+});
+
+export const DEFAULT_GONDOLA_FORMAT = GONDOLA_FORMATS.LETTER;
+
 export const PAPER_PRESETS = Object.freeze({
   WIDTH_80: "80",
   WIDTH_58: "58",
@@ -499,6 +515,20 @@ export function createDefaultPrintingConfig() {
         showCategory: false,
       },
     },
+    /**
+     * Rama góndola: precios físicos en hoja de impresora normal.
+     *
+     * El flujo /labels/shelf imprime SIEMPRE con el diálogo del navegador
+     * (iframe aislado), nunca con el bridge térmico. Esta rama expone el
+     * formato activo:
+     *   - `LETTER` (Carta, default) → landscape 279.4×215.9 mm, grid 3×5 = 15.
+     *   - `LEGAL`  (Oficio)         → landscape 355.6×215.9 mm, grid 4×5 = 20.
+     * La geometría exacta se calcula en `shelf-labels.mjs` para no duplicar
+     * dimensiones físicas en dos ficheros.
+     */
+    gondola: {
+      format: DEFAULT_GONDOLA_FORMAT,
+    },
   };
 }
 
@@ -830,6 +860,20 @@ export function sanitizePrintingConfig(input) {
         showCategory: pickBool(extras.showCategory, defaults.labels.extras.showCategory),
       },
     },
+    gondola: {
+      // Formato de hoja para precios de góndola. Sanitize es la única
+      // frontera: cualquier string desconocido cae al default seguro
+      // (`LETTER`). Permitimos aceptar los alias en español ("CARTA" /
+      // "OFICIO") para no romper configs que hayan sido editadas a mano.
+      format: (() => {
+        const raw = typeof (ensureObject(src.gondola).format) === "string"
+          ? String(ensureObject(src.gondola).format).trim().toUpperCase()
+          : "";
+        if (raw === GONDOLA_FORMATS.LETTER || raw === "CARTA") return GONDOLA_FORMATS.LETTER;
+        if (raw === GONDOLA_FORMATS.LEGAL || raw === "OFICIO") return GONDOLA_FORMATS.LEGAL;
+        return defaults.gondola.format;
+      })(),
+    },
   };
 
   // Normalización final: internamente no exponemos _ingestedVersion al JSON canónico.
@@ -1068,6 +1112,26 @@ export function applyLabelSizePreset(config, preset) {
     }
   }
   // Pasamos por sanitize para que clampee contra el nuevo tamaño físico.
+  return sanitizePrintingConfig(base);
+}
+
+/**
+ * Mutador puro del formato de hoja de góndola. Idempotente. Cualquier
+ * valor desconocido deja la config intacta (sanitize ya aplicó el default
+ * cuando se cargó).
+ *
+ * @param {unknown} config
+ * @param {"LETTER"|"LEGAL"} format
+ * @returns {object}
+ */
+export function applyGondolaFormatPreset(config, format) {
+  const base = sanitizePrintingConfig(config);
+  const normalized = typeof format === "string" ? format.trim().toUpperCase() : "";
+  if (normalized === GONDOLA_FORMATS.LETTER || normalized === "CARTA") {
+    base.gondola.format = GONDOLA_FORMATS.LETTER;
+  } else if (normalized === GONDOLA_FORMATS.LEGAL || normalized === "OFICIO") {
+    base.gondola.format = GONDOLA_FORMATS.LEGAL;
+  }
   return sanitizePrintingConfig(base);
 }
 

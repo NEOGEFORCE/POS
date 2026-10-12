@@ -4,13 +4,16 @@
 // Pruebas exhaustivas del helper puro `src/lib/shelf-labels.mjs`.
 //
 // Cubre:
-//   - Normalización y expansión de cantidades (0/1/12/13/25).
-//   - Paginación en bloques de 12 con blanks null al final.
+//   - Resolución dinámica de formato (LETTER / LEGAL / fallbacks).
+//   - Geometrías físicas inmutables por formato (80×40 mm · landscape).
+//   - Grids: Letter 3×5=15, Legal 4×5=20.
+//   - Padding físico calculado desde las dimensiones de hoja.
+//   - Normalización y expansión de cantidades.
+//   - Paginación por formato (blanks null al final).
 //   - Resumen contable (fullPages, remainder, totalPages, blanks).
 //   - Escape HTML sobre nombre, SKU, unidad y código.
-//   - Dimensiones físicas inmutables (CSS en mm).
-//   - CSS incluye @page Letter con margin 0, grid 2x6 sin gap.
-//   - Page breaks (page-break-after: always, break-after: page).
+//   - CSS incluye @page con tamaño landscape y margin 0.
+//   - buildAuditMeta impone el layout canónico del formato.
 //   - formatCOP determinístico.
 // =============================================================================
 
@@ -19,9 +22,12 @@ import assert from "node:assert/strict";
 
 import {
     COLUMNS,
-    LABELS_PER_PAGE,
+    DEFAULT_GONDOLA_FORMAT,
+    GONDOLA_FORMAT_SPECS,
+    GONDOLA_FORMATS,
     LABEL_HEIGHT_MM,
     LABEL_WIDTH_MM,
+    LABELS_PER_PAGE,
     LAYOUT_META_ID,
     PAGE_PADDING_X_MM,
     PAGE_PADDING_Y_MM,
@@ -39,27 +45,112 @@ import {
     normalizeQuantity,
     normalizeShelfLabelItem,
     paginateSlots,
+    resolveGondolaFormat,
+    resolveGondolaLayout,
     summarizeShelfLabels,
     truncate,
 } from "../src/lib/shelf-labels.mjs";
 
 // -----------------------------------------------------------------------------
-// Constantes físicas: congeladas por el requisito del operador.
+// Constantes físicas de la etiqueta — compartidas por todos los formatos.
 // -----------------------------------------------------------------------------
-test("constantes físicas: Letter portrait + 2x6 + 80x40", () => {
-    assert.equal(SHEET_WIDTH_MM, 215.9, "ancho de hoja Letter en mm");
-    assert.equal(SHEET_HEIGHT_MM, 279.4, "alto de hoja Letter en mm");
+test("etiqueta: siempre mide 80 × 40 mm, invariante del contrato", () => {
     assert.equal(LABEL_WIDTH_MM, 80, "ancho de etiqueta en mm");
     assert.equal(LABEL_HEIGHT_MM, 40, "alto de etiqueta en mm");
-    assert.equal(COLUMNS, 2, "columnas por hoja");
-    assert.equal(ROWS, 6, "filas por hoja");
-    assert.equal(LABELS_PER_PAGE, 12, "12 slots por hoja");
-    // Padding calculado explícitamente para que un cambio accidental grite.
-    assert.ok(Math.abs(PAGE_PADDING_X_MM - 27.95) < 1e-9,
-        `padding horizontal debe ser 27.95mm, encontrado ${PAGE_PADDING_X_MM}`);
-    assert.ok(Math.abs(PAGE_PADDING_Y_MM - 19.7) < 1e-9,
-        `padding vertical debe ser 19.7mm, encontrado ${PAGE_PADDING_Y_MM}`);
-    assert.equal(LAYOUT_META_ID, "gondola-80x40-letter-2x6",
+});
+
+// -----------------------------------------------------------------------------
+// Formatos soportados: LETTER (default) y LEGAL.
+// -----------------------------------------------------------------------------
+test("GONDOLA_FORMATS: expone LETTER y LEGAL con default LETTER", () => {
+    assert.equal(GONDOLA_FORMATS.LETTER, "LETTER");
+    assert.equal(GONDOLA_FORMATS.LEGAL, "LEGAL");
+    assert.equal(DEFAULT_GONDOLA_FORMAT, "LETTER", "default debe ser Carta");
+});
+
+test("GONDOLA_FORMAT_SPECS.LETTER: landscape 279.4×215.9, grid 3×5=15", () => {
+    const spec = GONDOLA_FORMAT_SPECS.LETTER;
+    assert.equal(spec.sheetWidthMm, 279.4);
+    assert.equal(spec.sheetHeightMm, 215.9);
+    assert.equal(spec.columns, 3);
+    assert.equal(spec.rows, 5);
+    assert.equal(spec.labelsPerPage, 15);
+    assert.equal(spec.cssPageSize, "Letter landscape");
+    assert.equal(spec.layoutMetaId, "gondola-80x40-letter-landscape-3x5");
+    assert.equal(spec.sheetLabel, "letter-landscape");
+});
+
+test("GONDOLA_FORMAT_SPECS.LEGAL: landscape 355.6×215.9, grid 4×5=20", () => {
+    const spec = GONDOLA_FORMAT_SPECS.LEGAL;
+    assert.equal(spec.sheetWidthMm, 355.6);
+    assert.equal(spec.sheetHeightMm, 215.9);
+    assert.equal(spec.columns, 4);
+    assert.equal(spec.rows, 5);
+    assert.equal(spec.labelsPerPage, 20);
+    assert.equal(spec.cssPageSize, "Legal landscape");
+    assert.equal(spec.layoutMetaId, "gondola-80x40-legal-landscape-4x5");
+    assert.equal(spec.sheetLabel, "legal-landscape");
+});
+
+test("resolveGondolaFormat: acepta sinónimos y rechaza basura al default", () => {
+    assert.equal(resolveGondolaFormat("LETTER"), "LETTER");
+    assert.equal(resolveGondolaFormat("letter"), "LETTER");
+    assert.equal(resolveGondolaFormat("carta"), "LETTER", "alias español");
+    assert.equal(resolveGondolaFormat("LEGAL"), "LEGAL");
+    assert.equal(resolveGondolaFormat("legal"), "LEGAL");
+    assert.equal(resolveGondolaFormat("oficio"), "LEGAL", "alias español");
+    assert.equal(resolveGondolaFormat(null), "LETTER");
+    assert.equal(resolveGondolaFormat(undefined), "LETTER");
+    assert.equal(resolveGondolaFormat(""), "LETTER");
+    assert.equal(resolveGondolaFormat(123), "LETTER");
+    assert.equal(resolveGondolaFormat("A4"), "LETTER", "formato no soportado cae al default");
+    assert.equal(resolveGondolaFormat({ format: "LEGAL" }), "LEGAL",
+        "objeto con .format debe extraer el valor");
+});
+
+test("resolveGondolaLayout: Letter calcula padding exacto desde la geometría", () => {
+    const l = resolveGondolaLayout("LETTER");
+    assert.equal(l.format, "LETTER");
+    assert.equal(l.sheetWidthMm, 279.4);
+    assert.equal(l.sheetHeightMm, 215.9);
+    assert.equal(l.columns, 3);
+    assert.equal(l.rows, 5);
+    assert.equal(l.labelsPerPage, 15);
+    assert.equal(l.labelWidthMm, 80);
+    assert.equal(l.labelHeightMm, 40);
+    // Padding X = (279.4 - 3*80)/2 = 19.7 mm
+    assert.ok(Math.abs(l.paddingXMm - 19.7) < 1e-9,
+        `padding horizontal Letter debe ser 19.7mm, encontrado ${l.paddingXMm}`);
+    // Padding Y = (215.9 - 5*40)/2 = 7.95 mm
+    assert.ok(Math.abs(l.paddingYMm - 7.95) < 1e-9,
+        `padding vertical Letter debe ser 7.95mm, encontrado ${l.paddingYMm}`);
+});
+
+test("resolveGondolaLayout: Legal calcula padding exacto desde la geometría", () => {
+    const l = resolveGondolaLayout("LEGAL");
+    assert.equal(l.format, "LEGAL");
+    assert.equal(l.sheetWidthMm, 355.6);
+    assert.equal(l.sheetHeightMm, 215.9);
+    assert.equal(l.columns, 4);
+    assert.equal(l.rows, 5);
+    assert.equal(l.labelsPerPage, 20);
+    // Padding X = (355.6 - 4*80)/2 = 17.8 mm
+    assert.ok(Math.abs(l.paddingXMm - 17.8) < 1e-9,
+        `padding horizontal Legal debe ser 17.8mm, encontrado ${l.paddingXMm}`);
+    // Padding Y = (215.9 - 5*40)/2 = 7.95 mm
+    assert.ok(Math.abs(l.paddingYMm - 7.95) < 1e-9,
+        `padding vertical Legal debe ser 7.95mm, encontrado ${l.paddingYMm}`);
+});
+
+test("alias retrocompatibles reflejan el formato DEFAULT (Letter landscape)", () => {
+    assert.equal(SHEET_WIDTH_MM, 279.4);
+    assert.equal(SHEET_HEIGHT_MM, 215.9);
+    assert.equal(COLUMNS, 3);
+    assert.equal(ROWS, 5);
+    assert.equal(LABELS_PER_PAGE, 15);
+    assert.ok(Math.abs(PAGE_PADDING_X_MM - 19.7) < 1e-9);
+    assert.ok(Math.abs(PAGE_PADDING_Y_MM - 7.95) < 1e-9);
+    assert.equal(LAYOUT_META_ID, "gondola-80x40-letter-landscape-3x5",
         "el id de layout va a /labels/print-jobs y no puede derivar");
 });
 
@@ -105,7 +196,7 @@ test("normalizeShelfLabelItem: descarta items inválidos y aplica defaults", () 
 });
 
 // -----------------------------------------------------------------------------
-// Expansión y paginación: casos 0, 1, 12, 13, 25
+// Expansión y paginación
 // -----------------------------------------------------------------------------
 function it(code, qty) {
     return { code, productName: `P-${code}`, salePrice: 1000 + qty, quantity: qty };
@@ -140,106 +231,135 @@ test("expandItemsToSlots: items inválidos se descartan sin romper el resto", ()
     assert.equal(slots[2].code, "B");
 });
 
-test("paginateSlots: 0 slots → 0 páginas", () => {
-    assert.deepEqual(paginateSlots([]), []);
+test("paginateSlots: 0 slots → 0 páginas (ambos formatos)", () => {
+    assert.deepEqual(paginateSlots([], "LETTER"), []);
+    assert.deepEqual(paginateSlots([], "LEGAL"), []);
     assert.deepEqual(paginateSlots(null), []);
 });
 
-test("paginateSlots: 1 slot → 1 página con 11 blanks", () => {
+test("paginateSlots Letter: 1 slot → 1 página con 14 blanks", () => {
     const slots = expandItemsToSlots([it("A", 1)]);
-    const pages = paginateSlots(slots);
+    const pages = paginateSlots(slots, "LETTER");
     assert.equal(pages.length, 1, "una página");
-    assert.equal(pages[0].length, LABELS_PER_PAGE, "siempre 12 celdas");
+    assert.equal(pages[0].length, 15, "siempre 15 celdas en Letter");
     assert.equal(pages[0][0].code, "A");
-    for (let i = 1; i < LABELS_PER_PAGE; i++) {
+    for (let i = 1; i < 15; i++) {
         assert.equal(pages[0][i], null, `celda ${i} debe ser blank null`);
     }
 });
 
-test("paginateSlots: 12 slots → 1 página, 0 blanks", () => {
-    const slots = expandItemsToSlots([it("A", 12)]);
+test("paginateSlots Letter: 15 slots → 1 página, 0 blanks", () => {
+    const slots = expandItemsToSlots([it("A", 15)]);
+    const pages = paginateSlots(slots, "LETTER");
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].length, 15);
+    assert.equal(pages[0].filter((s) => s === null).length, 0,
+        "no blanks cuando cabe exacto");
+});
+
+test("paginateSlots Letter: 16 slots → 2 páginas, segunda con 14 blanks", () => {
+    const slots = expandItemsToSlots([it("A", 16)]);
+    const pages = paginateSlots(slots, "LETTER");
+    assert.equal(pages.length, 2, "dos páginas");
+    assert.equal(pages[0].length, 15);
+    assert.equal(pages[1].length, 15);
+    assert.equal(pages[0].filter((s) => s === null).length, 0, "primera página llena");
+    assert.equal(pages[1].filter((s) => s === null).length, 14, "segunda tiene 14 blanks");
+    assert.equal(pages[1][0].code, "A", "primer slot de la segunda página es real");
+});
+
+test("paginateSlots Legal: 20 slots → 1 página, 0 blanks", () => {
+    const slots = expandItemsToSlots([it("A", 20)]);
+    const pages = paginateSlots(slots, "LEGAL");
+    assert.equal(pages.length, 1);
+    assert.equal(pages[0].length, 20);
+    assert.equal(pages[0].filter((s) => s === null).length, 0);
+});
+
+test("paginateSlots Legal: 21 slots → 2 páginas, segunda con 19 blanks", () => {
+    const slots = expandItemsToSlots([it("A", 21)]);
+    const pages = paginateSlots(slots, "LEGAL");
+    assert.equal(pages.length, 2);
+    assert.equal(pages[0].length, 20);
+    assert.equal(pages[1].length, 20);
+    assert.equal(pages[0].filter((s) => s === null).length, 0);
+    assert.equal(pages[1].filter((s) => s === null).length, 19);
+    assert.equal(pages[1][0].code, "A");
+});
+
+test("paginateSlots: sin format → cae al default LETTER (15 por página)", () => {
+    const slots = expandItemsToSlots([it("A", 15)]);
     const pages = paginateSlots(slots);
     assert.equal(pages.length, 1);
-    assert.equal(pages[0].length, 12);
-    assert.equal(pages[0].filter(s => s === null).length, 0, "no blanks cuando cabe exacto");
-});
-
-test("paginateSlots: 13 slots → 2 páginas, segunda con 11 blanks", () => {
-    const slots = expandItemsToSlots([it("A", 13)]);
-    const pages = paginateSlots(slots);
-    assert.equal(pages.length, 2, "dos páginas");
-    assert.equal(pages[0].length, 12);
-    assert.equal(pages[1].length, 12);
-    assert.equal(pages[0].filter(s => s === null).length, 0, "primera página llena");
-    assert.equal(pages[1].filter(s => s === null).length, 11, "segunda tiene 11 blanks");
-    assert.equal(pages[1][0].code, "A", "primer slot de la segunda página es real");
-    for (let i = 1; i < 12; i++) {
-        assert.equal(pages[1][i], null, `celda ${i} es blank`);
-    }
-});
-
-test("paginateSlots: 25 slots → 3 páginas, última con 11 blanks", () => {
-    const slots = expandItemsToSlots([it("A", 10), it("B", 10), it("C", 5)]);
-    assert.equal(slots.length, 25);
-    const pages = paginateSlots(slots);
-    assert.equal(pages.length, 3);
-    assert.equal(pages[0].filter(s => s === null).length, 0);
-    assert.equal(pages[1].filter(s => s === null).length, 0);
-    assert.equal(pages[2].filter(s => s === null).length, 11,
-        "25 slots dejan 1 real y 11 blanks en la tercera página");
-    assert.equal(pages[2].filter(s => s !== null).length, 1, "sólo 1 slot real en la tercera");
-    assert.equal(pages[2][0].code, "C");
+    assert.equal(pages[0].length, 15);
 });
 
 // -----------------------------------------------------------------------------
 // summarizeShelfLabels: alimentador del contador de la UI
 // -----------------------------------------------------------------------------
-test("summarizeShelfLabels: 0 ítems → todo cero", () => {
-    const s = summarizeShelfLabels([]);
-    assert.deepEqual(s, {
-        totalLabels: 0,
-        fullPages: 0,
-        remainder: 0,
-        totalPages: 0,
-        blanks: 0,
-        labelsPerPage: 12,
-    });
-});
-
-test("summarizeShelfLabels: 1 → 0 páginas completas + 1 sobrante + 1 total", () => {
-    const s = summarizeShelfLabels([it("A", 1)]);
-    assert.equal(s.totalLabels, 1);
+test("summarizeShelfLabels: 0 ítems → todo cero, layout canónico presente", () => {
+    const s = summarizeShelfLabels([], "LETTER");
+    assert.equal(s.totalLabels, 0);
     assert.equal(s.fullPages, 0);
-    assert.equal(s.remainder, 1);
-    assert.equal(s.totalPages, 1);
-    assert.equal(s.blanks, 11);
+    assert.equal(s.remainder, 0);
+    assert.equal(s.totalPages, 0);
+    assert.equal(s.blanks, 0);
+    assert.equal(s.labelsPerPage, 15);
+    assert.equal(s.format, "LETTER");
+    assert.equal(s.layout, "gondola-80x40-letter-landscape-3x5");
 });
 
-test("summarizeShelfLabels: 12 → 1 completa + 0 sobrantes + 0 blanks", () => {
-    const s = summarizeShelfLabels([it("A", 12)]);
-    assert.equal(s.totalLabels, 12);
+test("summarizeShelfLabels Letter: 15 → 1 completa + 0 sobrantes", () => {
+    const s = summarizeShelfLabels([it("A", 15)], "LETTER");
+    assert.equal(s.totalLabels, 15);
     assert.equal(s.fullPages, 1);
     assert.equal(s.remainder, 0);
     assert.equal(s.totalPages, 1);
     assert.equal(s.blanks, 0);
+    assert.equal(s.labelsPerPage, 15);
 });
 
-test("summarizeShelfLabels: 13 → 1 completa + 1 sobrante + 2 totales + 11 blanks", () => {
-    const s = summarizeShelfLabels([it("A", 13)]);
-    assert.equal(s.totalLabels, 13);
+test("summarizeShelfLabels Letter: 16 → 1 completa + 1 sobrante + 2 totales", () => {
+    const s = summarizeShelfLabels([it("A", 16)], "LETTER");
+    assert.equal(s.totalLabels, 16);
     assert.equal(s.fullPages, 1);
     assert.equal(s.remainder, 1);
     assert.equal(s.totalPages, 2);
-    assert.equal(s.blanks, 11);
+    assert.equal(s.blanks, 14);
+    assert.equal(s.labelsPerPage, 15);
 });
 
-test("summarizeShelfLabels: 25 → 2 completas + 1 sobrante + 3 totales + 11 blanks", () => {
-    const s = summarizeShelfLabels([it("A", 10), it("B", 10), it("C", 5)]);
-    assert.equal(s.totalLabels, 25);
-    assert.equal(s.fullPages, 2);
-    assert.equal(s.remainder, 1);
-    assert.equal(s.totalPages, 3);
-    assert.equal(s.blanks, 11);
+test("summarizeShelfLabels Legal: 20 → 1 completa, 40 → 2, 41 → 2+1 sobrante", () => {
+    const s20 = summarizeShelfLabels([it("A", 20)], "LEGAL");
+    assert.equal(s20.totalLabels, 20);
+    assert.equal(s20.fullPages, 1);
+    assert.equal(s20.remainder, 0);
+    assert.equal(s20.totalPages, 1);
+    assert.equal(s20.blanks, 0);
+    assert.equal(s20.labelsPerPage, 20);
+    assert.equal(s20.format, "LEGAL");
+    assert.equal(s20.layout, "gondola-80x40-legal-landscape-4x5");
+
+    const s40 = summarizeShelfLabels([it("A", 40)], "LEGAL");
+    assert.equal(s40.totalPages, 2);
+    assert.equal(s40.fullPages, 2);
+    assert.equal(s40.remainder, 0);
+
+    const s41 = summarizeShelfLabels([it("A", 41)], "LEGAL");
+    assert.equal(s41.totalLabels, 41);
+    assert.equal(s41.fullPages, 2);
+    assert.equal(s41.remainder, 1);
+    assert.equal(s41.totalPages, 3);
+    assert.equal(s41.blanks, 19);
+});
+
+test("summarizeShelfLabels: formato desconocido/undefined cae a LETTER", () => {
+    const s = summarizeShelfLabels([it("A", 10)]);
+    assert.equal(s.format, "LETTER");
+    assert.equal(s.labelsPerPage, 15);
+    const s2 = summarizeShelfLabels([it("A", 10)], "A4");
+    assert.equal(s2.format, "LETTER");
+    assert.equal(s2.labelsPerPage, 15);
 });
 
 // -----------------------------------------------------------------------------
@@ -311,75 +431,72 @@ test("buildSlotHtml: blank (null) genera slot vacío con la misma clase", () => 
 });
 
 // -----------------------------------------------------------------------------
-// CSS del documento aislado: dimensiones y @page Letter
+// CSS del documento aislado: dimensiones y @page landscape
 // -----------------------------------------------------------------------------
-test("buildShelfLabelsCss: contiene @page Letter portrait + margin 0", () => {
-    const css = buildShelfLabelsCss();
-    assert.match(css, /@page\s*{[^}]*size:\s*Letter\s+portrait/,
-        "debe fijar @page con tamaño Letter portrait");
-    assert.match(css, /@page\s*{[^}]*margin:\s*0/,
+test("buildShelfLabelsCss Letter: @page Letter landscape + margin 0 + grid 3x5", () => {
+    const css = buildShelfLabelsCss("LETTER");
+    assert.match(css, /@page\s*\{[^}]*size:\s*Letter\s+landscape/,
+        "debe fijar @page con tamaño Letter landscape");
+    assert.match(css, /@page\s*\{[^}]*margin:\s*0/,
         "debe fijar @page con margin: 0 para neutralizar márgenes del navegador");
+    assert.match(css, /grid-template-columns:\s*repeat\(3,\s*80mm\)/);
+    assert.match(css, /grid-template-rows:\s*repeat\(5,\s*40mm\)/);
+    assert.match(css, /gap:\s*0/);
+    assert.ok(css.includes("279.4mm"));
+    assert.ok(css.includes("215.9mm"));
+    assert.ok(css.includes("19.7mm"), "padding horizontal");
+    assert.ok(css.includes("7.95mm"), "padding vertical");
 });
 
-test("buildShelfLabelsCss: medidas físicas en mm, no px", () => {
-    const css = buildShelfLabelsCss();
-    assert.ok(css.includes(`${SHEET_WIDTH_MM}mm`), "SHEET_WIDTH_MM aparece en mm");
-    assert.ok(css.includes(`${SHEET_HEIGHT_MM}mm`), "SHEET_HEIGHT_MM aparece en mm");
-    assert.ok(css.includes(`${LABEL_WIDTH_MM}mm`), "LABEL_WIDTH_MM aparece en mm");
-    assert.ok(css.includes(`${LABEL_HEIGHT_MM}mm`), "LABEL_HEIGHT_MM aparece en mm");
-    assert.ok(css.includes(`${PAGE_PADDING_Y_MM}mm`), "padding vertical en mm");
-    assert.ok(css.includes(`${PAGE_PADDING_X_MM}mm`), "padding horizontal en mm");
+test("buildShelfLabelsCss Legal: @page Legal landscape + margin 0 + grid 4x5", () => {
+    const css = buildShelfLabelsCss("LEGAL");
+    assert.match(css, /@page\s*\{[^}]*size:\s*Legal\s+landscape/);
+    assert.match(css, /@page\s*\{[^}]*margin:\s*0/);
+    assert.match(css, /grid-template-columns:\s*repeat\(4,\s*80mm\)/);
+    assert.match(css, /grid-template-rows:\s*repeat\(5,\s*40mm\)/);
+    assert.ok(css.includes("355.6mm"));
+    assert.ok(css.includes("215.9mm"));
+    assert.ok(css.includes("17.8mm"), "padding horizontal Legal");
+    assert.ok(css.includes("7.95mm"), "padding vertical compartido");
 });
 
-test("buildShelfLabelsCss: grid 2x6 sin gap", () => {
-    const css = buildShelfLabelsCss();
-    assert.match(
-        css,
-        new RegExp(`grid-template-columns:\\s*repeat\\(${COLUMNS},\\s*${LABEL_WIDTH_MM}mm\\)`),
-        "2 columnas de 80mm");
-    assert.match(
-        css,
-        new RegExp(`grid-template-rows:\\s*repeat\\(${ROWS},\\s*${LABEL_HEIGHT_MM}mm\\)`),
-        "6 filas de 40mm");
-    assert.match(css, /gap:\s*0/, "sin gap entre slots");
+test("buildShelfLabelsCss: sin format cae al default Letter", () => {
+    const def = buildShelfLabelsCss();
+    const letter = buildShelfLabelsCss("LETTER");
+    assert.equal(def, letter);
 });
 
 test("buildShelfLabelsCss: borde dashed gris tenue muy fino", () => {
-    const css = buildShelfLabelsCss();
+    const css = buildShelfLabelsCss("LETTER");
     assert.match(css, /border:\s*0\.2mm\s+dashed\s+#c4c4c4/i,
         "borde debe ser 0.2mm dashed en gris muy tenue");
 });
 
 test("buildShelfLabelsCss: nombre bold con max 2 líneas", () => {
-    const css = buildShelfLabelsCss();
+    const css = buildShelfLabelsCss("LETTER");
     assert.match(css, /\.shelf-name[^}]*font-weight:\s*700/i, "nombre bold");
     assert.match(css, /-webkit-line-clamp:\s*2/, "máx 2 líneas con line-clamp");
 });
 
 test("buildShelfLabelsCss: precio B/N dominante y centrado", () => {
-    const css = buildShelfLabelsCss();
-    // Precio font-size grande.
-    assert.match(css, /\.shelf-price[^}]*font-size:\s*26pt/, "precio en 26pt dominante");
-    assert.match(css, /\.shelf-price[^}]*font-weight:\s*900/i, "precio en 900 (black)");
-    assert.match(css, /\.shelf-price[^}]*color:\s*#000/, "precio en negro puro");
+    const css = buildShelfLabelsCss("LETTER");
+    assert.match(css, /\.shelf-price[^}]*font-size:\s*26pt/);
+    assert.match(css, /\.shelf-price[^}]*font-weight:\s*900/i);
+    assert.match(css, /\.shelf-price[^}]*color:\s*#000/);
 });
 
 test("buildShelfLabelsCss: footer con izquierda (SKU/código) y derecha (unidad/fecha)", () => {
-    const css = buildShelfLabelsCss();
+    const css = buildShelfLabelsCss("LETTER");
     assert.match(css, /\.shelf-footer-left/i);
     assert.match(css, /\.shelf-footer-right/i);
-    assert.match(css, /\.shelf-footer[^}]*justify-content:\s*space-between/i,
-        "footer debe tener justify-content: space-between");
+    assert.match(css, /\.shelf-footer[^}]*justify-content:\s*space-between/i);
 });
 
 test("buildShelfLabelsCss: incluye page-break-after/break-after para forzar saltos", () => {
-    const css = buildShelfLabelsCss();
-    assert.match(css, /\.shelf-page[^{]*{[^}]*page-break-after:\s*always/i,
-        "cada hoja debe forzar page-break-after: always");
-    assert.match(css, /\.shelf-page[^{]*{[^}]*break-after:\s*page/i,
-        "equivalente moderno break-after: page");
-    assert.match(css, /\.shelf-page:last-child[^}]*page-break-after:\s*auto/i,
-        "última hoja no debe forzar salto adicional");
+    const css = buildShelfLabelsCss("LETTER");
+    assert.match(css, /\.shelf-page[^{]*\{[^}]*page-break-after:\s*always/i);
+    assert.match(css, /\.shelf-page[^{]*\{[^}]*break-after:\s*page/i);
+    assert.match(css, /\.shelf-page:last-child[^}]*page-break-after:\s*auto/i);
 });
 
 // -----------------------------------------------------------------------------
@@ -387,30 +504,50 @@ test("buildShelfLabelsCss: incluye page-break-after/break-after para forzar salt
 // -----------------------------------------------------------------------------
 test("buildShelfLabelsPrintHtml: lista vacía produce documento sin páginas", () => {
     const html = buildShelfLabelsPrintHtml([]);
-    assert.ok(html.startsWith("<!DOCTYPE html>"), "arranca con DOCTYPE");
-    assert.ok(html.includes("<html lang=\"es\">"));
+    assert.ok(html.startsWith("<!DOCTYPE html>"));
     assert.ok(html.includes("<body></body>"), "cuerpo vacío sin páginas");
 });
 
-test("buildShelfLabelsPrintHtml: con items genera página(s) y encapsula el CSS", () => {
+test("buildShelfLabelsPrintHtml: default Letter incluye @page Letter landscape", () => {
     const html = buildShelfLabelsPrintHtml([it("A", 2)]);
     assert.ok(html.startsWith("<!DOCTYPE html>"));
     assert.ok(html.includes("<style>"), "CSS inline en <style>");
     assert.ok(html.includes("@page"), "@page viaja dentro del documento");
-    assert.ok(html.includes("Letter portrait"));
-    assert.ok(html.includes("shelf-page"), "contiene al menos una sección shelf-page");
+    assert.ok(html.includes("Letter landscape"));
+    assert.ok(html.includes("shelf-page"));
+    assert.match(html, /data-gondola-format="LETTER"/);
+    assert.match(html, /data-gondola-layout="gondola-80x40-letter-landscape-3x5"/);
 });
 
-test("buildShelfLabelsPrintHtml: 13 items → 2 secciones .shelf-page", () => {
-    const html = buildShelfLabelsPrintHtml([it("A", 13)]);
+test("buildShelfLabelsPrintHtml Letter: 16 items → 2 secciones .shelf-page", () => {
+    const html = buildShelfLabelsPrintHtml([it("A", 16)], { format: "LETTER" });
     const matches = html.match(/<section\s+class="shelf-page"/g) || [];
     assert.equal(matches.length, 2, "deben renderizarse exactamente 2 páginas");
 });
 
-test("buildShelfLabelsPrintHtml: inyecta blanks null como <div.is-blank>", () => {
-    const html = buildShelfLabelsPrintHtml([it("A", 1)]);
+test("buildShelfLabelsPrintHtml Legal: 20 items → 1 sección y 25 → 2 secciones", () => {
+    const html1 = buildShelfLabelsPrintHtml([it("A", 20)], { format: "LEGAL" });
+    const m1 = html1.match(/<section\s+class="shelf-page"/g) || [];
+    assert.equal(m1.length, 1);
+    assert.match(html1, /size:\s*Legal\s+landscape/);
+    assert.match(html1, /data-gondola-format="LEGAL"/);
+    assert.match(html1, /data-gondola-layout="gondola-80x40-legal-landscape-4x5"/);
+
+    const html2 = buildShelfLabelsPrintHtml([it("A", 25)], { format: "LEGAL" });
+    const m2 = html2.match(/<section\s+class="shelf-page"/g) || [];
+    assert.equal(m2.length, 2);
+});
+
+test("buildShelfLabelsPrintHtml Letter: 1 item inyecta 14 blanks null", () => {
+    const html = buildShelfLabelsPrintHtml([it("A", 1)], { format: "LETTER" });
     const blanks = html.match(/class="shelf-slot is-blank"/g) || [];
-    assert.equal(blanks.length, 11, "11 blanks visibles en la hoja parcial");
+    assert.equal(blanks.length, 14, "14 blanks visibles en la hoja parcial de 15");
+});
+
+test("buildShelfLabelsPrintHtml Legal: 1 item inyecta 19 blanks null", () => {
+    const html = buildShelfLabelsPrintHtml([it("A", 1)], { format: "LEGAL" });
+    const blanks = html.match(/class="shelf-slot is-blank"/g) || [];
+    assert.equal(blanks.length, 19, "19 blanks visibles en la hoja parcial de 20");
 });
 
 test("buildShelfLabelsPrintHtml: TODO contenido dinámico pasa por escapeHtml", () => {
@@ -426,19 +563,53 @@ test("buildShelfLabelsPrintHtml: TODO contenido dinámico pasa por escapeHtml", 
 });
 
 // -----------------------------------------------------------------------------
-// buildAuditMeta: metadata obligatoria para /labels/print-jobs
+// buildAuditMeta: metadata canónica obligatoria del formato activo.
 // -----------------------------------------------------------------------------
-test("buildAuditMeta: siempre fija layout=gondola-80x40-letter-2x6", () => {
-    assert.deepEqual(buildAuditMeta(), { layout: LAYOUT_META_ID });
-    const extra = buildAuditMeta({ foo: "bar", printedBy: "jaime" });
-    assert.equal(extra.layout, LAYOUT_META_ID,
-        "layout no puede ser pisado por el caller — el helper lo impone");
-    assert.equal(extra.foo, "bar");
-    assert.equal(extra.printedBy, "jaime");
+test("buildAuditMeta Letter: fija layout + format + dimensiones correctas", () => {
+    const meta = buildAuditMeta(undefined, "LETTER");
+    assert.equal(meta.layout, "gondola-80x40-letter-landscape-3x5");
+    assert.equal(meta.format, "LETTER");
+    assert.equal(meta.sheet, "letter-landscape");
+    assert.equal(meta.sheetWidthMm, 279.4);
+    assert.equal(meta.sheetHeightMm, 215.9);
+    assert.equal(meta.labelWidthMm, 80);
+    assert.equal(meta.labelHeightMm, 40);
+    assert.equal(meta.columns, 3);
+    assert.equal(meta.rows, 5);
+    assert.equal(meta.labelsPerPage, 15);
 });
 
-test("buildAuditMeta: layout NO puede ser pisado por un `extra` malicioso", () => {
-    const extra = buildAuditMeta({ layout: "pirata-99x99" });
-    assert.equal(extra.layout, LAYOUT_META_ID,
-        "si el caller pasa layout, el helper lo sobrescribe");
+test("buildAuditMeta Legal: fija layout + format + dimensiones correctas", () => {
+    const meta = buildAuditMeta(undefined, "LEGAL");
+    assert.equal(meta.layout, "gondola-80x40-legal-landscape-4x5");
+    assert.equal(meta.format, "LEGAL");
+    assert.equal(meta.sheet, "legal-landscape");
+    assert.equal(meta.sheetWidthMm, 355.6);
+    assert.equal(meta.sheetHeightMm, 215.9);
+    assert.equal(meta.columns, 4);
+    assert.equal(meta.rows, 5);
+    assert.equal(meta.labelsPerPage, 20);
+});
+
+test("buildAuditMeta: layout/dimensions NUNCA pueden ser pisadas por `extra`", () => {
+    const meta = buildAuditMeta({
+        layout: "pirata-99x99",
+        format: "A5",
+        sheetWidthMm: 999,
+        rows: 99,
+        printedBy: "jaime",
+    }, "LETTER");
+    // El caller no puede corromper el canonical:
+    assert.equal(meta.layout, "gondola-80x40-letter-landscape-3x5");
+    assert.equal(meta.format, "LETTER");
+    assert.equal(meta.sheetWidthMm, 279.4);
+    assert.equal(meta.rows, 5);
+    // Pero sí puede agregar campos arbitrarios:
+    assert.equal(meta.printedBy, "jaime");
+});
+
+test("buildAuditMeta: sin format cae al default Letter", () => {
+    const meta = buildAuditMeta();
+    assert.equal(meta.format, "LETTER");
+    assert.equal(meta.layout, "gondola-80x40-letter-landscape-3x5");
 });

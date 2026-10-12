@@ -82,13 +82,17 @@ test("workspace: registra el lote en POST /labels/print-jobs antes de window.pri
   );
 });
 
-test("workspace: tiene botón 'Abrir cajón' con POST /cash-drawer/open", async () => {
+test("workspace: ya no expone la apertura manual del cajón en la UI", async () => {
   const src = await leer(workspace);
-  assert.ok(src.includes("Abrir cajón"), "El workspace debe mostrar 'Abrir cajón'.");
-  assert.ok(
-    src.includes('"/cash-drawer/open"'),
-    "El workspace debe llamar POST /cash-drawer/open.",
-  );
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  assert.ok(!/Abrir cajón/.test(codeOnly),
+    "El workspace NO debe mostrar un botón visible 'Abrir cajón'.");
+  assert.ok(!/handleOpenDrawer/.test(codeOnly),
+    "El callback muerto `handleOpenDrawer` debe quedar eliminado.");
+  assert.ok(!/caj[oó]n/i.test(codeOnly),
+    "Ninguna cadena visible del workspace puede mencionar al cajón.");
 });
 
 test("workspace: documenta en pantalla la dependencia del bridge local", async () => {
@@ -114,12 +118,19 @@ test("workspace: handlePrint audita primero y luego delega al bridge (térmica)"
 // labels/config
 // ---------------------------------------------------------------------------
 
-test("labels/config: existe pantalla admin con 'Probar cajón'", async () => {
+test("labels/config: ya no expone la configuración visible del cajón", async () => {
   const src = await leer(configPage);
-  assert.ok(src.includes("Probar cajón"), "labels/config debe tener botón 'Probar cajón'.");
-  assert.ok(src.includes('"/cash-drawer/open"'), "labels/config debe POSTear a /cash-drawer/open.");
-  assert.ok(src.includes("override: true"),
-    "La prueba del cajón desde config debe pedir override admin explícito.");
+  const codeOnly = src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "");
+  assert.ok(!/Probar cajón/.test(codeOnly),
+    "labels/config NO debe mostrar un botón visible 'Probar cajón'.");
+  assert.ok(!/testDrawer\b/.test(codeOnly),
+    "El callback muerto `testDrawer` debe quedar eliminado.");
+  assert.ok(!/caj[oó]n/i.test(codeOnly),
+    "Ninguna cadena visible de /labels/config puede mencionar al cajón.");
+  assert.ok(!/"\/cash-drawer\/open"/.test(codeOnly),
+    "La pantalla de configuración ya no debe disparar POST /cash-drawer/open.");
 });
 
 // ---------------------------------------------------------------------------

@@ -15,13 +15,19 @@
 //       · thermal: `handlePrint` → POST /labels/print-jobs → bridge.print(payload)
 //         con `bridgePayload` enriquecido (connection + labels + labelItems).
 //       · shelf: `handlePrintShelfSheet` → POST /labels/print-jobs
-//         (`sizeTemplateId: null`, `meta.layout: gondola-80x40-letter-2x6`) →
-//         iframe aislado con `@page Letter margin 0`.
+//         (`sizeTemplateId: null`, `meta.layout` derivado del formato activo
+//         en `gondola.format`: `gondola-80x40-letter-landscape-3x5` o
+//         `gondola-80x40-legal-landscape-4x5`) → iframe aislado con
+//         `@page { size: Letter|Legal landscape; margin: 0 }` que se
+//         imprime EXCLUSIVAMENTE con `iframe.contentWindow.print()`
+//         (diálogo normal del navegador). Nunca se usa el bridge térmico
+//         ni se abre el cajón para góndola.
 //
 // La invariante AUDIT-FIRST se mantiene: siempre registramos el lote en
 // `/labels/print-jobs` ANTES de delegar al bridge o abrir el `print()`.
-// La hoja de góndola es inmutable (Letter 2×6) y vive en `shelf-labels.mjs`;
-// nunca la tocamos acá.
+// La geometría de la hoja de góndola vive en `shelf-labels.mjs` y se
+// resuelve dinámicamente desde el formato persistido en
+// `printing-config.mjs` → `gondola.format`.
 //
 // Rutas que usan este workspace:
 //   - `/labels/page.tsx`       → `<LabelsWorkspace mode="thermal" />`
@@ -34,10 +40,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
-import { Button, Chip, Input, Spinner, Tooltip } from "@heroui/react";
+import { Button, Chip, Input, Spinner } from "@heroui/react";
 import {
     Barcode,
-    DoorOpen,
     FileText,
     Minus,
     Plus as PlusIcon,
@@ -67,9 +72,11 @@ import {
     buildBridgeConfigPayload,
     loadPrintingConfig,
 } from "@/lib/printing-config.mjs";
+import type { GondolaFormat } from "@/lib/printing-config.d.mts";
 import {
     buildAuditMeta,
     buildShelfLabelsPrintHtml,
+    resolveGondolaLayout,
     summarizeShelfLabels,
 } from "@/lib/shelf-labels.mjs";
 import { ShelfLabelsPreview } from "@/app/(app)/labels/components/ShelfLabelsPreview";
@@ -198,6 +205,35 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     // podría querer reintentar sin perder los items.
     const [clearQueueOnPrintClose, setClearQueueOnPrintClose] = useState(false);
     const [showShelfPreview, setShowShelfPreview] = useState(false);
+
+    // Formato de hoja de góndola (Carta / Oficio). Se hidrata desde la
+    // config persistida (`pos_printing_config_v1 → gondola.format`) al
+    // montar y se refresca cuando otro tab la cambia (`storage` event). El
+    // workspace NUNCA llama al bridge para góndola: el formato sólo altera
+    // la geometría del documento aislado que va al diálogo del navegador.
+    const [gondolaFormat, setGondolaFormat] = useState<GondolaFormat>("LETTER");
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        const hydrate = () => {
+            try {
+                const cfg = loadPrintingConfig();
+                setGondolaFormat(cfg.gondola?.format ?? "LETTER");
+            } catch {
+                setGondolaFormat("LETTER");
+            }
+        };
+        hydrate();
+        const onStorage = (ev: StorageEvent) => {
+            if (!ev.key || ev.key === "pos_printing_config_v1") hydrate();
+        };
+        window.addEventListener("storage", onStorage);
+        return () => window.removeEventListener("storage", onStorage);
+    }, []);
+
+    const gondolaLayout = useMemo(
+        () => resolveGondolaLayout(gondolaFormat),
+        [gondolaFormat],
+    );
 
     // -------------------------------------------------------------------------
     // Hidratación de la cola PERSISTENTE (ver src/lib/label-print-queue.mjs).
@@ -829,13 +865,22 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     }, [queue, defaultPrinter, defaultSize, user, totalLabels, toast]);
 
     // -------------------------------------------------------------------------
-    // Impresión hoja de góndola — modo "shelf" (Letter 2×6).
+    // Impresión hoja de góndola — modo "shelf".
+    //
+    // El formato activo (LETTER u OFICIO/LEGAL) se resuelve en runtime
+    // desde `gondolaFormat`, hidratado desde `pos_printing_config_v1 →
+    // gondola.format` por `loadPrintingConfig()`. El default es LETTER.
     //
     // Igual que el térmico, es AUDIT-FIRST: antes de generar el documento
-    // aislado registramos el lote. El `sizeTemplateId: null` y `meta.layout:
-    // gondola-80x40-letter-2x6` (vía `buildAuditMeta`) distinguen a este
-    // lote de las etiquetas térmicas. La geometría del grid Letter 2×6
-    // vive en `shelf-labels.mjs` y es inmutable.
+    // aislado registramos el lote. El `sizeTemplateId: null` y el
+    // `meta.layout` canónico (vía `buildAuditMeta`) distinguen a este
+    // lote de las etiquetas térmicas. Los dos ids posibles son
+    // `gondola-80x40-letter-landscape-3x5` y
+    // `gondola-80x40-legal-landscape-4x5`.
+    //
+    // La geometría (dimensiones de página, grid, padding centrado y
+    // capacidad) la impone `resolveGondolaLayout(format)` en
+    // `shelf-labels.mjs`: no está fija y no se duplica en el caller.
     // -------------------------------------------------------------------------
     // El resumen contable usa el precio PERSISTIDO cuando viene de una
     // entrada tras cambio en recepción (`persistentSalePrice`), de forma
@@ -861,8 +906,9 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                         salePrice: shelfPriceOf(q),
                         quantity: q.quantity,
                     })),
+                gondolaFormat,
             ),
-        [queue, shelfPriceOf],
+        [queue, gondolaFormat, shelfPriceOf],
     );
 
     const handlePrintShelfSheet = useCallback(async () => {
@@ -892,31 +938,39 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                 salePrice: shelfPriceOf(q),
                 quantity: q.quantity,
             }));
-            // 1. Auditoría: `sizeTemplateId: null` + `meta.layout` canónico.
+            // 1. Auditoría: `sizeTemplateId: null` + `meta.layout` canónico
+            //    derivado del formato de góndola activo (letter/legal
+            //    landscape). `buildAuditMeta` impone el layout y las
+            //    dimensiones del formato — el caller no puede pisarlos.
             const payload = {
                 printerProfileId: defaultPrinter?.id ?? null,
                 sizeTemplateId: null,
                 triggerSource,
                 items: queue.map((q) => ({ code: q.code.code, quantity: q.quantity })),
-                meta: buildAuditMeta({
-                    printedBy: user?.name || user?.dni || "",
-                    printerName: defaultPrinter?.name || "navegador",
-                    sheet: "letter-portrait",
-                    sheetWidthMm: 215.9,
-                    sheetHeightMm: 279.4,
-                    labelWidthMm: 80,
-                    labelHeightMm: 40,
-                    totalLabels: shelfSummary.totalLabels,
-                    totalPages: shelfSummary.totalPages,
-                }),
+                meta: buildAuditMeta(
+                    {
+                        printedBy: user?.name || user?.dni || "",
+                        printerName: defaultPrinter?.name || "navegador",
+                        totalLabels: shelfSummary.totalLabels,
+                        totalPages: shelfSummary.totalPages,
+                    },
+                    gondolaFormat,
+                ),
             };
+            // AUDIT FIRST: si falla, salimos y conservamos la cola intacta.
             await apiFetch("/labels/print-jobs", {
                 method: "POST",
                 body: JSON.stringify(payload),
             });
 
-            // 2. Documento aislado en iframe con su propio @page Letter margin 0.
-            const html = buildShelfLabelsPrintHtml(items, { now: new Date() });
+            // 2. Documento aislado en iframe con su propio
+            //    `@page { size: Letter|Legal landscape; margin: 0 }`.
+            //    La impresión usa EXCLUSIVAMENTE el diálogo del navegador
+            //    (iframe.contentWindow.print()) — nunca el bridge térmico.
+            const html = buildShelfLabelsPrintHtml(items, {
+                now: new Date(),
+                format: gondolaFormat,
+            });
             const iframe = document.createElement("iframe");
             iframe.setAttribute("aria-hidden", "true");
             iframe.setAttribute("title", "Impresión de etiquetas de góndola");
@@ -955,8 +1009,6 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
             let shelfPrintInvoked = false;
 
             const cleanup = () => {
-                // Limpieza DESPUÉS de iframe.print(): nunca antes, para no
-                // perder la cola si el usuario cancela el diálogo del navegador.
                 try {
                     if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
                 } catch {
@@ -1053,51 +1105,16 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
         } finally {
             setIsBusy(false);
         }
-    }, [queue, defaultPrinter, user, shelfSummary, clearQueueOnPrintClose, toast, shelfPriceOf]);
-
-    // -------------------------------------------------------------------------
-    // Apertura manual del cajón — compartida entre ambos modos.
-    //
-    // Siempre audit-first. Enriquecemos el payload del bridge con
-    // connection + drawer para que el bridge sepa a qué impresora enviar
-    // el pulso ESC/POS sin leer LocalStorage por su cuenta. Reimpresión y
-    // auto-print no pasan por acá; esta ruta es exclusivamente manual.
-    // -------------------------------------------------------------------------
-    const handleOpenDrawer = useCallback(async () => {
-        try {
-            await apiFetch("/cash-drawer/open", {
-                method: "POST",
-                body: JSON.stringify({
-                    override: isAdmin,
-                    note: "Apertura manual desde /labels",
-                    printerProfileId: defaultPrinter?.id ?? null,
-                }),
-            });
-            const w = window as any;
-            if (w.posBridge?.kickDrawer) {
-                try {
-                    const printingConfig = loadPrintingConfig();
-                    await w.posBridge.kickDrawer({
-                        printerProfileId: defaultPrinter?.id ?? null,
-                        command: printingConfig.drawer.command,
-                        event: printingConfig.drawer.event,
-                        connection: printingConfig.connection,
-                        drawer: printingConfig.drawer,
-                    });
-                } catch {
-                    /* ignorar: la auditoría ya quedó */
-                }
-            }
-            toast({
-                variant: "default",
-                title: "CAJÓN AUTORIZADO",
-                description: "Si no se abrió físicamente, verifica el bridge local.",
-            });
-        } catch (e: any) {
-            const msg = e?.message || "No se pudo abrir el cajón";
-            toast({ variant: "destructive", title: "BLOQUEADO", description: msg });
-        }
-    }, [isAdmin, defaultPrinter, toast]);
+    }, [
+        queue,
+        defaultPrinter,
+        user,
+        shelfSummary,
+        clearQueueOnPrintClose,
+        toast,
+        gondolaFormat,
+        shelfPriceOf,
+    ]);
 
     // -------------------------------------------------------------------------
     // Renderizado
@@ -1107,7 +1124,7 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     const headerSubtitle =
         mode === "thermal"
             ? `Generador térmico · ${products.length} productos cargados`
-            : `Hoja Letter 2×6 · ${products.length} productos cargados`;
+            : `Hoja ${gondolaLayout.label} landscape · grid ${gondolaLayout.columns}×${gondolaLayout.rows} · ${products.length} productos cargados`;
 
     return (
         <div
@@ -1140,20 +1157,6 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                     </div>
                 </div>
                 <div className="flex items-center gap-2">
-                    <Tooltip
-                        content={isAdmin ? "Abrir cajón (admin)" : "Sólo con venta reciente"}
-                    >
-                        <Button
-                            size="sm"
-                            color="warning"
-                            variant="flat"
-                            startContent={<DoorOpen size={14} />}
-                            onPress={handleOpenDrawer}
-                            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
-                        >
-                            Abrir cajón
-                        </Button>
-                    </Tooltip>
                     {isAdmin && (
                         <Button
                             size="sm"
@@ -1191,7 +1194,8 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                             startContent={<FileText size={14} />}
                             className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
                             data-testid="labels-shelf-print-btn"
-                            aria-label="Imprimir hoja de góndola en papel Letter"
+                            aria-label={`Imprimir hoja de góndola en papel ${gondolaLayout.label} (impresora normal, diálogo del navegador)`}
+                            data-gondola-format={gondolaFormat}
                         >
                             Hoja góndola ({shelfSummary.totalPages})
                         </Button>
@@ -1272,9 +1276,9 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                             Capacidades reales
                         </p>
                         <ul className="list-disc pl-4 space-y-1 text-zinc-700 dark:text-zinc-300">
-                            <li>El navegador NO controla directamente impresoras USB ni el cajón.</li>
+                            <li>El navegador NO controla directamente impresoras USB.</li>
                             <li>Con bridge local (scale-bridge o similar) se envía el pulso ESC/POS real.</li>
-                            <li>Sin bridge, Imprimir usa el diálogo del navegador y &quot;Abrir cajón&quot; sólo audita.</li>
+                            <li>Sin bridge, Imprimir usa el diálogo del navegador.</li>
                             {!defaultPrinter && (
                                 <li className="font-bold text-amber-700 dark:text-amber-400">
                                     No hay impresora configurada. Admin → &quot;Configurar&quot;.
@@ -1549,8 +1553,11 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                                         ? "Ocultar vista previa"
                                         : "Ver vista previa"}
                                 </Button>
-                                <span className="text-[9px] uppercase tracking-widest text-zinc-500">
-                                    Hoja Letter · 80mm × 40mm · grid 2×6
+                                <span
+                                    className="text-[9px] uppercase tracking-widest text-zinc-500"
+                                    data-testid="labels-shelf-format-caption"
+                                >
+                                    {`${gondolaLayout.label} landscape · 80mm × 40mm · grid ${gondolaLayout.columns}×${gondolaLayout.rows} · ${gondolaLayout.labelsPerPage} por hoja`}
                                 </span>
                             </div>
                             {showShelfPreview && (
@@ -1574,6 +1581,7 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                                             quantity: q.quantity,
                                         }))}
                                         scale={0.4}
+                                        format={gondolaFormat}
                                     />
                                 </div>
                             )}

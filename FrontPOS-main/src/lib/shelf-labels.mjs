@@ -1,20 +1,24 @@
 // =============================================================================
 // src/lib/shelf-labels.mjs
 //
-// Lógica pura para armar hojas de etiquetas de góndola (NO térmicas) en papel
-// Letter con un grid fijo de 2 columnas x 6 filas (12 etiquetas por página).
+// Lógica pura para armar hojas de etiquetas de góndola (NO térmicas) con
+// impresora normal mediante el diálogo del navegador. Cada etiqueta mide
+// 80x40 mm. La hoja se maquieta en orientación LANDSCAPE para maximizar
+// la cantidad de etiquetas por hoja:
 //
-// Contrato físico (inquebrantable):
+//   * LETTER landscape (default) → 279.4 × 215.9 mm, grid 3 × 5 = 15.
+//     Padding X = (279.4 - 3*80)/2 = 19.7 mm por lado.
+//     Padding Y = (215.9 - 5*40)/2 =  7.95 mm por lado.
+//   * LEGAL / OFICIO landscape    → 355.6 × 215.9 mm, grid 4 × 5 = 20.
+//     Padding X = (355.6 - 4*80)/2 = 17.8 mm por lado.
+//     Padding Y = (215.9 - 5*40)/2 =  7.95 mm por lado.
 //
-//   - Etiqueta: 80mm x 40mm.
-//   - Hoja: Letter portrait = 215.9mm x 279.4mm.
-//   - Grid: 2 columnas x 6 filas, 12 slots por página, SIN gap entre slots.
-//   - Padding físico de la hoja:
-//       horizontal = (215.9mm - 2 * 80mm) / 2  = 27.95mm por lado
-//       vertical   = (279.4mm - 6 * 40mm) / 2  = 19.7mm arriba/abajo
-//   - La última página se rellena con slots `null` (etiquetas en blanco)
-//     para mantener las guías del troquel/cuchilla; nunca se cambia la
-//     cantidad de slots por página.
+// El formato activo lo decide el consumidor (hoy, la rama `gondola.format`
+// de `printing-config.mjs`). Toda la geometría se deriva de ese formato con
+// `resolveGondolaLayout(format)` para no duplicar números físicos: ni
+// buildShelfLabelsCss, ni paginateSlots, ni summarizeShelfLabels, ni
+// buildAuditMeta, ni buildShelfLabelsPrintHtml duplican dimensiones ni
+// cantidad de slots por página.
 //
 // Separación con etiquetas térmicas:
 //
@@ -23,9 +27,12 @@
 //     con el mismo documento, esa regla ganaría y el navegador cortaría
 //     la hoja al ancho térmico.
 //   - Por eso `buildShelfLabelsPrintHtml` entrega un documento completo
-//     (`<!DOCTYPE html> ... </html>`) con su propio `@page Letter margin 0`
-//     que se inyecta en un iframe aislado — fuera del DOM principal — y
-//     NO comparte estilos con la app.
+//     (`<!DOCTYPE html> ... </html>`) con su propio
+//     `@page { size: Letter landscape; margin: 0; }` o
+//     `@page { size: Legal landscape; margin: 0; }` que se inyecta en un
+//     iframe aislado — fuera del DOM principal — y NO comparte estilos
+//     con la app. La impresión usa el diálogo normal del navegador vía
+//     `iframe.contentWindow.print()`, nunca el bridge térmico.
 //
 // Seguridad:
 //
@@ -37,24 +44,133 @@
 //
 //   - No lee `localStorage`, no toca `document`, no abre red. Todo lo
 //     imperativo (crear el iframe, invocar `print()`, limpiar la cola)
-//     vive en `labels/page.tsx`.
+//     vive en `labels/components/LabelsWorkspace.tsx`.
 //   - No valida que el `barcode` sea EAN13: la pantalla ya se encarga
 //     de generar/asegurar el code vía `POST /labels/codes`.
 // =============================================================================
 
-/** Dimensiones físicas inmutables del formato góndola. */
-export const SHEET_WIDTH_MM = 215.9;    // Letter portrait
-export const SHEET_HEIGHT_MM = 279.4;   // Letter portrait
-export const LABEL_WIDTH_MM = 80;       // ancho de cada etiqueta
-export const LABEL_HEIGHT_MM = 40;      // alto de cada etiqueta
-export const COLUMNS = 2;               // columnas por hoja
-export const ROWS = 6;                  // filas por hoja
-export const LABELS_PER_PAGE = COLUMNS * ROWS; // 12
-export const PAGE_PADDING_X_MM = (SHEET_WIDTH_MM - COLUMNS * LABEL_WIDTH_MM) / 2;  // 27.95
-export const PAGE_PADDING_Y_MM = (SHEET_HEIGHT_MM - ROWS * LABEL_HEIGHT_MM) / 2;   // 19.7
+/** Dimensiones físicas inmutables de la etiqueta individual (todas las hojas). */
+export const LABEL_WIDTH_MM = 80;
+export const LABEL_HEIGHT_MM = 40;
 
-/** Identificador del layout en la metadata de auditoría /labels/print-jobs. */
-export const LAYOUT_META_ID = "gondola-80x40-letter-2x6";
+/**
+ * Formatos de hoja soportados para precios de góndola. El default es
+ * `LETTER` (Carta) y es el único que se instala sin opt-in del admin.
+ */
+export const GONDOLA_FORMATS = Object.freeze({
+    LETTER: "LETTER",
+    LEGAL: "LEGAL",
+});
+
+export const DEFAULT_GONDOLA_FORMAT = GONDOLA_FORMATS.LETTER;
+
+/**
+ * Especificaciones físicas por formato. Son la única fuente de verdad:
+ * `resolveGondolaLayout` deriva el padding, meta id, columnas/filas y
+ * cantidad de slots por página desde este mapa.
+ *
+ * `cssPageSize` corresponde al valor del `size:` de la regla `@page` que
+ * entrega al navegador. Usamos los nombres canónicos de CSS Paged Media
+ * (`Letter`, `Legal`) junto con `landscape` para que Chromium/Firefox/
+ * Edge reconozcan la orientación nativa (si el nombre falla por falta de
+ * soporte, el navegador cae a dimensiones literales del contenedor).
+ */
+export const GONDOLA_FORMAT_SPECS = Object.freeze({
+    LETTER: Object.freeze({
+        id: "LETTER",
+        label: "Carta",
+        sheetWidthMm: 279.4,
+        sheetHeightMm: 215.9,
+        columns: 3,
+        rows: 5,
+        labelsPerPage: 15,
+        cssPageSize: "Letter landscape",
+        layoutMetaId: "gondola-80x40-letter-landscape-3x5",
+        sheetLabel: "letter-landscape",
+    }),
+    LEGAL: Object.freeze({
+        id: "LEGAL",
+        label: "Oficio / Legal",
+        sheetWidthMm: 355.6,
+        sheetHeightMm: 215.9,
+        columns: 4,
+        rows: 5,
+        labelsPerPage: 20,
+        cssPageSize: "Legal landscape",
+        layoutMetaId: "gondola-80x40-legal-landscape-4x5",
+        sheetLabel: "legal-landscape",
+    }),
+});
+
+/**
+ * Normaliza un input (string arbitrario, undefined, null, un objeto con
+ * `.format`) a uno de los formatos canónicos. Cualquier cosa desconocida
+ * cae al default seguro `LETTER`.
+ *
+ * @param {unknown} input
+ * @returns {"LETTER"|"LEGAL"}
+ */
+export function resolveGondolaFormat(input) {
+    if (!input) return DEFAULT_GONDOLA_FORMAT;
+    const raw = typeof input === "string"
+        ? input
+        : typeof input === "object" && typeof (/** @type {any} */ (input).format) === "string"
+            ? /** @type {any} */ (input).format
+            : "";
+    const normalized = String(raw).trim().toUpperCase();
+    if (normalized === "LETTER" || normalized === "CARTA") return GONDOLA_FORMATS.LETTER;
+    if (normalized === "LEGAL" || normalized === "OFICIO") return GONDOLA_FORMATS.LEGAL;
+    return DEFAULT_GONDOLA_FORMAT;
+}
+
+/**
+ * Devuelve la geometría completa (dimensiones, padding, meta id, etc.)
+ * calculada a partir del formato indicado. Todas las funciones que
+ * necesitan dimensiones físicas DEBEN pasar por acá para no duplicar
+ * números.
+ *
+ * @param {unknown} format
+ */
+export function resolveGondolaLayout(format) {
+    const key = resolveGondolaFormat(format);
+    const spec = GONDOLA_FORMAT_SPECS[key];
+    const paddingXMm = (spec.sheetWidthMm - spec.columns * LABEL_WIDTH_MM) / 2;
+    const paddingYMm = (spec.sheetHeightMm - spec.rows * LABEL_HEIGHT_MM) / 2;
+    return {
+        format: spec.id,
+        label: spec.label,
+        sheetWidthMm: spec.sheetWidthMm,
+        sheetHeightMm: spec.sheetHeightMm,
+        labelWidthMm: LABEL_WIDTH_MM,
+        labelHeightMm: LABEL_HEIGHT_MM,
+        columns: spec.columns,
+        rows: spec.rows,
+        labelsPerPage: spec.labelsPerPage,
+        paddingXMm,
+        paddingYMm,
+        cssPageSize: spec.cssPageSize,
+        layoutMetaId: spec.layoutMetaId,
+        sheetLabel: spec.sheetLabel,
+    };
+}
+
+// -----------------------------------------------------------------------------
+// Alias retrocompatibles basados en el formato DEFAULT (Letter landscape).
+// -----------------------------------------------------------------------------
+// Mantener estos exports evita romper tests y previews que consultan la
+// geometría canónica del default. Para formatos distintos usar
+// `resolveGondolaLayout(format)`.
+
+const DEFAULT_LAYOUT = resolveGondolaLayout(DEFAULT_GONDOLA_FORMAT);
+
+export const SHEET_WIDTH_MM = DEFAULT_LAYOUT.sheetWidthMm;
+export const SHEET_HEIGHT_MM = DEFAULT_LAYOUT.sheetHeightMm;
+export const COLUMNS = DEFAULT_LAYOUT.columns;
+export const ROWS = DEFAULT_LAYOUT.rows;
+export const LABELS_PER_PAGE = DEFAULT_LAYOUT.labelsPerPage;
+export const PAGE_PADDING_X_MM = DEFAULT_LAYOUT.paddingXMm;
+export const PAGE_PADDING_Y_MM = DEFAULT_LAYOUT.paddingYMm;
+export const LAYOUT_META_ID = DEFAULT_LAYOUT.layoutMetaId;
 
 /**
  * Escapa un string para que sea seguro dentro de HTML (contenido y atributos).
@@ -193,18 +309,21 @@ export function expandItemsToSlots(items) {
 }
 
 /**
- * Pagina una secuencia plana de slots en páginas de 12. La última página
- * se rellena con `null` para mantener la grilla y las guías del troquel.
+ * Pagina una secuencia plana de slots en páginas del tamaño dictado por
+ * el formato (`labelsPerPage`). La última página se rellena con `null`
+ * para mantener la grilla y las guías del troquel.
  *
  * @param {ReadonlyArray<import('./shelf-labels.d.mts').ShelfLabelSlot>} slots
+ * @param {unknown} [format]
  * @returns {Array<Array<import('./shelf-labels.d.mts').ShelfLabelSlot | null>>}
  */
-export function paginateSlots(slots) {
+export function paginateSlots(slots, format) {
+    const layout = resolveGondolaLayout(format);
     if (!Array.isArray(slots) || slots.length === 0) return [];
     const pages = [];
-    for (let i = 0; i < slots.length; i += LABELS_PER_PAGE) {
-        const chunk = slots.slice(i, i + LABELS_PER_PAGE);
-        while (chunk.length < LABELS_PER_PAGE) chunk.push(null);
+    for (let i = 0; i < slots.length; i += layout.labelsPerPage) {
+        const chunk = slots.slice(i, i + layout.labelsPerPage);
+        while (chunk.length < layout.labelsPerPage) chunk.push(null);
         pages.push(chunk);
     }
     return pages;
@@ -212,25 +331,32 @@ export function paginateSlots(slots) {
 
 /**
  * Resumen contable del lote: ideal para la cadena de UI
- * `X etiquetas en cola (Y páginas completas + Z sobrantes)`.
+ * `X etiquetas en cola (Y páginas completas + Z sobrantes)`. La cantidad
+ * de slots por página y la metadata del formato quedan incluidas para
+ * que el consumidor NO vuelva a resolverlas por su cuenta.
  *
  * @param {ReadonlyArray<Partial<import('./shelf-labels.d.mts').ShelfLabelItem>>} items
+ * @param {unknown} [format]
  * @returns {import('./shelf-labels.d.mts').ShelfLabelsSummary}
  */
-export function summarizeShelfLabels(items) {
+export function summarizeShelfLabels(items, format) {
+    const layout = resolveGondolaLayout(format);
     const slots = expandItemsToSlots(items);
     const totalLabels = slots.length;
-    const fullPages = Math.floor(totalLabels / LABELS_PER_PAGE);
-    const remainder = totalLabels % LABELS_PER_PAGE;
-    const totalPages = Math.ceil(totalLabels / LABELS_PER_PAGE);
-    const blanks = totalLabels === 0 ? 0 : (LABELS_PER_PAGE - remainder) % LABELS_PER_PAGE;
+    const perPage = layout.labelsPerPage;
+    const fullPages = Math.floor(totalLabels / perPage);
+    const remainder = totalLabels % perPage;
+    const totalPages = Math.ceil(totalLabels / perPage);
+    const blanks = totalLabels === 0 ? 0 : (perPage - remainder) % perPage;
     return {
+        format: layout.format,
         totalLabels,
         fullPages,
         remainder,
         totalPages,
         blanks,
-        labelsPerPage: LABELS_PER_PAGE,
+        labelsPerPage: perPage,
+        layout: layout.layoutMetaId,
     };
 }
 
@@ -239,25 +365,33 @@ export function summarizeShelfLabels(items) {
 // -----------------------------------------------------------------------------
 
 /**
- * CSS del documento de impresión. Las dimensiones (grid 2x6, 80x40mm,
+ * CSS del documento de impresión. Las dimensiones (grid dinámico, 80x40mm,
  * padding físico, borde dashed) viven aquí para que ningún guardián de
  * UI pueda hacerlas drift silencioso: cualquier cambio aparece como diff
  * y los tests estáticos lo congelan.
  *
- * `@page Letter margin 0` neutraliza los márgenes del navegador que, por
- * defecto, meten ~10mm y arruinan el troquel.
+ * `@page { size: Letter|Legal landscape; margin: 0 }` neutraliza los
+ * márgenes del navegador que, por defecto, meten ~10mm y arruinan el
+ * troquel.
  *
+ * @param {unknown} [format]
  * @returns {string}
  */
-export function buildShelfLabelsCss() {
+export function buildShelfLabelsCss(format) {
+    const layout = resolveGondolaLayout(format);
+    // `paddingXMm` / `paddingYMm` provienen de una resta en punto flotante
+    // ((279.4 - 3*80)/2 = 19.7 teórico pero 19.700000000000003 en IEEE 754).
+    // Redondeamos a 2 decimales para que el CSS exponga números legibles
+    // y los tests estáticos puedan verificar valores canónicos sin tolerancia.
+    const mm = (value) => `${Math.round(value * 100) / 100}mm`;
     return `
         @page {
-            size: Letter portrait;
+            size: ${layout.cssPageSize};
             margin: 0;
         }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html, body {
-            width: ${SHEET_WIDTH_MM}mm;
+            width: ${mm(layout.sheetWidthMm)};
             background: #ffffff;
             color: #000000;
             font-family: 'Helvetica Neue', Arial, Helvetica, sans-serif;
@@ -265,12 +399,12 @@ export function buildShelfLabelsCss() {
             print-color-adjust: exact;
         }
         .shelf-page {
-            width: ${SHEET_WIDTH_MM}mm;
-            height: ${SHEET_HEIGHT_MM}mm;
-            padding: ${PAGE_PADDING_Y_MM}mm ${PAGE_PADDING_X_MM}mm;
+            width: ${mm(layout.sheetWidthMm)};
+            height: ${mm(layout.sheetHeightMm)};
+            padding: ${mm(layout.paddingYMm)} ${mm(layout.paddingXMm)};
             display: grid;
-            grid-template-columns: repeat(${COLUMNS}, ${LABEL_WIDTH_MM}mm);
-            grid-template-rows: repeat(${ROWS}, ${LABEL_HEIGHT_MM}mm);
+            grid-template-columns: repeat(${layout.columns}, ${layout.labelWidthMm}mm);
+            grid-template-rows: repeat(${layout.rows}, ${layout.labelHeightMm}mm);
             gap: 0;
             page-break-after: always;
             break-after: page;
@@ -280,8 +414,8 @@ export function buildShelfLabelsCss() {
             break-after: auto;
         }
         .shelf-slot {
-            width: ${LABEL_WIDTH_MM}mm;
-            height: ${LABEL_HEIGHT_MM}mm;
+            width: ${layout.labelWidthMm}mm;
+            height: ${layout.labelHeightMm}mm;
             border: 0.2mm dashed #c4c4c4;
             padding: 2.5mm 3mm;
             display: flex;
@@ -374,18 +508,23 @@ export function buildSlotHtml(slot, dateLabel) {
 
 /**
  * Construye el HTML completo del documento aislado que irá al iframe.
- * Incluye `@page Letter margin 0` propio para que el `@media print`
- * térmico de `globals.css` no interfiera.
+ * Incluye `@page { size: Letter|Legal landscape; margin: 0 }` propio para
+ * que el `@media print` térmico de `globals.css` no interfiera.
+ *
+ * Opciones:
+ *   - `now`    : fecha a estampar en el footer (deterministic en tests).
+ *   - `format` : "LETTER" | "LEGAL". Default `LETTER`.
  *
  * @param {ReadonlyArray<Partial<import('./shelf-labels.d.mts').ShelfLabelItem>>} items
- * @param {{ now?: Date | string | number }} [opts]
+ * @param {{ now?: Date | string | number, format?: unknown }} [opts]
  * @returns {string}
  */
 export function buildShelfLabelsPrintHtml(items, opts = {}) {
+    const layout = resolveGondolaLayout(opts.format);
     const slots = expandItemsToSlots(items);
-    const pages = paginateSlots(slots);
+    const pages = paginateSlots(slots, layout.format);
     const dateLabel = formatPrintDate(opts.now);
-    const css = buildShelfLabelsCss();
+    const css = buildShelfLabelsCss(layout.format);
 
     const pagesHtml = pages.length === 0
         ? ""
@@ -398,7 +537,7 @@ export function buildShelfLabelsPrintHtml(items, opts = {}) {
 
     return [
         `<!DOCTYPE html>`,
-        `<html lang="es">`,
+        `<html lang="es" data-gondola-format="${escapeHtml(layout.format)}" data-gondola-layout="${escapeHtml(layout.layoutMetaId)}">`,
         `<head>`,
         `<meta charset="utf-8" />`,
         `<meta name="viewport" content="width=device-width, initial-scale=1" />`,
@@ -412,16 +551,30 @@ export function buildShelfLabelsPrintHtml(items, opts = {}) {
 
 /**
  * Mete en el formulario de impresión de auditoría la metadata obligatoria
- * del layout. El page.tsx la concatena al `payload.meta` que viaja al
- * endpoint `POST /labels/print-jobs`.
+ * del layout. El consumidor la concatena al `payload.meta` que viaja al
+ * endpoint `POST /labels/print-jobs`. El layout canónico y las dimensiones
+ * NO pueden ser pisadas por el caller: el helper las impone siempre al
+ * final del merge.
  *
- * @param {Record<string, unknown>} [extra]
- * @returns {{ layout: string } & Record<string, unknown>}
+ * @param {Record<string, unknown> | null | undefined} [extra]
+ * @param {unknown} [format]
  */
-export function buildAuditMeta(extra) {
-    const base = { layout: LAYOUT_META_ID };
+export function buildAuditMeta(extra, format) {
+    const layout = resolveGondolaLayout(format);
+    const canonical = {
+        layout: layout.layoutMetaId,
+        format: layout.format,
+        sheet: layout.sheetLabel,
+        sheetWidthMm: layout.sheetWidthMm,
+        sheetHeightMm: layout.sheetHeightMm,
+        labelWidthMm: layout.labelWidthMm,
+        labelHeightMm: layout.labelHeightMm,
+        columns: layout.columns,
+        rows: layout.rows,
+        labelsPerPage: layout.labelsPerPage,
+    };
     if (extra && typeof extra === "object") {
-        return { ...extra, ...base };
+        return { ...extra, ...canonical };
     }
-    return base;
+    return canonical;
 }

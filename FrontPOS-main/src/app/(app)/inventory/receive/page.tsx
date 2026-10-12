@@ -19,6 +19,7 @@ import {
     resolveBasePrice,
     resolveEffectivePercentage,
 } from '@/lib/reception-pricing.mjs';
+import { persistAlias } from '@/lib/alias-persistence.mjs';
 import {
     enqueue as enqueueLabelPrintEntry,
     QUEUE_REASONS as LABEL_QUEUE_REASONS,
@@ -676,6 +677,13 @@ export default function ReceiveInventoryPage() {
                     // Sin emparejar — encolar para el reviewer con TODA la metadata
                     // del OCR para que el reviewer pueda proyectar impuestos y DTO,
                     // y usar identidad estable para navegación/dedupe.
+                    //
+                    // NOTA sobre empaques: `quantity` y `unitPrice` llegan AQUI
+                    // ya convertidos a unidades individuales por el modal
+                    // (convertItemToIndividualUnits). Las claves de trazabilidad
+                    // `invoicePackageQuantity`, `confirmedUnitsPerPack` y
+                    // `packConversionApplied` viajan al reviewer para debugging
+                    // sin que ningún paso aguas abajo las vuelva a multiplicar.
                     unmatched.push({
                         invoiceName: ocr.invoiceName || ocr.name || 'Sin nombre',
                         quantity: Number(ocr.quantity) || 0,
@@ -688,6 +696,10 @@ export default function ReceiveInventoryPage() {
                         lineType: typeof ocr.lineType === 'string' ? ocr.lineType.toUpperCase() : ocr.line_type,
                         bonus_quantity: Number(ocr.bonus_quantity) || 0,
                         __ocrLocalId: ocr.__ocrLocalId,
+                        // Trazabilidad del paquete convertido (si aplicó).
+                        invoicePackageQuantity: Number(ocr.invoicePackageQuantity) || undefined,
+                        confirmedUnitsPerPack: Number(ocr.confirmedUnitsPerPack) || undefined,
+                        packConversionApplied: Boolean(ocr.packConversionApplied),
                     });
                     return;
                 }
@@ -844,6 +856,14 @@ export default function ReceiveInventoryPage() {
     }, [products, toast]);
 
     // Callback del UnmatchedItemsReviewer: añade los items resueltos al carrito principal.
+    //
+    // NOTA DE CONTRATO: el aprendizaje de alias (POST /inventory/save-alias)
+    // vive EN el reviewer (vía la prop `onSaveAlias` que inyectamos abajo)
+    // porque se dispara al momento de cada enlace explícito (sugerencia,
+    // búsqueda manual, escáner, producto recién creado). Aquí sólo nos
+    // ocupamos del contrato del carrito: no duplicamos el request ni
+    // ejecutamos side-effects dentro del updater de setReceiveList (que en
+    // React 18 Strict Mode corre dos veces).
     const handleUnmatchedResolved = useCallback((resolved: any[]) => {
         if (!resolved || resolved.length === 0) {
             setUnmatchedQueue([]);
@@ -853,23 +873,6 @@ export default function ReceiveInventoryPage() {
         setReceiveList(prev => {
             const newList = [...prev];
             resolved.forEach((r) => {
-                // AUTO-APRENDIZAJE: Si el item no fue recien creado (fue asignado a sugerencia o manual)
-                // guardamos el alias silenciosamente para que la proxima vez el OCR lo reconozca.
-                if (!r.isNew && r.invoiceName && r.barcode && selectedGlobalSupplier) {
-                    const token = Cookies.get('org-pos-token');
-                    if (token) {
-                        fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api'}/inventory/save-alias`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                            body: JSON.stringify({
-                                supplierId: Number(selectedGlobalSupplier),
-                                invoiceName: r.invoiceName,
-                                productBarcode: r.barcode
-                            })
-                        }).catch(err => console.error("Error auto-guardando alias:", err));
-                    }
-                }
-
                 // Si ya existe en el carrito, sumar cantidad; si no, push.
                 const existIdx = newList.findIndex(item => item.barcode === r.barcode);
                 if (existIdx >= 0) {
@@ -939,6 +942,137 @@ export default function ReceiveInventoryPage() {
             description: `${resolved.length} ${resolved.length === 1 ? 'item añadido' : 'items añadidos'} al carrito desde la revision.`,
         });
     }, [products, toast]);
+
+    // Persiste el alias de proveedor contra POST /inventory/save-alias en el
+    // momento de cada enlace explícito del reviewer. Se dispara desde las
+    // cuatro ramas (sugerencia, búsqueda manual, escáner y producto recién
+    // creado) a través de la prop `onSaveAlias` del UnmatchedItemsReviewer.
+    //
+    // Contrato:
+    //   - supplierId REAL leído del estado (`selectedGlobalSupplier`). Nunca
+    //     caemos a localStorage ni a 0; si el usuario no eligió proveedor
+    //     retornamos un veredicto no-ok sin pegarle al endpoint.
+    //   - res.ok se chequea dentro de `persistAlias`; si falla, surface un
+    //     toast informativo (no bloqueante) para que el aprendizaje no se
+    //     pierda silenciosamente.
+    //   - Devuelve el veredicto para que el reviewer pueda cerrar el loop
+    //     visual si quiere (toast ya se muestra aquí, así que normalmente
+    //     el reviewer no replica el toast cuando `{ok:true}` o cuando el
+    //     veredicto ya trae un mensaje gestionado).
+    const handleReviewerSaveAlias = useCallback(async (link: {
+        invoiceName: string;
+        productBarcode: string;
+        isNew: boolean;
+        source: 'suggestion' | 'manual' | 'scanner' | 'created';
+    }) => {
+        const token = Cookies.get('org-pos-token') || null;
+        const verdict = await persistAlias({
+            supplierId: selectedGlobalSupplier,
+            invoiceName: link.invoiceName,
+            productBarcode: link.productBarcode,
+            token,
+            apiBase: API_URL,
+        });
+        if (!verdict.ok) {
+            toast({
+                variant: 'destructive',
+                title: 'No se pudo recordar el alias',
+                description: verdict.message,
+            });
+            // Devolvemos ok:true para que el reviewer NO replique el toast:
+            // ya lo mostramos aquí y así evitamos doble notificación. El
+            // aprendizaje se intentará de nuevo la próxima vez que se
+            // repita la asignación.
+            return { ok: true };
+        }
+        return { ok: true };
+    }, [selectedGlobalSupplier, toast]);
+
+    // Callback del UnmatchedItemsReviewer: cuando el operario pulsa
+    // "Actualizar nombre y enlazar" en el diálogo de confirmación, llegamos
+    // aquí para ejecutar el PUT a `/products/update-products/:barcode`.
+    //
+    // Contrato (ver UnmatchedItemsReviewer.RenameLinkRequest / RenameOutcome):
+    //   - Buscamos el producto en el catálogo local (`products`) para
+    //     construir un payload COMPLETO; el backend valida todos los campos
+    //     y rechazaría un PUT parcial.
+    //   - Pasamos el payload por `sanitizeProductPayload` para que el
+    //     costo y PVP viajen como enteros y respeten la regla de precios
+    //     (incluida terminación 50).
+    //   - SÓLO si `apiFetch` resuelve OK actualizamos `products` localmente,
+    //     emitimos broadcast `PRODUCT_UPDATE` y retornamos `{ ok: true }`.
+    //   - En error atrapamos y retornamos `{ ok: false, message }` sin
+    //     lanzar; el reviewer mantiene el diálogo abierto con el mensaje.
+    //   - Jamás tocamos el estado de productos cuando el PUT falla.
+    const handleReviewerRenameProduct = useCallback(async (req: {
+        productBarcode: string;
+        invoiceName: string;
+        newName: string;
+        previousName: string;
+        source: 'suggestion' | 'manual' | 'scanner';
+    }): Promise<{ ok: boolean; productName?: string; message?: string }> => {
+        const bc = String(req.productBarcode || '').trim();
+        if (!bc) {
+            return { ok: false, message: 'El producto no tiene código de barras válido.' };
+        }
+        const newName = normalizeText(req.newName || '');
+        if (!newName) {
+            return { ok: false, message: 'El nombre no puede estar vacío.' };
+        }
+        // Buscamos el producto en el catálogo local; aceptamos barcode
+        // principal y alternateCodes para que el PUT viaje con TODO el
+        // registro (iva, ibua, categoría, etc.) y el backend no rechace
+        // por campos faltantes.
+        const base = products.find((p: any) =>
+            p.barcode === bc
+            || (p.alternateCodes && String(p.alternateCodes).split(',').map((s: string) => s.trim()).includes(bc)),
+        );
+        if (!base) {
+            return { ok: false, message: 'El producto ya no está en el catálogo local. Refresca la página.' };
+        }
+        if (normalizeText(base.productName || '') === newName) {
+            // Guard por si el reviewer no lo capturó: no pegamos al endpoint
+            // si el nombre no cambia.
+            return { ok: false, message: 'El nombre es idéntico al actual; no hay nada que actualizar.' };
+        }
+
+        const token = Cookies.get('org-pos-token');
+        try {
+            const rawPayload = {
+                ...base,
+                productName: newName,
+                barcode: normalizeText(base.barcode || ''),
+            };
+            const payload = sanitizeProductPayload(rawPayload);
+            const updated = await apiFetch<Product>(`/products/update-products/${encodeURIComponent(bc.toUpperCase())}`, {
+                method: 'PUT',
+                body: JSON.stringify(payload),
+                fallbackError: 'FALLO AL ACTUALIZAR NOMBRE',
+            }, token!);
+            // Backend puede devolver el producto actualizado o un payload
+            // mínimo; en cualquier caso aplicamos el nuevo nombre al estado
+            // local reemplazando por barcode.
+            const resolvedName = (updated && typeof (updated as any).productName === 'string' && (updated as any).productName.trim())
+                ? String((updated as any).productName)
+                : newName;
+            setProducts(prev => prev.map(p => {
+                if (p.barcode === base.barcode) {
+                    return { ...p, ...(updated || {}), productName: resolvedName } as any;
+                }
+                return p;
+            }));
+            broadcastRevalidate('PRODUCT_UPDATE');
+            return { ok: true, productName: resolvedName };
+        } catch (err: any) {
+            if (err instanceof ApiError && err.status === 401) {
+                return { ok: false, message: 'Tu sesión caducó al actualizar el nombre; vuelve a iniciar sesión.' };
+            }
+            const msg = (err && typeof err.message === 'string' && err.message.trim())
+                ? err.message
+                : 'El servidor rechazó la actualización del nombre.';
+            return { ok: false, message: msg };
+        }
+    }, [products]);
 
     // El reviewer del OCR pide abrir el ProductFormModal con datos pre-llenados
     // de la factura. Pre-cargamos newProduct con esos valores y abrimos el modal
@@ -2193,6 +2327,13 @@ export default function ReceiveInventoryPage() {
                                             item={item}
                                             onUpdate={updateItem}
                                             onDelete={deleteItem}
+                                            // supplierId REAL del estado: lo usa ReceptionRow en el
+                                            // camino secundario `handleSaveQuickEdit` cuando el
+                                            // usuario intenta emparejar manualmente un item con
+                                            // `isMatched === false`. Pasamos undefined si no hay
+                                            // proveedor elegido para que `persistAlias` aborte sin
+                                            // pegarle al endpoint, nunca 0 como fallback.
+                                            supplierId={selectedGlobalSupplier || undefined}
                                             // NO se pasa onPrintLabels: las filas del carrito DRAFT nunca deben
                                             // ofrecer imprimir etiquetas porque la recepción aún no está
                                             // confirmada en BD. El botón Printer sólo aparece en el modal
@@ -2828,6 +2969,8 @@ export default function ReceiveInventoryPage() {
                 supplierId={selectedGlobalSupplier}
                 onResolved={handleUnmatchedResolved}
                 onRequestCreateNewProduct={handleRequestCreateFromReviewer}
+                onSaveAlias={handleReviewerSaveAlias}
+                onRenameProduct={handleReviewerRenameProduct}
                 externalResolution={reviewerExternalResolution}
                 onExternalResolutionConsumed={() => setReviewerExternalResolution(null)}
                 products={products}

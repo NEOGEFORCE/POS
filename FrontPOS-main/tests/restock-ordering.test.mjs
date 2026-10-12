@@ -16,7 +16,7 @@ import {
 test("resolveBand prefiere el stockBand del backend cuando llega", () => {
   assert.equal(resolveBand({ stockBand: "RED", liveStock: 100, minStock: 10 }), STOCK_HEALTH.CRITICAL);
   assert.equal(resolveBand({ stockBand: "yellow", liveStock: 0, minStock: 10 }), STOCK_HEALTH.WARNING);
-  assert.equal(resolveBand({ stockBand: "GREEN" }), STOCK_HEALTH.OPTIMAL);
+  assert.equal(resolveBand({ stockBand: "GREEN", minStock: 10 }), STOCK_HEALTH.OPTIMAL);
   assert.equal(resolveBand({ stockBand: "unset" }), STOCK_HEALTH.UNSET);
 });
 
@@ -32,14 +32,39 @@ test("resolveBand con stockBand desconocido cae al calculo local", () => {
 });
 
 // ----------------------------------------------------------------------------
+// Override duro: minStock <= 0 NUNCA puede pintar rojo/critico ni amarillo.
+// ----------------------------------------------------------------------------
+//
+// Un producto sin minimo configurado es neutral. Si el backend por error
+// envia stockBand = "RED" (contrato legacy o bug), el frontend lo
+// neutraliza. La regla del dueno (2026-10-08) es dura: minStock <= 0
+// implica SIEMPRE SIN_MINIMO en la UI, incluso con stock 0 o negativo.
+
+test("resolveBand ignora el stockBand del backend cuando minStock<=0", () => {
+  assert.equal(resolveBand({ stockBand: "RED", liveStock: 0, minStock: 0 }), STOCK_HEALTH.UNSET);
+  assert.equal(resolveBand({ stockBand: "YELLOW", liveStock: 5, minStock: 0 }), STOCK_HEALTH.UNSET);
+  assert.equal(resolveBand({ stockBand: "GREEN", liveStock: 50, minStock: 0 }), STOCK_HEALTH.UNSET);
+  // Y tampoco entra el calculo local al rojo.
+  assert.equal(resolveBand({ liveStock: 0, minStock: 0 }), STOCK_HEALTH.UNSET);
+  assert.equal(resolveBand({ liveStock: -3, minStock: 0 }), STOCK_HEALTH.UNSET);
+});
+
+test("resolveBand neutraliza items donde minStock viene como null/undefined/NaN", () => {
+  assert.equal(resolveBand({ stockBand: "RED", liveStock: 0 }), STOCK_HEALTH.UNSET);
+  assert.equal(resolveBand({ stockBand: "RED", liveStock: 0, minStock: null }), STOCK_HEALTH.UNSET);
+  assert.equal(resolveBand({ stockBand: "RED", liveStock: 0, minStock: undefined }), STOCK_HEALTH.UNSET);
+  assert.equal(resolveBand({ stockBand: "RED", liveStock: 0, minStock: "abc" }), STOCK_HEALTH.UNSET);
+});
+
+// ----------------------------------------------------------------------------
 // orden por banda: RED > YELLOW > GREEN > UNSET
 // ----------------------------------------------------------------------------
 
 test("las bandas se ordenan critico -> advertencia -> optimo -> sin_minimo", () => {
-  const unset = { productId: "u", productName: "sin minimo", stockBand: "UNSET", suggestedOrderQty: 0 };
-  const green = { productId: "g", productName: "verde", stockBand: "GREEN", suggestedOrderQty: 0 };
-  const yellow = { productId: "y", productName: "amarillo", stockBand: "YELLOW", suggestedOrderQty: 5 };
-  const red = { productId: "r", productName: "rojo", stockBand: "RED", suggestedOrderQty: 20 };
+  const unset = { productId: "u", productName: "sin minimo", stockBand: "UNSET", suggestedOrderQty: 0, minStock: 0 };
+  const green = { productId: "g", productName: "verde", stockBand: "GREEN", suggestedOrderQty: 0, minStock: 10 };
+  const yellow = { productId: "y", productName: "amarillo", stockBand: "YELLOW", suggestedOrderQty: 5, minStock: 10 };
+  const red = { productId: "r", productName: "rojo", stockBand: "RED", suggestedOrderQty: 20, minStock: 10 };
   const ordered = orderSuggestions([green, unset, yellow, red]);
   assert.deepEqual(
     ordered.map((item) => item.productId),
@@ -179,8 +204,8 @@ test("productos sin rotacion (avgDailySales 0) caen al final de su banda por cob
 
 test("orderSuggestions no muta la lista original", () => {
   const items = [
-    { productId: "g", productName: "z", stockBand: "GREEN", suggestedOrderQty: 0 },
-    { productId: "r", productName: "a", stockBand: "RED", suggestedOrderQty: 3 },
+    { productId: "g", productName: "z", stockBand: "GREEN", suggestedOrderQty: 0, minStock: 10 },
+    { productId: "r", productName: "a", stockBand: "RED", suggestedOrderQty: 3, minStock: 10 },
   ];
   const snapshot = items.map((item) => item.productId).join(",");
   orderSuggestions(items);
@@ -198,8 +223,8 @@ test("orderSuggestions tolera entradas vacias o invalidas", () => {
 // ----------------------------------------------------------------------------
 
 test("compareSuggestions es simetrica: si A ordena antes que B, B ordena despues que A", () => {
-  const red = { productId: "r", productName: "rojo", stockBand: "RED", suggestedOrderQty: 3 };
-  const green = { productId: "g", productName: "verde", stockBand: "GREEN", suggestedOrderQty: 0 };
+  const red = { productId: "r", productName: "rojo", stockBand: "RED", suggestedOrderQty: 3, minStock: 10 };
+  const green = { productId: "g", productName: "verde", stockBand: "GREEN", suggestedOrderQty: 0, minStock: 10 };
   assert.ok(compareSuggestions(red, green) < 0);
   assert.ok(compareSuggestions(green, red) > 0);
   assert.equal(compareSuggestions(red, red), 0);

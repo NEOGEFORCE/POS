@@ -1,6 +1,7 @@
 package services
 
 import (
+	"backPOS-go/internal/core/aliasnorm"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"context"
@@ -82,7 +83,29 @@ func (s *ProductService) GetProductsBySupplier(supplierID uint) ([]models.Produc
 	return s.repo.GetBySupplier(supplierID)
 }
 
+// SaveSupplierAlias valida y canonicaliza antes de delegar al repositorio.
+//
+// Reglas (ver internal/core/aliasnorm para detalle):
+//   - supplierId > 0, invoiceName no vacío tras canonicalizar, productBarcode no vacío.
+//   - El invoiceName se guarda ya en forma canónica (uppercase sin acentos,
+//     espacios colapsados, puntuación de ruido saneada). Esto hace que el
+//     repositorio sea idempotente por (supplier_id, canonical_name) sin
+//     necesidad de migración: un alias histórico que entró con casing distinto
+//     se detecta por su forma canónica y se corrige en el mismo UPDATE.
+//
+// Devuelve aliasnorm.ErrSupplierAliasInvalid envuelto en caso de validación
+// fallida; el handler lo mapea a HTTP 400 sin filtrar el detalle técnico.
 func (s *ProductService) SaveSupplierAlias(alias *models.SupplierProductAlias) error {
+	if alias == nil {
+		return aliasnorm.ErrSupplierAliasInvalid
+	}
+	fields, err := aliasnorm.ValidateAndCanonicalize(alias.SupplierID, alias.InvoiceName, alias.ProductBarcode)
+	if err != nil {
+		return err
+	}
+	alias.SupplierID = fields.SupplierID
+	alias.InvoiceName = fields.InvoiceName
+	alias.ProductBarcode = fields.ProductBarcode
 	return s.repo.SaveSupplierAlias(alias)
 }
 
@@ -683,6 +706,13 @@ func (s *ProductService) ScanInvoice(
 	//    cumple en toda la lista.
 	for i := range extractedItems {
 		normalizeExtractedItem(&extractedItems[i])
+		// 1.b Allowlist estricta de expectedTaxes: TODO porcentaje que
+		//     Claude haya devuelto para un impuesto NO seleccionado se
+		//     anula aquí, antes de calcular costos o emitir la respuesta.
+		//     Esto garantiza que una opción deshabilitada no pueda
+		//     reaparecer por ningún camino (prompt relajado, respuesta
+		//     ambigua, fallback de catálogo más adelante).
+		applyExpectedTaxesAllowlist(&extractedItems[i], expectedTaxes)
 	}
 
 	// 2. Partir bonificaciones del patrón A en pares REGULAR + BONUS.
@@ -706,17 +736,36 @@ func (s *ProductService) ScanInvoice(
 
 		// 2.a Match por barcode: la fuente más confiable. Sólo si el OCR
 		//     devolvió un código de barras no vacío y existe en catálogo.
+		//     Si acierta, aprendemos el alias nombre→barcode para que la
+		//     próxima factura del mismo proveedor empareje por alias aun
+		//     si Claude no vuelve a extraer el barcode. El aprendizaje es
+		//     best-effort: si la persistencia falla (BD caída, nombre
+		//     vacío, supplierID=0) sólo se loguea; NO se corta el OCR.
 		if trimmed := strings.TrimSpace(extracted.Barcode); trimmed != "" {
 			if product, err := s.repo.GetByBarcode(trimmed); err == nil && product != nil {
 				matched = product
 				matchType = "barcode"
 				confidence = 1.0
+				if supplierID > 0 && strings.TrimSpace(extracted.Name) != "" {
+					learn := &models.SupplierProductAlias{
+						SupplierID:     supplierID,
+						InvoiceName:    extracted.Name,
+						ProductBarcode: product.Barcode,
+					}
+					if errLearn := s.SaveSupplierAlias(learn); errLearn != nil {
+						log.Printf("[scan-invoice] no se pudo aprender alias %q→%s para supplier %d: %v",
+							extracted.Name, product.Barcode, supplierID, errLearn)
+					}
+				}
 			}
 		}
 
-		// 2.b Fallback a alias por nombre normalizado del proveedor.
+		// 2.b Fallback a alias por nombre canonicalizado del proveedor.
+		//     El mapa se construye con aliasnorm.CanonicalInvoiceName en el
+		//     repo, así que aliases guardados con casing/espaciado distinto
+		//     siguen emparejando sin exigir migración de datos antiguos.
 		if matched == nil {
-			if alias, ok := aliases[strings.ToUpper(strings.TrimSpace(extracted.Name))]; ok {
+			if alias, ok := aliases[aliasnorm.CanonicalInvoiceName(extracted.Name)]; ok {
 				if product, err := s.repo.GetByBarcode(alias.ProductBarcode); err == nil && product != nil {
 					matched = product
 					matchType = "alias"
@@ -726,14 +775,19 @@ func (s *ProductService) ScanInvoice(
 		}
 
 		if matched != nil {
-			item := s.calculateItemDetails(matched, extracted, params, matchType, confidence)
+			item := s.calculateItemDetails(matched, extracted, params, expectedTaxes, matchType, confidence)
+			// Detector de empaque: la UI confirma antes de convertir unidades.
+			if hint := DetectPackMultiplier(extracted.Name); hint > 0 {
+				item.PackHintUnits = hint
+				item.RequiresPackConfirmation = true
+			}
 			result.ScannedItems = append(result.ScannedItems, item)
 			continue
 		}
 
 		// 3. No match: va al reviewer con TODO el shape para que el
 		//    frontend muestre el DTO y los impuestos pre-detectados.
-		result.Unmatched = append(result.Unmatched, models.UnmatchedItem{
+		unmatched := models.UnmatchedItem{
 			InvoiceName:        extracted.Name,
 			Quantity:           extracted.Quantity,
 			LineType:           extracted.LineType,
@@ -744,7 +798,12 @@ func (s *ProductService) ScanInvoice(
 			IbuaPercentage:     extracted.IbuaPercentage,
 			IcuiPercentage:     extracted.IcuiPercentage,
 			Suggestions:        s.repo.SearchSimilarProducts(extracted.Name, 5),
-		})
+		}
+		if hint := DetectPackMultiplier(extracted.Name); hint > 0 {
+			unmatched.PackHintUnits = hint
+			unmatched.RequiresPackConfirmation = true
+		}
+		result.Unmatched = append(result.Unmatched, unmatched)
 	}
 
 	// Totales del contrato: ambos campos siempre consistentes.
@@ -754,7 +813,7 @@ func (s *ProductService) ScanInvoice(
 	return result, nil
 }
 
-func (s *ProductService) calculateItemDetails(product *models.Product, extracted models.ExtractedItem, params *models.SupplierInvoiceParams, matchType string, confidence float64) models.ScannedItem {
+func (s *ProductService) calculateItemDetails(product *models.Product, extracted models.ExtractedItem, params *models.SupplierInvoiceParams, expectedTaxes *models.ExpectedTaxes, matchType string, confidence float64) models.ScannedItem {
 	unitPrice := extracted.UnitPrice
 	if unitPrice == 0 && extracted.Quantity > 0 && extracted.TotalPrice > 0 {
 		unitPrice = extracted.TotalPrice / extracted.Quantity
@@ -766,11 +825,17 @@ func (s *ProductService) calculateItemDetails(product *models.Product, extracted
 	// cambia el IBUA de 8 a 18 en una línea concreta quede reflejado sin que
 	// el operador tenga que corregir el catálogo primero. Si todo está en 0,
 	// la línea entra sin impuestos (REGULAR puro sin fiscal).
+	//
+	// Allowlist estricta: los impuestos NO seleccionados en expectedTaxes se
+	// anulan tanto para la ruta OCR (ya anulada en ScanInvoice) como para el
+	// FALLBACK de catálogo. Es la salvaguarda que impide que una opción
+	// deshabilitada reaparezca por el PurchasePrice guardado del producto.
 	productRates := models.TaxRates{
 		IvaPct:  product.Iva,
 		IcuiPct: product.Icui,
 		IbuaPct: product.Ibua,
 	}
+	zeroCatalogRatesForDeselected(&productRates, expectedTaxes)
 	effectiveRates := models.TaxRates{
 		IvaPct:  productRates.IvaPct,
 		IcuiPct: productRates.IcuiPct,

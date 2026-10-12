@@ -6,10 +6,18 @@ import { dirname, join } from 'node:path';
 
 import {
   INVOICE_FILE_MAX_BYTES,
+  PACK_MIN_UNITS,
+  PACK_MAX_UNITS,
+  anyItemRequiresPackConfirmation,
   clampPercentage,
+  convertItemToIndividualUnits,
   entryTypeFromLineType,
   fillInvoiceItemDefaults,
+  getPackHintUnits,
+  isValidUnitsPerPack,
+  itemRequiresPackConfirmation,
   makeOcrLocalId,
+  neutralizeTaxFields,
   normalizeLineType,
   resolveCartDiscountFromOcr,
   sanitizeBonusQuantity,
@@ -195,19 +203,24 @@ test('InvoiceReaderModal importa validateInvoiceFile desde el helper puro', asyn
   }
 });
 
-test('InvoiceReaderModal es no descartable durante procesamiento (isDismissable + hideCloseButton)', async () => {
+test('InvoiceReaderModal es no descartable durante procesamiento y revisión de empaques', async () => {
   const src = await readSource(invoiceReaderModal);
+  // Nuevo contrato: el modal es no-descartable mientras:
+  //   - el OCR está en vuelo (isProcessing), O
+  //   - se está confirmando el multiplicador de empaques (isCommittingPacks), O
+  //   - el usuario está en la etapa interna de revisión de empaques
+  //     (stage === 'packReview'), para preservar los items retenidos.
   assert.ok(
-    /isDismissable=\{!isProcessing\}/.test(src),
-    'el modal debe aplicar isDismissable={!isProcessing}',
+    /isDismissable=\{!isProcessing\s*&&\s*!isCommittingPacks\s*&&\s*stage\s*!==\s*['"]packReview['"]\}/.test(src),
+    'isDismissable debe contemplar isProcessing, isCommittingPacks y la etapa packReview',
   );
   assert.ok(
-    /hideCloseButton=\{isProcessing\}/.test(src),
-    'el modal debe aplicar hideCloseButton={isProcessing}',
+    /hideCloseButton=\{isProcessing\s*\|\|\s*isCommittingPacks\}/.test(src),
+    'hideCloseButton debe cubrir isProcessing e isCommittingPacks',
   );
   assert.ok(
-    /isKeyboardDismissDisabled=\{isProcessing\}/.test(src),
-    'el modal debe deshabilitar ESC durante procesamiento',
+    /isKeyboardDismissDisabled=\{isProcessing\s*\|\|\s*isCommittingPacks\s*\|\|\s*stage\s*===\s*['"]packReview['"]\}/.test(src),
+    'ESC debe quedar bloqueado en procesamiento, commit de empaques y revisión',
   );
 });
 
@@ -223,11 +236,53 @@ test('InvoiceReaderModal expone un Progress accesible mientras procesa', async (
   );
 });
 
-test('InvoiceReaderModal envia expectedTaxes al endpoint OCR', async () => {
+test('InvoiceReaderModal envia expectedTaxes al endpoint OCR con las 3 opciones independientes', async () => {
   const src = await readSource(invoiceReaderModal);
+  // Contrato: `expectedTaxes` refleja exactamente los 3 flags del usuario.
+  // Antes el frontend fijaba `icui: false` porque la UI legacy combinaba
+  // IBUA/ICUI en un solo toggle. Ahora cada impuesto tiene su propio bool.
   assert.ok(
-    /expectedTaxes:\s*\{\s*iva:\s*expectIVA/.test(src),
-    'el payload debe incluir expectedTaxes: { iva: expectIVA, ibua: expectIBUA, icui: false }',
+    /expectedTaxes:\s*\{\s*iva:\s*expectIVA\s*,\s*ibua:\s*expectIBUA\s*,\s*icui:\s*expectICUI\s*,?\s*\}/.test(src),
+    'el payload debe incluir expectedTaxes: { iva: expectIVA, ibua: expectIBUA, icui: expectICUI }',
+  );
+  // Y los tres toggles deben vivir en estado independiente (useState).
+  for (const sym of ['expectIVA', 'expectIBUA', 'expectICUI']) {
+    assert.ok(
+      new RegExp(`setExpectI(VA|BUA|CUI)`).test(src),
+      `debe existir setter para ${sym}`,
+    );
+    assert.ok(
+      new RegExp(`\\b${sym}\\b`).test(src),
+      `debe existir el estado ${sym}`,
+    );
+  }
+});
+
+test('InvoiceReaderModal reinicia IVA, IBUA e ICUI al cerrar para cada nueva factura', async () => {
+  const src = await readSource(invoiceReaderModal);
+  const reset = src.match(/const\s+resetAllState\s*=\s*\(\)\s*=>\s*\{([\s\S]*?)\n\s*\};/);
+  assert.ok(reset, 'debe existir resetAllState');
+  for (const setter of ['setExpectIVA(false)', 'setExpectIBUA(false)', 'setExpectICUI(false)']) {
+    assert.ok(
+      reset[1].includes(setter),
+      `resetAllState debe ejecutar ${setter} para exigir selección explícita por factura`,
+    );
+  }
+});
+
+test('InvoiceReaderModal neutraliza defensivamente los impuestos no esperados', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // Antes de pasar al padre, cualquier porcentaje residual en los campos
+  // iva/ibua/icui (matched) o *_percentage (unmatched) se aplana a 0 si el
+  // usuario no marcó el checkbox. Se delega al helper puro neutralizeTaxFields.
+  assert.ok(
+    /neutralizeTaxFields\s*\(/.test(src),
+    'el modal debe llamar neutralizeTaxFields antes de propagar',
+  );
+  assert.ok(
+    /from\s+['"]@\/lib\/invoice-reader-helpers\.mjs['"]/.test(src)
+    && /\bneutralizeTaxFields\b/.test(src),
+    'neutralizeTaxFields debe importarse desde el helper puro',
   );
 });
 
@@ -475,4 +530,358 @@ test('receive/page.tsx: RETURN envia addedQuantity negativo', async () => {
     /addedQuantity:\s*isReturn\s*\?\s*-finalQuantity\s*:\s*finalQuantity/.test(src),
     'el entry debe negar la cantidad cuando entryType=return',
   );
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// HELPERS PUROS DE IMPUESTOS ESPERADOS: neutralización defensiva
+// ─────────────────────────────────────────────────────────────────────────
+
+test('neutralizeTaxFields sin expectedTaxes retorna copia sin modificar valores', () => {
+  const item = { iva: 19, ibua: 18, icui: 8, iva_percentage: 19, ibua_percentage: 18, icui_percentage: 8 };
+  const out = neutralizeTaxFields(item);
+  assert.notStrictEqual(out, item, 'debe retornar una copia, nunca el mismo objeto');
+  assert.equal(out.iva, 19);
+  assert.equal(out.ibua, 18);
+  assert.equal(out.icui, 8);
+});
+
+test('neutralizeTaxFields aplana a 0 los campos NO marcados por el usuario', () => {
+  const item = {
+    invoiceName: 'COCA LATA 330',
+    quantity: 10,
+    unitPrice: 1500,
+    iva: 19, ibua: 18, icui: 8,
+    iva_percentage: 19, ibua_percentage: 18, icui_percentage: 8,
+    discount_percentage: 5,
+  };
+  const out = neutralizeTaxFields(item, { iva: true, ibua: false, icui: false });
+  assert.equal(out.iva, 19, 'IVA marcado se preserva');
+  assert.equal(out.iva_percentage, 19, 'IVA en shape unmatched se preserva');
+  assert.equal(out.ibua, 0, 'IBUA no marcado se aplana');
+  assert.equal(out.ibua_percentage, 0);
+  assert.equal(out.icui, 0, 'ICUI no marcado se aplana');
+  assert.equal(out.icui_percentage, 0);
+  assert.equal(out.discount_percentage, 5, 'no toca otros campos');
+  assert.equal(out.invoiceName, 'COCA LATA 330');
+});
+
+test('neutralizeTaxFields: TODOS marcados → nada se neutraliza', () => {
+  const item = { iva: 19, ibua: 18, icui: 8 };
+  const out = neutralizeTaxFields(item, { iva: true, ibua: true, icui: true });
+  assert.equal(out.iva, 19);
+  assert.equal(out.ibua, 18);
+  assert.equal(out.icui, 8);
+});
+
+test('neutralizeTaxFields: NINGUNO marcado → los 3 impuestos quedan en 0', () => {
+  const item = {
+    iva: 19, ibua: 18, icui: 8,
+    iva_percentage: 19, ibua_percentage: 18, icui_percentage: 8,
+  };
+  const out = neutralizeTaxFields(item, { iva: false, ibua: false, icui: false });
+  assert.equal(out.iva, 0);
+  assert.equal(out.ibua, 0);
+  assert.equal(out.icui, 0);
+  assert.equal(out.iva_percentage, 0);
+  assert.equal(out.ibua_percentage, 0);
+  assert.equal(out.icui_percentage, 0);
+});
+
+test('neutralizeTaxFields tolera null/undefined sin lanzar', () => {
+  assert.equal(neutralizeTaxFields(null, { iva: true, ibua: false, icui: false }), null);
+  assert.equal(neutralizeTaxFields(undefined, { iva: true, ibua: false, icui: false }), undefined);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// HELPERS PUROS DE EMPAQUES: hints, validación, conversión numérica
+// ─────────────────────────────────────────────────────────────────────────
+
+test('PACK_MIN_UNITS y PACK_MAX_UNITS tienen rangos coherentes con el negocio', () => {
+  assert.equal(PACK_MIN_UNITS, 2, 'el mínimo debe ser 2 (empaque de 1 no es empaque)');
+  assert.equal(PACK_MAX_UNITS, 999);
+});
+
+test('getPackHintUnits acepta packHintUnits y pack_hint_units; rechaza <2', () => {
+  assert.equal(getPackHintUnits({ packHintUnits: 24 }), 24);
+  assert.equal(getPackHintUnits({ pack_hint_units: 20 }), 20, 'snake_case defensivo');
+  assert.equal(getPackHintUnits({ packHintUnits: '18' }), 18, 'tolera strings');
+  assert.equal(getPackHintUnits({ packHintUnits: 1 }), 0, '1 no es empaque');
+  assert.equal(getPackHintUnits({ packHintUnits: 0 }), 0);
+  assert.equal(getPackHintUnits({ packHintUnits: -5 }), 0);
+  assert.equal(getPackHintUnits({ packHintUnits: Number.NaN }), 0);
+  assert.equal(getPackHintUnits(null), 0);
+  assert.equal(getPackHintUnits(undefined), 0);
+  assert.equal(getPackHintUnits({}), 0);
+});
+
+test('itemRequiresPackConfirmation exige flag true Y hint >= 2', () => {
+  assert.equal(itemRequiresPackConfirmation({ requiresPackConfirmation: true, packHintUnits: 24 }), true);
+  assert.equal(itemRequiresPackConfirmation({ requires_pack_confirmation: true, pack_hint_units: 18 }), true);
+  assert.equal(itemRequiresPackConfirmation({ requiresPackConfirmation: false, packHintUnits: 24 }), false, 'flag en false → no confirma');
+  assert.equal(itemRequiresPackConfirmation({ requiresPackConfirmation: true, packHintUnits: 1 }), false, 'hint < 2 → no confirma');
+  assert.equal(itemRequiresPackConfirmation({ requiresPackConfirmation: true }), false, 'sin hint → no confirma');
+  assert.equal(itemRequiresPackConfirmation({ packHintUnits: 20 }), false, 'sin flag → no confirma');
+  assert.equal(itemRequiresPackConfirmation(null), false);
+});
+
+test('anyItemRequiresPackConfirmation: true si al menos uno lo requiere', () => {
+  assert.equal(anyItemRequiresPackConfirmation([]), false);
+  assert.equal(anyItemRequiresPackConfirmation(null), false);
+  assert.equal(anyItemRequiresPackConfirmation(undefined), false);
+  assert.equal(anyItemRequiresPackConfirmation([
+    { requiresPackConfirmation: false, packHintUnits: 24 },
+    { requiresPackConfirmation: false, packHintUnits: 10 },
+  ]), false);
+  assert.equal(anyItemRequiresPackConfirmation([
+    { requiresPackConfirmation: false },
+    { requiresPackConfirmation: true, packHintUnits: 20 },
+  ]), true);
+});
+
+test('isValidUnitsPerPack: entero estrictamente en [2, 999]', () => {
+  // Enteros válidos
+  for (const v of [2, 24, 100, 999, '18', '2', '999']) {
+    assert.equal(isValidUnitsPerPack(v), true, `${JSON.stringify(v)} debería ser válido`);
+  }
+  // Fuera de rango o no-entero
+  for (const v of [0, 1, 1000, 1500, -5, 2.5, '2.5', '24.0', 'abc', '', '  ', null, undefined, {}, [], true, Number.NaN]) {
+    assert.equal(isValidUnitsPerPack(v), false, `${JSON.stringify(v)} debería ser inválido`);
+  }
+});
+
+// Conversiones numéricas obligatorias por contrato
+test('convertItemToIndividualUnits: unmatched 1 paquete × 20 unidades → qty 20 / costo /20', () => {
+  const item = {
+    isMatched: false,
+    invoiceName: 'LECHE X 20',
+    quantity: 1,
+    unitPrice: 60000,
+    requiresPackConfirmation: true,
+    packHintUnits: 20,
+  };
+  const out = convertItemToIndividualUnits(item, 20);
+  assert.equal(out.quantity, 20);
+  assert.equal(out.unitPrice, 3000, 'costo paquete / 20 = 3000');
+  assert.equal(out.invoicePackageQuantity, 1);
+  assert.equal(out.confirmedUnitsPerPack, 20);
+  assert.equal(out.packConversionApplied, true);
+  // Valor total de la línea preservado: 1 × 60000 = 20 × 3000 = 60000
+  assert.equal(out.quantity * out.unitPrice, item.quantity * item.unitPrice);
+});
+
+test('convertItemToIndividualUnits: unmatched 2 paquetes × 18 unidades → qty 36', () => {
+  const item = {
+    isMatched: false,
+    invoiceName: 'GASEOSA X 18',
+    quantity: 2,
+    unitPrice: 36000,
+  };
+  const out = convertItemToIndividualUnits(item, 18);
+  assert.equal(out.quantity, 36);
+  assert.equal(out.unitPrice, 2000, '36000 / 18 = 2000');
+  assert.equal(out.invoicePackageQuantity, 2);
+  assert.equal(out.confirmedUnitsPerPack, 18);
+  // Valor total preservado: 2 × 36000 = 36 × 2000 = 72000
+  assert.equal(out.quantity * out.unitPrice, item.quantity * item.unitPrice);
+});
+
+test('convertItemToIndividualUnits: matched 1 paquete × 24 → costUnit y pvpSugerido correctamente escalados', () => {
+  const item = {
+    isMatched: true,
+    barcode: '7700000000124',
+    productName: 'COCA LATA 330',
+    quantity: 1,
+    costUnit: 48000,
+    costoReal: 48000,
+    pvpSugerido: 72000,
+    pvpActual: 3200, // ya es unitario; se preserva
+    currentStock: 50,
+    currentWac: 2000,
+    marginUsed: 30,
+  };
+  const out = convertItemToIndividualUnits(item, 24);
+  assert.equal(out.quantity, 24);
+  assert.equal(out.costUnit, 2000, 'costo paquete / 24 = 2000');
+  assert.equal(out.costoReal, 2000, 'costo real también se divide');
+  assert.equal(out.pvpSugerido, 3000, 'PVP sugerido 72000 / 24 = 3000 (entero)');
+  // Campos "por producto" no se tocan
+  assert.equal(out.pvpActual, 3200, 'PVP actual intacto');
+  assert.equal(out.currentStock, 50, 'currentStock intacto');
+  assert.equal(out.currentWac, 2000, 'currentWac intacto');
+  assert.equal(out.marginUsed, 30, 'marginUsed intacto');
+  // Trazabilidad
+  assert.equal(out.invoicePackageQuantity, 1);
+  assert.equal(out.confirmedUnitsPerPack, 24);
+  assert.equal(out.packConversionApplied, true);
+  // Valor total costo preservado: 1 × 48000 = 24 × 2000
+  assert.equal(out.quantity * out.costUnit, item.quantity * item.costUnit);
+});
+
+test('convertItemToIndividualUnits: pvpSugerido redondea coherentemente a entero', () => {
+  // 55000 / 24 = 2291.666... → debe quedar en 2292 (round half away from zero)
+  const out = convertItemToIndividualUnits(
+    { isMatched: true, quantity: 1, costUnit: 48000, pvpSugerido: 55000 },
+    24,
+  );
+  assert.equal(out.pvpSugerido, 2292);
+});
+
+test('convertItemToIndividualUnits: bonus_quantity escala por N', () => {
+  const out = convertItemToIndividualUnits(
+    { isMatched: false, invoiceName: 'PACK 2x1', quantity: 2, unitPrice: 50000, bonus_quantity: 1 },
+    24,
+  );
+  assert.equal(out.quantity, 48);
+  assert.equal(out.bonus_quantity, 24, 'bonus 1 paquete regalado → 24 unidades regaladas');
+});
+
+test('convertItemToIndividualUnits: totalPrice NO se divide (ya refleja la línea completa)', () => {
+  const out = convertItemToIndividualUnits(
+    { isMatched: false, quantity: 2, unitPrice: 36000, totalPrice: 72000 },
+    18,
+  );
+  assert.equal(out.totalPrice, 72000, 'totalPrice se preserva intacto');
+  assert.equal(out.unitPrice, 2000);
+  assert.equal(out.quantity, 36);
+});
+
+test('convertItemToIndividualUnits: unitsPerPack inválido retorna copia superficial sin modificar', () => {
+  const item = { quantity: 2, unitPrice: 36000, costUnit: 36000 };
+  for (const bad of [0, 1, 1.5, -5, 'abc', '', null, undefined, {}]) {
+    const out = convertItemToIndividualUnits(item, bad);
+    assert.equal(out.quantity, 2, `${JSON.stringify(bad)} no debe modificar quantity`);
+    assert.equal(out.unitPrice, 36000);
+    assert.equal(out.costUnit, 36000);
+    assert.ok(!out.packConversionApplied, 'no debe marcar como aplicado si el input es inválido');
+  }
+});
+
+test('convertItemToIndividualUnits: tolera input vacío', () => {
+  assert.equal(convertItemToIndividualUnits(null, 24), null);
+  assert.equal(convertItemToIndividualUnits(undefined, 24), undefined);
+});
+
+test('convertItemToIndividualUnits: no toca campos ausentes en el input', () => {
+  const out = convertItemToIndividualUnits(
+    { isMatched: true, quantity: 1, costUnit: 48000 },
+    24,
+  );
+  assert.ok(!('unitPrice' in out), 'no debe inventar unitPrice si no vino en el input');
+  assert.ok(!('pvpSugerido' in out), 'no debe inventar pvpSugerido');
+  assert.ok(!('costoReal' in out), 'no debe inventar costoReal');
+  assert.ok(!('bonus_quantity' in out), 'no debe inventar bonus_quantity');
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// GUARDIANES ESTATICOS adicionales: etapa interna de empaques
+// ─────────────────────────────────────────────────────────────────────────
+
+test('InvoiceReaderModal expone 3 toggles independientes para IVA / IBUA / ICUI', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // Cada toggle tiene su propio useState y setter. La UI es un grid de 3
+  // elementos con role="group" para accesibilidad.
+  for (const name of ['expectIVA', 'expectIBUA', 'expectICUI']) {
+    assert.ok(
+      new RegExp(`\\b${name}\\b`).test(src),
+      `debe existir el estado ${name}`,
+    );
+  }
+  assert.ok(
+    /setExpectIVA\(/.test(src) && /setExpectIBUA\(/.test(src) && /setExpectICUI\(/.test(src),
+    'cada toggle debe tener su setter',
+  );
+  assert.ok(
+    /role="group"/.test(src),
+    'el bloque de 3 toggles debe exponer role=group para lectores de pantalla',
+  );
+});
+
+test('InvoiceReaderModal mantiene stage interno packReview y retiene items', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // La máquina de estado interna del modal: 'upload' | 'packReview'. En
+  // packReview no se dispara onExtractedItems ni se cierra; se almacenan los
+  // items retenidos y las filas con sus multiplicadores.
+  assert.ok(/stage/.test(src) && /['"]packReview['"]/.test(src), 'debe existir una stage "packReview"');
+  assert.ok(/pendingItems/.test(src), 'debe retener los items hasta confirmar');
+  assert.ok(/packReviewRows/.test(src), 'debe armar la lista de filas de revisión');
+  // La política es SIEMPRE individual: no debe existir un botón o rama de
+  // "conservar paquete".
+  assert.ok(
+    !/conservar paquete/i.test(src),
+    'el modal NO debe ofrecer la opción de conservar paquete',
+  );
+});
+
+test('InvoiceReaderModal gatea onExtractedItems detrás del commit de empaques', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // El commit sólo puede ejecutarse si todas las filas son enteros válidos
+  // en el rango permitido (allRowsValid). Esta variable debe existir y
+  // alimentar el disabled del botón de confirmar.
+  assert.ok(/const\s+allRowsValid\s*=/.test(src), 'debe existir el guard allRowsValid');
+  assert.ok(
+    /isDisabled=\{!allRowsValid\s*\|\|\s*isCommittingPacks\}/.test(src),
+    'el botón de confirmar debe deshabilitarse si allRowsValid=false',
+  );
+  // Y debe invocar convertItemToIndividualUnits del helper puro para la
+  // conversión final.
+  assert.ok(
+    /convertItemToIndividualUnits\s*\(/.test(src),
+    'el modal debe aplicar convertItemToIndividualUnits al confirmar',
+  );
+});
+
+test('InvoiceReaderModal usa anyItemRequiresPackConfirmation para decidir la rama', async () => {
+  const src = await readSource(invoiceReaderModal);
+  assert.ok(
+    /anyItemRequiresPackConfirmation\s*\(/.test(src),
+    'el modal debe consultar anyItemRequiresPackConfirmation antes de cerrar',
+  );
+  // isValidUnitsPerPack se usa para validar cada input de la etapa interna.
+  assert.ok(
+    /isValidUnitsPerPack\s*\(/.test(src),
+    'cada fila de la etapa interna debe validar con isValidUnitsPerPack',
+  );
+});
+
+test('InvoiceReaderModal input de empaque: entero requerido con rango accesible', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // Debe exponer:
+  //   - inputMode="numeric" para teclado móvil
+  //   - required (confirmación obligatoria por fila)
+  //   - aria-invalid cuando el valor no es válido
+  //   - aria-describedby con el hint "entero entre 2 y 999"
+  for (const token of [
+    'inputMode="numeric"',
+    'required',
+    'aria-invalid',
+    'aria-describedby',
+  ]) {
+    assert.ok(
+      src.includes(token),
+      `el input de empaque debe exponer ${token} para accesibilidad`,
+    );
+  }
+});
+
+test('receive/page.tsx propaga la trazabilidad del empaque al unmatchedQueue', async () => {
+  const src = await readSource(receivePage);
+  const pushMatch = src.match(/unmatched\.push\(\s*\{([\s\S]*?)\}\s*\)/);
+  assert.ok(pushMatch, 'no se encontró unmatched.push({...})');
+  const block = pushMatch[1];
+  for (const field of ['invoicePackageQuantity', 'confirmedUnitsPerPack', 'packConversionApplied']) {
+    assert.ok(
+      block.includes(field),
+      `unmatched.push debe propagar ${field} para trazabilidad sin re-multiplicar`,
+    );
+  }
+});
+
+test('UnmatchedItemsReviewer: UnmatchedItem tipa la trazabilidad del empaque', async () => {
+  const src = await readSource(unmatchedReviewer);
+  for (const field of ['invoicePackageQuantity?:', 'confirmedUnitsPerPack?:', 'packConversionApplied?:']) {
+    assert.ok(
+      src.includes(field),
+      `UnmatchedItem debe declarar ${field} para heredar la trazabilidad`,
+    );
+  }
 });

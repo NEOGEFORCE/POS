@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"backPOS-go/internal/core/aliasnorm"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/cache"
@@ -166,20 +167,28 @@ func (r *PostgresProductRepository) GetPaginated(page, pageSize int, search stri
 	}
 
 	if stockFilter == "critical" {
-		// ROJO nuevo (regla del dueno, agosto 2026): ratio < 0.25 del minimo.
-		// Con minimo <= 0 se sigue considerando critico cuando quantity <= 0.
-		query = query.Where(`(
-			(COALESCE(products."minStock", 0) <= 0 AND products.quantity <= 0)
-			OR (COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) < 0.25)
-		)`)
+		// ROJO (regla del dueno, agosto 2026 — actualizada 2026-10): ratio < 0.25
+		// del minimo CONFIGURADO. Un producto sin minimo (minStock<=0) ya no
+		// cuenta como critico aunque el stock sea 0 — queda en UNSET y mapea
+		// a Optimal en los conteos agregados.
+		query = query.Where(`
+			COALESCE(products."minStock", 0) > 0
+			AND (products.quantity / NULLIF(products."minStock", 0)) < 0.25
+		`)
 	} else if stockFilter == "warning" {
-		// AMARILLO nuevo: 0.25 <= ratio < 0.75. Sin minimo configurado con
-		// stock bajo (<=5) se sigue tolerando el fallback historico para no
-		// dejar productos sin senal cuando el dueno no puso minimo.
-		query = query.Where(`(
-			(COALESCE(products."minStock", 0) > 0 AND (products.quantity / NULLIF(products."minStock", 0)) >= 0.25 AND (products.quantity / NULLIF(products."minStock", 0)) < 0.75)
-			OR (COALESCE(products."minStock", 0) <= 0 AND products.quantity > 0 AND products.quantity <= 5)
-		)`)
+		// AMARILLO (regla del dueno, agosto 2026 — actualizada 2026-10):
+		// 0.25 <= ratio < 0.75 del minimo CONFIGURADO. Un producto sin minimo
+		// (minStock<=0) nunca aparece aqui: queda en UNSET y mapea a Optimal
+		// en los conteos agregados (y en la UI del catalogo via
+		// calculateStockHealth). El fallback historico "sin minimo con stock
+		// 1..5" se eliminó por la misma razon que la regla del semaforo: un
+		// minimo 0 refleja intencion del dueno (descontinuado, consignacion),
+		// no una advertencia. Alinea esta consulta con GetProductStatsAggregate.
+		query = query.Where(`
+			COALESCE(products."minStock", 0) > 0
+			AND (products.quantity / NULLIF(products."minStock", 0)) >= 0.25
+			AND (products.quantity / NULLIF(products."minStock", 0)) < 0.75
+		`)
 	}
 
 	if err := query.Count(&total).Error; err != nil {
@@ -621,14 +630,36 @@ func (r *PostgresProductRepository) EditReception(ref string, dniStr string, rea
 	return priceChanges, err
 }
 
+// GetSupplierAliases carga TODOS los aliases del proveedor y los indexa por
+// forma CANÓNICA del nombre de factura. Esto hace que la búsqueda por nombre
+// sea tolerante a datos históricos no normalizados: dos filas que entraron en
+// épocas distintas con casing/espaciado diferente colapsan al mismo canónico
+// y el lector OCR las empareja igual.
+//
+// Si dos filas colapsan al mismo canónico (herencia sucia), gana la más
+// reciente por UsesCount para no "congelar" un enlace viejo. Esto nunca pisa
+// la data; la limpieza real la hace SaveSupplierAlias cuando el usuario toque
+// ese alias de nuevo (consolida en una sola fila canónica).
 func (r *PostgresProductRepository) GetSupplierAliases(supplierID uint) (map[string]models.SupplierProductAlias, error) {
 	var aliases []models.SupplierProductAlias
 	if err := r.db.Where("supplier_id = ?", supplierID).Find(&aliases).Error; err != nil {
 		return nil, err
 	}
-	result := make(map[string]models.SupplierProductAlias)
+	result := make(map[string]models.SupplierProductAlias, len(aliases))
 	for _, a := range aliases {
-		result[strings.ToUpper(a.InvoiceName)] = a
+		key := aliasnorm.CanonicalInvoiceName(a.InvoiceName)
+		if key == "" {
+			continue
+		}
+		if existing, ok := result[key]; ok {
+			if a.UsesCount < existing.UsesCount {
+				continue
+			}
+			if a.UsesCount == existing.UsesCount && a.ID < existing.ID {
+				continue
+			}
+		}
+		result[key] = a
 	}
 	return result, nil
 }
@@ -644,17 +675,89 @@ func (r *PostgresProductRepository) GetSupplierInvoiceParams(supplierID uint) (*
 	return &params, nil
 }
 
+// SaveSupplierAlias es idempotente por (supplier_id, forma canónica del
+// invoice_name).
+//
+// Flujo:
+//  1. Carga todos los aliases del proveedor (son decenas, no miles: cada
+//     proveedor factura un subconjunto chico del catálogo).
+//  2. Busca uno cuya forma CANÓNICA coincida con el alias entrante. Esto
+//     detecta filas antiguas no normalizadas sin exigir migración.
+//  3. Si existe:
+//     - Si el usuario cambió el barcode destino, se ACTUALIZA el barcode
+//     y se re-escribe el invoice_name en forma canónica. Esto evita
+//     "congelar" un enlace erróneo cuando el operador corrige el match.
+//     - Si no cambió, sólo se incrementa UsesCount y se canonicaliza el
+//     invoice_name en sitio.
+//  4. Si no existe, se CREA una fila nueva.
+//
+// El service ya canonicaliza antes de llamar; aquí defendemos en profundidad
+// por si algún caller (migración, script administrativo) invoca el repo
+// directo. La validación de supplierId > 0 y campos no vacíos vive en
+// services.ValidateAndCanonicalizeSupplierAlias; aquí se repite por
+// seguridad para que llamadas directas al repo también fallen temprano.
 func (r *PostgresProductRepository) SaveSupplierAlias(alias *models.SupplierProductAlias) error {
-	var existing models.SupplierProductAlias
-	err := r.db.Where("supplier_id = ? AND invoice_name = ?", alias.SupplierID, alias.InvoiceName).First(&existing).Error
-	if err == nil {
-		existing.UsesCount++
-		return r.db.Save(&existing).Error
+	if alias == nil {
+		return fmt.Errorf("alias nil")
 	}
-	if err == gorm.ErrRecordNotFound {
+	fields, err := aliasnorm.ValidateAndCanonicalize(alias.SupplierID, alias.InvoiceName, alias.ProductBarcode)
+	if err != nil {
+		return err
+	}
+	alias.SupplierID = fields.SupplierID
+	alias.InvoiceName = fields.InvoiceName
+	alias.ProductBarcode = fields.ProductBarcode
+
+	var rows []models.SupplierProductAlias
+	if err := r.db.Where("supplier_id = ?", alias.SupplierID).Find(&rows).Error; err != nil {
+		return fmt.Errorf("error cargando aliases existentes del proveedor %d: %w", alias.SupplierID, err)
+	}
+
+	// Decisión pura (ver aliasnorm.DecideAliasUpsert): elige Create /
+	// Relink / BumpUses y, en caso de herencia sucia con duplicados,
+	// toma la fila más reciente para no congelar enlaces viejos.
+	pureRows := make([]aliasnorm.AliasRow, 0, len(rows))
+	for _, row := range rows {
+		pureRows = append(pureRows, aliasnorm.AliasRow{
+			ID:             row.ID,
+			InvoiceName:    row.InvoiceName,
+			ProductBarcode: row.ProductBarcode,
+		})
+	}
+	decision := aliasnorm.DecideAliasUpsert(fields, pureRows)
+
+	switch decision.Action {
+	case aliasnorm.AliasUpsertCreate:
+		if alias.UsesCount == 0 {
+			alias.UsesCount = 1
+		}
 		return r.db.Create(alias).Error
+	case aliasnorm.AliasUpsertRelink, aliasnorm.AliasUpsertBumpUses:
+		var existing models.SupplierProductAlias
+		for i := range rows {
+			if rows[i].ID == decision.TargetID {
+				existing = rows[i]
+				break
+			}
+		}
+		existing.InvoiceName = fields.InvoiceName
+		if decision.Action == aliasnorm.AliasUpsertRelink {
+			existing.ProductBarcode = fields.ProductBarcode
+		}
+		existing.UsesCount++
+		if err := r.db.Save(&existing).Error; err != nil {
+			return fmt.Errorf("error actualizando alias existente %d: %w", existing.ID, err)
+		}
+		alias.ID = existing.ID
+		alias.UsesCount = existing.UsesCount
+		alias.ProductBarcode = existing.ProductBarcode
+		alias.InvoiceName = existing.InvoiceName
+		alias.CreatedAt = existing.CreatedAt
+		alias.UpdatedAt = existing.UpdatedAt
+		return nil
+	default:
+		return fmt.Errorf("acción de upsert desconocida: %v", decision.Action)
 	}
-	return err
 }
 
 func (r *PostgresProductRepository) FindProductBySimilarName(name string, supplierID uint) (*models.Product, float64) {
@@ -670,39 +773,78 @@ func (r *PostgresProductRepository) FindProductBySimilarName(name string, suppli
 	return nil, 0
 }
 
+// SearchSimilarProducts devuelve sugerencias determinísticas y sin basura
+// para el reviewer OCR. Es el flujo que corre cuando un item de la factura
+// NO empareja por barcode ni por alias y el usuario tiene que elegir a mano.
+//
+// Garantías:
+//   - Sólo productos activos y NO marcadores '[HISTORICO]'.
+//   - Requiere al menos un TOKEN DISTINTIVO compartido con el query, lo que
+//     excluye matches espurios que sólo comparten términos de empaque como
+//     BOLSA, CAJA, PAQUETE, CIERRE, UND, DISPLAY, PROMO, etc.
+//   - Scoring por media armónica entre cobertura (query → candidato) y
+//     precisión (candidato → query), de modo que un producto grande que
+//     "incluye" todas las palabras del query no gane a un match 1-a-1.
+//   - Orden estable: confianza descendente, luego nombre ascendente para
+//     romper empates.
+//
+// Ejemplo guardián (ver supplier_alias_normalize_test.go):
+// `MILO ACTIGEN-E BOLSA CIERRE 48X100G CO` NO sugiere "BOLSA DE ARROZ" ni
+// cualquier producto que SÓLO comparta BOLSA.
+//
+// Diseño en dos capas:
+//  1. SQL pre-filtra con ILIKE OR sobre los tokens distintivos (acota el
+//     conjunto que viaja a Go incluso en catálogos grandes).
+//  2. Go rankea con la lógica pura de supplier_alias_normalize.go. Evita
+//     depender de pg_trgm, que requeriría migración.
+//
+// Si el query no tiene tokens distintivos (p.ej. nombre vacío o compuesto
+// únicamente por términos genéricos), devuelve nil: no hay información
+// suficiente para proponer nada.
 func (r *PostgresProductRepository) SearchSimilarProducts(name string, limit int) []models.ProductSearch {
-	var products []models.Product
-
-	words := strings.Fields(name)
-	query := r.db
-
-	if len(words) > 0 {
-		var orConditions []string
-		var args []interface{}
-		for _, w := range words {
-			if len(w) > 3 { // Ignorar conectores cortos o palabras de 1-3 letras
-				orConditions = append(orConditions, "\"productName\" ILIKE ?")
-				args = append(args, "%"+w+"%")
-			}
-		}
-		if len(orConditions) > 0 {
-			query = query.Where(strings.Join(orConditions, " OR "), args...)
-		} else {
-			query = query.Where("\"productName\" ILIKE ?", "%"+name+"%")
-		}
-	} else {
-		query = query.Where("\"productName\" ILIKE ?", "%"+name+"%")
+	queryTokens := aliasnorm.DistinctiveInvoiceTokens(name)
+	if len(queryTokens) == 0 {
+		return nil
 	}
 
-	query.Limit(limit).Find(&products)
+	// Prefiltro SQL: trae productos activos, no marcadores, que mencionen
+	// al menos un token distintivo del query. El tope de 200 candidatos
+	// evita que un token genérico accidental (p.ej. "LITRO") traiga medio
+	// catálogo; el ranker en memoria afina luego.
+	whereClauses := make([]string, 0, len(queryTokens))
+	args := make([]interface{}, 0, len(queryTokens))
+	for _, tok := range queryTokens {
+		whereClauses = append(whereClauses, "unaccent(\"productName\") ILIKE unaccent(?)")
+		args = append(args, "%"+tok+"%")
+	}
+	tokenMatch := strings.Join(whereClauses, " OR ")
 
-	var suggestions []models.ProductSearch
+	var products []models.Product
+	err := r.db.
+		Where(ports.SQLActiveProduct).
+		Where("\"productName\" NOT LIKE ?", historicalMarkerNamePrefix+"%").
+		Where("("+tokenMatch+")", args...).
+		Limit(200).
+		Find(&products).Error
+	if err != nil {
+		return nil
+	}
+
+	candidates := make([]aliasnorm.SimilarProductCandidate, 0, len(products))
 	for _, p := range products {
-		suggestions = append(suggestions, models.ProductSearch{
-			ID:          1, // Not used heavily, barcode is main ID
+		candidates = append(candidates, aliasnorm.SimilarProductCandidate{
 			Barcode:     p.Barcode,
 			ProductName: p.ProductName,
-			Confidence:  0.8,
+		})
+	}
+	ranked := aliasnorm.RankSimilarProducts(name, candidates, limit)
+
+	suggestions := make([]models.ProductSearch, 0, len(ranked))
+	for _, item := range ranked {
+		suggestions = append(suggestions, models.ProductSearch{
+			Barcode:     item.Barcode,
+			ProductName: item.ProductName,
+			Confidence:  item.Confidence,
 		})
 	}
 	return suggestions

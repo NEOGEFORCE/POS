@@ -33,7 +33,9 @@ func leerRepoFuente(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("no se pudo leer el repositorio: %v", err)
 	}
-	return string(b)
+	// Normaliza CRLF a LF para que los patrones con "\n" literal
+	// funcionen cuando el worktree esta checkout-eado con core.autocrlf.
+	return strings.ReplaceAll(string(b), "\r\n", "\n")
 }
 
 func TestProveedorElegidoMuestraTodoSuCatalogo(t *testing.T) {

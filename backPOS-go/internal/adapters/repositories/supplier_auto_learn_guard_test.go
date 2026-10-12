@@ -85,6 +85,9 @@ func TestNoAutoWriteToVisitDaysOrDeliveryDays(t *testing.T) {
 			return readErr
 		}
 		body := string(data)
+		// Normaliza CRLF a LF para que los patrones con "\n" literal
+		// funcionen cuando el worktree esta checkout-eado con core.autocrlf.
+		body = strings.ReplaceAll(body, "\r\n", "\n")
 		bodyWithoutManualAction := body
 		if full == "internal/adapters/repositories/postgres_supplier_repository.go" &&
 			strings.Contains(body, `const manualScheduleWriteMarker = "MANUAL_SUPPLIER_SCHEDULE_WRITE"`) {

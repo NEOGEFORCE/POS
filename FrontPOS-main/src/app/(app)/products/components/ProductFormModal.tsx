@@ -7,7 +7,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
-import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP, roundToNearestFifty, normalizeSalePrice } from '@/lib/utils';
+import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP, roundToNearestFifty, normalizeSalePrice, calculateStockHealth } from '@/lib/utils';
 import { validateProduct, FieldError } from '@/lib/formValidation';
 import ValidationErrors from '@/components/ValidationErrors';
 import { useState, useCallback, useMemo, memo, useEffect } from 'react';
@@ -1118,12 +1118,39 @@ const ProductFormModal = memo(function ProductFormModal({
                   {(() => {
                     const current = Number(addDialogOpen ? newProduct.quantity : editingProduct?.quantity);
                     const min = Number(addDialogOpen ? newProduct.minStock : editingProduct?.minStock);
-                    
+
                     if (isNaN(current) || isNaN(min)) return null;
-                    
-                    const isCritical = current <= min && current > 0;
+
+                    // Sin minimo configurado (minStock<=0): NEUTRAL. Regla del
+                    // dueno (2026-10): un producto sin minimo NUNCA se pinta
+                    // rojo/critico, aunque el stock sea 0. Esto respeta la
+                    // decision deliberada de dejar el producto sin alarma
+                    // (descontinuado, estacional, consignacion). La fuente
+                    // unica de clasificacion vive en calculateStockHealth.
+                    if (min <= 0) {
+                      return (
+                        <div className="col-span-2 flex items-center justify-between p-2.5 rounded-xl border bg-zinc-500/10 border-zinc-500/20 mt-1">
+                          <div className="flex items-center gap-2">
+                            <Info size={14} className="text-zinc-500" />
+                            <span className="text-[10px] font-medium uppercase tracking-tight text-zinc-500">
+                              SIN MINIMO CONFIGURADO
+                            </span>
+                          </div>
+                          <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">
+                            Stock actual: {current}
+                          </span>
+                        </div>
+                      );
+                    }
+
+                    // Con minimo: delegamos en el helper canonico para que
+                    // esta tarjeta use los MISMOS cortes (25% / 75%) que el
+                    // resto del sistema. "SIN STOCK (COMPRAR URGENTE)" se
+                    // emite SOLO cuando ademas hay minimo configurado.
+                    const level = calculateStockHealth(current, min);
                     const isOut = current <= 0;
-                    
+                    const isCritical = level === 'CRITICAL' || level === 'WARNING';
+
                     return (
                       <div className={`col-span-2 flex items-center justify-between p-2.5 rounded-xl border ${isOut ? 'bg-rose-500/10 border-rose-500/20' : isCritical ? 'bg-amber-500/10 border-amber-500/20' : 'bg-emerald-500/10 border-emerald-500/20'} mt-1`}>
                         <div className="flex items-center gap-2">

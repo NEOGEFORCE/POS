@@ -3,14 +3,18 @@ package models
 import "math"
 
 // ============================================================================
-// SEMAFORO DE INVENTARIO — REGLA PERMANENTE DEL DUENO (agosto 2026)
+// SEMAFORO DE INVENTARIO — REGLA PERMANENTE DEL DUENO (agosto 2026,
+// actualizada 2026-10)
 // ============================================================================
 //
-// La banda del semaforo NO se toca (regla del dueno de agosto 2026):
+// La banda del semaforo:
 //
 //   minStock <= 0:
-//       ROJO   si stock <= 0.
-//       UNSET  si stock > 0 (no se juzga contra el minimo).
+//       UNSET  SIEMPRE (regla 2026-10). Un producto sin minimo configurado
+//              NUNCA se pinta rojo/critico contra el minimo, aunque el stock
+//              sea 0: no hay umbral contra el que medir. La urgencia por
+//              agotado se emite en otra parte (BuildRestockRecommendation),
+//              no en la banda.
 //   minStock > 0, ratio = stock / minStock:
 //       ROJO     si ratio < 0.25.
 //       AMARILLO si 0.25 <= ratio < 0.75.
@@ -85,9 +89,12 @@ const (
 	StockBandRed    = "RED"
 	StockBandYellow = "YELLOW"
 	StockBandGreen  = "GREEN"
-	// StockBandUnset se emite solo cuando no hay minimo configurado y hay
-	// stock positivo: el producto no se puede juzgar contra un minimo que
-	// no existe. Los consumidores del semaforo lo tratan como VERDE.
+	// StockBandUnset se emite cuando no hay minimo configurado (minStock<=0),
+	// cualquiera sea el stock: no hay umbral contra el que medir. Los
+	// consumidores del semaforo lo tratan como VERDE para el conteo de
+	// "critical/warning" (el producto no incumple ningun minimo), pero la
+	// urgencia por agotado todavia puede emitirse en otras capas (ventas 0
+	// con rotacion -> BuildRestockRecommendation marca Urgent).
 	StockBandUnset = "UNSET"
 )
 
@@ -105,11 +112,14 @@ const (
 //
 // El input es float64 porque el POS acepta cantidades decimales (peso,
 // fracciones). Los umbrales son ratios exactos, no cifras enteras.
+//
+// Regla 2026-10: cuando minStock<=0 la banda es SIEMPRE UNSET, incluso con
+// stock<=0. Un producto sin minimo configurado no se juzga rojo/critico
+// contra el minimo porque no hay minimo que violar. La señal de "agotado
+// sin minimo" se emite en otras capas (recomendaciones, dashboard) y nunca
+// mapea a la banda ROJA.
 func ClassifyStockBand(stock, minStock float64) string {
 	if minStock <= 0 {
-		if stock <= 0 {
-			return StockBandRed
-		}
 		return StockBandUnset
 	}
 	ratio := stock / minStock
