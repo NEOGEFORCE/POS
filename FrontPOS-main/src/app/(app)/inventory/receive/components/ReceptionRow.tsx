@@ -4,7 +4,7 @@ import React, { memo, useState, useEffect, useMemo } from 'react';
 import { Button, Input, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from "@heroui/react";
 import dynamic from 'next/dynamic';
 import { 
-    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles, Camera, Printer
+    Barcode, Trash2, Truck, Gift, ArrowDownLeft, ChevronDown, Edit2, Sparkles, Camera
 } from 'lucide-react';
 import { ReceiveItem } from '../page';
 import { formatCOP, formatInputCOP, parseCOP, applyRounding, sanitizeNumber, normalizeText, normalizeSalePrice, roundToNearestFifty } from "@/lib/utils";
@@ -17,6 +17,7 @@ import {
     calculateRawPVP,
     parseSubtotalEdit,
 } from '@/lib/reception-pricing.mjs';
+import { Checkbox } from '@/components/ui/checkbox';
 import { useAuth } from '@/lib/auth';
 import { apiFetch } from '@/lib/api-error';
 import { broadcastRevalidate } from '@/lib/revalidate';
@@ -29,16 +30,9 @@ interface ReceptionRowProps {
     item: ReceiveItem;
     onUpdate: (lineId: string, updates: Partial<ReceiveItem>) => void;
     onDelete: (lineId: string) => void;
-    /**
-     * Callback opcional disparado al presionar el botón "Imprimir
-     * etiquetas unitarias". El padre decide cuándo mostrar la hoja
-     * (típicamente DESPUÉS de confirmar la recepción) y abre el
-     * LabelPrintSheet con los datos del producto.
-     */
-    onPrintLabels?: (item: ReceiveItem) => void;
 }
 
-const ReceptionRow = memo(({ item, onUpdate, onDelete, onPrintLabels }: ReceptionRowProps) => {
+const ReceptionRow = memo(({ item, onUpdate, onDelete }: ReceptionRowProps) => {
     const { toast } = useToast();
     const { user } = useAuth();
     const isAdmin = useMemo(() => {
@@ -616,26 +610,59 @@ const ReceptionRow = memo(({ item, onUpdate, onDelete, onPrintLabels }: Receptio
                     >
                         <Trash2 size={14} />
                     </Button>
-                    {/* El botón Printer SÓLO aparece cuando la línea ya se
-                        sincronizó (item.syncedReceptionId presente). Esto
-                        evita auditar trabajos de impresión antes de que la
-                        recepción exista en BD. Guardián estático:
-                        tests/label-reprint-contract.test.mjs. */}
-                    {onPrintLabels && item.syncedReceptionId && (
-                        <Button
-                            isIconOnly
-                            variant="flat"
-                            size="sm"
-                            onClick={() => onPrintLabels(item)}
-                            aria-label="Imprimir etiquetas unitarias"
-                            title="Imprimir etiquetas unitarias (recepción confirmada)"
-                            className="h-8 w-8 min-w-8 bg-sky-50 dark:bg-sky-500/10 text-sky-500 rounded-2xl border border-sky-500/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)]"
-                        >
-                            <Printer size={14} />
-                        </Button>
-                    )}
                 </div>
             </div>
+
+            {/* SELECCIÓN PREVIA DE ETIQUETAS (DRAFT).
+                Checkbox shadcn accesible, compacto, con `id` único y <label htmlFor>
+                correctamente asociado. Las devoluciones NO pueden imprimir
+                etiqueta (sale stock, no entra): forzamos `checked=false` y
+                `disabled=true` para feedback claro. El padre (page.tsx) también
+                invalida el flag en `updateItem` como defensa en profundidad.
+                Al confirmar la recepción, SOLO las líneas marcadas aquí
+                aparecen en `PostReceptionLabelsModal`. */}
+            {(() => {
+                const isReturn = item.entryType === 'return';
+                const checkboxId = `print-label-${item.lineId}`;
+                const checked = !isReturn && item.printLabelAfterReceive === true;
+                return (
+                    <div
+                        className={`flex items-center gap-2 pt-1 ${isReturn ? 'opacity-60' : ''}`}
+                        data-testid="print-label-row-toggle"
+                        data-return={isReturn ? 'true' : 'false'}
+                    >
+                        <Checkbox
+                            id={checkboxId}
+                            checked={checked}
+                            disabled={isReturn}
+                            aria-disabled={isReturn}
+                            onCheckedChange={(v) => {
+                                // RETURN permanece siempre `false` (invariante);
+                                // no publicamos cambios desde un checkbox
+                                // deshabilitado. Para los demás, el valor viene
+                                // como boolean o 'indeterminate' — tratamos
+                                // 'indeterminate' como false defensivamente.
+                                if (isReturn) return;
+                                const next = v === true;
+                                onUpdate(item.lineId, { printLabelAfterReceive: next });
+                            }}
+                            className="h-4 w-4 rounded-md border-zinc-400 data-[state=checked]:bg-emerald-500 data-[state=checked]:border-emerald-500 data-[state=checked]:text-white"
+                            data-testid="print-label-checkbox"
+                        />
+                        <label
+                            htmlFor={checkboxId}
+                            className={`text-[10px] font-medium uppercase tracking-widest select-none ${isReturn ? 'cursor-not-allowed text-zinc-500' : 'cursor-pointer text-zinc-700 dark:text-zinc-300'}`}
+                        >
+                            Imprimir etiqueta tras recibir
+                        </label>
+                        {isReturn && (
+                            <span className="text-[9px] font-semibold text-rose-500 uppercase tracking-widest ml-1">
+                                No aplica (devolución)
+                            </span>
+                        )}
+                    </div>
+                );
+            })()}
 
             {/* Fila 2: Entradas Principales (Rediseño 2 Filas Mobile) */}
             <div className="flex flex-col gap-2 pt-1">

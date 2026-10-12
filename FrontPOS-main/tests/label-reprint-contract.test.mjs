@@ -179,12 +179,32 @@ test("receive/page: handleConfirmReceive genera un syncedReceptionId DESPUÉS de
   );
 });
 
-test("ReceptionRow: botón Printer gateado por item.syncedReceptionId", async () => {
+test("ReceptionRow: NO renderiza botón Printer en el DRAFT (contrato A — reemplazado por Checkbox)", async () => {
   const src = await leer(row);
-  // Debe existir una guardia explícita: `onPrintLabels && item.syncedReceptionId`.
+  // El contrato A del rediseño "selección previa + cola persistente"
+  // retira el botón Printer de ReceptionRow. La invariante "DRAFT jamás
+  // imprime antes de sync" se preserva de forma más fuerte: no hay botón
+  // Printer en absoluto. El flujo de impresión unitaria ocurre ÚNICAMENTE
+  // vía `PostReceptionLabelsModal` tras `/products/bulk-receive` OK, y la
+  // selección previa se marca en el DRAFT con el Checkbox shadcn (ver
+  // tests/reception-row-print-selection.test.mjs).
   assert.ok(
-    /onPrintLabels\s*&&\s*item\.syncedReceptionId/.test(src),
-    "El botón Printer de ReceptionRow debe estar gateado por item.syncedReceptionId: sin esa marca, la línea aún es DRAFT y no debe permitir imprimir.",
+    !/<Printer\b/.test(src),
+    "ReceptionRow NO debe renderizar un botón/icono <Printer /> en el DRAFT.",
+  );
+  // El icono Printer de lucide-react no debe estar importado en este
+  // componente — es señal clara de que no se renderiza nada relacionado
+  // con imprimir en el DRAFT.
+  assert.ok(
+    !/\bPrinter\b.*from\s+["']lucide-react["']|from\s+["']lucide-react["']\s*;?\s*[\s\S]*?\bPrinter\b/.test(src)
+    || !/import[^;]*\bPrinter\b[^;]*from\s+["']lucide-react["']/.test(src),
+    "ReceptionRow NO debe importar el icono Printer de lucide-react.",
+  );
+  // La prop `onPrintLabels` queda retirada del contrato — no se declara
+  // en la interfaz y no se referencia en el cuerpo.
+  assert.ok(
+    !/onPrintLabels/.test(src),
+    "La prop `onPrintLabels` fue retirada del contrato de ReceptionRow.",
   );
 });
 

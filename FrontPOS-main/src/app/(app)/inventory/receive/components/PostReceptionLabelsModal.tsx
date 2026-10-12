@@ -79,9 +79,11 @@ export default function PostReceptionLabelsModal({
 
                 <ModalBody className="px-5 py-4 space-y-3 min-h-0 min-w-0">
                     <div className="rounded-2xl bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-500/30 px-4 py-3 text-[12px] text-emerald-700 dark:text-emerald-200">
-                        <strong>Stock actualizado.</strong> ¿Deseas imprimir etiquetas unitarias para
-                        las unidades que llegaron sin código? La impresión es opcional: el
-                        inventario YA quedó sincronizado.
+                        <strong>Stock actualizado.</strong> Estas son las líneas
+                        que marcaste para imprimir etiquetas antes de sincronizar.
+                        La impresión es opcional: el inventario YA quedó
+                        sincronizado y las etiquetas pueden lanzarse ahora o
+                        descartarse sin afectar el stock.
                     </div>
 
                     <div className="flex flex-col gap-2 pt-1">

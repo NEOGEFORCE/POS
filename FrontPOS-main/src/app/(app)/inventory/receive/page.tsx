@@ -8,7 +8,7 @@ import Link from 'next/link';
 import {
     Search, Plus, Camera, Truck, RefreshCw,
     Trash2, Package, ShieldCheck, Gift, ArrowDownLeft, Barcode, Loader2, Zap, TrendingDown, AlertTriangle, Sparkles, ChevronDown, Check, X,
-    ShoppingBag, Info, Wallet, Landmark, HandCoins, Building2, History
+    ShoppingBag, Info, Wallet, Landmark, HandCoins, Building2, History, Printer
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Product, Supplier, Category } from '@/lib/definitions';
@@ -19,6 +19,10 @@ import {
     resolveBasePrice,
     resolveEffectivePercentage,
 } from '@/lib/reception-pricing.mjs';
+import {
+    enqueue as enqueueLabelPrintEntry,
+    QUEUE_REASONS as LABEL_QUEUE_REASONS,
+} from '@/lib/label-print-queue.mjs';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import Cookies from 'js-cookie';
 import dynamic from 'next/dynamic';
@@ -87,6 +91,18 @@ export interface ReceiveItem {
      * recepción exista.
      */
     syncedReceptionId?: string;
+    /**
+     * Selección previa (DRAFT) para imprimir etiquetas unitarias después
+     * de que la recepción quede confirmada. Default `false` en absolutamente
+     * TODAS las rutas de creación/hidratación. Las líneas con
+     * `entryType === 'return'` fuerzan `false` y presentan el checkbox
+     * deshabilitado: nunca se imprime etiqueta para una devolución al
+     * proveedor (sale stock, no entra). Al sincronizar, el padre
+     * construye `stampedLines` exclusivamente a partir de las líneas con
+     * este flag en `true`, de forma que el `PostReceptionLabelsModal`
+     * sólo liste lo que el cajero marcó.
+     */
+    printLabelAfterReceive?: boolean;
 }
 
 export default function ReceiveInventoryPage() {
@@ -200,8 +216,27 @@ export default function ReceiveInventoryPage() {
     // ESTADO PARA LECTOR IA DE FACTURAS
     const [isInvoiceReaderOpen, setIsInvoiceReaderOpen] = useState(false);
 
-    // ESTADO PARA AVISO DE CAMBIOS DE PRECIO
-    const [priceChangeText, setPriceChangeText] = useState<string | null>(null);
+    // ESTADO PARA AVISO DE CAMBIOS DE PRECIO (Modal "Zona de impresión").
+    // Reemplaza el antiguo flag suelto `priceChangeText`: ahora el modal
+    // lista explícitamente los pares old→new, ofrece compartir por
+    // WhatsApp (preservando la UX anterior) y añade los dos botones
+    // nuevos:
+    //   - "Ir a zona de impresión" → router.push('/labels')
+    //   - "Continuar" / "Finalizar" → si hay stampedLines (impresión
+    //     unitaria opt-in), abre PostReceptionLabelsModal; si no,
+    //     redirige al dashboard. Nunca redirige temprano: el flujo
+    //     price-change → labels-modal → dashboard respeta orden.
+    const [priceZoneState, setPriceZoneState] = useState<{
+        open: boolean;
+        changes: Array<{
+            barcode: string;
+            productName: string;
+            oldSalePrice: number;
+            newSalePrice: number;
+        }>;
+        whatsappText: string;
+        receptionRef: string;
+    }>({ open: false, changes: [], whatsappText: '', receptionRef: '' });
 
     // ESTADO PARA ASOCIAR PRODUCTO MANUALMENTE
     const [selectedAssociateProduct, setSelectedAssociateProduct] = useState<any | null>(null);
@@ -289,7 +324,11 @@ export default function ReceiveInventoryPage() {
                             unit: item.product?.unit || 'UND',
                             isWeighted: item.product?.isWeighted || false,
                             actualPhysicalStock: actualPhysicalStock,
-                            supplierId: supplierId
+                            supplierId: supplierId,
+                            // Default universal: nunca marcar impresión en DRAFT, incluso
+                            // en edición histórica — el flujo de etiquetas opera después
+                            // de confirmar la recepción, no al re-cargar un histórico.
+                            printLabelAfterReceive: false,
                         };
                     });
 
@@ -447,10 +486,20 @@ export default function ReceiveInventoryPage() {
             try {
                 const parsed = JSON.parse(savedList);
                 if (Array.isArray(parsed)) {
-                    // Limpieza de IDs duplicados o corruptos (Blindaje de Reactividad)
+                    // Limpieza de IDs duplicados o corruptos (Blindaje de Reactividad).
+                    // Persistencia DRAFT: la selección "imprimir etiqueta tras
+                    // sincronizar" sobrevive al reload. Ausencia del campo =>
+                    // false (contrato: default universal); una selección
+                    // explícita `true` del draft previo se preserva salvo
+                    // que la línea sea devolución (nunca imprimimos
+                    // etiquetas de devoluciones; defensa en profundidad).
                     const sanitized = parsed.map(item => ({
                         ...item,
-                        lineId: Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4)
+                        lineId: Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4),
+                        printLabelAfterReceive:
+                            item?.entryType === 'return'
+                                ? false
+                                : item?.printLabelAfterReceive === true,
                     }));
                     setReceiveList(sanitized);
                 }
@@ -542,7 +591,9 @@ export default function ReceiveInventoryPage() {
                 discount: 0,
                 currentStock: 0,
                 unit: 'UND',
-                isWeighted: false
+                isWeighted: false,
+                // Default universal: nunca marcar impresión en DRAFT.
+                printLabelAfterReceive: false,
             }, ...prev];
         });
     }, []);
@@ -591,7 +642,9 @@ export default function ReceiveInventoryPage() {
                 discount: 0,
                 currentStock: Number(product.quantity || 0),
                 unit: product.isWeighted ? 'KG' : 'UND',
-                isWeighted: Boolean(product.isWeighted)
+                isWeighted: Boolean(product.isWeighted),
+                // Default universal: nunca marcar impresión en DRAFT.
+                printLabelAfterReceive: false,
             }, ...prev];
         });
         setSearchQuery('');
@@ -750,6 +803,8 @@ export default function ReceiveInventoryPage() {
                             unit: p.isWeighted ? 'KG' : 'UND',
                             isWeighted: Boolean(p.isWeighted),
                             matchStatus: 'extra',
+                            // Default universal: nunca marcar impresión en DRAFT.
+                            printLabelAfterReceive: false,
                         });
                         addedCount++;
                     } else {
@@ -869,6 +924,8 @@ export default function ReceiveInventoryPage() {
                         unit: p?.isWeighted ? 'KG' : 'UND',
                         isWeighted: Boolean(p?.isWeighted),
                         matchStatus: r.isNew ? 'extra' : 'match',
+                        // Default universal: nunca marcar impresión en DRAFT.
+                        printLabelAfterReceive: false,
                     });
                 }
             });
@@ -1238,7 +1295,9 @@ export default function ReceiveInventoryPage() {
                         discount: 0,
                         currentStock: Number(p.quantity || 0),
                         unit: p.isWeighted ? 'KG' : 'UND',
-                        isWeighted: Boolean(p.isWeighted)
+                        isWeighted: Boolean(p.isWeighted),
+                        // Default universal: nunca marcar impresión en DRAFT.
+                        printLabelAfterReceive: false,
                     });
                 }
             });
@@ -1303,12 +1362,84 @@ export default function ReceiveInventoryPage() {
     }, [isScannerOpen, submitting, isProductModalOpen, isAddSupplierOpen, isSyncConfirmOpen]);
 
     const updateItem = useCallback((lineId: string, updates: Partial<ReceiveItem>) => {
-        setReceiveList(prev => prev.map(item => item.lineId === lineId ? { ...item, ...updates } : item));
+        setReceiveList(prev => prev.map(item => {
+            if (item.lineId !== lineId) return item;
+            const merged = { ...item, ...updates };
+            // Invariante estricta: RETURN nunca se imprime como etiqueta
+            // unitaria porque el inventario SALE, no entra. Si el usuario
+            // (o un side-effect) intenta cambiar entryType a 'return' sin
+            // apagar la selección, aquí la forzamos a `false`. El checkbox
+            // en ReceptionRow también está `disabled` para feedback visual.
+            if (merged.entryType === 'return') {
+                merged.printLabelAfterReceive = false;
+            }
+            return merged;
+        }));
     }, []);
 
     const deleteItem = useCallback((lineId: string) => {
         setReceiveList(prev => prev.filter(item => item.lineId !== lineId));
     }, []);
+
+    // Resumen "N seleccionadas" + helpers para los botones Todas/Ninguna del
+    // panel de selección previa (contrato A). Un item es ELEGIBLE para
+    // imprimir cuando no es devolución y tiene cantidad positiva: sólo esos
+    // participan en el conteo y en el toggle "Todas". `Ninguna` apaga TODOS
+    // los flags (incluyendo cualquier residuo si quedaba en una devolución).
+    const eligibleForLabelPrint = useCallback(
+        (it: ReceiveItem) => it.entryType !== 'return' && Number(it.addedQuantity || 0) > 0,
+        [],
+    );
+    const selectionCounts = useMemo(() => {
+        let selected = 0;
+        let eligible = 0;
+        for (const it of receiveList) {
+            if (!eligibleForLabelPrint(it)) continue;
+            eligible += 1;
+            if (it.printLabelAfterReceive === true) selected += 1;
+        }
+        return { selected, eligible };
+    }, [receiveList, eligibleForLabelPrint]);
+    const handleSelectAllPrintLabels = useCallback(() => {
+        setReceiveList((prev) =>
+            prev.map((item) =>
+                eligibleForLabelPrint(item)
+                    ? { ...item, printLabelAfterReceive: true }
+                    : { ...item, printLabelAfterReceive: false },
+            ),
+        );
+    }, [eligibleForLabelPrint]);
+    const handleSelectNonePrintLabels = useCallback(() => {
+        setReceiveList((prev) =>
+            prev.map((item) => ({ ...item, printLabelAfterReceive: false })),
+        );
+    }, []);
+
+    // Handlers explícitos del modal "Zona de impresión". Los botones no
+    // llaman al onClose del render-prop, por lo que no compiten con el
+    // fallback de cierre por X/backdrop.
+    const handlePriceZoneGoToLabels = useCallback(() => {
+        setPriceZoneState({ open: false, changes: [], whatsappText: '', receptionRef: '' });
+        // El usuario priorizó la Zona de impresión: soltamos stampedLines
+        // pendientes para NO abrir PostReceptionLabelsModal detrás ni
+        // programar redirect al dashboard por error.
+        setPostReceptionLines([]);
+        setPendingPostReceptionRedirect(false);
+        router.push('/labels');
+    }, [router]);
+
+    const handlePriceZoneContinue = useCallback(() => {
+        setPriceZoneState({ open: false, changes: [], whatsappText: '', receptionRef: '' });
+        // Si hay stampedLines (impresión unitaria opt-in) abrimos el modal
+        // dedicado SIN pasar por un onClose adicional. Si no hay nada,
+        // caemos al redirect normal.
+        if (postReceptionLines.length > 0) {
+            setIsPostReceptionOpen(true);
+            setPendingPostReceptionRedirect(true);
+        } else {
+            setTimeout(() => router.push('/dashboard'), 1200);
+        }
+    }, [router, postReceptionLines.length]);
 
     const sumPayments = Object.values(mixedPayments).reduce((a, b) => a + (Number(b) || 0), 0);
 
@@ -1485,16 +1616,83 @@ export default function ReceiveInventoryPage() {
                 description: (bypassExpense && !leaveAsDebt) ? "INVENTARIO ACTUALIZADO (SIN EGRESO)" : leaveAsDebt ? "INVENTARIO ACTUALIZADO — DEUDA REGISTRADA" : "INVENTARIO Y EGRESO SINCRONIZADOS"
             });
 
-            // POST-RECEPCIÓN: snapshot de las líneas con un receptionRef
-            // generado client-side. El backend aún no devuelve un id
-            // persistente desde /products/bulk-receive, así que el ref es
-            // puramente para auditoría de label_print_jobs.meta y para que
-            // ReceptionRow sepa cuándo mostrar el botón Printer. Solo las
-            // líneas REGULAR y BONUS (no RETURN) tiene sentido etiquetar.
+            // POST-RECEPCIÓN: snapshot ORDENADO para preservar invariantes
+            // críticas antes de limpiar el carrito:
+            //
+            //   1. `receptionRef` único por lote. Lo marcamos en cada línea
+            //      stampada y en cada entrada que vayamos a encolar en la
+            //      cola persistente, para que /labels pueda correlacionar
+            //      impresión ↔ recepción.
+            //   2. `stampedLines` SÓLO contiene líneas con
+            //      `printLabelAfterReceive === true` (opt-in explícito del
+            //      cajero en el DRAFT), que no sean devoluciones y que
+            //      tengan unidades positivas. Es la ÚNICA fuente del
+            //      PostReceptionLabelsModal — nunca listamos todo el carrito
+            //      por defecto.
+            //   3. `changedItems` se calcula ANTES de setReceiveList([]) y
+            //      ANTES de limpiar localStorage. Esta es la invariante
+            //      que exige el contrato: snapshot antes de limpiar.
+            //   4. Encolar los cambios de precio en la cola persistente
+            //      (localStorage) ocurre AQUÍ, DESPUÉS del bulk receive OK.
+            //      NUNCA se hace POST a /labels/print-jobs al encolar:
+            //      la auditoría se dispara únicamente cuando el usuario
+            //      pulsa imprimir desde /labels (audit-first).
             const receptionRef = `RCV-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
             const stampedLines: ReceiveItem[] = receiveList
-                .filter((it) => it.entryType !== 'return' && Number(it.addedQuantity || 0) > 0)
+                .filter((it) =>
+                    it.printLabelAfterReceive === true
+                    && it.entryType !== 'return'
+                    && Number(it.addedQuantity || 0) > 0,
+                )
                 .map((it) => ({ ...it, syncedReceptionId: receptionRef }));
+
+            const changedItems = receiveList
+                .map((item) => {
+                    const oldProduct = products.find(
+                        (p) =>
+                            p.barcode === item.barcode
+                            || (p.alternateCodes
+                                && p.alternateCodes
+                                    .split(',')
+                                    .map((s: string) => s.trim())
+                                    .includes(item.barcode)),
+                    );
+                    const oldSalePrice = oldProduct ? Number(oldProduct.salePrice) : 0;
+                    const newSalePrice = Number(item.newSalePrice);
+                    return { item, oldSalePrice, newSalePrice };
+                })
+                .filter((entry) => Number(entry.newSalePrice) !== Number(entry.oldSalePrice));
+
+            // Encolar en la cola persistente (localStorage) para que /labels
+            // la recoja al montar. Si el storage no está disponible el
+            // helper degrada silenciosamente — nunca lanza.
+            if (changedItems.length > 0 && typeof window !== 'undefined') {
+                for (const change of changedItems) {
+                    try {
+                        enqueueLabelPrintEntry(window.localStorage, {
+                            productBarcode: change.item.barcode,
+                            productName: change.item.productName,
+                            oldSalePrice: change.oldSalePrice,
+                            newSalePrice: change.newSalePrice,
+                            // `salePrice` canónico = precio actual/nuevo. El
+                            // helper lo sincroniza con newSalePrice si no se
+                            // pasa, pero lo explicitamos para que el contrato
+                            // sea evidente al leer el call-site.
+                            salePrice: change.newSalePrice,
+                            reason: LABEL_QUEUE_REASONS.PRICE_CHANGE,
+                            quantity: 1,
+                            receptionRef,
+                            // `queuedAt` queda implícito: el helper usa
+                            // Date.now() cuando el caller no lo pasa.
+                        });
+                    } catch (e) {
+                        // Blindaje: enqueue no debería lanzar, pero no
+                        // queremos que un bug raro del helper rompa la
+                        // confirmación de recepción.
+                        console.warn('enqueue label print queue failed', e);
+                    }
+                }
+            }
 
             localStorage.removeItem('org-pos-reception-list');
             localStorage.removeItem('org-pos-reception-supplier');
@@ -1535,30 +1733,46 @@ export default function ReceiveInventoryPage() {
             broadcastRevalidate('ORDER_UPDATE');
             if (!(bypassExpense && !leaveAsDebt)) broadcastRevalidate('EXPENSE_UPDATE');
 
-            // Detectar cambios de precio
-            const changedItems = receiveList.filter(item => {
-                const oldProduct = products.find(p => p.barcode === item.barcode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(item.barcode)));
-                const oldPrice = oldProduct ? Number(oldProduct.salePrice) : 0;
-                return Number(item.newSalePrice) !== oldPrice;
-            });
-
+            // Detectar cambios de precio: la lista `changedItems` ya la
+            // computamos arriba (snapshot antes de limpiar). Reusamos ese
+            // snapshot aquí para abrir el modal "Zona de impresión" sin
+            // volver a leer el estado — evita condiciones de carrera.
             if (changedItems.length > 0) {
                 let msg = "¡Hola! Se actualizaron los precios de venta de estos productos:\n\n";
-                changedItems.forEach((item, idx) => {
-                    const oldProduct = products.find(p => p.barcode === item.barcode || (p.alternateCodes && p.alternateCodes.split(',').map((s: string) => s.trim()).includes(item.barcode)));
-                    const oldPrice = oldProduct ? Number(oldProduct.salePrice) : 0;
-                    msg += `${idx + 1}. ${item.productName}\n   Antes: $${oldPrice}\n   NUEVO PRECIO: $${item.newSalePrice}\n\n`;
+                changedItems.forEach((entry, idx) => {
+                    msg += `${idx + 1}. ${entry.item.productName}\n   Antes: $${entry.oldSalePrice}\n   NUEVO PRECIO: $${entry.newSalePrice}\n\n`;
                 });
                 msg += "Por favor actualizar las etiquetas de los estantes. ¡Gracias!";
-                setPriceChangeText(msg);
-                
+
+                // Guardamos la lista estructurada para el modal "Zona de
+                // impresión" (lista old→new, acciones Ir a zona /
+                // Continuar). También guardamos las stampedLines pendientes
+                // para que, cuando el usuario pulse "Continuar", abramos
+                // PostReceptionLabelsModal sin redirigir temprano.
+                setPriceZoneState({
+                    open: true,
+                    changes: changedItems.map((entry) => ({
+                        barcode: entry.item.barcode,
+                        productName: entry.item.productName,
+                        oldSalePrice: entry.oldSalePrice,
+                        newSalePrice: entry.newSalePrice,
+                    })),
+                    whatsappText: msg,
+                    receptionRef,
+                });
+                if (stampedLines.length > 0) {
+                    setPostReceptionLines(stampedLines);
+                }
+
                 // Enviar notificacion a Telegram automaticamente en segundo plano
                 apiFetch('/notifications/telegram/text', {
                     method: 'POST',
                     body: JSON.stringify({ message: msg })
                 }, token).catch(e => console.error("Error al enviar telegram automatico", e));
 
-                // No redirigir aun, la modal se encarga de hacerlo al cerrar
+                // NO redirigir aquí: el modal "Zona de impresión" controla
+                // la secuencia (price-change modal → PostReceptionLabelsModal
+                // → dashboard) sin perder stampedLines ni redirigir temprano.
             } else if (stampedLines.length > 0) {
                 // POST-RECEPCIÓN: ofrecer imprimir etiquetas unitarias para
                 // las líneas que acaban de entrar en stock. Es el ÚNICO
@@ -1924,6 +2138,46 @@ export default function ReceiveInventoryPage() {
                                 </Button>
                             )}
                         </div>
+                        {/* Panel de SELECCIÓN PREVIA de etiquetas (contrato A). Sólo
+                            se muestra cuando hay líneas elegibles (no devolución, qty>0)
+                            para no distraer con contadores vacíos. Las devoluciones
+                            NO se cuentan: su checkbox vive deshabilitado en cada
+                            ReceptionRow y nunca contribuyen al total. */}
+                        {receiveList.length > 0 && selectionCounts.eligible > 0 && (
+                            <div
+                                className="px-3 md:px-4 py-2 border-b border-gray-100 dark:border-white/5 flex flex-wrap items-center gap-2 justify-between bg-emerald-50/40 dark:bg-emerald-900/10"
+                                data-testid="label-selection-summary"
+                            >
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <Printer size={12} className="text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
+                                    <span className="text-[10px] font-medium uppercase tracking-widest text-emerald-700 dark:text-emerald-300">
+                                        <span data-testid="label-selection-count">{selectionCounts.selected}</span>
+                                        {" "}seleccionadas · {selectionCounts.eligible} elegibles
+                                    </span>
+                                </div>
+                                <div className="flex items-center gap-1.5" role="group" aria-label="Selección masiva de etiquetas">
+                                    <button
+                                        type="button"
+                                        onClick={handleSelectAllPrintLabels}
+                                        disabled={selectionCounts.eligible === 0}
+                                        data-testid="label-select-all"
+                                        aria-label="Marcar todas las líneas elegibles para imprimir etiquetas"
+                                        className="h-7 px-3 rounded-xl text-[10px] font-bold uppercase tracking-widest bg-emerald-500 text-white hover:bg-emerald-600 disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800 dark:disabled:text-zinc-500 transition-colors"
+                                    >
+                                        Todas
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={handleSelectNonePrintLabels}
+                                        data-testid="label-select-none"
+                                        aria-label="Desmarcar la selección de etiquetas"
+                                        className="h-7 px-3 rounded-xl text-[10px] font-bold uppercase tracking-widest bg-zinc-200 text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+                                    >
+                                        Ninguna
+                                    </button>
+                                </div>
+                            </div>
+                        )}
                         
                         {receiveList.length === 0 ? (
                             <div className="flex-1 flex flex-col items-center justify-center opacity-40 text-gray-500 dark:text-zinc-500 p-10">
@@ -2454,7 +2708,9 @@ export default function ReceiveInventoryPage() {
                                                             currentStock: Number(p.quantity || 0),
                                                             unit: p.isWeighted ? 'KG' : 'UND',
                                                             isWeighted: Boolean(p.isWeighted),
-                                                            actualPhysicalStock: null
+                                                            actualPhysicalStock: null,
+                                                            // Default universal: nunca marcar impresión en DRAFT.
+                                                            printLabelAfterReceive: false,
                                                         }, ...prev];
                                                     });
                                                 } catch (e) {
@@ -2577,42 +2833,106 @@ export default function ReceiveInventoryPage() {
                 products={products}
             />
 
-            <Modal isOpen={!!priceChangeText} onOpenChange={(open) => {
-                if (!open) {
-                    setPriceChangeText(null);
-                    router.push('/dashboard');
-                }
-            }} backdrop="blur" classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl" }}>
+            <Modal
+                isOpen={priceZoneState.open}
+                onOpenChange={(open) => {
+                    if (!open && priceZoneState.open) {
+                        // Cierre con X/backdrop equivale a Continuar. Los
+                        // botones usan handlers directos y no disparan este
+                        // callback, evitando redirecciones dobles.
+                        handlePriceZoneContinue();
+                    }
+                }}
+                backdrop="blur"
+                size="lg"
+                classNames={{ base: "bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl" }}
+            >
                 <ModalContent>
-                    {(onClose) => (
-                        <>
-                            <ModalHeader className="flex flex-col gap-1 p-6">
-                                <div className="flex items-center gap-2">
-                                    <Sparkles className="text-emerald-500" size={20} />
-                                    <span className="font-medium uppercase tracking-tight text-lg">Cambios de Precio</span>
-                                </div>
-                                <p className="text-xs text-zinc-500 dark:text-zinc-400 font-normal normal-case">
-                                    Se detectaron cambios en los precios de venta. Â¿Deseas enviar el resumen a tus empleados para actualizar las etiquetas?
-                                </p>
-                            </ModalHeader>
-                            <ModalBody className="px-6 pb-6">
-                                <div className="bg-zinc-100 dark:bg-zinc-900 p-4 rounded-xl max-h-60 overflow-y-auto font-mono text-[10px] sm:text-xs whitespace-pre-wrap border border-zinc-200 dark:border-white/5">
-                                    {priceChangeText}
-                                </div>
-                            </ModalBody>
-                            <ModalFooter className="p-6 pt-0 gap-3">
-                                <Button variant="flat" onPress={onClose} className="h-12 flex-1 rounded-2xl font-medium uppercase text-xs tracking-widest">
-                                    Omitir
-                                </Button>
-                                <Button color="success" onPress={() => {
-                                    window.open(`https://wa.me/?text=${encodeURIComponent(priceChangeText || '')}`, '_blank');
-                                    onClose();
-                                }} className="h-12 flex-[2] rounded-2xl font-medium uppercase text-xs tracking-widest text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] bg-green-500 hover:bg-green-600">
-                                    Enviar por WhatsApp
-                                </Button>
-                            </ModalFooter>
-                        </>
-                    )}
+                    <ModalHeader className="flex flex-col gap-1 p-6">
+                        <div className="flex items-center gap-2">
+                            <Sparkles className="text-emerald-500" size={20} />
+                            <span className="font-medium uppercase tracking-tight text-lg">Zona de impresión</span>
+                        </div>
+                        <p
+                            className="text-xs text-zinc-500 dark:text-zinc-400 font-normal normal-case"
+                            data-testid="price-zone-summary"
+                        >
+                            {priceZoneState.changes.length} {priceZoneState.changes.length === 1 ? 'producto fue enviado' : 'productos fueron enviados'} a Zona de impresión para revisión posterior.
+                        </p>
+                        {priceZoneState.receptionRef && (
+                            <span className="text-[10px] text-zinc-400 font-mono mt-1">
+                                Lote: {priceZoneState.receptionRef}
+                            </span>
+                        )}
+                    </ModalHeader>
+                    <ModalBody className="px-6 pb-4">
+                        <div className="bg-zinc-50 dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-white/5 max-h-72 overflow-y-auto">
+                            <ul className="divide-y divide-zinc-200 dark:divide-white/5" aria-label="Lista de cambios de precio detectados">
+                                {priceZoneState.changes.map((change) => (
+                                    <li
+                                        key={`${change.barcode}-${change.oldSalePrice}-${change.newSalePrice}`}
+                                        className="flex items-center justify-between gap-3 px-4 py-3"
+                                        data-testid="price-zone-change-row"
+                                    >
+                                        <div className="min-w-0 flex-1">
+                                            <p className="text-xs font-medium text-zinc-900 dark:text-zinc-100 truncate uppercase tracking-tight">
+                                                {change.productName}
+                                            </p>
+                                            <p className="text-[10px] font-mono text-zinc-500 truncate">
+                                                #{change.barcode}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0">
+                                            <span className="text-xs text-rose-500 line-through tabular-nums">
+                                                ${formatCurrency(change.oldSalePrice)}
+                                            </span>
+                                            <ArrowDownLeft size={12} className="text-emerald-500 rotate-180" aria-hidden="true" />
+                                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">
+                                                ${formatCurrency(change.newSalePrice)}
+                                            </span>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (priceZoneState.whatsappText) {
+                                    window.open(`https://wa.me/?text=${encodeURIComponent(priceZoneState.whatsappText)}`, '_blank');
+                                }
+                            }}
+                            className="mt-3 text-[10px] font-medium uppercase tracking-widest text-green-600 hover:text-green-700 self-start"
+                        >
+                            Enviar resumen por WhatsApp
+                        </button>
+                    </ModalBody>
+                    <ModalFooter className="p-6 pt-0 gap-3">
+                        <Button
+                            variant="flat"
+                            // Handler EXPLÍCITO: marca la intención y
+                            // navega. No llamamos a `onClose()` para evitar
+                            // encadenamientos con onOpenChange.
+                            onPress={handlePriceZoneGoToLabels}
+                            className="h-12 flex-1 rounded-2xl font-medium uppercase text-xs tracking-widest bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                            aria-label="Ir a la zona de impresión de etiquetas (/labels)"
+                            data-testid="price-zone-go-to-labels"
+                        >
+                            Ir a zona de impresión
+                        </Button>
+                        <Button
+                            color="success"
+                            // Handler EXPLÍCITO: marca la intención y
+                            // abre PostReceptionLabelsModal si hay
+                            // stampedLines; si no, redirige al dashboard.
+                            onPress={handlePriceZoneContinue}
+                            className="h-12 flex-[2] rounded-2xl font-medium uppercase text-xs tracking-widest text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)] bg-emerald-500 hover:bg-emerald-600"
+                            aria-label="Continuar con el flujo de recepción"
+                            data-testid="price-zone-continue"
+                        >
+                            {postReceptionLines.length > 0 ? 'Continuar' : 'Finalizar'}
+                        </Button>
+                    </ModalFooter>
                 </ModalContent>
             </Modal>
             </>

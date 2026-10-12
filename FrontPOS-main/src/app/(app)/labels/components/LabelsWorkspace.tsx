@@ -32,7 +32,7 @@
 // no es la única puerta.
 // =============================================================================
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Button, Chip, Input, Spinner, Tooltip } from "@heroui/react";
 import {
@@ -55,6 +55,14 @@ import { apiFetch } from "@/lib/api-error";
 import { useAuth } from "@/lib/auth";
 import { isAdminUser } from "@/lib/auth-helpers.mjs";
 import { labelBatchTriggerSource } from "@/lib/label-print-trigger.mjs";
+import {
+    load as loadPersistentQueue,
+    remove as removePersistentEntry,
+    updateQuantity as persistentUpdateQuantity,
+    QUEUE_STORAGE_KEY as PERSISTENT_QUEUE_KEY,
+    QUEUE_REASONS as PERSISTENT_QUEUE_REASONS,
+} from "@/lib/label-print-queue.mjs";
+import type { LabelQueueEntry } from "@/lib/label-print-queue.d.mts";
 import {
     buildBridgeConfigPayload,
     loadPrintingConfig,
@@ -92,7 +100,24 @@ interface LabelCode {
 interface QueueItem {
     code: LabelCode;
     product: Product | null;
+    /**
+     * Cantidad TOTAL mostrada en la cola = `persistentQuantity + manualQuantity`.
+     * Deriva de los dos componentes y se mantiene sincronizada por el
+     * reducer `recomputeQuantity`.
+     */
     quantity: number;
+    /**
+     * Cantidad proveniente de la cola persistente (localStorage). SOLO
+     * esta porción se escribe de vuelta al storage al editar; la porción
+     * `manualQuantity` nunca contamina el storage.
+     */
+    persistentQuantity: number;
+    /**
+     * Cantidad añadida manualmente por el workspace (escaneo, búsqueda,
+     * +1). Al descartar/limpiar/completar la fila persistente, esta
+     * porción se preserva en memoria.
+     */
+    manualQuantity: number;
     /**
      * `true` cuando `POST /labels/codes` creó el code en esta sesión;
      * `false` cuando reutilizó uno existente (idempotencia). Se usa para
@@ -101,6 +126,41 @@ interface QueueItem {
      * "reprint" para no camuflar reimpresiones.
      */
     created: boolean;
+    /**
+     * Origen de la entrada:
+     *   - 'manual'    → sin componente persistente — todo manualQuantity.
+     *   - 'persistent'→ tiene componente persistente activo
+     *     (persistentQuantity > 0). Al imprimir, la porción persistente
+     *     se elimina del storage; la porción manual (si existe) sobrevive
+     *     y la fila queda convertida a 'manual' tras limpiarse la parte
+     *     persistente.
+     *   - Al descartar/limpiar/completar la porción persistente, la fila
+     *     NO desaparece si manualQuantity > 0: se queda en memoria como
+     *     'manual' con la cantidad manual intacta.
+     */
+    source: 'manual' | 'persistent';
+    /** ID canónico en storage. Solo presente cuando source === 'persistent'. */
+    persistentId?: string;
+    /** Motivo persistente (sólo PRICE_CHANGE). Solo persistent. */
+    reason?: string;
+    /** Precio viejo (antes del cambio). Solo persistent. */
+    oldSalePrice?: number;
+    /** Nuevo precio (snapshot en el momento del enqueue). Solo persistent. */
+    persistentSalePrice?: number;
+    /** Ref de recepción origen. Solo persistent. */
+    receptionRef?: string;
+    /**
+     * Barcode canónico (product-level) usado para fusionar manuales y
+     * persistentes por MISMO BARCODE. Se persiste en memoria independiente
+     * de `code.code` porque el backend puede devolver code === barcode o
+     * un code distinto; la fusión debe ser por producto, no por code.
+     */
+    productBarcode: string;
+    /**
+     * Error de resolución en /labels/codes para esta entrada persistente.
+     * Si está presente, pintamos un badge y permitimos reintento manual.
+     */
+    resolveError?: string;
 }
 
 interface PrinterProfile {
@@ -138,6 +198,270 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     // podría querer reintentar sin perder los items.
     const [clearQueueOnPrintClose, setClearQueueOnPrintClose] = useState(false);
     const [showShelfPreview, setShowShelfPreview] = useState(false);
+
+    // -------------------------------------------------------------------------
+    // Hidratación de la cola PERSISTENTE (ver src/lib/label-print-queue.mjs).
+    //
+    // Al montar y cada vez que otro tab modifique
+    // `pos_label_print_queue_v1`, cargamos las entradas canónicas (shape:
+    // { id, productBarcode, salePrice, newSalePrice, oldSalePrice,
+    //   queuedAt, receptionRef, reason: 'PRICE_CHANGE', quantity }),
+    // resolvemos su `code` canónico vía POST /labels/codes (idempotente) y
+    // las fusionamos con la cola local manteniendo:
+    //   - El `source: 'persistent'` cuando la porción persistente > 0; al
+    //     imprimir eliminamos la entrada de storage. Si manualQuantity>0,
+    //     la fila sobrevive como 'manual' con esa porción.
+    //   - La `persistentQuantity` del storage (fuente autoritativa de la
+    //     cantidad persistida; no se le suma nada por hidratación).
+    //   - La `manualQuantity` acumulada por el usuario en el workspace
+    //     (escaneo, +1). Se PRESERVA siempre que haya un match por
+    //     MISMO BARCODE (product-level), no sólo por `code.code`.
+    //   - Errores de resolución en `resolveError` para que la UI pueda
+    //     pintar el badge y el botón "Reintentar".
+    //
+    // Esta rutina NUNCA borra entradas de storage: la limpieza se hace
+    // sólo después de audit + print exitoso en el handler.
+    //
+    // Guard anti-reentrancy + pending re-run: si llega un `storage` event
+    // mientras una hidratación está en curso, marcamos la bandera
+    // `hydrationPendingRef` para disparar otra ronda al terminar — así no
+    // se pierden eventos durante vuelos en progreso.
+    // -------------------------------------------------------------------------
+    const hydrationInFlightRef = useRef(false);
+    const hydrationPendingRef = useRef(false);
+    const hydratePersistentQueue = useCallback(async () => {
+        if (typeof window === "undefined") return;
+        if (hydrationInFlightRef.current) {
+            // Un storage event llegó durante hidratación: marcamos pending
+            // para re-ejecutar al terminar y no perder el evento.
+            hydrationPendingRef.current = true;
+            return;
+        }
+        hydrationInFlightRef.current = true;
+        try {
+            const persistent = loadPersistentQueue(window.localStorage);
+            if (persistent.length === 0) {
+                // No hay nada persistido: desactivamos la porción persistente
+                // de las filas actuales. Si quedaba manualQuantity>0, la fila
+                // sobrevive como 'manual'; si no, se descarta.
+                setQueue((prev) =>
+                    prev
+                        .map((q) =>
+                            q.source === "persistent"
+                                ? {
+                                      ...q,
+                                      source: "manual" as const,
+                                      persistentId: undefined,
+                                      persistentQuantity: 0,
+                                      reason: undefined,
+                                      oldSalePrice: undefined,
+                                      persistentSalePrice: undefined,
+                                      receptionRef: undefined,
+                                      resolveError: undefined,
+                                      quantity: q.manualQuantity,
+                                  }
+                                : q,
+                        )
+                        .filter((q) => q.quantity > 0),
+                );
+                return;
+            }
+            // Resolver cada entrada contra /labels/codes. Idempotente —
+            // conserva errores por entrada para que el workspace pinte el
+            // badge y permita reintento.
+            const resolved = await Promise.all(
+                persistent.map(async (entry: LabelQueueEntry) => {
+                    try {
+                        const resp = await apiFetch<{ code: LabelCode; created: boolean }>(
+                            "/labels/codes",
+                            {
+                                method: "POST",
+                                body: JSON.stringify({ productBarcode: entry.productBarcode }),
+                            },
+                        );
+                        if (!resp?.code) {
+                            return { entry, error: "respuesta inválida del backend" };
+                        }
+                        return { entry, resp };
+                    } catch (err: any) {
+                        return {
+                            entry,
+                            error: err?.message || "No se pudo resolver el código",
+                        };
+                    }
+                }),
+            );
+            // IMPORTANTE: construimos el próximo estado FUERA del setQueue
+            // updater (sin side effects dentro del reducer de React). El
+            // updater sólo hace el merge con la cola previa.
+            setQueue((prev) => {
+                // Index previo por productBarcode (clave canónica para la
+                // fusión por MISMO BARCODE a nivel producto). Buscamos
+                // tanto en entradas marcadas como persistentes (para
+                // actualizar su persistentQuantity) como en manuales (para
+                // adoptarlas en una nueva fila fusionada).
+                const prevByBarcode = new Map<string, QueueItem>();
+                for (const q of prev) {
+                    const key = (q.productBarcode || q.code.productBarcode || "").toUpperCase();
+                    if (key) prevByBarcode.set(key, q);
+                }
+                const nextByBarcode = new Map<string, QueueItem>();
+                for (const item of resolved) {
+                    const entry = item.entry;
+                    const bc = (entry.productBarcode || "").toUpperCase();
+                    const existing = prevByBarcode.get(bc);
+                    const manualQuantity = existing?.manualQuantity ?? 0;
+                    const persistentQuantity = entry.quantity;
+                    if ("error" in item && item.error) {
+                        // Fallback: entrada con error. La mantenemos para
+                        // que el usuario pueda reintentar. Usamos un
+                        // placeholder como "code.code" temporal para la
+                        // fila (no se envía nunca al audit si no se
+                        // resuelve).
+                        nextByBarcode.set(bc, {
+                            code: {
+                                code: `__pending__${entry.id}`,
+                                productBarcode: bc,
+                                productName: entry.productName,
+                                salePrice: entry.salePrice,
+                            },
+                            product: existing?.product ?? null,
+                            quantity: persistentQuantity + manualQuantity,
+                            persistentQuantity,
+                            manualQuantity,
+                            created: false,
+                            source: "persistent",
+                            persistentId: entry.id,
+                            reason: entry.reason,
+                            oldSalePrice: entry.oldSalePrice,
+                            persistentSalePrice: entry.newSalePrice,
+                            receptionRef: entry.receptionRef,
+                            productBarcode: bc,
+                            resolveError: item.error,
+                        });
+                        continue;
+                    }
+                    const resp = (item as { resp: { code: LabelCode; created: boolean } }).resp;
+                    nextByBarcode.set(bc, {
+                        code: {
+                            ...resp.code,
+                            salePrice:
+                                typeof resp.code.salePrice === "number"
+                                    ? resp.code.salePrice
+                                    : entry.newSalePrice,
+                            productName:
+                                resp.code.productName || entry.productName,
+                        },
+                        product: existing?.product ?? null,
+                        quantity: persistentQuantity + manualQuantity,
+                        persistentQuantity,
+                        manualQuantity,
+                        created: !!resp.created,
+                        source: "persistent",
+                        persistentId: entry.id,
+                        reason: entry.reason,
+                        oldSalePrice: entry.oldSalePrice,
+                        persistentSalePrice: entry.newSalePrice,
+                        receptionRef: entry.receptionRef,
+                        productBarcode: bc,
+                    });
+                }
+                // Manuales previas que NO coincidieron con ninguna
+                // persistente nueva: se conservan tal cual.
+                const persistentManualPreserved: QueueItem[] = [];
+                for (const q of prev) {
+                    const key = (q.productBarcode || q.code.productBarcode || "").toUpperCase();
+                    if (!key) continue;
+                    if (nextByBarcode.has(key)) continue;
+                    if (q.source === "manual") {
+                        // Manual sin match persistente: preservar tal cual.
+                        persistentManualPreserved.push(q);
+                        continue;
+                    }
+                    // Fila que ERA persistente y ya no está en storage:
+                    // conservar la porción manual si existe.
+                    if (q.manualQuantity > 0) {
+                        persistentManualPreserved.push({
+                            ...q,
+                            source: "manual",
+                            persistentId: undefined,
+                            persistentQuantity: 0,
+                            reason: undefined,
+                            oldSalePrice: undefined,
+                            persistentSalePrice: undefined,
+                            receptionRef: undefined,
+                            resolveError: undefined,
+                            quantity: q.manualQuantity,
+                        });
+                    }
+                }
+                // Orden determinista: primero persistent (orden FIFO del
+                // storage, dado por `resolved`), luego manual.
+                const persistentList = Array.from(nextByBarcode.values());
+                return [...persistentList, ...persistentManualPreserved];
+            });
+        } finally {
+            hydrationInFlightRef.current = false;
+            // Si llegó un storage event durante el vuelo, re-ejecutamos.
+            if (hydrationPendingRef.current) {
+                hydrationPendingRef.current = false;
+                void hydratePersistentQueue();
+            }
+        }
+    }, []);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        void hydratePersistentQueue();
+        const onStorage = (ev: StorageEvent) => {
+            if (!ev.key || ev.key === PERSISTENT_QUEUE_KEY) {
+                void hydratePersistentQueue();
+            }
+        };
+        window.addEventListener("storage", onStorage);
+        return () => window.removeEventListener("storage", onStorage);
+    }, [hydratePersistentQueue]);
+
+    const discardPersistentEntry = useCallback((persistentId: string) => {
+        if (!persistentId || typeof window === "undefined") return;
+        // Side effect de storage FUERA del updater de setState: así React
+        // puede re-ejecutar el updater en Strict Mode sin disparar
+        // múltiples removeItem (contrato: no side effects dentro del
+        // reducer).
+        removePersistentEntry(window.localStorage, persistentId);
+        setQueue((prev) =>
+            prev
+                .map((q) => {
+                    if (q.persistentId !== persistentId) return q;
+                    // Si la fila tenía porción manual añadida por el
+                    // usuario, la fila sobrevive como 'manual' con esa
+                    // cantidad. Si no, cae a 0 y se filtra.
+                    const manual = q.manualQuantity;
+                    return {
+                        ...q,
+                        source: "manual" as const,
+                        persistentId: undefined,
+                        persistentQuantity: 0,
+                        reason: undefined,
+                        oldSalePrice: undefined,
+                        persistentSalePrice: undefined,
+                        receptionRef: undefined,
+                        resolveError: undefined,
+                        manualQuantity: manual,
+                        quantity: manual,
+                    };
+                })
+                .filter((q) => q.quantity > 0),
+        );
+    }, []);
+
+    const retryPersistentEntry = useCallback(
+        async (persistentId: string) => {
+            if (!persistentId || typeof window === "undefined") return;
+            await hydratePersistentQueue();
+        },
+        [hydratePersistentQueue],
+    );
 
     const { data: productsResponse } = useApi<any>("/products/all-products");
     const { data: profilesResp } = useApi<{ profiles: PrinterProfile[] }>("/labels/printers");
@@ -181,18 +505,52 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                     },
                 );
                 if (!resp?.code) throw new Error("respuesta inválida del backend");
+                const resolvedBarcode = (
+                    resp.code.productBarcode || bc
+                ).toUpperCase();
                 setQueue((prev) => {
-                    const existing = prev.findIndex((q) => q.code.code === resp.code.code);
+                    // FUSIÓN POR MISMO BARCODE (nivel producto). No basta
+                    // con `code.code` porque la cola persistente usa el
+                    // placeholder `__pending__{id}` para entradas sin
+                    // resolver, y porque los códigos derivados pueden
+                    // cambiar. El pivote es `productBarcode`.
+                    const existing = prev.findIndex(
+                        (q) =>
+                            (q.productBarcode || q.code.productBarcode || "")
+                                .toUpperCase() === resolvedBarcode,
+                    );
                     if (existing >= 0) {
                         const copy = [...prev];
+                        const current = copy[existing];
+                        // Sumamos 1 a la porción MANUAL: la porción
+                        // persistente nunca se infla por escaneo (sigue
+                        // reflejando lo acordado en recepción).
+                        const nextManual = current.manualQuantity + 1;
                         copy[existing] = {
-                            ...copy[existing],
-                            quantity: copy[existing].quantity + 1,
+                            ...current,
+                            code: {
+                                ...current.code,
+                                // Si estábamos en placeholder, adoptamos
+                                // el code real que acabamos de resolver.
+                                ...resp.code,
+                            },
+                            manualQuantity: nextManual,
+                            quantity: current.persistentQuantity + nextManual,
+                            product: current.product ?? product,
                         };
                         return copy;
                     }
                     return [
-                        { code: resp.code, product, quantity: 1, created: !!resp.created },
+                        {
+                            code: resp.code,
+                            product,
+                            quantity: 1,
+                            persistentQuantity: 0,
+                            manualQuantity: 1,
+                            created: !!resp.created,
+                            source: "manual" as const,
+                            productBarcode: resolvedBarcode,
+                        },
                         ...prev,
                     ];
                 });
@@ -239,19 +597,54 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
         [query, addToQueue],
     );
 
-    const updateQuantity = (code: string, delta: number) => {
+    // La cantidad editable de una entrada persistente modifica su porción
+    // persistida y se escribe antes de actualizar React. La porción manual
+    // fusionada permanece independiente y no contamina localStorage.
+    const updateQuantity = useCallback((code: string, delta: number) => {
+        const target = queue.find((item) => item.code.code === code);
+        if (!target) return;
+
+        if (target.source === "persistent" && target.persistentId) {
+            const nextPersistent = Math.max(1, target.persistentQuantity + delta);
+            if (nextPersistent === target.persistentQuantity) return;
+            if (typeof window !== "undefined") {
+                persistentUpdateQuantity(
+                    window.localStorage,
+                    target.persistentId,
+                    nextPersistent,
+                );
+            }
+            setQueue((prev) =>
+                prev.map((item) =>
+                    item.persistentId === target.persistentId
+                        ? {
+                              ...item,
+                              persistentQuantity: nextPersistent,
+                              quantity: nextPersistent + item.manualQuantity,
+                          }
+                        : item,
+                ),
+            );
+            return;
+        }
+
+        const nextManual = Math.max(1, target.manualQuantity + delta);
         setQueue((prev) =>
-            prev.map((q) =>
-                q.code.code === code
-                    ? { ...q, quantity: Math.max(1, q.quantity + delta) }
-                    : q,
+            prev.map((item) =>
+                item.code.code === code && item.source === "manual"
+                    ? {
+                          ...item,
+                          manualQuantity: nextManual,
+                          quantity: nextManual,
+                      }
+                    : item,
             ),
         );
-    };
+    }, [queue]);
 
-    const removeFromQueue = (code: string) => {
+    const removeFromQueue = useCallback((code: string) => {
         setQueue((prev) => prev.filter((q) => q.code.code !== code));
-    };
+    }, []);
 
     const totalLabels = queue.reduce((acc, q) => acc + q.quantity, 0);
 
@@ -269,6 +662,20 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     // -------------------------------------------------------------------------
     const handlePrint = useCallback(async () => {
         if (queue.length === 0) return;
+        // AUDIT-FIRST: si alguna entrada persistente no se pudo resolver
+        // en /labels/codes, se queda en pantalla con badge rojo y no se
+        // envía al lote. Bloquear aquí antes de computar los payloads
+        // mantiene las referencias `queue.map(q => ...)` intactas con el
+        // contrato de los tests estáticos.
+        if (queue.some((q) => q.resolveError)) {
+            toast({
+                variant: "destructive",
+                title: "Resuelve los errores antes de imprimir",
+                description:
+                    "Hay entradas pendientes en la cola con error. Pulsa Reintentar en cada una o descártala.",
+            });
+            return;
+        }
         setIsBusy(true);
         try {
             const triggerSource = labelBatchTriggerSource(queue.map((q) => q.created));
@@ -283,6 +690,8 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                     sizeName: defaultSize?.name || "default",
                 },
             };
+            // 1. AUDIT PRIMERO. Si falla, conservamos la cola intacta y
+            //    salimos — nada se borra del storage persistente.
             await apiFetch("/labels/print-jobs", {
                 method: "POST",
                 body: JSON.stringify(payload),
@@ -301,9 +710,12 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                 productName:
                     q.product?.productName || q.code.productName || "ETIQUETA",
                 salePrice:
-                    typeof q.product?.salePrice === "number"
-                        ? q.product.salePrice
-                        : q.code.salePrice ?? 0,
+                    q.source === "persistent"
+                    && typeof q.persistentSalePrice === "number"
+                        ? q.persistentSalePrice
+                        : typeof q.product?.salePrice === "number"
+                            ? q.product.salePrice
+                            : q.code.salePrice ?? 0,
             }));
             const bridgePayload = {
                 ...payload,
@@ -316,15 +728,89 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                 bridgeConfig,
                 labelItems,
             };
+            // 2. ENVÍO: bridge si está disponible, si no fallback a
+            //    window.print(). printInvoked=true requiere que al menos
+            //    una de las dos vías haya corrido sin lanzar.
             const w = window as any;
+            let printInvoked = false;
             if (w.posBridge?.print) {
                 try {
                     await w.posBridge.print(bridgePayload);
+                    printInvoked = true;
                 } catch {
-                    window.print();
+                    try {
+                        window.print();
+                        printInvoked = true;
+                    } catch {
+                        printInvoked = false;
+                    }
                 }
             } else {
-                window.print();
+                try {
+                    window.print();
+                    printInvoked = true;
+                } catch {
+                    printInvoked = false;
+                }
+            }
+            // Si NO se logró invocar el envío físico (bridge rechazó y
+            // window.print lanzó), NO limpiamos la cola, NO borramos
+            // persistentes y NO mostramos éxito. El usuario reintenta.
+            if (!printInvoked) {
+                toast({
+                    variant: "destructive",
+                    title: "No se pudo imprimir",
+                    description:
+                        "El bridge local y el diálogo del navegador fallaron. La cola se conserva para reintento.",
+                });
+                return;
+            }
+            // 3. LIMPIEZA DE STORAGE: SOLO los persistentIds incluidos en
+            //    este lote se eliminan del storage. Las porciones MANUAL
+            //    fusionadas en esas mismas filas sobreviven en memoria
+            //    como entradas 'manual' standalone (contrato: no perder
+            //    la porción manual al descartar/limpiar/completar la
+            //    persistente). Las entradas MANUALES puras tampoco se
+            //    tocan automáticamente — "Vaciar" las limpia por aparte.
+            if (printInvoked && typeof window !== "undefined") {
+                const persistentIdsPrinted = queue
+                    .filter((q) => q.source === "persistent" && q.persistentId)
+                    .map((q) => q.persistentId as string);
+                // Side effect de storage FUERA del updater: una pasada
+                // por id, antes del reducer de React.
+                for (const pid of persistentIdsPrinted) {
+                    removePersistentEntry(window.localStorage, pid);
+                }
+                setQueue((prev) =>
+                    prev
+                        .map((q) => {
+                            if (
+                                q.source === "persistent"
+                                && q.persistentId
+                                && persistentIdsPrinted.includes(q.persistentId)
+                            ) {
+                                // Transformamos a 'manual' preservando la
+                                // porción manual fusionada; si no hay
+                                // porción manual, el filter de abajo la quita.
+                                const manual = q.manualQuantity;
+                                return {
+                                    ...q,
+                                    source: "manual" as const,
+                                    persistentId: undefined,
+                                    persistentQuantity: 0,
+                                    reason: undefined,
+                                    oldSalePrice: undefined,
+                                    persistentSalePrice: undefined,
+                                    receptionRef: undefined,
+                                    resolveError: undefined,
+                                    manualQuantity: manual,
+                                    quantity: manual,
+                                };
+                            }
+                            return q;
+                        })
+                        .filter((q) => q.quantity > 0),
+                );
             }
             toast({
                 variant: "default",
@@ -351,25 +837,50 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     // lote de las etiquetas térmicas. La geometría del grid Letter 2×6
     // vive en `shelf-labels.mjs` y es inmutable.
     // -------------------------------------------------------------------------
+    // El resumen contable usa el precio PERSISTIDO cuando viene de una
+    // entrada tras cambio en recepción (`persistentSalePrice`), de forma
+    // que la hoja de góndola refleje el PRECIO NUEVO. Para entradas
+    // manuales usamos el salePrice del producto o del code en ese orden.
+    const shelfPriceOf = useCallback((q: QueueItem): number => {
+        if (q.source === "persistent" && typeof q.persistentSalePrice === "number") {
+            return q.persistentSalePrice;
+        }
+        if (typeof q.product?.salePrice === "number") return q.product.salePrice;
+        return q.code.salePrice ?? 0;
+    }, []);
+
     const shelfSummary = useMemo(
         () =>
             summarizeShelfLabels(
-                queue.map((q) => ({
-                    code: q.code.code,
-                    productName:
-                        q.product?.productName || q.code.productName || "ETIQUETA",
-                    salePrice:
-                        typeof q.product?.salePrice === "number"
-                            ? q.product.salePrice
-                            : q.code.salePrice ?? 0,
-                    quantity: q.quantity,
-                })),
+                queue
+                    .filter((q) => !q.resolveError)
+                    .map((q) => ({
+                        code: q.code.code,
+                        productName:
+                            q.product?.productName || q.code.productName || "ETIQUETA",
+                        salePrice: shelfPriceOf(q),
+                        quantity: q.quantity,
+                    })),
             ),
-        [queue],
+        [queue, shelfPriceOf],
     );
 
     const handlePrintShelfSheet = useCallback(async () => {
         if (queue.length === 0) return;
+        // AUDIT-FIRST: si alguna entrada persistente no se pudo resolver
+        // en /labels/codes, se queda en pantalla con badge rojo y no se
+        // envía al lote. Bloquear aquí antes de computar los payloads
+        // mantiene las referencias `queue.map(q => ...)` intactas con el
+        // contrato de los tests estáticos.
+        if (queue.some((q) => q.resolveError)) {
+            toast({
+                variant: "destructive",
+                title: "Resuelve los errores antes de imprimir",
+                description:
+                    "Hay entradas pendientes en la cola con error. Pulsa Reintentar en cada una o descártala.",
+            });
+            return;
+        }
         setIsBusy(true);
         try {
             const triggerSource = labelBatchTriggerSource(queue.map((q) => q.created));
@@ -377,10 +888,8 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                 code: q.code.code,
                 productName:
                     q.product?.productName || q.code.productName || "ETIQUETA",
-                salePrice:
-                    typeof q.product?.salePrice === "number"
-                        ? q.product.salePrice
-                        : q.code.salePrice ?? 0,
+                // Precio NUEVO en la hoja de góndola — ver shelfPriceOf.
+                salePrice: shelfPriceOf(q),
                 quantity: q.quantity,
             }));
             // 1. Auditoría: `sizeTemplateId: null` + `meta.layout` canónico.
@@ -432,6 +941,19 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
             doc.write(html);
             doc.close();
 
+            // Lista de ids persistentes que debemos eliminar DESPUÉS del
+            // print(): tomamos snapshot aquí para no leer `queue` dentro
+            // del cleanup (el closure captura).
+            const persistentIdsToRemove = queue
+                .filter((q) => q.source === "persistent" && q.persistentId)
+                .map((q) => q.persistentId as string);
+
+            // Flag compartido entre `fire` y `cleanup`: la limpieza del
+            // storage sólo ocurre cuando `print()` se invocó físicamente.
+            // Si el iframe falla por completo antes de llamar a print(),
+            // no limpiamos nada ni mostramos éxito.
+            let shelfPrintInvoked = false;
+
             const cleanup = () => {
                 // Limpieza DESPUÉS de iframe.print(): nunca antes, para no
                 // perder la cola si el usuario cancela el diálogo del navegador.
@@ -440,27 +962,88 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                 } catch {
                     /* el nodo ya fue removido */
                 }
+                if (!shelfPrintInvoked) {
+                    // print() nunca se invocó: NO limpiamos storage, NO
+                    // tocamos la cola in-memory y NO mostramos éxito.
+                    toast({
+                        variant: "destructive",
+                        title: "No se pudo imprimir la hoja",
+                        description:
+                            "El diálogo del navegador no se abrió. La cola se conserva para reintento.",
+                    });
+                    return;
+                }
+                // ELIMINAR ENTRADAS PERSISTENTES del storage SOLO
+                // después de print() invocado. Side effect FUERA del
+                // reducer: una sola pasada por id.
+                if (typeof window !== "undefined") {
+                    for (const pid of persistentIdsToRemove) {
+                        removePersistentEntry(window.localStorage, pid);
+                    }
+                }
+                // Checkbox "Limpiar cola al cerrar impresión": limpieza
+                // manual explícita del usuario. Vaciamos todo (incluyendo
+                // la porción manual de filas que acabamos de convertir).
                 if (clearQueueOnPrintClose) {
                     setQueue([]);
+                } else {
+                    // Preservamos las porciones MANUAL de las filas que
+                    // tenían porción persistente: convertimos esas filas
+                    // a 'manual' standalone con `manualQuantity > 0`.
+                    setQueue((prev) =>
+                        prev
+                            .map((q) => {
+                                if (
+                                    q.source === "persistent"
+                                    && q.persistentId
+                                    && persistentIdsToRemove.includes(q.persistentId)
+                                ) {
+                                    const manual = q.manualQuantity;
+                                    return {
+                                        ...q,
+                                        source: "manual" as const,
+                                        persistentId: undefined,
+                                        persistentQuantity: 0,
+                                        reason: undefined,
+                                        oldSalePrice: undefined,
+                                        persistentSalePrice: undefined,
+                                        receptionRef: undefined,
+                                        resolveError: undefined,
+                                        manualQuantity: manual,
+                                        quantity: manual,
+                                    };
+                                }
+                                return q;
+                            })
+                            .filter((q) => q.quantity > 0),
+                    );
                 }
+                toast({
+                    variant: "default",
+                    title: "HOJA DE GÓNDOLA ENVIADA",
+                    description: `${shelfSummary.totalLabels} etiqueta(s) · ${shelfSummary.totalPages} página(s)`,
+                });
             };
 
             const fire = () => {
                 try {
-                    iframe.contentWindow?.focus();
-                    iframe.contentWindow?.print();
+                    if (typeof iframe.contentWindow?.print !== "function") {
+                        shelfPrintInvoked = false;
+                    } else {
+                        iframe.contentWindow?.focus();
+                        iframe.contentWindow?.print();
+                        shelfPrintInvoked = true;
+                    }
+                } catch {
+                    shelfPrintInvoked = false;
                 } finally {
                     setTimeout(cleanup, 500);
                 }
             };
             if (iframe.contentWindow?.document.readyState === "complete") fire();
             else iframe.onload = fire;
-
-            toast({
-                variant: "default",
-                title: "HOJA DE GÓNDOLA ENVIADA",
-                description: `${shelfSummary.totalLabels} etiqueta(s) · ${shelfSummary.totalPages} página(s)`,
-            });
+            // El toast de "enviada" se emite en el cleanup, cuando
+            // sabemos si print() se invocó.
         } catch (e: any) {
             toast({
                 variant: "destructive",
@@ -470,7 +1053,7 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
         } finally {
             setIsBusy(false);
         }
-    }, [queue, defaultPrinter, user, shelfSummary, clearQueueOnPrintClose, toast]);
+    }, [queue, defaultPrinter, user, shelfSummary, clearQueueOnPrintClose, toast, shelfPriceOf]);
 
     // -------------------------------------------------------------------------
     // Apertura manual del cajón — compartida entre ambos modos.
@@ -712,8 +1295,38 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                                 size="sm"
                                 color="danger"
                                 variant="light"
-                                onPress={() => setQueue([])}
+                                // "Vaciar" NUNCA toca entradas persistentes: estas
+                                // vienen de la cola localStorage (cambios de precio
+                                // encolados tras una recepción) y deben descartarse
+                                // explícitamente con el botón "Descartar" de cada
+                                // entrada. Así protegemos al cajero de perder una
+                                // lista de reimpresión por un click apresurado.
+                                // "Vaciar" limpia la porción MANUAL
+                                // añadida en este workspace. Las filas que
+                                // tienen porción persistente conservan
+                                // sólo esa porción (manualQuantity → 0);
+                                // las filas puramente manuales se filtran.
+                                // La persistente nunca se descarta aquí,
+                                // porque viene del flujo de recepción y
+                                // debe descartarse explícitamente con el
+                                // botón "Descartar" de cada fila.
+                                onPress={() =>
+                                    setQueue((prev) =>
+                                        prev
+                                            .map((q) =>
+                                                q.source === "persistent"
+                                                    ? {
+                                                          ...q,
+                                                          manualQuantity: 0,
+                                                          quantity: q.persistentQuantity,
+                                                      }
+                                                    : q,
+                                            )
+                                            .filter((q) => q.source === "persistent"),
+                                    )
+                                }
                                 className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+                                data-testid="labels-clear-manual-btn"
                             >
                                 Vaciar
                             </Button>
@@ -729,63 +1342,161 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                         </div>
                     ) : (
                         <ul className="space-y-2 max-h-[60vh] overflow-auto">
-                            {queue.map((item) => (
-                                <li
-                                    key={item.code.code}
-                                    data-queue-code={item.code.code}
-                                    className="flex items-center gap-3 p-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/50 border border-zinc-200 dark:border-white/5"
-                                >
-                                    <div className="min-w-0 flex-1">
-                                        <p className="text-xs font-bold truncate">
-                                            {item.product?.productName
-                                                || item.code.productName
-                                                || "Etiqueta libre"}
-                                        </p>
-                                        <p className="text-[9px] font-mono text-zinc-500 truncate">
-                                            {item.code.code}
-                                            {item.code.printCount != null && item.code.printCount > 0
-                                                ? ` · ${item.code.printCount} prints`
-                                                : ""}
-                                        </p>
-                                    </div>
-                                    <div className="flex items-center gap-1">
-                                        <Button
-                                            isIconOnly
-                                            size="sm"
-                                            variant="flat"
-                                            className="rounded-xl"
-                                            aria-label="menos"
-                                            onPress={() => updateQuantity(item.code.code, -1)}
-                                        >
-                                            <Minus size={12} />
-                                        </Button>
-                                        <span className="text-xs font-bold w-8 text-center tabular-nums">
-                                            {item.quantity}
-                                        </span>
-                                        <Button
-                                            isIconOnly
-                                            size="sm"
-                                            variant="flat"
-                                            className="rounded-xl"
-                                            aria-label="más"
-                                            onPress={() => updateQuantity(item.code.code, 1)}
-                                        >
-                                            <PlusIcon size={12} />
-                                        </Button>
-                                        <Button
-                                            isIconOnly
-                                            size="sm"
-                                            variant="light"
-                                            color="danger"
-                                            className="rounded-xl ml-1"
-                                            aria-label="quitar"
-                                            onPress={() => removeFromQueue(item.code.code)}
-                                        >
-                                            <Trash2 size={12} />
-                                        </Button>
-                                    </div>
-                                </li>
-                            ))}
+                            {queue.map((item) => {
+                                const isPersistent = item.source === "persistent";
+                                const hasError = Boolean(item.resolveError);
+                                return (
+                                    <li
+                                        key={isPersistent && item.persistentId
+                                            ? `pq-${item.persistentId}`
+                                            : item.code.code}
+                                        data-queue-code={item.code.code}
+                                        data-queue-source={item.source}
+                                        data-queue-persistent-id={item.persistentId || ""}
+                                        data-queue-reason={item.reason || ""}
+                                        className={`flex items-center gap-3 p-2 rounded-xl border transition-colors ${hasError
+                                            ? "bg-rose-50 dark:bg-rose-500/10 border-rose-500/40"
+                                            : isPersistent
+                                                ? "bg-amber-50/60 dark:bg-amber-500/5 border-amber-500/30"
+                                                : "bg-zinc-50 dark:bg-zinc-800/50 border-zinc-200 dark:border-white/5"
+                                            }`}
+                                    >
+                                        <div className="min-w-0 flex-1">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                <p className="text-xs font-bold truncate max-w-[220px]">
+                                                    {item.product?.productName
+                                                        || item.code.productName
+                                                        || "Etiqueta libre"}
+                                                </p>
+                                                {isPersistent && item.reason === PERSISTENT_QUEUE_REASONS.PRICE_CHANGE && (
+                                                    <Chip
+                                                        size="sm"
+                                                        variant="flat"
+                                                        color="warning"
+                                                        className="rounded-xl text-[9px] font-bold uppercase"
+                                                        data-testid="labels-queue-badge-reason"
+                                                    >
+                                                        Cambio de precio
+                                                    </Chip>
+                                                )}
+                                                {hasError && (
+                                                    <Chip
+                                                        size="sm"
+                                                        variant="flat"
+                                                        color="danger"
+                                                        className="rounded-xl text-[9px] font-bold uppercase"
+                                                    >
+                                                        Error · reintentar
+                                                    </Chip>
+                                                )}
+                                            </div>
+                                            <p className="text-[9px] font-mono text-zinc-500 truncate">
+                                                {item.code.code}
+                                                {item.code.printCount != null && item.code.printCount > 0
+                                                    ? ` · ${item.code.printCount} prints`
+                                                    : ""}
+                                            </p>
+                                            {isPersistent && typeof item.oldSalePrice === "number" && typeof item.persistentSalePrice === "number" && (
+                                                <p
+                                                    className="text-[10px] text-amber-700 dark:text-amber-300 mt-0.5 flex items-center gap-1"
+                                                    data-testid="labels-queue-badge-change"
+                                                >
+                                                    <span className="line-through text-zinc-500 tabular-nums">
+                                                        ${item.oldSalePrice.toLocaleString("es-CO")}
+                                                    </span>
+                                                    <span>→</span>
+                                                    <span className="font-bold tabular-nums">
+                                                        ${item.persistentSalePrice.toLocaleString("es-CO")}
+                                                    </span>
+                                                </p>
+                                            )}
+                                            {isPersistent && item.receptionRef && (
+                                                <p
+                                                    className="text-[9px] font-mono text-zinc-500 truncate"
+                                                    data-testid="labels-queue-badge-ref"
+                                                >
+                                                    Lote: {item.receptionRef}
+                                                </p>
+                                            )}
+                                            {hasError && (
+                                                <p className="text-[9px] text-rose-600 dark:text-rose-400 mt-1 truncate">
+                                                    {item.resolveError}
+                                                </p>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-1">
+                                            {hasError && item.persistentId && (
+                                                <Button
+                                                    isIconOnly
+                                                    size="sm"
+                                                    variant="flat"
+                                                    color="warning"
+                                                    className="rounded-xl"
+                                                    aria-label="Reintentar resolución"
+                                                    onPress={() => void retryPersistentEntry(item.persistentId!)}
+                                                    data-testid="labels-queue-retry"
+                                                >
+                                                    <RefreshCw size={12} />
+                                                </Button>
+                                            )}
+                                            {!hasError && (
+                                                <>
+                                                    <Button
+                                                        isIconOnly
+                                                        size="sm"
+                                                        variant="flat"
+                                                        className="rounded-xl"
+                                                        aria-label="menos"
+                                                        onPress={() => updateQuantity(item.code.code, -1)}
+                                                    >
+                                                        <Minus size={12} />
+                                                    </Button>
+                                                    <span className="text-xs font-bold w-8 text-center tabular-nums">
+                                                        {item.quantity}
+                                                    </span>
+                                                    <Button
+                                                        isIconOnly
+                                                        size="sm"
+                                                        variant="flat"
+                                                        className="rounded-xl"
+                                                        aria-label="más"
+                                                        onPress={() => updateQuantity(item.code.code, 1)}
+                                                    >
+                                                        <PlusIcon size={12} />
+                                                    </Button>
+                                                </>
+                                            )}
+                                            {isPersistent && item.persistentId ? (
+                                                <Button
+                                                    isIconOnly
+                                                    size="sm"
+                                                    variant="light"
+                                                    color="danger"
+                                                    className="rounded-xl ml-1"
+                                                    aria-label="Descartar entrada persistente"
+                                                    title="Descartar: elimina la entrada de la cola persistente"
+                                                    onPress={() => discardPersistentEntry(item.persistentId!)}
+                                                    data-testid="labels-queue-discard"
+                                                >
+                                                    <Trash2 size={12} />
+                                                </Button>
+                                            ) : (
+                                                <Button
+                                                    isIconOnly
+                                                    size="sm"
+                                                    variant="light"
+                                                    color="danger"
+                                                    className="rounded-xl ml-1"
+                                                    aria-label="quitar"
+                                                    onPress={() => removeFromQueue(item.code.code)}
+                                                >
+                                                    <Trash2 size={12} />
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </li>
+                                );
+                            })}
                         </ul>
                     )}
 
