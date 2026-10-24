@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Modal, ModalContent, Button, Avatar } from '@heroui/react';
-import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins, HandCoins, QrCode } from 'lucide-react';
+import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins, HandCoins } from 'lucide-react';
 
 /**
  * Préstamo registrado disponible para pagar un egreso.
@@ -481,7 +481,7 @@ export function ExpensePaymentModal({
                   // egresos pagados desde el saldo de Bold para que se
                   // descuente del canal correcto en el dashboard, igual
                   // que con Nequi o Daviplata.
-                  { id: 'BOLD_QR' as const, label: 'Bold QR', icon: <QrCode size={14} className="md:w-5 md:h-5" /> },
+                  { id: 'BOLD_QR' as const, label: 'Bold', logo: '/logos/bold.png' },
                   // La pestaña "Préstamo" sólo aparece cuando el padre entrega
                   // `loanOption?.enabled = true`. Es la última de la lista para
                   // dejar claro que es un canal especial — no sale de la caja.
@@ -610,9 +610,9 @@ export function ExpensePaymentModal({
                       )}
                       {boldQrPaid > 0 && (
                         <div className="px-2.5 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
-                           <QrCode size={14} className="text-cyan-500" />
+                           <img src="/logos/bold.png" className="h-4 w-4 object-contain rounded-full" alt="Bold" />
                            <span className="text-[10px] font-medium text-cyan-600 dark:text-cyan-400 uppercase tracking-widest">${formatCurrency(boldQrPaid)}</span>
-                           <button type="button" onClick={() => setBoldQrPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Bold QR"><X size={12} /></button>
+                           <button type="button" onClick={() => setBoldQrPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Bold"><X size={12} /></button>
                         </div>
                       )}
                       {cashPaid > 0 && (
@@ -671,8 +671,8 @@ export function ExpensePaymentModal({
                             role="note"
                             className="text-[10px] md:text-[11px] font-bold text-cyan-600 dark:text-cyan-400 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1 flex items-center justify-center gap-1.5"
                           >
-                            <QrCode size={12} aria-hidden="true" />
-                            Bold QR se paga completo, no se combina
+                            <img src="/logos/bold.png" className="h-3 w-3 object-contain rounded-full" alt="" aria-hidden="true" />
+                            Bold se paga completo, no se combina
                           </p>
                         )}
                       </div>

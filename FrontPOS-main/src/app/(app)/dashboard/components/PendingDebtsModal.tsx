@@ -7,7 +7,7 @@ import {
 } from "@heroui/react";
 import {
   HandCoins, Activity, Banknote, Wallet, Building2,
-  CreditCard as CardIcon, ChevronRight, Info, X, QrCode
+  CreditCard as CardIcon, ChevronRight, Info, X
 } from 'lucide-react';
 import { Expense } from '@/lib/definitions';
 import { liveDebtTotal, sumPayables } from '@/lib/payables.mjs';
@@ -169,7 +169,7 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                                       // deuda cobrando desde el saldo del
                                       // canal Bold. El backend ya acepta
                                       // `paymentSource` libre en /expenses/settle.
-                                      { id: 'BOLD_QR', label: 'Bold QR', icon: <QrCode size={16} />, color: 'cyan' }
+                                      { id: 'BOLD_QR', label: 'Bold', icon: <img src="/logos/bold.png" className="h-4 w-4 object-contain rounded-full" alt="" aria-hidden="true" />, color: 'cyan' }
                                     ].map((source) => (
                                       <Button
                                         key={source.id}

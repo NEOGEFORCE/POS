@@ -308,11 +308,11 @@ test("ExpensePaymentModal mantiene estado dedicado `boldQrPaid` y pestaña `BOLD
         /\bboldQrPaid\b/,
         "El modal debe mantener la variable `boldQrPaid` como monto acumulado del canal.",
     );
-    // Pestaña del rail con id BOLD_QR y label 'Bold QR'.
+    // Pestaña del rail con id BOLD_QR, label 'Bold' y el logo oficial de Bold.
     assert.match(
         runtime,
-        /id:\s*['"]BOLD_QR['"][\s\S]{0,160}label:\s*['"]Bold QR['"]/,
-        "El rail de métodos debe exponer `{ id: 'BOLD_QR', label: 'Bold QR', icon: <QrCode .../> }`.",
+        /id:\s*['"]BOLD_QR['"][\s\S]{0,160}label:\s*['"]Bold['"][\s\S]{0,60}logo:\s*['"]\/logos\/bold\.png['"]/,
+        "El rail de métodos debe exponer `{ id: 'BOLD_QR', label: 'Bold', logo: '/logos/bold.png' }`.",
     );
 });
 
@@ -390,11 +390,11 @@ test("ExpensePaymentModal: al abandonar Bold QR se limpia `boldQrPaid`", () => {
     );
 });
 
-test("ExpensePaymentModal: muestra el aviso 'Bold QR se paga completo, no se combina'", () => {
+test("ExpensePaymentModal: muestra el aviso 'Bold se paga completo, no se combina'", () => {
     const src = read(EXPENSE_PAYMENT_MODAL);
     assert.ok(
-        src.includes("Bold QR se paga completo, no se combina"),
-        "El modal debe mostrar el aviso corto cuando la pestaña Bold QR está activa.",
+        src.includes("Bold se paga completo, no se combina"),
+        "El modal debe mostrar el aviso corto cuando la pestaña Bold está activa.",
     );
 });
 
@@ -438,13 +438,13 @@ test("PendingDebtsModal expone Bold QR como opción de abono", () => {
     const runtime = stripComments(src);
     assert.match(
         runtime,
-        /\bQrCode\b/,
-        "PendingDebtsModal debe importar QrCode de lucide-react para el botón Bold QR.",
+        /\/logos\/bold\.png/,
+        "PendingDebtsModal debe usar el logo oficial de Bold en el botón.",
     );
     assert.match(
         runtime,
-        /id:\s*['"]BOLD_QR['"][\s\S]{0,120}label:\s*['"]Bold QR['"]/,
-        "El array de métodos de abono debe exponer `{ id: 'BOLD_QR', label: 'Bold QR', ... }`.",
+        /id:\s*['"]BOLD_QR['"][\s\S]{0,120}label:\s*['"]Bold['"]/,
+        "El array de métodos de abono debe exponer `{ id: 'BOLD_QR', label: 'Bold', ... }`.",
     );
 });
 
