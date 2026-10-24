@@ -53,8 +53,10 @@ import {
   FilePenLine,
   FileText,
   Printer,
+  RefreshCw,
   RotateCcw,
   Save,
+  SearchCode,
   Tag,
   TestTube2,
   Usb,
@@ -73,6 +75,7 @@ import {
   BARCODE_SYMBOLOGIES,
   BOUNDS,
   CUT_MODES,
+  DEFAULT_GONDOLA_THERMAL_CONFIG,
   GONDOLA_FORMATS,
   INTERFACES,
   INTERFACE_PROTOCOLS,
@@ -98,9 +101,16 @@ import {
   sanitizePrintingConfig,
   savePrintingConfig,
   setActiveMode,
+  setGondolaThermalParams,
   validatePrintingConfig,
 } from "@/lib/printing-config.mjs";
-import { hasPosBridgePrint, subscribePosBridgeStatus } from "@/lib/pos-bridge";
+import {
+  hasPosBridgeListPrinters,
+  hasPosBridgePrint,
+  parseDetectedPrintersResult,
+  subscribePosBridgeStatus,
+} from "@/lib/pos-bridge";
+import type { DetectedPrinter, DetectedPrintersResult } from "@/lib/pos-bridge";
 import {
   MIN_THERMAL_PAGE_HEIGHT_MM,
   buildThermalPageRule,
@@ -120,6 +130,8 @@ import type {
   ActiveMode,
   BarcodeRotation,
   GondolaFormat,
+  GondolaThermalConfig,
+  TsplBuiltinFontId,
 } from "@/lib/printing-config.d.mts";
 
 // -----------------------------------------------------------------------------
@@ -340,34 +352,71 @@ export default function LabelsConfigPage() {
         printTestPage?: (data: unknown) => Promise<unknown>;
         print?: (data: unknown) => Promise<unknown>;
       } };
-      let delegatedToBridge = false;
-      if (w.posBridge && typeof w.posBridge.printTestPage === "function") {
-        try {
-          await w.posBridge.printTestPage(payload);
-          delegatedToBridge = true;
-          toast({ variant: "success", title: "PRUEBA ENVIADA", description: "El bridge local tomó el control." });
-        } catch (err) {
-          console.warn("[labels/config] printTestPage falló, caerá a iframe", err);
-        }
-      } else if (w.posBridge && typeof w.posBridge.print === "function") {
-        try {
-          await w.posBridge.print(payload);
-          delegatedToBridge = true;
-          toast({ variant: "success", title: "PRUEBA ENVIADA", description: "El bridge local tomó el control." });
-        } catch (err) {
-          console.warn("[labels/config] print({test-page}) falló, caerá a iframe", err);
-        }
-      }
-      if (!delegatedToBridge) {
-        runIframeTestPrint(target, config);
+      // Delegación al bridge local SIN fallback automático al iframe.
+      // Si el bridge no está o rechaza, mostramos un toast accionable y
+      // dejamos al admin pulsar el botón manual separado "Probar en
+      // navegador (PDF)". Nunca abrimos el diálogo del navegador en
+      // silencio: el contrato "modo bridge = silencioso" se mantiene a
+      // rajatabla.
+      if (!(w.posBridge && (typeof w.posBridge.printTestPage === "function"
+          || typeof w.posBridge.print === "function"))) {
         toast({
-          variant: "default",
-          title: "DIÁLOGO ABIERTO",
-          description: "Sin bridge local se usó el diálogo del navegador.",
+          variant: "destructive",
+          title: "SIN BRIDGE LOCAL",
+          description:
+            "Esta pantalla no abre el diálogo del navegador automáticamente. " +
+            "Usa el botón \"Probar en navegador (PDF)\" como acción manual separada.",
+          duration: 8000,
+        });
+        return;
+      }
+      try {
+        if (typeof w.posBridge.printTestPage === "function") {
+          await w.posBridge.printTestPage(payload);
+        } else if (typeof w.posBridge.print === "function") {
+          await w.posBridge.print(payload);
+        }
+        toast({ variant: "success", title: "PRUEBA ENVIADA", description: "El bridge local tomó el control." });
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err || "");
+        const colon = raw.indexOf(":");
+        const code = colon > 0 && colon < 40 ? raw.slice(0, colon) : null;
+        toast({
+          variant: "destructive",
+          title: code ? `IMPRESIÓN FALLÓ: ${code}` : "IMPRESIÓN FALLÓ",
+          description:
+            `${raw || "El bridge local rechazó la prueba."} ` +
+            `Pulsa "Probar en navegador (PDF)" si quieres una copia por diálogo.`,
+          duration: 10000,
         });
       }
     } finally {
       setTesting(false);
+    }
+  }, [config, tab, testing, toast]);
+
+  /**
+   * Acción manual separada: fuerza el iframe aislado con `@page` acorde al
+   * target y abre el diálogo del navegador. NUNCA se dispara desde
+   * `printTestPage`; el admin la invoca de forma consciente cuando el
+   * bridge no está disponible o cuando quiere una copia PDF.
+   */
+  const printManualBrowser = useCallback(() => {
+    if (typeof window === "undefined" || testing) return;
+    const target: "receipt" | "label" = tab === "etiquetas" ? "label" : "receipt";
+    try {
+      runIframeTestPrint(target, sanitizePrintingConfig(config));
+      toast({
+        variant: "default",
+        title: "DIÁLOGO DEL NAVEGADOR ABIERTO",
+        description: "Acción manual separada: no sustituye al bridge local.",
+      });
+    } catch (err) {
+      toast({
+        variant: "destructive",
+        title: "DIÁLOGO BLOQUEADO",
+        description: err instanceof Error ? err.message : "El navegador no abrió el diálogo.",
+      });
     }
   }, [config, tab, testing, toast]);
 
@@ -441,8 +490,23 @@ export default function LabelsConfigPage() {
             startContent={<TestTube2 size={14} />}
             isLoading={testing}
             className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+            data-testid="labels-config-print-test-bridge"
+            aria-label="Probar impresión con el bridge local (ESC/POS, TSPL o cola de Windows)"
           >
             Imprimir página de prueba
+          </Button>
+          <Button
+            size="sm"
+            variant="flat"
+            color="default"
+            isDisabled={testing}
+            onPress={printManualBrowser}
+            startContent={<FileText size={14} />}
+            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+            data-testid="labels-config-print-test-browser"
+            aria-label="Acción manual separada: probar con el diálogo del navegador en formato PDF"
+          >
+            Probar en navegador (PDF)
           </Button>
           <Button
             size="sm"
@@ -831,6 +895,22 @@ function PerfilTab({ config, update, dbProfiles, onImportProfile }: PerfilTabPro
         </div>
       </Section>
 
+      <Divider className="opacity-50" />
+
+      <DetectedPrintersSection
+        iface={iface}
+        currentPrinterName={config.connection.system.printerName}
+        onPickPrinter={(name) => {
+          update((d) => {
+            // Siempre guardamos el nombre detectado en `system.printerName`
+            // (campo canónico de la rama SYSTEM). La interfaz actual puede
+            // seguir siendo NETWORK si el admin la cambió: el valor queda
+            // disponible por si decide cambiar más tarde.
+            d.connection.system.printerName = name;
+          });
+        }}
+      />
+
       {dbProfiles.length > 0 && (
         <>
           <Divider className="opacity-50" />
@@ -873,6 +953,306 @@ function PerfilTab({ config, update, dbProfiles, onImportProfile }: PerfilTabPro
         </>
       )}
     </div>
+  );
+}
+
+// =============================================================================
+// Impresoras detectadas (acción listPrinters del bridge local)
+// =============================================================================
+//
+// Sección opcional dentro de PerfilTab. Enumera las colas de Windows
+// detectadas por el bridge local vía la acción WebSocket tipada
+// `listPrinters` (contrato unificado en `scale-bridge/printer-bridge.js`:
+// `validatePrinterRequest` acepta la cuarta acción). Devuelve un
+// `DetectedPrintersResult` canónico que el consumidor pasa por
+// `parseDetectedPrintersResult` para obtener un shape tipado.
+//
+// Comportamiento:
+//   - Chip de estado del bridge (reutilizando `subscribePosBridgeStatus`).
+//   - Botón "Detectar impresoras" dispara el request. Un segundo botón
+//     "Actualizar" fuerza `payload.refresh = true`.
+//   - Lista cada cola con `name`, `driver`, `port` y badges `status`,
+//     `online`, `default`. El click en una fila setea
+//     `connection.system.printerName` (el padre decide si cambia la
+//     interfaz; aquí NUNCA la mutamos para preservar la entrada manual).
+//   - Si la interfaz activa NO es SYSTEM se muestra una nota explicativa
+//     pero igualmente se guarda el nombre: así el admin puede cambiar la
+//     interfaz después sin repetir la selección.
+//
+// La UI NO reemplaza el `Input` de printerName del padre: es un selector
+// adicional. Los perfiles DB016 siguen funcionando como fuente de verdad
+// server-side; la detección es puramente runtime del equipo del cajero.
+
+interface DetectedPrintersSectionProps {
+  iface: PrinterInterface;
+  currentPrinterName: string;
+  onPickPrinter: (name: string) => void;
+}
+
+function DetectedPrintersSection({
+  iface,
+  currentPrinterName,
+  onPickPrinter,
+}: DetectedPrintersSectionProps) {
+  const { toast } = useToast();
+  const [bridgeConnected, setBridgeConnected] = useState(false);
+  const [bridgeHasListAction, setBridgeHasListAction] = useState(false);
+  const [printers, setPrinters] = useState<DetectedPrinter[]>([]);
+  const [defaultName, setDefaultName] = useState<string>("");
+  const [platform, setPlatform] = useState<DetectedPrintersResult["platform"] | undefined>(undefined);
+  const [lastDetectionAt, setLastDetectionAt] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [lastError, setLastError] = useState<string | null>(null);
+
+  // Reactividad del chip. Observamos el estado real del bridge y la
+  // disponibilidad del método `listPrinters` (bridges nativos pueden
+  // exponerlo con una firma distinta a la clase WS).
+  useEffect(() => {
+    const refresh = () => {
+      setBridgeConnected(hasPosBridgePrint());
+      setBridgeHasListAction(hasPosBridgeListPrinters());
+    };
+    refresh();
+    const unsubscribe = subscribePosBridgeStatus(() => refresh());
+    return () => unsubscribe();
+  }, []);
+
+  const requestList = useCallback(async (refresh: boolean) => {
+    if (loading) return;
+    setLoading(true);
+    setLastError(null);
+    try {
+      if (typeof window === "undefined") throw new Error("window no disponible");
+      const w = window as Window & { posBridge?: {
+        listPrinters?: (payload?: unknown) => Promise<unknown>;
+      } };
+      if (!w.posBridge || typeof w.posBridge.listPrinters !== "function") {
+        throw new Error("El bridge local no expone `listPrinters` (acción WebSocket tipada).");
+      }
+      const raw = await w.posBridge.listPrinters({ refresh: !!refresh });
+      // `raw` puede venir como `{kind, platform, defaultName, printers}` o
+      // como `{result: ...}` según cómo el bridge resuelva el envelope.
+      // `parseDetectedPrintersResult` cubre ambos casos de forma defensiva.
+      const parsed = parseDetectedPrintersResult(raw);
+      if (!parsed) {
+        throw new Error("El bridge respondió con un shape no reconocido.");
+      }
+      setPrinters([...parsed.printers]);
+      setDefaultName(parsed.defaultName || "");
+      setPlatform(parsed.platform);
+      setLastDetectionAt(Date.now());
+      toast({
+        variant: "success",
+        title: refresh ? "LISTA ACTUALIZADA" : "IMPRESORAS DETECTADAS",
+        description: parsed.printers.length === 0
+          ? "El bridge respondió sin colas instaladas."
+          : `${parsed.printers.length} cola${parsed.printers.length === 1 ? "" : "s"} detectada${parsed.printers.length === 1 ? "" : "s"}.`,
+      });
+    } catch (err) {
+      const raw = err instanceof Error ? err.message : String(err || "");
+      setLastError(raw || "Fallo desconocido al enumerar impresoras.");
+      const colon = raw.indexOf(":");
+      const code = colon > 0 && colon < 40 ? raw.slice(0, colon) : null;
+      toast({
+        variant: "destructive",
+        title: code ? `DETECCIÓN FALLÓ: ${code}` : "DETECCIÓN FALLÓ",
+        description: raw || "El bridge local rechazó la solicitud.",
+        duration: 10000,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [loading, toast]);
+
+  const canCallBridge = bridgeConnected && bridgeHasListAction;
+
+  return (
+    <Section title="Impresoras detectadas" icon={<SearchCode size={14} />}>
+      <div className="space-y-3" data-testid="labels-config-detect-printers-section">
+        <div className="flex flex-wrap items-center gap-2">
+          <Chip
+            size="sm"
+            variant="flat"
+            color={bridgeConnected ? "success" : "warning"}
+            className="rounded-2xl"
+            aria-live="polite"
+            data-testid="labels-config-detect-printers-bridge-chip"
+          >
+            {bridgeConnected ? "✓ bridge detectado" : "✗ bridge no detectado"}
+          </Chip>
+          {bridgeConnected && !bridgeHasListAction && (
+            <Chip
+              size="sm"
+              variant="flat"
+              color="warning"
+              className="rounded-2xl"
+              aria-live="polite"
+            >
+              listPrinters no disponible
+            </Chip>
+          )}
+          {platform && (
+            <Chip size="sm" variant="flat" color="default" className="rounded-2xl">
+              Plataforma: <span className="font-mono ml-1">{platform}</span>
+            </Chip>
+          )}
+          <Button
+            size="sm"
+            color="primary"
+            variant="flat"
+            isDisabled={!canCallBridge || loading}
+            onPress={() => void requestList(false)}
+            startContent={<SearchCode size={14} />}
+            isLoading={loading && printers.length === 0}
+            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+            data-testid="labels-config-detect-printers-btn"
+            aria-label="Detectar colas de impresión instaladas en este equipo"
+          >
+            Detectar impresoras
+          </Button>
+          <Button
+            size="sm"
+            variant="flat"
+            isDisabled={!canCallBridge || loading}
+            onPress={() => void requestList(true)}
+            startContent={<RefreshCw size={14} />}
+            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+            data-testid="labels-config-detect-printers-refresh-btn"
+            aria-label="Forzar re-detección (ignora cache del bridge)"
+          >
+            Actualizar
+          </Button>
+          {lastDetectionAt && (
+            <span className="text-[9px] uppercase tracking-widest text-zinc-500">
+              Última detección: {new Date(lastDetectionAt).toLocaleTimeString("es-CO")}
+            </span>
+          )}
+        </div>
+
+        {!canCallBridge && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
+            Esta sección requiere que el bridge local (<code className="font-mono">scale-bridge</code>) esté corriendo y exponga la
+            acción <code className="font-mono">listPrinters</code>. Sin bridge seguís pudiendo escribir el nombre de la impresora
+            manualmente en el campo <em>Nombre de la impresora en el SO</em> (arriba) o importar un perfil
+            de /labels/printers.
+          </p>
+        )}
+
+        {lastError && (
+          <p className="text-[11px] text-rose-600 dark:text-rose-400 leading-snug" role="alert">
+            {lastError}
+          </p>
+        )}
+
+        {iface !== INTERFACES.SYSTEM && printers.length > 0 && (
+          <p className="text-[11px] text-amber-600 dark:text-amber-400 leading-snug">
+            La interfaz activa es <span className="font-mono">{iface}</span>. Al seleccionar una cola
+            se guarda el nombre en la rama SYSTEM: cambia la interfaz a &quot;Sistema operativo
+            (spooler)&quot; para que el bridge imprima por el spooler Windows. Para TCP RAW usa
+            Ethernet y la IP del dispositivo.
+          </p>
+        )}
+
+        {printers.length > 0 ? (
+          <ul
+            className="space-y-1 max-h-64 overflow-auto"
+            role="listbox"
+            aria-label="Lista de impresoras detectadas por el bridge local"
+            data-testid="labels-config-detect-printers-list"
+          >
+            {printers.map((p) => {
+              const selected = currentPrinterName && p.name === currentPrinterName;
+              const statusColor: "success" | "warning" | "danger" | "default" =
+                p.status === "online" ? "success"
+                : p.status === "offline" || p.status === "paper-out" ? "warning"
+                : p.status === "error" || p.status === "paused" ? "danger"
+                : "default";
+              return (
+                <li
+                  key={p.name}
+                  role="option"
+                  aria-selected={!!selected}
+                  data-testid="labels-config-detect-printers-row"
+                  data-printer-name={p.name}
+                  data-printer-status={p.status || "unknown"}
+                  data-printer-default={p.isDefault ? "true" : "false"}
+                  data-printer-online={p.online ? "true" : "false"}
+                  className={`flex items-center justify-between gap-2 p-2 rounded-xl border transition-colors ${
+                    selected
+                      ? "bg-emerald-50 dark:bg-emerald-500/10 border-emerald-500/40"
+                      : "bg-zinc-50 dark:bg-zinc-800/50 border-zinc-200 dark:border-white/5"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <p className="text-xs font-bold truncate flex items-center gap-1 flex-wrap">
+                      <span>{p.name}</span>
+                      {p.isDefault && (
+                        <Chip size="sm" variant="flat" color="success" className="rounded-xl text-[9px]">
+                          default
+                        </Chip>
+                      )}
+                      {typeof p.online === "boolean" && (
+                        <Chip
+                          size="sm"
+                          variant="flat"
+                          color={p.online ? "success" : "warning"}
+                          className="rounded-xl text-[9px]"
+                        >
+                          {p.online ? "online" : "offline"}
+                        </Chip>
+                      )}
+                      <Chip
+                        size="sm"
+                        variant="flat"
+                        color={statusColor}
+                        className="rounded-xl text-[9px]"
+                      >
+                        {p.status || "unknown"}
+                      </Chip>
+                    </p>
+                    <p className="text-[10px] font-mono text-zinc-500 truncate">
+                      {(p.driver || "driver desconocido")}
+                      {" · "}
+                      {(p.port || "puerto desconocido")}
+                      {typeof p.jobs === "number" && p.jobs > 0 ? ` · ${p.jobs} trabajos` : ""}
+                    </p>
+                  </div>
+                  <Tooltip content={`Usar ${p.name} como impresora SYSTEM`}>
+                    <Button
+                      size="sm"
+                      variant={selected ? "solid" : "flat"}
+                      color={selected ? "success" : "default"}
+                      onPress={() => onPickPrinter(p.name)}
+                      startContent={<Printer size={12} />}
+                      className="rounded-xl text-[10px] uppercase tracking-widest font-bold"
+                      aria-label={`Seleccionar ${p.name}`}
+                      data-testid="labels-config-detect-printers-row-pick"
+                    >
+                      {selected ? "Seleccionada" : "Usar"}
+                    </Button>
+                  </Tooltip>
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          lastDetectionAt && (
+            <p
+              className="text-[11px] text-zinc-500"
+              data-testid="labels-config-detect-printers-empty"
+            >
+              El bridge respondió sin colas instaladas en este equipo.
+            </p>
+          )
+        )}
+
+        {defaultName && (
+          <p className="text-[9px] uppercase tracking-widest text-zinc-500">
+            Cola por defecto del SO: <span className="font-mono">{defaultName}</span>
+          </p>
+        )}
+      </div>
+    </Section>
   );
 }
 
@@ -1642,24 +2022,52 @@ function EtiquetasTab({ config, update, dbSizes }: EtiquetasTabProps) {
 }
 
 // =============================================================================
-// Góndola (hoja de precios con impresora normal)
+// Góndola (hoja de precios con impresora normal o rollo térmico 80 mm)
 // =============================================================================
 
 /**
- * Tab de configuración de la hoja de precios de góndola. La impresión
- * vive 100% en el navegador: iframe aislado + `window.print()` sin pasar
- * por el bridge térmico. El admin elige entre:
+ * Tab de configuración de góndola. Soporta TRES formatos:
  *
  *   - Carta  (Letter)   → landscape 279.4 × 215.9 mm · grid 3 × 5 = 15.
+ *     Impresión por diálogo del navegador (iframe aislado). Nunca pasa
+ *     por el bridge térmico.
  *   - Oficio (Legal)    → landscape 355.6 × 215.9 mm · grid 4 × 5 = 20.
+ *     Mismo flujo iframe que Letter.
+ *   - Térmica 80 mm     → rollo continuo. Imprime DIRECTO por el bridge
+ *     (`window.posBridge.print({type:"shelf-labels"})`). SIN iframe, SIN
+ *     fallback automático. El sub-panel con parámetros térmicos
+ *     (dimensiones, densidad, fuentes TSPL, pie) sólo se muestra cuando
+ *     este formato está activo. Esta rama JAMÁS llama a drawer kick ni
+ *     honra `openDrawerOnSale`.
  *
  * El default es Carta. El valor se persiste en
- * `pos_printing_config_v1 → gondola.format` y lo consume
- * `/labels/shelf` (vía `LabelsWorkspace`).
+ * `pos_printing_config_v1 → gondola.format` (+ `.thermal` cuando aplica)
+ * y lo consume `/labels/shelf` (vía `LabelsWorkspace`).
  */
 function GondolaTab({ config, update }: TabProps) {
+  const { toast } = useToast();
   const activeFormat = config.gondola?.format ?? "LETTER";
   const activeLayout = resolveGondolaLayout(activeFormat);
+  const thermal = config.gondola?.thermal ?? DEFAULT_GONDOLA_THERMAL_CONFIG;
+  const isThermal = activeFormat === GONDOLA_FORMATS.THERMAL_80;
+
+  // Estado del bridge para el chip. Se suscribe sólo mientras la tab está
+  // montada; se cancela al desmontar.
+  const [bridgeConnected, setBridgeConnected] = useState(false);
+  const [bridgeTesting, setBridgeTesting] = useState(false);
+  useEffect(() => {
+    const unsub = subscribePosBridgeStatus((status) => {
+      setBridgeConnected(!!status.connected);
+    });
+    return unsub;
+  }, []);
+
+  const updateThermal = useCallback(
+    (patch: Partial<GondolaThermalConfig>) => {
+      update((d) => Object.assign(d, setGondolaThermalParams(d, patch)));
+    },
+    [update],
+  );
 
   const options: Array<{
     key: GondolaFormat;
@@ -1667,6 +2075,7 @@ function GondolaTab({ config, update }: TabProps) {
     sheet: string;
     grid: string;
     perSheet: number;
+    note: string;
   }> = [
     {
       key: GONDOLA_FORMATS.LETTER,
@@ -1674,6 +2083,7 @@ function GondolaTab({ config, update }: TabProps) {
       sheet: "279.4 × 215.9 mm · landscape",
       grid: "3 × 5",
       perSheet: 15,
+      note: "Impresora normal · diálogo del navegador.",
     },
     {
       key: GONDOLA_FORMATS.LEGAL,
@@ -1681,24 +2091,78 @@ function GondolaTab({ config, update }: TabProps) {
       sheet: "355.6 × 215.9 mm · landscape",
       grid: "4 × 5",
       perSheet: 20,
+      note: "Impresora normal · diálogo del navegador.",
+    },
+    {
+      key: GONDOLA_FORMATS.THERMAL_80,
+      title: "Térmica 80 mm",
+      sheet: `${thermal.widthMm} × ${thermal.heightMm} mm · rollo continuo`,
+      grid: "1 × 1",
+      perSheet: 1,
+      note: "Impresora térmica TSPL · bridge directo (sin diálogo).",
     },
   ];
 
+  const handleTestShelfPrint = useCallback(async () => {
+    if (typeof window === "undefined" || bridgeTesting) return;
+    setBridgeTesting(true);
+    try {
+      const w = window as Window & {
+        posBridge?: { print?: (p: unknown) => Promise<unknown>; printTestPage?: (p: unknown) => Promise<unknown> };
+      };
+      if (!(w.posBridge && typeof w.posBridge.print === "function")) {
+        toast({
+          variant: "destructive",
+          title: "SIN BRIDGE LOCAL",
+          description:
+            "No hay bridge disponible. La impresión térmica de góndola requiere el scale-bridge (o equivalente) conectado.",
+          duration: 8000,
+        });
+        return;
+      }
+      const payload = {
+        type: "test-page" as const,
+        target: "shelf" as const,
+        config: sanitizePrintingConfig(config),
+      };
+      try {
+        await w.posBridge.print(payload);
+        toast({
+          variant: "success",
+          title: "PRUEBA TÉRMICA ENVIADA",
+          description: "El bridge tomó el control del rollo 80 mm.",
+        });
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : String(err || "");
+        const colon = raw.indexOf(":");
+        const code = colon > 0 && colon < 40 ? raw.slice(0, colon) : null;
+        toast({
+          variant: "destructive",
+          title: code ? `IMPRESIÓN FALLÓ: ${code}` : "IMPRESIÓN FALLÓ",
+          description: raw || "El bridge local rechazó la prueba.",
+          duration: 10000,
+        });
+      }
+    } finally {
+      setBridgeTesting(false);
+    }
+  }, [config, bridgeTesting, toast]);
+
   return (
     <div className="space-y-5">
-      <Section title="Formato de hoja de precios" icon={<FileText size={14} />}>
+      <Section title="Formato de precios de góndola" icon={<FileText size={14} />}>
         <p className="text-[11px] leading-snug text-zinc-700 dark:text-zinc-300">
-          Las etiquetas de góndola se imprimen SIEMPRE con impresora normal
-          (hoja de papel) mediante el diálogo del navegador. Nunca se envían
-          al bridge térmico. Cada etiqueta mide{" "}
-          <span className="font-mono">80 × 40 mm</span>; la orientación es
-          siempre <span className="font-bold">landscape</span> para maximizar
-          la cantidad por hoja.
+          Las etiquetas de góndola se pueden imprimir en{" "}
+          <span className="font-bold">hoja de papel</span> (Carta / Oficio) con
+          el diálogo del navegador, o directo en{" "}
+          <span className="font-bold">rollo térmico 80 mm</span> vía bridge
+          TSPL. La ruta Carta/Oficio nunca pasa por el bridge; la ruta Térmica
+          nunca abre diálogo del navegador.
         </p>
         <div
           role="radiogroup"
-          aria-label="Formato de hoja de precios de góndola"
-          className="grid grid-cols-1 sm:grid-cols-2 gap-3"
+          aria-label="Formato de precios de góndola"
+          className="grid grid-cols-1 sm:grid-cols-3 gap-3"
           data-testid="labels-config-gondola-format-group"
         >
           {options.map((opt) => {
@@ -1709,7 +2173,7 @@ function GondolaTab({ config, update }: TabProps) {
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                aria-label={`Formato ${opt.title}. ${opt.sheet}. Grid ${opt.grid}. ${opt.perSheet} etiquetas por hoja.`}
+                aria-label={`Formato ${opt.title}. ${opt.sheet}. Grid ${opt.grid}. ${opt.perSheet} etiqueta${opt.perSheet === 1 ? "" : "s"} por página.`}
                 data-testid={`labels-config-gondola-format-${opt.key.toLowerCase()}`}
                 onClick={() =>
                   update((d) => Object.assign(d, applyGondolaFormatPreset(d, opt.key)))
@@ -1739,18 +2203,71 @@ function GondolaTab({ config, update }: TabProps) {
                     color={selected ? "success" : "default"}
                     className="rounded-xl"
                   >
-                    {opt.perSheet} etiquetas
+                    {opt.perSheet} {opt.perSheet === 1 ? "etiqueta" : "etiquetas"}
                   </Chip>
                 </div>
                 <ul className="mt-2 text-[11px] text-zinc-700 dark:text-zinc-300 space-y-0.5 list-disc pl-4">
                   <li>Grid <span className="font-mono">{opt.grid}</span> (columnas × filas).</li>
-                  <li>Impresora normal · diálogo del navegador · nunca bridge térmico.</li>
+                  <li>{opt.note}</li>
                 </ul>
               </button>
             );
           })}
         </div>
       </Section>
+
+      {isThermal && (
+        <>
+          <Divider className="opacity-50" />
+          <Section
+            title="Parámetros térmicos (rollo 80 mm)"
+            icon={<Printer size={14} />}
+          >
+            <div
+              className="flex flex-wrap items-center gap-2 pb-2"
+              data-testid="labels-config-gondola-thermal-bridge-chip"
+            >
+              <Chip
+                size="sm"
+                variant="flat"
+                color={bridgeConnected ? "success" : "warning"}
+                className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+              >
+                {bridgeConnected
+                  ? "Bridge conectado"
+                  : "Sin bridge · no se puede imprimir Térmica 80"}
+              </Chip>
+              <Button
+                size="sm"
+                color="primary"
+                variant="flat"
+                isDisabled={!bridgeConnected || bridgeTesting}
+                isLoading={bridgeTesting}
+                onPress={handleTestShelfPrint}
+                startContent={<TestTube2 size={14} />}
+                className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+                data-testid="labels-config-print-test-shelf"
+                aria-label="Probar impresión en rollo térmico 80 mm"
+              >
+                Probar en rollo térmico
+              </Button>
+            </div>
+            <div
+              className="rounded-2xl border border-zinc-200 dark:border-white/5 bg-white dark:bg-zinc-900 p-4 space-y-5"
+              data-testid="labels-config-gondola-thermal-panel"
+              data-gondola-format={activeFormat}
+            >
+              <ThermalPhysicalGroup thermal={thermal} onChange={updateThermal} />
+              <Divider className="opacity-30" />
+              <ThermalPrintGroup thermal={thermal} onChange={updateThermal} />
+              <Divider className="opacity-30" />
+              <ThermalTypographyGroup thermal={thermal} onChange={updateThermal} />
+              <Divider className="opacity-30" />
+              <ThermalFooterGroup thermal={thermal} onChange={updateThermal} />
+            </div>
+          </Section>
+        </>
+      )}
 
       <Divider className="opacity-50" />
 
@@ -1769,18 +2286,22 @@ function GondolaTab({ config, update }: TabProps) {
           </div>
           <div>
             <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
-              Hoja
+              {isThermal ? "Rollo" : "Hoja"}
             </p>
             <p className="font-mono">
-              {activeLayout.sheetWidthMm} × {activeLayout.sheetHeightMm} mm · landscape
+              {isThermal
+                ? `${thermal.widthMm} × ${thermal.heightMm} mm · continuo (gap ${thermal.gapMm} mm)`
+                : `${activeLayout.sheetWidthMm} × ${activeLayout.sheetHeightMm} mm · landscape`}
             </p>
           </div>
           <div>
             <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
-              Grid
+              {isThermal ? "Por página" : "Grid"}
             </p>
             <p className="font-mono">
-              {activeLayout.columns} × {activeLayout.rows} · {activeLayout.labelsPerPage} etiquetas
+              {isThermal
+                ? "1 etiqueta por página (sin paginación)"
+                : `${activeLayout.columns} × ${activeLayout.rows} · ${activeLayout.labelsPerPage} etiquetas`}
             </p>
           </div>
           <div>
@@ -1788,9 +2309,31 @@ function GondolaTab({ config, update }: TabProps) {
               Etiqueta
             </p>
             <p className="font-mono">
-              {activeLayout.labelWidthMm} × {activeLayout.labelHeightMm} mm
+              {isThermal
+                ? `${thermal.widthMm} × ${thermal.heightMm} mm · imprimible ${thermal.printableWidthMm} mm`
+                : `${activeLayout.labelWidthMm} × ${activeLayout.labelHeightMm} mm`}
             </p>
           </div>
+          {isThermal && (
+            <>
+              <div>
+                <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+                  Densidad / DPI
+                </p>
+                <p className="font-mono">
+                  DENSITY {thermal.density} · {thermal.dpi} dpi
+                </p>
+              </div>
+              <div>
+                <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
+                  Fuentes TSPL
+                </p>
+                <p className="font-mono">
+                  nombre {thermal.nameFont} ({thermal.nameScaleX}×{thermal.nameScaleY}) · precio {thermal.priceFont} ({thermal.priceScaleX}×{thermal.priceScaleY})
+                </p>
+              </div>
+            </>
+          )}
           <div className="sm:col-span-2">
             <p className="text-[9px] uppercase tracking-widest font-bold text-emerald-700 dark:text-emerald-300">
               Identificador de auditoría
@@ -1801,6 +2344,558 @@ function GondolaTab({ config, update }: TabProps) {
           </div>
         </div>
       </Section>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// Sub-paneles del panel térmico. Se renderizan sólo cuando el formato
+// activo es THERMAL_80. Cada grupo toma la rama `thermal` saneada y expone
+// inputs HeroUI con labels asociados por `aria-label` + `label` propio.
+// -----------------------------------------------------------------------------
+
+interface ThermalGroupProps {
+  thermal: GondolaThermalConfig;
+  onChange: (patch: Partial<GondolaThermalConfig>) => void;
+}
+
+function ThermalPhysicalGroup({ thermal, onChange }: ThermalGroupProps) {
+  return (
+    <div className="space-y-3">
+      <p className="text-[10px] uppercase tracking-widest font-bold text-zinc-600 dark:text-zinc-300">
+        Rollo
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <Input
+          type="number"
+          label="Ancho (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.widthMm)}
+          onChange={(e) =>
+            onChange({
+              widthMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalWidthMm.min,
+                BOUNDS.gondolaThermalWidthMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalWidthMm.min}
+          max={BOUNDS.gondolaThermalWidthMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-width-input"
+          aria-label="Ancho físico del rollo en mm"
+        />
+        <Input
+          type="number"
+          label="Imprimible (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.printableWidthMm)}
+          onChange={(e) =>
+            onChange({
+              printableWidthMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalPrintableWidthMm.min,
+                BOUNDS.gondolaThermalPrintableWidthMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalPrintableWidthMm.min}
+          max={BOUNDS.gondolaThermalPrintableWidthMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-printable-input"
+          aria-label="Ancho imprimible del rollo en mm, nunca mayor que el ancho físico"
+        />
+        <Input
+          type="number"
+          label="Alto (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.heightMm)}
+          onChange={(e) =>
+            onChange({
+              heightMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalHeightMm.min,
+                BOUNDS.gondolaThermalHeightMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalHeightMm.min}
+          max={BOUNDS.gondolaThermalHeightMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-height-input"
+          aria-label="Alto de cada etiqueta térmica en mm"
+        />
+        <Input
+          type="number"
+          label="Gap (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.gapMm)}
+          onChange={(e) =>
+            onChange({
+              gapMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalGapMm.min,
+                BOUNDS.gondolaThermalGapMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalGapMm.min}
+          max={BOUNDS.gondolaThermalGapMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-gap-input"
+          aria-label="Separación entre etiquetas en mm, 0 = rollo continuo"
+          description="0 = rollo continuo"
+        />
+        <Input
+          type="number"
+          label="Margen izq. (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.marginLeftMm)}
+          onChange={(e) =>
+            onChange({
+              marginLeftMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalMarginMm.min,
+                BOUNDS.gondolaThermalMarginMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalMarginMm.min}
+          max={BOUNDS.gondolaThermalMarginMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-margin-left-input"
+          aria-label="Margen izquierdo seguro en mm"
+        />
+        <Input
+          type="number"
+          label="Margen sup. (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.marginTopMm)}
+          onChange={(e) =>
+            onChange({
+              marginTopMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalMarginMm.min,
+                BOUNDS.gondolaThermalMarginMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalMarginMm.min}
+          max={BOUNDS.gondolaThermalMarginMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-margin-top-input"
+          aria-label="Margen superior seguro en mm"
+        />
+        <Input
+          type="number"
+          label="Margen inf. (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.marginBottomMm)}
+          onChange={(e) =>
+            onChange({
+              marginBottomMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalMarginMm.min,
+                BOUNDS.gondolaThermalMarginMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalMarginMm.min}
+          max={BOUNDS.gondolaThermalMarginMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-margin-bottom-input"
+          aria-label="Margen inferior seguro en mm"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ThermalPrintGroup({ thermal, onChange }: ThermalGroupProps) {
+  return (
+    <div className="space-y-3">
+      <p className="text-[10px] uppercase tracking-widest font-bold text-zinc-600 dark:text-zinc-300">
+        Impresión
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+        <Input
+          type="number"
+          label="Densidad"
+          size="sm"
+          value={numberOrEmpty(thermal.density)}
+          onChange={(e) =>
+            onChange({
+              density: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalDensity.min,
+                BOUNDS.gondolaThermalDensity.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalDensity.min}
+          max={BOUNDS.gondolaThermalDensity.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-density-input"
+          aria-label="Comando DENSITY de TSPL, 0 a 15"
+        />
+        <Input
+          type="number"
+          label="DPI"
+          size="sm"
+          value={numberOrEmpty(thermal.dpi)}
+          onChange={(e) =>
+            onChange({
+              dpi: clampForInput(e.target.value, BOUNDS.dpi.min, BOUNDS.dpi.max),
+            })
+          }
+          min={BOUNDS.dpi.min}
+          max={BOUNDS.dpi.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-dpi-input"
+          aria-label="Resolución de la cabeza térmica en dpi"
+        />
+        <Select
+          size="sm"
+          label="Direction"
+          selectedKeys={[String(thermal.direction)]}
+          onChange={(e) =>
+            onChange({ direction: e.target.value === "1" ? 1 : 0 })
+          }
+          classNames={{ trigger: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-direction-select"
+          aria-label="Dirección TSPL (0 = default, 1 = invertido)"
+        >
+          <SelectItem key="0">0 (default)</SelectItem>
+          <SelectItem key="1">1 (invertido)</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          label="Mirror"
+          selectedKeys={[String(thermal.mirror)]}
+          onChange={(e) => onChange({ mirror: e.target.value === "1" ? 1 : 0 })}
+          classNames={{ trigger: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-mirror-select"
+          aria-label="Espejo TSPL (0 = default, 1 = espejado)"
+        >
+          <SelectItem key="0">0 (default)</SelectItem>
+          <SelectItem key="1">1 (espejado)</SelectItem>
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+function ThermalTypographyGroup({ thermal, onChange }: ThermalGroupProps) {
+  return (
+    <div className="space-y-3">
+      <p className="text-[10px] uppercase tracking-widest font-bold text-zinc-600 dark:text-zinc-300">
+        Tipografía
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+        <Select
+          size="sm"
+          label="Fuente nombre"
+          selectedKeys={[thermal.nameFont]}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (TSPL_BUILTIN_FONTS.includes(v as TsplBuiltinFontId)) {
+              onChange({ nameFont: v as TsplBuiltinFontId });
+            }
+          }}
+          classNames={{ trigger: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-name-font"
+          aria-label="Fuente TSPL built-in para el nombre"
+        >
+          {TSPL_BUILTIN_FONTS.map((f) => (
+            <SelectItem key={f}>{`Fuente ${f}`}</SelectItem>
+          ))}
+        </Select>
+        <Input
+          type="number"
+          label="Esc. X nombre"
+          size="sm"
+          value={numberOrEmpty(thermal.nameScaleX)}
+          onChange={(e) =>
+            onChange({
+              nameScaleX: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalScale.min,
+                BOUNDS.gondolaThermalScale.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalScale.min}
+          max={BOUNDS.gondolaThermalScale.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-name-scale-x-input"
+          aria-label="Escala X de la fuente del nombre"
+        />
+        <Input
+          type="number"
+          label="Esc. Y nombre"
+          size="sm"
+          value={numberOrEmpty(thermal.nameScaleY)}
+          onChange={(e) =>
+            onChange({
+              nameScaleY: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalScale.min,
+                BOUNDS.gondolaThermalScale.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalScale.min}
+          max={BOUNDS.gondolaThermalScale.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-name-scale-y-input"
+          aria-label="Escala Y de la fuente del nombre"
+        />
+        <Input
+          type="number"
+          label="Máx. chars"
+          size="sm"
+          value={numberOrEmpty(thermal.nameMaxChars)}
+          onChange={(e) =>
+            onChange({
+              nameMaxChars: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalNameMaxChars.min,
+                BOUNDS.gondolaThermalNameMaxChars.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalNameMaxChars.min}
+          max={BOUNDS.gondolaThermalNameMaxChars.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-name-max-chars-input"
+          aria-label="Máximo de caracteres antes de truncar el nombre"
+        />
+        <Select
+          size="sm"
+          label="Fuente precio"
+          selectedKeys={[thermal.priceFont]}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (TSPL_BUILTIN_FONTS.includes(v as TsplBuiltinFontId)) {
+              onChange({ priceFont: v as TsplBuiltinFontId });
+            }
+          }}
+          classNames={{ trigger: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-price-font"
+          aria-label="Fuente TSPL built-in para el precio"
+        >
+          {TSPL_BUILTIN_FONTS.map((f) => (
+            <SelectItem key={f}>{`Fuente ${f}`}</SelectItem>
+          ))}
+        </Select>
+        <Input
+          type="number"
+          label="Esc. X precio"
+          size="sm"
+          value={numberOrEmpty(thermal.priceScaleX)}
+          onChange={(e) =>
+            onChange({
+              priceScaleX: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalScale.min,
+                BOUNDS.gondolaThermalScale.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalScale.min}
+          max={BOUNDS.gondolaThermalScale.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-price-scale-x-input"
+          aria-label="Escala X de la fuente del precio"
+        />
+        <Input
+          type="number"
+          label="Esc. Y precio"
+          size="sm"
+          value={numberOrEmpty(thermal.priceScaleY)}
+          onChange={(e) =>
+            onChange({
+              priceScaleY: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalScale.min,
+                BOUNDS.gondolaThermalScale.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalScale.min}
+          max={BOUNDS.gondolaThermalScale.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-price-scale-y-input"
+          aria-label="Escala Y de la fuente del precio"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ThermalFooterGroup({ thermal, onChange }: ThermalGroupProps) {
+  return (
+    <div className="space-y-3">
+      <p className="text-[10px] uppercase tracking-widest font-bold text-zinc-600 dark:text-zinc-300">
+        Pie
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-center">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 dark:border-white/5 p-3">
+          <label
+            htmlFor="gondola-thermal-show-code"
+            className="text-[11px] uppercase tracking-widest font-bold text-zinc-700 dark:text-zinc-200"
+          >
+            Mostrar código
+          </label>
+          <Switch
+            id="gondola-thermal-show-code"
+            checked={thermal.showCode}
+            onCheckedChange={(v) => onChange({ showCode: v === true })}
+            data-testid="labels-config-gondola-thermal-show-code-switch"
+            aria-label="Mostrar el código del producto en el pie de la etiqueta"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 dark:border-white/5 p-3">
+          <label
+            htmlFor="gondola-thermal-show-date"
+            className="text-[11px] uppercase tracking-widest font-bold text-zinc-700 dark:text-zinc-200"
+          >
+            Mostrar fecha
+          </label>
+          <Switch
+            id="gondola-thermal-show-date"
+            checked={thermal.showDate}
+            onCheckedChange={(v) => onChange({ showDate: v === true })}
+            data-testid="labels-config-gondola-thermal-show-date-switch"
+            aria-label="Mostrar la fecha de impresión en el pie de la etiqueta"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 dark:border-white/5 p-3">
+          <label
+            htmlFor="gondola-thermal-show-barcode"
+            className="text-[11px] uppercase tracking-widest font-bold text-zinc-700 dark:text-zinc-200"
+          >
+            Mostrar barcode
+          </label>
+          <Switch
+            id="gondola-thermal-show-barcode"
+            checked={thermal.showBarcode}
+            onCheckedChange={(v) => onChange({ showBarcode: v === true })}
+            data-testid="labels-config-gondola-thermal-show-barcode-switch"
+            aria-label="Imprimir el código de barras CODE128 abajo a la izquierda cuando el código es ASCII seguro"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-zinc-200 dark:border-white/5 p-3">
+          <label
+            htmlFor="gondola-thermal-show-unit"
+            className="text-[11px] uppercase tracking-widest font-bold text-zinc-700 dark:text-zinc-200"
+          >
+            Mostrar unidad
+          </label>
+          <Switch
+            id="gondola-thermal-show-unit"
+            checked={thermal.showUnitLabel}
+            onCheckedChange={(v) => onChange({ showUnitLabel: v === true })}
+            data-testid="labels-config-gondola-thermal-show-unit-switch"
+            aria-label="Mostrar el literal corto de unidad bajo el precio (ej. PRECIO UND)"
+          />
+        </div>
+        <Input
+          type="text"
+          label="Literal unidad"
+          size="sm"
+          value={thermal.unitLabel ?? ""}
+          isDisabled={!thermal.showUnitLabel}
+          onChange={(e) => onChange({ unitLabel: e.target.value })}
+          maxLength={BOUNDS.gondolaThermalUnitLabelMaxChars.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-unit-label-input"
+          aria-label="Texto del literal de unidad bajo el precio"
+          description={`Máx. ${BOUNDS.gondolaThermalUnitLabelMaxChars.max} caracteres`}
+        />
+        <Input
+          type="number"
+          label="Alto barcode (mm)"
+          size="sm"
+          value={numberOrEmpty(thermal.barcodeHeightMm)}
+          isDisabled={!thermal.showBarcode}
+          onChange={(e) =>
+            onChange({
+              barcodeHeightMm: clampForInput(
+                e.target.value,
+                BOUNDS.gondolaThermalBarcodeHeightMm.min,
+                BOUNDS.gondolaThermalBarcodeHeightMm.max,
+              ),
+            })
+          }
+          min={BOUNDS.gondolaThermalBarcodeHeightMm.min}
+          max={BOUNDS.gondolaThermalBarcodeHeightMm.max}
+          classNames={{ inputWrapper: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-barcode-height-input"
+          aria-label="Alto nominal del código de barras CODE128 en mm"
+        />
+        <Select
+          size="sm"
+          label="Fuente pie"
+          selectedKeys={[thermal.footerFont]}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (TSPL_BUILTIN_FONTS.includes(v as TsplBuiltinFontId)) {
+              onChange({ footerFont: v as TsplBuiltinFontId });
+            }
+          }}
+          classNames={{ trigger: "rounded-2xl" }}
+          data-testid="labels-config-gondola-thermal-footer-font"
+          aria-label="Fuente TSPL built-in para el pie"
+        >
+          {TSPL_BUILTIN_FONTS.map((f) => (
+            <SelectItem key={f}>{`Fuente ${f}`}</SelectItem>
+          ))}
+        </Select>
+        <div className="grid grid-cols-2 gap-2">
+          <Input
+            type="number"
+            label="Esc. X"
+            size="sm"
+            value={numberOrEmpty(thermal.footerScaleX)}
+            onChange={(e) =>
+              onChange({
+                footerScaleX: clampForInput(
+                  e.target.value,
+                  BOUNDS.gondolaThermalScale.min,
+                  BOUNDS.gondolaThermalScale.max,
+                ),
+              })
+            }
+            min={BOUNDS.gondolaThermalScale.min}
+            max={BOUNDS.gondolaThermalScale.max}
+            classNames={{ inputWrapper: "rounded-2xl" }}
+            data-testid="labels-config-gondola-thermal-footer-scale-x-input"
+            aria-label="Escala X de la fuente del pie"
+          />
+          <Input
+            type="number"
+            label="Esc. Y"
+            size="sm"
+            value={numberOrEmpty(thermal.footerScaleY)}
+            onChange={(e) =>
+              onChange({
+                footerScaleY: clampForInput(
+                  e.target.value,
+                  BOUNDS.gondolaThermalScale.min,
+                  BOUNDS.gondolaThermalScale.max,
+                ),
+              })
+            }
+            min={BOUNDS.gondolaThermalScale.min}
+            max={BOUNDS.gondolaThermalScale.max}
+            classNames={{ inputWrapper: "rounded-2xl" }}
+            data-testid="labels-config-gondola-thermal-footer-scale-y-input"
+            aria-label="Escala Y de la fuente del pie"
+          />
+        </div>
+      </div>
     </div>
   );
 }

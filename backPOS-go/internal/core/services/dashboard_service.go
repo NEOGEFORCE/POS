@@ -141,6 +141,13 @@ type DashboardOverview struct {
 	PendingDebts  DebtSummary     `json:"pendingDebts"`
 	TodayExpenses ExpenseSummary  `json:"todayExpenses"`
 	TodayCashFlow CashFlowSummary `json:"todayCashFlow"`
+	// TodayCashFlowDetail (B2, 2026-10-23): el widget "Flujo Hoy"
+	// necesita ingresos, egresos y saldo POR CANAL. El shape del campo
+	// anterior `todayCashFlow` se CONSERVA; este campo nuevo lo
+	// complementa con mapas EFECTIVO/NEQUI/DAVIPLATA/BOLD_QR. Ver
+	// today_cash_flow_detail.go y BuildTodayCashFlowDetail para la
+	// función pura y los tests que fijan el contrato.
+	TodayCashFlowDetail TodayCashFlowDetail `json:"todayCashFlowDetail"`
 	// Financial Reconciliation V5.5
 	SystemBalance         float64 `json:"systemBalance"`
 	ReportedBalance       float64 `json:"reportedBalance"`
@@ -174,6 +181,12 @@ type CashFlowSummary struct {
 	Cash      float64 `json:"cash"`
 	Nequi     float64 `json:"nequi"`
 	Daviplata float64 `json:"daviplata"`
+	// BoldQr es el saldo del canal Bold QR / Bre-B: ingresos de ventas
+	// cobradas con el QR (transferSource='BOLD_QR') + abonos recibidos por
+	// ese canal − egresos pagados desde Bold QR. Patrón idéntico a
+	// Nequi/Daviplata; existe aparte para que el dashboard muestre
+	// "cuánto hay" en Bold QR sin diluirlo dentro de "TRANSFERENCIA".
+	BoldQr float64 `json:"boldQr"`
 }
 
 type DebtSummary struct {
@@ -739,6 +752,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			normalizedShiftSales["FIADO"] = shiftClosure.TotalCreditIssued
 			normalizedShiftSales["TRANSFERENCIA"] = shiftClosure.TotalTransfer
 			normalizedShiftSales["MIXTO"] = shiftClosure.TotalMixed
+			// Bold QR / Bre-B: ventas y abonos cobrados por el QR del turno
+			// activo. Mismo nivel visual que NEQUI/DAVIPLATA.
+			normalizedShiftSales["BOLD_QR"] = shiftClosure.TotalBoldQr
 
 			shiftSalesAmount = shiftClosure.TotalSales
 			// TARJETA "EGRESOS DEL TURNO" en el dashboard:
@@ -979,6 +995,19 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		bovedaFisicaAcumulada := bovedaBilletes + totalMonedasAcumuladas
 		saldoNequiReal := globalSalesByMethod["NEQUI"] + globalCollectedByMethod["NEQUI"] - globalPaidByMethod["NEQUI"]
 		saldoDaviplataReal := globalSalesByMethod["DAVIPLATA"] + globalCollectedByMethod["DAVIPLATA"] - globalPaidByMethod["DAVIPLATA"]
+		// Saldo "cuánto hay" en Bold QR: ventas acumuladas con el QR +
+		// abonos recibidos − egresos pagados desde Bold QR. Mismo patrón que
+		// Nequi/Daviplata (ver pos_qr_async_dispatcher.go para la fuente de
+		// los ingresos y models.IsBoldQRPaymentSource para los egresos).
+		//
+		// NOTA: Bold QR también suma dentro de globalSalesByMethod["TRANSFERENCIA"]
+		// porque toda transferencia (incluidas NEQUI y DAVIPLATA) se agrega ahí
+		// en PostgresSaleRepository.GetGlobalSalesByMethod. Eso es intencional
+		// para no romper el donut de métodos. Al exponer BOLD_QR como canal
+		// propio en realCashFlow no estamos duplicando: realCashFlow.cash,
+		// nequi, daviplata y boldQr son saldos independientes y el frontend
+		// los pinta en tarjetas separadas, no suma TRANSFERENCIA aparte.
+		saldoBoldQrReal := globalSalesByMethod["BOLD_QR"] + globalCollectedByMethod["BOLD_QR"] - globalPaidByMethod["BOLD_QR"]
 
 		result := DashboardOverview{
 			TotalSalesAmount:    totalSalesAmount,
@@ -1014,6 +1043,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				Cash:      bovedaBilletes, // Efectivo Operativo de Bóveda
 				Nequi:     saldoNequiReal,
 				Daviplata: saldoDaviplataReal,
+				BoldQr:    saldoBoldQrReal,
 			},
 			PendingDebts: DebtSummary{
 				Amount: pendingDebtsAmount,
@@ -1025,10 +1055,25 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				Count:  int(shiftExpensesCount),
 			},
 			TodayCashFlow: CashFlowSummary{
-				Cash:      normalizedSales["EFECTIVO"] + dayCollectedByMethod["EFECTIVO"] - dayExpensesByMethod["EFECTIVO"] - todayReturns,
-				Nequi:     normalizedSales["NEQUI"] + dayCollectedByMethod["NEQUI"] - dayExpensesByMethod["NEQUI"],
-				Daviplata: normalizedSales["DAVIPLATA"] + dayCollectedByMethod["DAVIPLATA"] - dayExpensesByMethod["DAVIPLATA"],
+				// B2 FIX (2026-10-23): `normalizedSales` viene de
+				// GetSalesBreakdownByRange, que YA UNE credit_payments
+				// en EFECTIVO y en las transferencias (NEQUI/DAVIPLATA/
+				// BOLD_QR). Antes esta fórmula sumaba también
+				// `dayCollectedByMethod`, que son los MISMOS abonos
+				// recorridos aparte, duplicando los abonos del día en
+				// cada canal del widget "Flujo Hoy". Ahora se usa sólo
+				// `normalizedSales` menos los egresos y, en EFECTIVO,
+				// menos las devoluciones.
+				Cash:      normalizedSales["EFECTIVO"] - dayExpensesByMethod["EFECTIVO"] - todayReturns,
+				Nequi:     normalizedSales["NEQUI"] - dayExpensesByMethod["NEQUI"],
+				Daviplata: normalizedSales["DAVIPLATA"] - dayExpensesByMethod["DAVIPLATA"],
+				BoldQr:    normalizedSales["BOLD_QR"] - dayExpensesByMethod["BOLD_QR"],
 			},
+			// TodayCashFlowDetail (B2): detalle por canal del widget
+			// "Flujo Hoy". Función pura y testeable
+			// (today_cash_flow_detail.go) que NO duplica abonos
+			// (consume `normalizedSales` que ya los incluye).
+			TodayCashFlowDetail: BuildTodayCashFlowDetail(normalizedSales, dayExpensesByMethod, todayReturns),
 			// CÁLCULO DE SALDOS (Bóveda Estricta y Restauración Digital)
 			VaultBalance: bovedaBilletes,
 			CoinsSavings: totalMonedasAcumuladas,
@@ -1076,7 +1121,14 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				}
 				return 0
 			})(),
-			TotalLiquidity: bovedaFisicaAcumulada + saldoNequiReal + saldoDaviplataReal,
+			// TotalLiquidity (B3, 2026-10-23): "cuánta plata líquida
+			// hay en toda la operación". Se suma: efectivo físico de
+			// bóveda + saldo real Nequi + saldo real Daviplata +
+			// saldo real Bold QR. Antes del fix se omitía Bold QR y
+			// la liquidez se subestimaba cada vez que había pagos QR
+			// pendientes de llegar a otro bolsillo. saldoBoldQrReal
+			// usa la misma fórmula que `realCashFlow.boldQr`.
+			TotalLiquidity: bovedaFisicaAcumulada + saldoNequiReal + saldoDaviplataReal + saldoBoldQrReal,
 
 			EstimatedNetProfit:   estimatedNetProfit,
 			InventoryCostValue:   inventoryCostValue,
@@ -1350,18 +1402,24 @@ func (s *DashboardService) AdjustInitialBalance(cash, nequi, daviplata float64, 
 }
 
 type CashierClosure struct {
-	Date                 time.Time              `json:"date"`
-	StartDate            time.Time              `json:"startDate"`
-	EndDate              time.Time              `json:"endDate"`
-	SalesCount           int                    `json:"salesCount"`
-	TotalSales           float64                `json:"totalSales"`
-	TotalCash            float64                `json:"totalCash"`
-	TotalTransfer        float64                `json:"totalTransfer"`
-	TotalCard            float64                `json:"totalCard"` // NUEVO: Pagos con tarjeta
-	TotalNequi           float64                `json:"totalNequi"`
-	TotalDaviplata       float64                `json:"totalDaviplata"`
-	TotalBancolombia     float64                `json:"totalBancolombia"`
-	TotalOtherTransfer   float64                `json:"totalOtherTransfer"`
+	Date               time.Time `json:"date"`
+	StartDate          time.Time `json:"startDate"`
+	EndDate            time.Time `json:"endDate"`
+	SalesCount         int       `json:"salesCount"`
+	TotalSales         float64   `json:"totalSales"`
+	TotalCash          float64   `json:"totalCash"`
+	TotalTransfer      float64   `json:"totalTransfer"`
+	TotalCard          float64   `json:"totalCard"` // NUEVO: Pagos con tarjeta
+	TotalNequi         float64   `json:"totalNequi"`
+	TotalDaviplata     float64   `json:"totalDaviplata"`
+	TotalBancolombia   float64   `json:"totalBancolombia"`
+	TotalOtherTransfer float64   `json:"totalOtherTransfer"`
+	// TotalBoldQr acumula las ventas y abonos cobrados con el QR Bre-B de
+	// Bold (sales.transferSource='BOLD_QR' y credit_payments.transferSource
+	// equivalente). Se calcula en runtime a partir de los movimientos del
+	// turno; no persiste en la columna de BD (requeriría migración), pero
+	// alimenta `shiftSalesByMethod.BOLD_QR` del dashboard.
+	TotalBoldQr          float64                `json:"totalBoldQr"`
 	TotalExpenses        float64                `json:"totalExpenses"`
 	TotalReturns         float64                `json:"totalReturns"`
 	ReturnsCount         float64                `json:"returnsCount"`
@@ -1550,18 +1608,13 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 			}
 
 			if sale.TransferAmount > 0 {
-				switch strings.ToUpper(sale.TransferSource) {
-				case "NEQUI":
-					closure.TotalNequi += sale.TransferAmount
-				case "DAVIPLATA":
-					closure.TotalDaviplata += sale.TransferAmount
-				case "BANCOLOMBIA":
-					closure.TotalBancolombia += sale.TransferAmount
-				case "TARJETA":
-					closure.TotalCard += sale.TransferAmount
-				default:
-					closure.TotalOtherTransfer += sale.TransferAmount
-				}
+				// Clasificación canónica (función pura, ver
+				// closure_transfer_classifier.go). Bold QR se acumula a
+				// TotalOtherTransfer Y a TotalBoldQr (subconjunto
+				// informativo) para no perder la plata al mapear al
+				// modelo persistente models.CashierClosure, que NO tiene
+				// la columna TotalBoldQr.
+				classifyTransferToClosure(sale.TransferSource, sale.TransferAmount, &closure)
 			}
 		}
 	}
@@ -1586,18 +1639,10 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 		}
 
 		if p.AmountTransfer > 0 {
-			switch strings.ToUpper(p.TransferSource) {
-			case "NEQUI":
-				closure.TotalNequi += p.AmountTransfer
-			case "DAVIPLATA":
-				closure.TotalDaviplata += p.AmountTransfer
-			case "BANCOLOMBIA":
-				closure.TotalBancolombia += p.AmountTransfer
-			case "TARJETA":
-				closure.TotalCard += p.AmountTransfer
-			default:
-				closure.TotalOtherTransfer += p.AmountTransfer
-			}
+			// Abonos recibidos: misma clasificación canónica que las
+			// ventas (ver closure_transfer_classifier.go). Bold QR se
+			// acumula a TotalOtherTransfer Y a TotalBoldQr.
+			classifyTransferToClosure(p.TransferSource, p.AmountTransfer, &closure)
 		}
 	}
 
@@ -1864,6 +1909,14 @@ func normalizeClosureExpenses(expenses []models.Expense) error {
 
 func assignExpenseChannel(expense *models.Expense, source string, value float64) {
 	switch {
+	// Bold QR se evalúa primero: comparte el token genérico "QR" con
+	// cualquier otra descripción pero IsBoldQRPaymentSource exige la marca
+	// "BOLD" para distinguirlo. Como no hay columna física, el egreso queda
+	// con todas las columnas desglosadas en 0 y PaymentSource='BOLD_QR'; los
+	// agregadores lo levantan por la rama legacy (misma estrategia que
+	// usaba la alcancía antes de tener columna propia).
+	case models.IsBoldQRPaymentSource(source):
+		return
 	// DAVIPLATA se evalúa primero: contiene "DAVI" y también es un canal digital.
 	case strings.Contains(source, "DAVIPLATA"), strings.Contains(source, "DAVI"):
 		expense.DaviplataAmount += value
@@ -2527,7 +2580,12 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 						if num == 0 {
 							num = exp.Amount + exp.TaxAmount
 						}
-						if strings.Contains(p, "NEQUI") {
+						// Bold QR se evalúa primero: comparte el token "QR"
+						// con descripciones genéricas, pero
+						// IsBoldQRPaymentSource exige la marca "BOLD".
+						if models.IsBoldQRPaymentSource(p) {
+							totals["BOLD_QR"] -= num
+						} else if strings.Contains(p, "NEQUI") {
 							totals["NEQUI"] -= num
 						} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
 							totals["DAVIPLATA"] -= num
@@ -2537,6 +2595,10 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 							totals["EFECTIVO"] -= num
 						}
 					}
+				} else if models.IsBoldQRPaymentSource(method) {
+					// Egreso pagado por el QR Bre-B de Bold: descuenta del saldo
+					// Bold QR, no del efectivo.
+					totals["BOLD_QR"] -= (exp.Amount + exp.TaxAmount)
 				} else if method == "NEQUI" {
 					totals["NEQUI"] -= (exp.Amount + exp.TaxAmount)
 				} else if method == "DAVIPLATA" || method == "DAVI" {

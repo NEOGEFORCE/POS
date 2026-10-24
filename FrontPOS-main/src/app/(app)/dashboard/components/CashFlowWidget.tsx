@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Card, CardBody, Progress, Chip } from "@heroui/react";
-import { Wallet, ArrowUpRight, ArrowDownRight, Smartphone, Coins } from 'lucide-react';
+import { Wallet, ArrowUpRight, ArrowDownRight, Smartphone, Coins, QrCode } from 'lucide-react';
 import { formatCurrency } from "@/lib/utils";
 import { MoneyDigits } from "@/components/ui/motion";
 
@@ -27,6 +27,11 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
         { key: 'EFECTIVO', label: 'Efectivo', icon: Coins, color: 'emerald' },
         { key: 'NEQUI', label: 'Nequi', icon: Smartphone, color: 'purple' },
         { key: 'DAVIPLATA', label: 'Daviplata', icon: Smartphone, color: 'rose' },
+        // Bold QR / Bre-B — canal propio para que los ingresos del QR y
+        // los egresos pagados desde Bold se contabilicen y descuenten como
+        // los demás canales. El backend expone sus montos como la clave
+        // "BOLD_QR" dentro de todayCashFlow.income / .expense (ver informe).
+        { key: 'BOLD_QR', label: 'Bold QR', icon: QrCode, color: 'cyan' },
     ];
 
     return (

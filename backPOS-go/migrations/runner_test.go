@@ -13,8 +13,8 @@ func TestCatalogIsCompleteOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Catalog() error = %v", err)
 	}
-	if len(catalog) != 23 {
-		t.Fatalf("len(Catalog()) = %d, want 23", len(catalog))
+	if len(catalog) != 27 {
+		t.Fatalf("len(Catalog()) = %d, want 27", len(catalog))
 	}
 	for i, migration := range catalog {
 		wantVersion := int64(i + 1)
@@ -1026,6 +1026,1140 @@ func TestMigration023LoansBankMetadataIsTransactionalDDL(t *testing.T) {
 	} {
 		if strings.Contains(migration.Source, forbiddenAlter) {
 			t.Errorf("migration 023 debe limitarse a ALTER TABLE loans, encontró %q", forbiddenAlter)
+		}
+	}
+}
+
+func TestMigration024InternalBarcodeReservationsIsTransactionalDDL(t *testing.T) {
+	catalog, err := Catalog()
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	var migration *Migration
+	for i := range catalog {
+		if catalog[i].Version == 24 {
+			migration = &catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("migration 024 no está en el catálogo")
+	}
+	if !migration.Transactional {
+		t.Fatal("migration 024 debe ser transaccional: no usa CREATE INDEX CONCURRENTLY")
+	}
+
+	// La tabla principal se declara una sola vez y de forma idempotente.
+	if !strings.Contains(migration.Source, "CREATE TABLE IF NOT EXISTS internal_barcode_reservations") {
+		t.Error("migration 024 debe crear internal_barcode_reservations con IF NOT EXISTS")
+	}
+	// PK sobre el código: es la última línea de defensa que impide emitir
+	// dos veces el mismo valor. Si alguien cambia la clave primaria a un
+	// id serial, se pierde esa garantía y el test falla a propósito.
+	if !strings.Contains(migration.Source, "reserved_code              VARCHAR(64)   PRIMARY KEY") {
+		t.Error("migration 024 debe tener reserved_code VARCHAR(64) PRIMARY KEY (unicidad absoluta del namespace)")
+	}
+
+	// CHECKs obligatorios: namespace, status enumerado, coherencia de
+	// CONSUMED y expiración futura. Si alguien afloja estos invariantes
+	// el modelo de reserva ↔ consumo se contamina.
+	for _, constraint := range []string{
+		"ck_ibr_status_known",
+		"CHECK (status IN ('RESERVED', 'CONSUMED', 'EXPIRED'))",
+		"ck_ibr_source_known",
+		"CHECK (source IN ('product_form', 'reception', 'other'))",
+		"ck_ibr_namespace_shape",
+		"CHECK (reserved_code ~ '^POSINT-[0-9A-F]{8,24}$')",
+		"ck_ibr_consumed_coherent",
+		"ck_ibr_expiry_after_reserved",
+		"CHECK (expires_at IS NULL OR expires_at > reserved_at)",
+	} {
+		if !strings.Contains(migration.Source, constraint) {
+			t.Errorf("migration 024 debe declarar %q", constraint)
+		}
+	}
+
+	// Índices esperados: hot path de reserva, auditoría por actor,
+	// resolución por producto consumido. Son parciales a propósito para
+	// no inflar el B-tree con filas CONSUMED/EXPIRED (que son la mayoría
+	// con el tiempo).
+	for _, idx := range []string{
+		"CREATE INDEX IF NOT EXISTS ix_ibr_live_by_expiry",
+		"WHERE status = 'RESERVED'",
+		"CREATE INDEX IF NOT EXISTS ix_ibr_by_actor",
+		"CREATE INDEX IF NOT EXISTS ix_ibr_by_consumed_product",
+		"WHERE consumed_product_barcode IS NOT NULL",
+	} {
+		if !strings.Contains(migration.Source, idx) {
+			t.Errorf("migration 024 debe declarar %q", idx)
+		}
+	}
+
+	// Guardianes cruzados sobre otras tablas: package_barcode_aliases y
+	// products NO pueden adoptar el namespace POSINT-. label_codes SÍ
+	// puede llevar code=POSINT-<hex>, pero debe cumplir una coherencia
+	// intra-fila (code = product_barcode) que no es una prohibición.
+	// Las tres se agregan vía DO $$ ... END $$ porque Postgres no soporta
+	// ADD CONSTRAINT IF NOT EXISTS y el runner debe poder reintentar la
+	// migración tras un fallo parcial.
+	for _, cross := range []string{
+		"ck_pba_no_internal_namespace",
+		`ALTER TABLE package_barcode_aliases`,
+		"CHECK (package_code !~* '^POSINT-')",
+		"ck_products_alternate_codes_no_internal_namespace",
+		`ALTER TABLE products`,
+		"position('POSINT-' in upper(alternate_codes)) = 0",
+	} {
+		if !strings.Contains(migration.Source, cross) {
+			t.Errorf("migration 024 debe declarar el guardián cruzado %q", cross)
+		}
+	}
+	// label_codes NO debe prohibirse en general: el flujo audit-first de
+	// LabelPrintSheet para productos internos persiste
+	// code=product_barcode=POSINT-<hex> para que al escanear la etiqueta
+	// impresa ResolveLabelCode resuelva al producto. La prohibición
+	// global que una versión anterior intentó introducir rompía ese flujo
+	// y no debe reintroducirse.
+	for _, forbidden := range []string{
+		"ck_label_codes_no_internal_namespace",
+		"CHECK (code !~* '^POSINT-')",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 024 NO debe prohibir en general POSINT- en label_codes.code (encontró %q): rompería el audit-first de LabelPrintSheet para productos internos", forbidden)
+		}
+	}
+	// En su lugar: CHECK de COHERENCIA intra-fila sobre label_codes. Para
+	// filas con code POSINT-, product_barcode debe ser igual a code (la
+	// etiqueta impresa ES el barcode del producto). Sin subquery: la
+	// existencia global del producto la garantiza el repositorio Go.
+	for _, coherence := range []string{
+		"ck_label_codes_posint_matches_product_barcode",
+		`ALTER TABLE label_codes`,
+		"code !~ '^POSINT-'",
+		"product_barcode IS NOT NULL AND product_barcode = code",
+	} {
+		if !strings.Contains(migration.Source, coherence) {
+			t.Errorf("migration 024 debe declarar la coherencia intra-fila %q sobre label_codes", coherence)
+		}
+	}
+	// Idempotencia de los tres CHECK que se añaden vía ALTER (los dos
+	// cruzados sobre otras tablas + la coherencia sobre label_codes):
+	// deben vivir dentro de DO $$ con comprobación en pg_constraint. Si
+	// alguien reemplaza por ALTER directo, el runner no puede reintentar
+	// tras un fallo parcial.
+	if count := strings.Count(migration.Source, "FROM pg_constraint"); count != 3 {
+		t.Errorf("migration 024 debe envolver los tres ADD CONSTRAINT (pba, products.alternate_codes, label_codes coherencia) en bloques DO $$ con pg_constraint, encontró %d", count)
+	}
+	if count := strings.Count(migration.Source, "\nDO $$\n"); count != 3 {
+		t.Errorf("migration 024 debe tener exactamente 3 bloques DO $$ ejecutables (pba, products.alternate_codes, label_codes coherencia), encontró %d", count)
+	}
+
+	// Al ser transaccional NO puede usar CREATE INDEX CONCURRENTLY.
+	// Postgres prohíbe CONCURRENTLY dentro de una transacción.
+	if concurrentIndexPattern.MatchString(migration.Source) {
+		t.Error("migration 024 es transaccional: contiene una sentencia CREATE INDEX CONCURRENTLY ejecutable")
+	}
+
+	// Puramente DDL: la 024 NO backfillea nada. Si alguien agrega
+	// INSERT/UPDATE/DELETE para "sembrar" reservas iniciales, estaría
+	// generando códigos sin pasar por el handler (que valida colisión
+	// contra las cuatro fuentes). Explícitamente prohibido.
+	for _, forbidden := range []string{
+		"UPDATE internal_barcode_reservations",
+		"UPDATE products",
+		"UPDATE label_codes",
+		"UPDATE package_barcode_aliases",
+		"DELETE FROM ",
+		"INSERT INTO ",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 024 debe ser puramente DDL, encontró %q", forbidden)
+		}
+	}
+
+	// COMMENT ON TABLE / COLUMN para que pg_dump --schema-only conserve
+	// la justificación con la BD. Documenta el contrato operativo.
+	for _, comment := range []string{
+		"COMMENT ON TABLE internal_barcode_reservations",
+		"COMMENT ON COLUMN internal_barcode_reservations.reserved_code",
+		"COMMENT ON COLUMN internal_barcode_reservations.status",
+		"COMMENT ON COLUMN internal_barcode_reservations.source",
+		"COMMENT ON COLUMN internal_barcode_reservations.reserved_by_dni",
+		"COMMENT ON COLUMN internal_barcode_reservations.expires_at",
+		"COMMENT ON COLUMN internal_barcode_reservations.consumed_at",
+		"COMMENT ON COLUMN internal_barcode_reservations.consumed_product_barcode",
+		"COMMENT ON COLUMN internal_barcode_reservations.consumed_by_dni",
+		"COMMENT ON CONSTRAINT ck_pba_no_internal_namespace ON package_barcode_aliases",
+		"COMMENT ON CONSTRAINT ck_products_alternate_codes_no_internal_namespace ON products",
+		"COMMENT ON CONSTRAINT ck_label_codes_posint_matches_product_barcode ON label_codes",
+	} {
+		if !strings.Contains(migration.Source, comment) {
+			t.Errorf("migration 024 debe declarar %q", comment)
+		}
+	}
+
+	// Documentación obligatoria: el archivo tiene que explicar POR QUÉ el
+	// namespace es POSINT- (ASCII, CODE128, no comercial), por qué hex en
+	// mayúsculas (empata con strings.ToUpper del handler), por qué sin FK
+	// dura al producto (soft delete + marcadores [HISTORICO]), por qué el
+	// status jamás se borra (unicidad eterna), por qué label_codes PUEDE
+	// llevar code=POSINT- (flujo audit-first de LabelPrintSheet con
+	// code = product_barcode) y por qué los dos guardianes cruzados
+	// restantes existen. Blindaje semántico: si alguien reemplaza el
+	// contenido sin esa justificación, el test obliga a revisarlo.
+	for _, mustExplain := range []string{
+		"POSINT-",
+		"CODE128",
+		"no comercial",
+		"ToUpper",
+		"soft delete",
+		"[HISTORICO]",
+		"buildProductLookup",
+		"ProductFormModal",
+		"RESERVED",
+		"CONSUMED",
+		"EXPIRED",
+		"crypto/rand",
+		"label_codes",
+		"package_barcode_aliases",
+		"alternate_codes",
+		"LabelPrintSheet",
+		"audit-first",
+		"ResolveLabelCode",
+		"EnsureCodeForProduct",
+		"LC-<hex>",
+	} {
+		if !strings.Contains(migration.Source, mustExplain) {
+			t.Errorf("migration 024 debe documentar %q", mustExplain)
+		}
+	}
+}
+
+
+func TestMigration025CashDrawerOtpChallengesIsTransactionalDDL(t *testing.T) {
+	catalog, err := Catalog()
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	var migration *Migration
+	for i := range catalog {
+		if catalog[i].Version == 25 {
+			migration = &catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("migration 025 no está en el catálogo")
+	}
+	if !migration.Transactional {
+		t.Fatal("migration 025 debe ser transaccional: no usa CREATE INDEX CONCURRENTLY")
+	}
+
+	// La tabla principal se declara una sola vez y de forma idempotente.
+	if !strings.Contains(migration.Source, "CREATE TABLE IF NOT EXISTS cash_drawer_otp_challenges") {
+		t.Error("migration 025 debe crear cash_drawer_otp_challenges con IF NOT EXISTS")
+	}
+
+	// Columnas obligatorias y tipos exactos. Si alguien cambia BYTEA por
+	// TEXT para code_hash, o VARCHAR por TEXT para challenge_id, el
+	// contrato con el handler bcrypt se rompe en silencio.
+	for _, column := range []string{
+		"id                        BIGSERIAL     PRIMARY KEY",
+		"challenge_id              VARCHAR(64)   NOT NULL",
+		"requested_by_dni          VARCHAR(32)   NOT NULL",
+		"code_hash                 BYTEA         NOT NULL",
+		"created_at                TIMESTAMPTZ   NOT NULL DEFAULT NOW()",
+		"expires_at                TIMESTAMPTZ   NOT NULL",
+		"attempts_used             INTEGER       NOT NULL DEFAULT 0",
+		"attempts_max              INTEGER       NOT NULL DEFAULT 3",
+		"status                    VARCHAR(16)   NOT NULL DEFAULT 'PENDING'",
+		"consumed_at               TIMESTAMPTZ",
+		"consumed_drawer_open_id   BIGINT",
+	} {
+		if !strings.Contains(migration.Source, column) {
+			t.Errorf("migration 025 debe declarar la columna %q", column)
+		}
+	}
+
+	// Blindaje tipo-de-dato: el hash bcrypt vive como BYTEA, no como
+	// JSON ni VARCHAR. Si alguien lo cambia a texto, bcrypt sigue
+	// funcionando pero la columna pierde la semántica binaria explícita
+	// y abre la puerta a persistir el OTP en claro por error.
+	if strings.Contains(migration.Source, "code_hash                 TEXT") ||
+		strings.Contains(migration.Source, "code_hash                 VARCHAR") ||
+		strings.Contains(migration.Source, "code_hash                 JSONB") ||
+		strings.Contains(migration.Source, "code_hash                 JSON") {
+		t.Error("migration 025 debe mantener code_hash BYTEA (bcrypt es binario, JSON nunca aplica en SQL)")
+	}
+
+	// CHECKs obligatorios: status enumerado, cotas de intentos, ventana
+	// positiva, tamaño del hash bcrypt y biyección CONSUMED ↔
+	// (consumed_at, consumed_drawer_open_id).
+	for _, constraint := range []string{
+		"ck_cdoc_status_known",
+		"CHECK (status IN ('PENDING', 'CONSUMED', 'FAILED', 'EXPIRED', 'CANCELLED'))",
+		"ck_cdoc_attempts_bounds",
+		"attempts_max  >= 1",
+		"attempts_used >= 0",
+		"attempts_used <= attempts_max",
+		"ck_cdoc_expires_after_created",
+		"CHECK (expires_at > created_at)",
+		"ck_cdoc_code_hash_bcrypt_size",
+		"CHECK (octet_length(code_hash) BETWEEN 59 AND 72)",
+		"ck_cdoc_consumed_coherent",
+	} {
+		if !strings.Contains(migration.Source, constraint) {
+			t.Errorf("migration 025 debe declarar %q", constraint)
+		}
+	}
+
+	// Índices: challenge_id UNIQUE global, PENDING vivo por actor
+	// (unique parcial), expiración parcial, auditoría por actor.
+	for _, idx := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_cdoc_challenge_id",
+		"ON cash_drawer_otp_challenges (challenge_id)",
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_cdoc_live_by_actor",
+		"ON cash_drawer_otp_challenges (requested_by_dni)",
+		"WHERE status = 'PENDING'",
+		"CREATE INDEX IF NOT EXISTS ix_cdoc_expiry_pending",
+		"ON cash_drawer_otp_challenges (expires_at)",
+		"CREATE INDEX IF NOT EXISTS ix_cdoc_actor_created",
+		"ON cash_drawer_otp_challenges (requested_by_dni, created_at DESC)",
+	} {
+		if !strings.Contains(migration.Source, idx) {
+			t.Errorf("migration 025 debe declarar %q", idx)
+		}
+	}
+
+	// FK dura challenge → cash_drawer_opens (soft RESTRICT) y FK dura
+	// cash_drawer_opens → challenge (soft RESTRICT), ambas vía DO $$
+	// para idempotencia.
+	for _, fk := range []string{
+		"fk_cdoc_consumed_drawer_open",
+		"REFERENCES cash_drawer_opens(id)",
+		"fk_cash_drawer_opens_otp_challenge",
+		"REFERENCES cash_drawer_otp_challenges(id)",
+	} {
+		if !strings.Contains(migration.Source, fk) {
+			t.Errorf("migration 025 debe declarar %q", fk)
+		}
+	}
+	// Las dos FKs usan ON DELETE RESTRICT: cash_drawer_opens es
+	// append-only y los challenges tampoco se borran en operación
+	// normal. ON DELETE CASCADE o SET NULL abriría la puerta a perder
+	// trazabilidad.
+	if count := strings.Count(migration.Source, "ON DELETE RESTRICT"); count < 2 {
+		t.Errorf("migration 025 debe usar ON DELETE RESTRICT en las dos FKs, encontró %d", count)
+	}
+
+	// Alteración de cash_drawer_opens: nueva columna + FK + UNIQUE parcial.
+	for _, alter := range []string{
+		"ALTER TABLE cash_drawer_opens",
+		"ADD COLUMN IF NOT EXISTS otp_challenge_id BIGINT NULL",
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_cash_drawer_opens_otp_challenge",
+		"ON cash_drawer_opens (otp_challenge_id)",
+		"WHERE otp_challenge_id IS NOT NULL",
+	} {
+		if !strings.Contains(migration.Source, alter) {
+			t.Errorf("migration 025 debe declarar %q", alter)
+		}
+	}
+
+	// Reemplazo del CHECK anónimo de reason: debe nacer un
+	// ck_cash_drawer_opens_reason_known que admita 'otp_manual' y
+	// mantenga los cuatro valores originales (sale/return/admin_override/other).
+	for _, reasonCheck := range []string{
+		"ck_cash_drawer_opens_reason_known",
+		"CHECK (reason IN ('sale', 'return', 'admin_override', 'other', 'otp_manual'))",
+	} {
+		if !strings.Contains(migration.Source, reasonCheck) {
+			t.Errorf("migration 025 debe declarar %q", reasonCheck)
+		}
+	}
+	// El reemplazo del CHECK anónimo heredado de la 016 se hace vía
+	// lookup por contenido en pg_constraint (no por nombre), porque el
+	// nombre autogenerado por Postgres (<table>_<col>_check) no es un
+	// contrato estable. Si alguien introduce un DROP por nombre
+	// hardcoded, el test lo detecta.
+	for _, lookupBit := range []string{
+		"legacy_check_name TEXT",
+		"FROM pg_constraint c",
+		"JOIN pg_class t",
+		"pg_get_constraintdef(c.oid)",
+		"NOT ILIKE '%otp_manual%'",
+	} {
+		if !strings.Contains(migration.Source, lookupBit) {
+			t.Errorf("migration 025 debe localizar el CHECK anónimo de reason por contenido: falta %q", lookupBit)
+		}
+	}
+
+	// Reemplazo del guardián sale_or_admin: desaparece el nombre viejo y
+	// nace el nuevo sale_admin_return_otp con las cuatro justificaciones.
+	for _, saleGuard := range []string{
+		"DROP CONSTRAINT ck_cash_drawer_opens_sale_or_admin",
+		"ck_cash_drawer_opens_sale_admin_return_otp",
+		"sale_id IS NOT NULL",
+		"return_id IS NOT NULL",
+		"override_admin",
+		"otp_challenge_id IS NOT NULL",
+	} {
+		if !strings.Contains(migration.Source, saleGuard) {
+			t.Errorf("migration 025 debe declarar %q", saleGuard)
+		}
+	}
+
+	// Biyección exacta reason='otp_manual' ↔ otp_challenge_id IS NOT NULL.
+	for _, coherent := range []string{
+		"ck_cash_drawer_opens_otp_reason_coherent",
+		"(reason = 'otp_manual' AND otp_challenge_id IS NOT NULL)",
+		"(reason <> 'otp_manual' AND otp_challenge_id IS NULL)",
+	} {
+		if !strings.Contains(migration.Source, coherent) {
+			t.Errorf("migration 025 debe declarar la coherencia %q", coherent)
+		}
+	}
+
+	// Idempotencia de todos los ADD CONSTRAINT que se añaden vía ALTER:
+	// deben vivir dentro de DO $$ con comprobación en pg_constraint. La
+	// 025 añade 5 bloques DO $$ (FK cdoc→opens, FK opens→cdoc, reason
+	// CHECK con lookup+add, sale_or_admin DROP+ADD, otp_reason_coherent ADD).
+	if count := strings.Count(migration.Source, "\nDO $$\n"); count != 5 {
+		t.Errorf("migration 025 debe tener exactamente 5 bloques DO $$ ejecutables (dos FKs, reason, sale/admin/return/otp, coherencia), encontró %d", count)
+	}
+	if count := strings.Count(migration.Source, "FROM pg_constraint"); count < 5 {
+		t.Errorf("migration 025 debe consultar pg_constraint en todos los bloques idempotentes, encontró %d", count)
+	}
+
+	// Al ser transaccional NO puede usar CREATE INDEX CONCURRENTLY.
+	// Postgres prohíbe CONCURRENTLY dentro de una transacción.
+	if concurrentIndexPattern.MatchString(migration.Source) {
+		t.Error("migration 025 es transaccional: contiene una sentencia CREATE INDEX CONCURRENTLY ejecutable")
+	}
+
+	// Puramente DDL: la 025 NO backfillea ni semilla challenges. Si
+	// alguien agrega INSERT/UPDATE/DELETE para "sembrar" datos iniciales,
+	// está generando OTPs sin pasar por el handler (que calcula bcrypt
+	// y manda por Telegram). Explícitamente prohibido.
+	for _, forbidden := range []string{
+		"UPDATE cash_drawer_otp_challenges",
+		"UPDATE cash_drawer_opens",
+		"DELETE FROM ",
+		"INSERT INTO ",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 025 debe ser puramente DDL, encontró %q", forbidden)
+		}
+	}
+
+	// COMMENT ON TABLE / COLUMN / CONSTRAINT para que pg_dump --schema-only
+	// conserve la justificación con la BD.
+	for _, comment := range []string{
+		"COMMENT ON TABLE cash_drawer_otp_challenges",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.challenge_id",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.requested_by_dni",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.code_hash",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.expires_at",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.attempts_used",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.attempts_max",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.status",
+		"COMMENT ON COLUMN cash_drawer_otp_challenges.consumed_drawer_open_id",
+		"COMMENT ON COLUMN cash_drawer_opens.otp_challenge_id",
+		"COMMENT ON CONSTRAINT fk_cdoc_consumed_drawer_open ON cash_drawer_otp_challenges",
+		"COMMENT ON CONSTRAINT fk_cash_drawer_opens_otp_challenge ON cash_drawer_opens",
+		"COMMENT ON CONSTRAINT ck_cash_drawer_opens_reason_known ON cash_drawer_opens",
+		"COMMENT ON CONSTRAINT ck_cash_drawer_opens_sale_admin_return_otp ON cash_drawer_opens",
+		"COMMENT ON CONSTRAINT ck_cash_drawer_opens_otp_reason_coherent ON cash_drawer_opens",
+	} {
+		if !strings.Contains(migration.Source, comment) {
+			t.Errorf("migration 025 debe declarar %q", comment)
+		}
+	}
+
+	// Documentación obligatoria: el archivo tiene que explicar POR QUÉ el
+	// OTP se persiste como BYTEA (bcrypt, no JSON ni texto en claro),
+	// por qué hay un UNIQUE parcial por actor PENDING (DoS a Telegram),
+	// por qué cash_drawer_opens.reason se amplía a cuatro valores
+	// (sale/admin/return/otp), por qué la biyección es exacta (no sólo
+	// "si hay challenge, legal"), por qué las FKs son ON DELETE RESTRICT
+	// y por qué la 025 no reemplaza al override admin sino que corre en
+	// paralelo. Blindaje semántico: si alguien reemplaza el contenido
+	// sin esa justificación, el test obliga a revisarlo.
+	for _, mustExplain := range []string{
+		"bcrypt",
+		"BYTEA",
+		"JSON",
+		"Telegram",
+		"DoS",
+		"append-only",
+		"RESTRICT",
+		"otp_manual",
+		"sale/admin/return/otp",
+		"override admin",
+		"biyección",
+		"crypto/rand",
+		"estrictamente más permisivo",
+		"append-only",
+		"PENDING",
+		"CONSUMED",
+		"FAILED",
+		"EXPIRED",
+		"CANCELLED",
+	} {
+		if !strings.Contains(migration.Source, mustExplain) {
+			t.Errorf("migration 025 debe documentar %q", mustExplain)
+		}
+	}
+
+	// La 025 limita su alcance a cash_drawer_otp_challenges y
+	// cash_drawer_opens. Si alguien añade ALTER TABLE sobre otras
+	// tablas, debe ser una migración 026+ con su propia justificación.
+	for _, forbiddenAlter := range []string{
+		"ALTER TABLE products",
+		"ALTER TABLE sales",
+		"ALTER TABLE returns",
+		"ALTER TABLE audit_logs",
+		"ALTER TABLE label_codes",
+		"ALTER TABLE package_barcode_aliases",
+		"ALTER TABLE internal_barcode_reservations",
+	} {
+		if strings.Contains(migration.Source, forbiddenAlter) {
+			t.Errorf("migration 025 debe limitarse a cash_drawer_otp_challenges y cash_drawer_opens, encontró %q", forbiddenAlter)
+		}
+	}
+}
+
+func TestMigration026PosQrPaymentIntentsIsTransactionalDDL(t *testing.T) {
+	catalog, err := Catalog()
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	var migration *Migration
+	for i := range catalog {
+		if catalog[i].Version == 26 {
+			migration = &catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("migration 026 no está en el catálogo")
+	}
+	if !migration.Transactional {
+		t.Fatal("migration 026 debe ser transaccional: no usa CREATE INDEX CONCURRENTLY")
+	}
+
+	// Las dos tablas nuevas deben declararse de forma idempotente.
+	for _, table := range []string{
+		"pos_qr_payment_intents",
+		"pos_qr_webhook_events",
+	} {
+		expected := "CREATE TABLE IF NOT EXISTS " + table
+		if !strings.Contains(migration.Source, expected) {
+			t.Errorf("migration 026 debe crear %s con IF NOT EXISTS", table)
+		}
+	}
+
+	// Columnas obligatorias y tipos exactos de pos_qr_payment_intents.
+	// Si alguien cambia BIGINT por NUMERIC en amount_cop (perdiendo el
+	// contrato int64 pedido por el dueño) o VARCHAR por TEXT en los
+	// enums, el matcher y los CHECK se vuelven ambiguos: estas pruebas
+	// lo detectan antes de que la BD lo acepte en silencio.
+	for _, column := range []string{
+		"id                        BIGSERIAL     PRIMARY KEY",
+		"venta_temp_id             VARCHAR(80)   NOT NULL",
+		"caja_id                   VARCHAR(64)   NOT NULL",
+		"created_by_dni            VARCHAR(32)   NOT NULL",
+		"amount_cop                BIGINT        NOT NULL",
+		"status                    VARCHAR(24)   NOT NULL DEFAULT 'PENDIENTE'",
+		"created_at                TIMESTAMPTZ   NOT NULL DEFAULT NOW()",
+		"expires_at                TIMESTAMPTZ   NOT NULL",
+		"approved_at               TIMESTAMPTZ",
+		"approved_source           VARCHAR(24)",
+		"approved_reference        VARCHAR(128)",
+		"approved_event_id         BIGINT",
+		"cancelled_at              TIMESTAMPTZ",
+		"cancelled_by_dni          VARCHAR(32)",
+		"cancel_reason             VARCHAR(64)",
+		"manual_confirmed_by_dni   VARCHAR(32)",
+		"manual_confirmed_note     TEXT",
+		"related_sale_id           BIGINT",
+	} {
+		if !strings.Contains(migration.Source, column) {
+			t.Errorf("migration 026 (pos_qr_payment_intents) debe declarar la columna %q", column)
+		}
+	}
+
+	// Blindaje tipo-de-dinero: amount_cop vive en BIGINT por contrato
+	// explícito (int64 del dueño). Si alguien lo cambia a NUMERIC con o
+	// sin escala, cambia la semántica a número con decimales y rompe la
+	// equidad exacta del match.
+	for _, forbidden := range []string{
+		"amount_cop                NUMERIC",
+		"amount_cop                DECIMAL",
+		"amount_cop                FLOAT",
+		"amount_cop                DOUBLE PRECISION",
+		"amount_cop                REAL",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 026 debe mantener amount_cop BIGINT (int64 por contrato), encontró %q", forbidden)
+		}
+	}
+
+	// Columnas obligatorias y tipos exactos de pos_qr_webhook_events.
+	for _, column := range []string{
+		"id                 BIGSERIAL     PRIMARY KEY",
+		"received_at        TIMESTAMPTZ   NOT NULL DEFAULT NOW()",
+		"source             VARCHAR(24)   NOT NULL",
+		"event_type         VARCHAR(32)",
+		"external_id        VARCHAR(128)",
+		"fingerprint        VARCHAR(128)  NOT NULL",
+		"amount_cop         BIGINT        NOT NULL",
+		"processed_at       TIMESTAMPTZ",
+		"processed_status   VARCHAR(24)   NOT NULL DEFAULT 'PENDING'",
+		"matched_intent_id  BIGINT",
+		"note               VARCHAR(255)",
+	} {
+		if !strings.Contains(migration.Source, column) {
+			t.Errorf("migration 026 (pos_qr_webhook_events) debe declarar la columna %q", column)
+		}
+	}
+
+	// CHECKs obligatorios sobre pos_qr_payment_intents: estados,
+	// fuentes, montos, coherencia aprobada ↔ cancelada ↔ manual. Si
+	// alguien afloja estos invariantes, la máquina de estados queda
+	// expuesta a race conditions del service.
+	for _, constraint := range []string{
+		"ck_pqpi_amount_positive",
+		"CHECK (amount_cop > 0)",
+		"ck_pqpi_status_known",
+		"CHECK (status IN ('PENDIENTE', 'APROBADA', 'CONFIRMADA_MANUAL', 'EXPIRADA', 'CANCELADA'))",
+		"ck_pqpi_approved_source_known",
+		"approved_source IN ('BOLD_OFFICIAL', 'BRIDGE_NOTIFICATION', 'MANUAL')",
+		"ck_pqpi_expires_after_created",
+		"CHECK (expires_at > created_at)",
+		"ck_pqpi_approval_coherent",
+		"status = 'APROBADA'",
+		"status = 'CONFIRMADA_MANUAL'",
+		"status IN ('PENDIENTE', 'EXPIRADA', 'CANCELADA')",
+		"ck_pqpi_cancelled_coherent",
+	} {
+		if !strings.Contains(migration.Source, constraint) {
+			t.Errorf("migration 026 debe declarar el CHECK/CONSTRAINT %q sobre pos_qr_payment_intents", constraint)
+		}
+	}
+
+	// CHECKs obligatorios sobre pos_qr_webhook_events: fuente,
+	// estado procesado, monto positivo, fingerprint no vacío,
+	// biyección matched_intent_id ↔ APPROVED, y FK dura hacia la
+	// intención.
+	for _, constraint := range []string{
+		"ck_pqwe_source_known",
+		"CHECK (source IN ('BOLD_OFFICIAL', 'BRIDGE_NOTIFICATION'))",
+		"ck_pqwe_processed_status_known",
+		"CHECK (processed_status IN ('PENDING', 'APPROVED', 'UNMATCHED', 'AMBIGUOUS', 'DUPLICATE', 'INVALID'))",
+		"ck_pqwe_amount_positive",
+		"ck_pqwe_fingerprint_nonempty",
+		"CHECK (char_length(fingerprint) >= 8",
+		"ck_pqwe_external_id_shape",
+		"ck_pqwe_matched_only_if_approved",
+		"processed_status = 'APPROVED'",
+		"matched_intent_id IS NOT NULL",
+		"fk_pqwe_matched_intent",
+		"REFERENCES pos_qr_payment_intents(id)",
+	} {
+		if !strings.Contains(migration.Source, constraint) {
+			t.Errorf("migration 026 debe declarar el CHECK/CONSTRAINT %q sobre pos_qr_webhook_events", constraint)
+		}
+	}
+
+	// Las dos FK (eventos→intenciones y la retro intenciones→eventos)
+	// usan ON DELETE RESTRICT. Un CASCADE o SET NULL abriría la puerta
+	// a perder la trazabilidad entre pagos y aprobaciones.
+	if count := strings.Count(migration.Source, "ON DELETE RESTRICT"); count < 2 {
+		t.Errorf("migration 026 debe usar ON DELETE RESTRICT en las dos FKs cruzadas, encontró %d", count)
+	}
+
+	// Índices esperados sobre pos_qr_payment_intents.
+	for _, idx := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_pqpi_live_by_venta_temp",
+		"ON pos_qr_payment_intents (venta_temp_id)",
+		"WHERE status = 'PENDIENTE'",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_match_by_amount_live",
+		"ON pos_qr_payment_intents (amount_cop, expires_at)",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_expiry_pending",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_actor_created",
+		"ON pos_qr_payment_intents (created_by_dni, created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_caja_created",
+		"ON pos_qr_payment_intents (caja_id, created_at DESC)",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_created_desc",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_approved_event",
+	} {
+		if !strings.Contains(migration.Source, idx) {
+			t.Errorf("migration 026 debe declarar %q", idx)
+		}
+	}
+
+	// Índices esperados sobre pos_qr_webhook_events, incluyendo los
+	// dos UNIQUE del dedupe doble (external_id canónico Bold y
+	// fingerprint de replay MacroDroid).
+	for _, idx := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_pqwe_source_external_id",
+		"ON pos_qr_webhook_events (source, external_id)",
+		"WHERE external_id IS NOT NULL",
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_pqwe_source_fingerprint",
+		"ON pos_qr_webhook_events (source, fingerprint)",
+		"CREATE INDEX IF NOT EXISTS ix_pqwe_received_desc",
+		"CREATE INDEX IF NOT EXISTS ix_pqwe_needs_review",
+		"processed_status IN ('PENDING', 'UNMATCHED', 'AMBIGUOUS')",
+		"CREATE INDEX IF NOT EXISTS ix_pqwe_matched_intent",
+		"CREATE INDEX IF NOT EXISTS ix_pqwe_amount_received",
+	} {
+		if !strings.Contains(migration.Source, idx) {
+			t.Errorf("migration 026 debe declarar %q", idx)
+		}
+	}
+
+	// La FK retro intents→events se añade vía DO $$ porque Postgres no
+	// admite ADD CONSTRAINT IF NOT EXISTS y el runner debe poder
+	// reintentar la migración tras un fallo parcial. Debe haber
+	// exactamente UN bloque DO $$ ejecutable (la FK retro).
+	if count := strings.Count(migration.Source, "\nDO $$\n"); count != 1 {
+		t.Errorf("migration 026 debe tener exactamente 1 bloque DO $$ ejecutable (la FK retro intents→events), encontró %d", count)
+	}
+	if !strings.Contains(migration.Source, "fk_pqpi_approved_event") {
+		t.Error("migration 026 debe nombrar la FK retro como fk_pqpi_approved_event")
+	}
+	if !strings.Contains(migration.Source, "REFERENCES pos_qr_webhook_events(id)") {
+		t.Error("migration 026 debe referenciar pos_qr_webhook_events(id) desde la intención")
+	}
+	if !strings.Contains(migration.Source, "FROM pg_constraint") {
+		t.Error("migration 026 debe consultar pg_constraint dentro del DO $$ para idempotencia")
+	}
+
+	// Al ser transaccional NO puede usar CREATE INDEX CONCURRENTLY.
+	// Postgres prohíbe CONCURRENTLY dentro de una transacción. El
+	// regex del runner matchea sólo sentencias ejecutables, no la
+	// palabra en comentarios "--".
+	if concurrentIndexPattern.MatchString(migration.Source) {
+		t.Error("migration 026 es transaccional: contiene una sentencia CREATE INDEX CONCURRENTLY ejecutable")
+	}
+
+	// Puramente DDL: la 026 NO backfillea ni semilla intenciones o
+	// eventos. Si alguien agrega INSERT/UPDATE/DELETE para "sembrar"
+	// datos iniciales, está emitiendo intenciones o eventos sin pasar
+	// por el handler (que valida monto, caja, DNI, firma HMAC o
+	// token). Explícitamente prohibido.
+	for _, forbidden := range []string{
+		"UPDATE pos_qr_payment_intents",
+		"UPDATE pos_qr_webhook_events",
+		"DELETE FROM ",
+		"INSERT INTO ",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 026 debe ser puramente DDL, encontró %q", forbidden)
+		}
+	}
+
+	// COMMENT ON TABLE / COLUMN / CONSTRAINT para que pg_dump
+	// --schema-only conserve la justificación con la BD.
+	for _, comment := range []string{
+		"COMMENT ON TABLE pos_qr_payment_intents",
+		"COMMENT ON TABLE pos_qr_webhook_events",
+		"COMMENT ON COLUMN pos_qr_payment_intents.venta_temp_id",
+		"COMMENT ON COLUMN pos_qr_payment_intents.caja_id",
+		"COMMENT ON COLUMN pos_qr_payment_intents.amount_cop",
+		"COMMENT ON COLUMN pos_qr_payment_intents.status",
+		"COMMENT ON COLUMN pos_qr_payment_intents.expires_at",
+		"COMMENT ON COLUMN pos_qr_payment_intents.approved_source",
+		"COMMENT ON COLUMN pos_qr_payment_intents.approved_reference",
+		"COMMENT ON COLUMN pos_qr_payment_intents.approved_event_id",
+		"COMMENT ON COLUMN pos_qr_payment_intents.manual_confirmed_by_dni",
+		"COMMENT ON COLUMN pos_qr_payment_intents.related_sale_id",
+		"COMMENT ON COLUMN pos_qr_webhook_events.source",
+		"COMMENT ON COLUMN pos_qr_webhook_events.event_type",
+		"COMMENT ON COLUMN pos_qr_webhook_events.external_id",
+		"COMMENT ON COLUMN pos_qr_webhook_events.fingerprint",
+		"COMMENT ON COLUMN pos_qr_webhook_events.amount_cop",
+		"COMMENT ON COLUMN pos_qr_webhook_events.processed_status",
+		"COMMENT ON COLUMN pos_qr_webhook_events.matched_intent_id",
+		"COMMENT ON CONSTRAINT fk_pqwe_matched_intent ON pos_qr_webhook_events",
+		"COMMENT ON CONSTRAINT fk_pqpi_approved_event ON pos_qr_payment_intents",
+	} {
+		if !strings.Contains(migration.Source, comment) {
+			t.Errorf("migration 026 debe declarar %q", comment)
+		}
+	}
+
+	// Documentación obligatoria: el archivo tiene que explicar POR QUÉ
+	// la aprobación por webhook SÓLO procede con match exacto 1-a-1
+	// (regla "falso negativo antes que doble aprobación"), por qué el
+	// token BOLD_BRIDGE_TOKEN y la firma HMAC-SHA256 NO se persisten,
+	// por qué amount_cop es BIGINT y no NUMERIC, por qué hay dedupe
+	// doble (external_id canónico Bold + fingerprint de replay
+	// MacroDroid), por qué la autoría manual se guarda con DNI, y la
+	// identidad fiscal del local (Sebastian Sarmiento / 0093097755
+	// Bre-B). Blindaje semántico: si alguien reemplaza el contenido
+	// sin esa justificación, el test obliga a revisarlo.
+	for _, mustExplain := range []string{
+		"Bre-B",
+		"Nequi",
+		"DaviPlata",
+		"Bancolombia",
+		"Supermercado Surtifamiliar",
+		"Sebastian Sarmiento",
+		"0093097755",
+		"BOLD_OFFICIAL",
+		"BRIDGE_NOTIFICATION",
+		"BOLD_BRIDGE_TOKEN",
+		"BOLD_SECRET_KEY",
+		"x-bold-signature",
+		"HMAC-SHA256",
+		"SALE_APPROVED",
+		"bold_code",
+		"MacroDroid",
+		"fingerprint",
+		"replay",
+		"idempotente",
+		"doble aprobación",
+		"falso negativo",
+		"5 min",
+		"UNMATCHED",
+		"AMBIGUOUS",
+		"CONFIRMADA_MANUAL",
+		"SELECT ... FOR UPDATE",
+		"sync.RWMutex",
+		"BIGINT",
+		"int64",
+		"soft delete",
+		"RESTRICT",
+		"append-only",
+		"audit_logs",
+	} {
+		if !strings.Contains(migration.Source, mustExplain) {
+			t.Errorf("migration 026 debe documentar %q en comentarios", mustExplain)
+		}
+	}
+
+	// Guardas contra fuga de secretos: la 026 NO debe persistir el
+	// token del bridge ni la firma HMAC-SHA256. Si alguien introduce
+	// una columna llamada así, el test grita.
+	for _, forbiddenColumn := range []string{
+		"bold_bridge_token ",
+		"bold_bridge_token\t",
+		"signature_header ",
+		"x_bold_signature ",
+		"raw_payload ",
+		"raw_payload_json ",
+		"payload_raw ",
+	} {
+		if strings.Contains(migration.Source, forbiddenColumn) {
+			t.Errorf("migration 026 no debe persistir secretos ni payload crudo, encontró columna %q", forbiddenColumn)
+		}
+	}
+
+	// La 026 limita su alcance a las dos tablas nuevas. Si alguien
+	// agrega ALTER TABLE sobre tablas existentes (sales, employees,
+	// audit_logs, cash_drawer_opens, label_codes, etc.), debe ser una
+	// migración 027+ con su propia justificación. La única ALTER
+	// legítima aquí es sobre pos_qr_payment_intents dentro del bloque
+	// DO $$ para añadir la FK retro.
+	for _, forbiddenAlter := range []string{
+		"ALTER TABLE sales",
+		"ALTER TABLE employees",
+		"ALTER TABLE audit_logs",
+		"ALTER TABLE cash_drawer_opens",
+		"ALTER TABLE cash_drawer_otp_challenges",
+		"ALTER TABLE label_codes",
+		"ALTER TABLE products",
+		"ALTER TABLE package_barcode_aliases",
+		"ALTER TABLE internal_barcode_reservations",
+		"ALTER TABLE pos_qr_webhook_events",
+	} {
+		if strings.Contains(migration.Source, forbiddenAlter) {
+			t.Errorf("migration 026 debe limitarse a pos_qr_payment_intents y pos_qr_webhook_events, encontró %q", forbiddenAlter)
+		}
+	}
+}
+
+
+func TestMigration027PosQrAsyncCheckoutIsTransactionalDDL(t *testing.T) {
+	catalog, err := Catalog()
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	var migration *Migration
+	for i := range catalog {
+		if catalog[i].Version == 27 {
+			migration = &catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("migration 027 no está en el catálogo")
+	}
+	if !migration.Transactional {
+		t.Fatal("migration 027 debe ser transaccional: no usa CREATE INDEX CONCURRENTLY")
+	}
+
+	// La 027 extiende pos_qr_payment_intents y nada más. Si alguien
+	// agrega CREATE TABLE sobre otra tabla, debe ser una migración
+	// 028+ con su propia justificación.
+	if strings.Contains(migration.Source, "CREATE TABLE") {
+		t.Error("migration 027 no debe crear tablas nuevas (es una extensión aditiva de pos_qr_payment_intents)")
+	}
+
+	// Columnas nuevas obligatorias con tipo exacto y DEFAULT seguro.
+	// Si alguien cambia JSONB por TEXT, BIGINT por INTEGER para
+	// cashier_notified_at (que es TIMESTAMPTZ), o quita el NOT NULL
+	// DEFAULT en finalization_status/attempts, el contrato se rompe.
+	for _, column := range []string{
+		"ADD COLUMN IF NOT EXISTS cart_snapshot                JSONB",
+		"ADD COLUMN IF NOT EXISTS client_snapshot              JSONB",
+		"ADD COLUMN IF NOT EXISTS totals_snapshot              JSONB",
+		"ADD COLUMN IF NOT EXISTS sale_client_tx_id            VARCHAR(64)",
+		"ADD COLUMN IF NOT EXISTS queued_at                    TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS finalization_status          VARCHAR(24)  NOT NULL DEFAULT 'NOT_STARTED'",
+		"ADD COLUMN IF NOT EXISTS finalization_started_at      TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS finalization_completed_at    TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS finalization_attempts        INTEGER      NOT NULL DEFAULT 0",
+		"ADD COLUMN IF NOT EXISTS finalization_last_error      VARCHAR(255)",
+		"ADD COLUMN IF NOT EXISTS finalization_next_retry_at   TIMESTAMPTZ",
+		"ADD COLUMN IF NOT EXISTS cashier_notified_at          TIMESTAMPTZ",
+	} {
+		if !strings.Contains(migration.Source, column) {
+			t.Errorf("migration 027 debe declarar %q", column)
+		}
+	}
+
+	// Blindaje tipo-de-dato: los snapshots deben ser JSONB (no TEXT ni
+	// JSON) para que PostgreSQL pueda indexar y validar más adelante
+	// sin reescribir la tabla. Si alguien lo cambia a TEXT (string
+	// crudo) perdemos validación y el servicio tendría que parsear
+	// cada vez.
+	for _, forbidden := range []string{
+		"cart_snapshot                TEXT",
+		"client_snapshot              TEXT",
+		"totals_snapshot              TEXT",
+		"cart_snapshot                JSON,",
+		"client_snapshot              JSON,",
+		"totals_snapshot              JSON,",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 027 debe mantener los snapshots como JSONB, encontró %q", forbidden)
+		}
+	}
+
+	// CHECKs obligatorios: enum, bounds de attempts, shape de error,
+	// shape de clientTxId, coherencia de la máquina de materialización,
+	// requerimiento de aprobación antes de SUCCEEDED.
+	for _, constraint := range []string{
+		"ck_pqpi_finalization_status_known",
+		"CHECK (finalization_status IN ('NOT_STARTED', 'IN_PROGRESS', 'SUCCEEDED', 'FAILED'))",
+		"ck_pqpi_finalization_attempts_bounds",
+		"CHECK (finalization_attempts >= 0 AND finalization_attempts <= 100)",
+		"ck_pqpi_finalization_last_error_shape",
+		"ck_pqpi_sale_client_tx_id_shape",
+		"ck_pqpi_finalization_coherent",
+		"ck_pqpi_finalization_requires_approval",
+		"finalization_status <> 'SUCCEEDED'",
+		"status IN ('APROBADA', 'CONFIRMADA_MANUAL')",
+	} {
+		if !strings.Contains(migration.Source, constraint) {
+			t.Errorf("migration 027 debe declarar el CHECK/CONSTRAINT %q", constraint)
+		}
+	}
+
+	// Las cuatro ramas de la biyección deben estar en el CHECK
+	// coherente. Si alguien quita una rama (p. ej. permite SUCCEEDED
+	// sin related_sale_id), la máquina queda contaminada.
+	for _, branch := range []string{
+		"finalization_status = 'NOT_STARTED'",
+		"finalization_status = 'IN_PROGRESS'",
+		"finalization_status = 'SUCCEEDED'",
+		"finalization_status = 'FAILED'",
+		"related_sale_id IS NOT NULL",
+		"related_sale_id IS NULL",
+		"sale_client_tx_id IS NOT NULL",
+		"finalization_last_error IS NOT NULL",
+		"finalization_last_error IS NULL",
+	} {
+		if !strings.Contains(migration.Source, branch) {
+			t.Errorf("migration 027 debe incluir la rama %q en ck_pqpi_finalization_coherent", branch)
+		}
+	}
+
+	// Índices obligatorios: dos UNIQUE partial (idempotencia cruzada)
+	// y tres parciales para hot paths operativos.
+	for _, idx := range []string{
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_pqpi_sale_client_tx_id",
+		"ON pos_qr_payment_intents (sale_client_tx_id)",
+		"WHERE sale_client_tx_id IS NOT NULL",
+		"CREATE UNIQUE INDEX IF NOT EXISTS ux_pqpi_related_sale_id",
+		"ON pos_qr_payment_intents (related_sale_id)",
+		"WHERE related_sale_id IS NOT NULL",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_queued_bandeja",
+		"ON pos_qr_payment_intents (caja_id, queued_at DESC)",
+		"WHERE queued_at IS NOT NULL AND status = 'PENDIENTE'",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_finalization_retry",
+		"WHERE finalization_status = 'FAILED' AND finalization_next_retry_at IS NOT NULL",
+		"CREATE INDEX IF NOT EXISTS ix_pqpi_finalization_in_progress",
+		"WHERE finalization_status = 'IN_PROGRESS'",
+	} {
+		if !strings.Contains(migration.Source, idx) {
+			t.Errorf("migration 027 debe declarar %q", idx)
+		}
+	}
+
+	// Los seis CHECK se añaden vía DO $$ ... END $$ con lookup en
+	// pg_constraint para idempotencia. Si alguien colapsa dos en el
+	// mismo bloque, un fallo parcial deja el estado roto.
+	if count := strings.Count(migration.Source, "\nDO $$\n"); count != 6 {
+		t.Errorf("migration 027 debe tener exactamente 6 bloques DO $$ ejecutables (uno por CHECK), encontró %d", count)
+	}
+	if count := strings.Count(migration.Source, "FROM pg_constraint"); count != 6 {
+		t.Errorf("migration 027 debe consultar pg_constraint en los 6 bloques idempotentes, encontró %d", count)
+	}
+
+	// Al ser transaccional NO puede usar CREATE INDEX CONCURRENTLY.
+	// Postgres prohíbe CONCURRENTLY dentro de una transacción. El
+	// regex del runner matchea sólo sentencias ejecutables, no la
+	// palabra en comentarios "--".
+	if concurrentIndexPattern.MatchString(migration.Source) {
+		t.Error("migration 027 es transaccional: contiene una sentencia CREATE INDEX CONCURRENTLY ejecutable")
+	}
+
+	// Puramente DDL: la 027 NO backfillea datos legacy. Las intenciones
+	// pre-027 quedan en finalization_status='NOT_STARTED' con snapshots
+	// NULL; el servicio las trata como "cerradas por fuera" y no las
+	// reintenta.
+	for _, forbidden := range []string{
+		"UPDATE pos_qr_payment_intents",
+		"UPDATE pos_qr_webhook_events",
+		"UPDATE sales",
+		"DELETE FROM ",
+		"INSERT INTO ",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 027 debe ser puramente DDL, encontró %q", forbidden)
+		}
+	}
+
+	// COMMENT ON COLUMN / CONSTRAINT / INDEX para que pg_dump
+	// --schema-only conserve la justificación con la BD.
+	for _, comment := range []string{
+		"COMMENT ON COLUMN pos_qr_payment_intents.cart_snapshot",
+		"COMMENT ON COLUMN pos_qr_payment_intents.client_snapshot",
+		"COMMENT ON COLUMN pos_qr_payment_intents.totals_snapshot",
+		"COMMENT ON COLUMN pos_qr_payment_intents.sale_client_tx_id",
+		"COMMENT ON COLUMN pos_qr_payment_intents.queued_at",
+		"COMMENT ON COLUMN pos_qr_payment_intents.finalization_status",
+		"COMMENT ON COLUMN pos_qr_payment_intents.finalization_started_at",
+		"COMMENT ON COLUMN pos_qr_payment_intents.finalization_completed_at",
+		"COMMENT ON COLUMN pos_qr_payment_intents.finalization_attempts",
+		"COMMENT ON COLUMN pos_qr_payment_intents.finalization_last_error",
+		"COMMENT ON COLUMN pos_qr_payment_intents.finalization_next_retry_at",
+		"COMMENT ON COLUMN pos_qr_payment_intents.cashier_notified_at",
+		"COMMENT ON CONSTRAINT ck_pqpi_finalization_status_known ON pos_qr_payment_intents",
+		"COMMENT ON CONSTRAINT ck_pqpi_finalization_coherent ON pos_qr_payment_intents",
+		"COMMENT ON CONSTRAINT ck_pqpi_finalization_requires_approval ON pos_qr_payment_intents",
+		"COMMENT ON CONSTRAINT ck_pqpi_sale_client_tx_id_shape ON pos_qr_payment_intents",
+		"COMMENT ON CONSTRAINT ck_pqpi_finalization_attempts_bounds ON pos_qr_payment_intents",
+		"COMMENT ON CONSTRAINT ck_pqpi_finalization_last_error_shape ON pos_qr_payment_intents",
+		"COMMENT ON INDEX ux_pqpi_sale_client_tx_id",
+		"COMMENT ON INDEX ux_pqpi_related_sale_id",
+		"COMMENT ON INDEX ix_pqpi_queued_bandeja",
+		"COMMENT ON INDEX ix_pqpi_finalization_retry",
+		"COMMENT ON INDEX ix_pqpi_finalization_in_progress",
+	} {
+		if !strings.Contains(migration.Source, comment) {
+			t.Errorf("migration 027 debe declarar %q", comment)
+		}
+	}
+
+	// Documentación obligatoria: el archivo tiene que explicar POR QUÉ
+	// se separa la máquina de materialización de la máquina de pago,
+	// por qué sale_client_tx_id se reserva al emitir (no al cerrar),
+	// por qué queued_at NO es un status del pago, por qué los
+	// snapshots son inmutables, por qué no se backfillea, por qué los
+	// secretos (BOLD_BRIDGE_TOKEN, BOLD_SECRET_KEY, firma HMAC) siguen
+	// fuera del esquema, y la convivencia con confirmar-manual (que
+	// queda deprecada en handler pero sus columnas permanecen).
+	// Blindaje semántico: si alguien reemplaza el contenido sin esa
+	// justificación, el test obliga a revisarlo.
+	for _, mustExplain := range []string{
+		"Bre-B",
+		"MacroDroid",
+		"co.bold",
+		"BOLD_BRIDGE_TOKEN",
+		"BOLD_SECRET_KEY",
+		"HMAC",
+		"inmutable",
+		"snapshot",
+		"clientTxId",
+		"idempotencia",
+		"reintentar",
+		"backoff",
+		"migración 009",
+		"migración 026",
+		"NOT_STARTED",
+		"IN_PROGRESS",
+		"SUCCEEDED",
+		"FAILED",
+		"bandeja",
+		"queued_at",
+		"ModalPagoBoldQR",
+		"confirmar-manual",
+		"AMBIGUOUS",
+		"falso negativo",
+		"SELECT ... FOR UPDATE",
+		"CreateSale",
+		"soft delete",
+		"append-only",
+		"audit",
+		"segundo plano",
+	} {
+		if !strings.Contains(migration.Source, mustExplain) {
+			t.Errorf("migration 027 debe documentar %q en comentarios", mustExplain)
+		}
+	}
+
+	// Guardas contra fuga de secretos: la 027 NO debe persistir el
+	// token del bridge ni la firma HMAC-SHA256 ni el payload crudo. Si
+	// alguien introduce una columna llamada así, el test grita. Mismo
+	// guardián que la 026, replicado aquí para que al extender la
+	// tabla no se filtre un secreto por error.
+	for _, forbiddenColumn := range []string{
+		"bold_bridge_token ",
+		"bold_bridge_token\t",
+		"signature_header ",
+		"x_bold_signature ",
+		"raw_payload ",
+		"raw_payload_json ",
+		"payload_raw ",
+	} {
+		if strings.Contains(migration.Source, forbiddenColumn) {
+			t.Errorf("migration 027 no debe persistir secretos ni payload crudo, encontró columna %q", forbiddenColumn)
+		}
+	}
+
+	// La 027 limita su alcance a pos_qr_payment_intents. Si alguien
+	// agrega ALTER TABLE sobre otras tablas (sales, employees,
+	// audit_logs, pos_qr_webhook_events, etc.), debe ser una migración
+	// 028+ con su propia justificación. En particular NO toca
+	// pos_qr_webhook_events (la ingestión del webhook sigue igual).
+	for _, forbiddenAlter := range []string{
+		"ALTER TABLE sales",
+		"ALTER TABLE employees",
+		"ALTER TABLE audit_logs",
+		"ALTER TABLE pos_qr_webhook_events",
+		"ALTER TABLE cash_drawer_opens",
+		"ALTER TABLE cash_drawer_otp_challenges",
+		"ALTER TABLE label_codes",
+		"ALTER TABLE products",
+		"ALTER TABLE package_barcode_aliases",
+		"ALTER TABLE internal_barcode_reservations",
+	} {
+		if strings.Contains(migration.Source, forbiddenAlter) {
+			t.Errorf("migration 027 debe limitarse a pos_qr_payment_intents, encontró %q", forbiddenAlter)
 		}
 	}
 }

@@ -2,7 +2,7 @@
 
 import { 
     ShoppingCart, Wallet, CreditCard, ArrowDownRight, HandCoins, ChevronRight, TrendingUp, DollarSign,
-    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark, Banknote, RotateCcw, Trash2
+    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark, Banknote, RotateCcw, Trash2, QrCode
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -302,7 +302,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                         TOTAL GENERAL GUARDADO (CAJA + DIGITAL)
                                     </span>
                                     <span className="text-3xl sm:text-4xl font-extrabold text-white tracking-tight tabular-nums">
-                                        ${formatCurrency(Math.round(data.totalLiquidity || ((data.reportedBalance || 0) + (data.realCashFlow?.nequi || 0) + (data.realCashFlow?.daviplata || 0))))}
+                                        ${formatCurrency(Math.round(data.totalLiquidity || ((data.reportedBalance || 0) + (data.realCashFlow?.nequi || 0) + (data.realCashFlow?.daviplata || 0) + (data.realCashFlow?.boldQr || 0))))}
                                     </span>
                                 </div>
 
@@ -367,7 +367,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                             <span className="text-[9px] text-gray-500 dark:text-zinc-400 font-bold uppercase tracking-widest leading-none">
                                 BILLETERAS DIGITALES (TOTAL)
                             </span>
-                            <div className="flex items-center gap-2 sm:gap-3 mt-1.5">
+                            <div className="flex items-center gap-2 sm:gap-3 mt-1.5 flex-wrap">
                                 <div className="flex items-center gap-1.5 bg-purple-500/10 px-2.5 py-1 rounded-xl border border-purple-500/20">
                                     <Smartphone size={11} className="text-purple-500" />
                                     <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">NEQUI: ${formatCurrency(Math.round(data.realCashFlow?.nequi || 0))}</span>
@@ -375,6 +375,19 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                 <div className="flex items-center gap-1.5 bg-rose-500/10 px-2.5 py-1 rounded-xl border border-rose-500/20">
                                     <Smartphone size={11} className="text-rose-500" />
                                     <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">DAVIPLATA: ${formatCurrency(Math.round(data.realCashFlow?.daviplata || 0))}</span>
+                                </div>
+                                {/*
+                                  Bold QR / Bre-B — Pastilla paralela a Nequi y
+                                  Daviplata. Lee data.realCashFlow?.boldQr que
+                                  publica el dashboard (ventas QR + abonos QR -
+                                  egresos pagados por QR). Mientras el backend
+                                  no exponga el campo (ver informe research)
+                                  cae a 0 y el chip solo marca presencia del
+                                  canal.
+                                */}
+                                <div className="flex items-center gap-1.5 bg-cyan-500/10 px-2.5 py-1 rounded-xl border border-cyan-500/20">
+                                    <QrCode size={11} className="text-cyan-500" />
+                                    <span className="text-[10px] font-bold text-zinc-900 dark:text-zinc-100">BOLD QR: ${formatCurrency(Math.round(data.realCashFlow?.boldQr || 0))}</span>
                                 </div>
                             </div>
                         </div>

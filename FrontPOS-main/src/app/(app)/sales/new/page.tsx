@@ -17,14 +17,45 @@ import dynamic from 'next/dynamic';
 
 import { formatCurrency, applyRounding, roundSaleLineSubtotal } from "@/lib/utils";
 import { useNewSale } from './hooks/useNewSale';
+import { useBoldQrTray, type BoldQrPendingItem, type BoldQrTrayApprovedInfo } from './hooks/useBoldQrTray';
 import ProductGrid from './components/ProductGrid';
 import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api-error';
+import { canCaptureHomeKey } from '@/lib/drawer-otp.mjs';
+import { buildEncolarPayload, buildIniciarPayload, generateQrClientTxId, BOLD_QR_ALREADY_PAID_SENTINEL, isAlreadyPaidError, isAlreadyPaidResponse } from '@/lib/bold-qr-helpers.mjs';
+import { countCartUnits, splitCartTabs } from '@/lib/cart-tabs.mjs';
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { playNotificationSound, isSoundMuted } from '@/lib/audio-utils';
+import {
+    buildVoiceAnnouncement,
+    isSpeechSynthesisSupported,
+    pickSpanishVoice,
+    BOLD_QR_VOICE_PREFERRED_LANG,
+} from '@/lib/bold-qr-voice.mjs';
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { CheckCircle2 } from 'lucide-react';
 import Cookies from 'js-cookie';
 
 // CARGA DINÃƒÂMICA DE COMPONENTES PESADOS
 const UniversalPaymentModal = dynamic(() => import('@/components/shared/UniversalPaymentModal'), { ssr: false });
+const BoldQrTrayPopover = dynamic(() => import('./components/BoldQrTrayPopover'), { ssr: false });
+import { isAdminUser } from '@/lib/auth-helpers.mjs';
 const ClientSelectionModal = dynamic(() => import('./components/ClientSelectionModal'), { ssr: false });
 const ManualWeightModal = dynamic(() => import('./components/ManualWeightModal'), { ssr: false });
 const MissingItemModal = dynamic(() => import('./components/MissingItemModal'), { ssr: false });
@@ -32,12 +63,13 @@ const ScannerOverlay = dynamic(() => import('@/components/ScannerOverlay').then(
 const SplitBillDialog = dynamic(() => import('@/components/SplitBillDialog').then(module => module.SplitBillDialog), { ssr: false });
 const EditCartItemModal = dynamic(() => import('./components/EditCartItemModal').then(module => module.EditCartItemModal), { ssr: false });
 const ProductSearchModal = dynamic(() => import('./components/ProductSearchModal'), { ssr: false });
+const HomeDrawerModal = dynamic(() => import('./components/HomeDrawerModal').then(module => module.HomeDrawerModal), { ssr: false });
 
 
 export default function NewSalePage() {
     const {
         products, customers, categories,
-        currentCart, activeCartKey, cartKeys, cartCustomers,
+        currentCart, carts, activeCartKey, cartKeys, cartCustomers,
         selectedCustomer, selectedCustomerDni,
         total, editDeltaTotal, editHasChanges, editMode, isEditMode, filteredProductsGrid, filteredCustomers,
         loading, submitting, searchQuery, setSearchQuery,
@@ -59,11 +91,13 @@ export default function NewSalePage() {
         isDeleteCartConfirmOpen, setIsDeleteCartConfirmOpen,
         updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity, updateCartItem,
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight,
+        confirmEnqueuedAndFreeCart,
         setOriginalCustomerDniBeforeSplit, setRemainingItemsAfterSplit, setSplitItemsToPay
     } = useNewSale();
 
     const [editingCartItem, setEditingCartItem] = useState<any | null>(null);
     const [isProductSearchOpen, setIsProductSearchOpen] = useState(false);
+    const [isHomeDrawerModalOpen, setIsHomeDrawerModalOpen] = useState(false);
     const [pendingReturn, setPendingReturn] = useState<any | null>(null);
 
     useEffect(() => {
@@ -90,6 +124,521 @@ export default function NewSalePage() {
 
     const { user } = useAuth();
     const { toast } = useToast();
+
+    // =============================================================
+    // Flujo asíncrono QR Bold / Bre-B (migración 027)
+    //
+    // El cajero puede dejar en espera un cobro QR y seguir atendiendo:
+    // la bandeja global `useBoldQrTray` escucha por SSE las aprobaciones
+    // post-commit emitidas por el backend tras recibir la notificación
+    // MacroDroid. Cuando una aprobación llega, mostramos alerta grande
+    // + sonido + impresión (ToDo: hook) sin tocar el carrito activo.
+    // =============================================================
+    const cajaId = useCallback(() => {
+        const dni = typeof user?.dni === 'string' ? user.dni.trim() : '';
+        if (dni) return dni;
+        const id = typeof user?.id === 'string' ? user.id.trim() : '';
+        return id || 'CAJA';
+    }, [user?.dni, user?.id])();
+    const [qrApprovedAlert, setQrApprovedAlert] = useState<BoldQrTrayApprovedInfo | null>(null);
+    // Reopen payload canónico: cuando el cajero pulsa "Reabrir QR" en la
+    // bandeja global, guardamos exactamente el `ventaTempId` + `monto` del
+    // pending y el UPM lo consume UNA sola vez (contrato de un solo uso).
+    // El UPM dispara `onBoldQrReopenConsumed` cuando abre el QR; aquí
+    // limpiamos el payload a null para que NUNCA se reconsuma al abrir
+    // cobros de otra cuenta (bug 2026-10-23).
+    const [boldQrReopenPayload, setBoldQrReopenPayload] = useState<{ ventaTempId: string; monto: number } | null>(null);
+    // ventaTempId reabierto desde la bandeja: al aprobarse no debe
+    // liberar el carrito activo (que es otra venta).
+    const reopenedVentaTempIdRef = useRef<string | null>(null);
+    // Dedupe duro: cada APPROVED por ventaTempId o saleId se procesa UNA
+    // sola vez por sesión del tab (el hook ya tiene su propio dedupe por
+    // sessionStorage, pero este Set defensivo protege contra re-renders
+    // sincrónicos del callback).
+    const notifiedApprovedKeysRef = useRef<Set<string>>(new Set());
+
+    // =============================================================
+    // Dedupe compartido entre bandeja (useBoldQrTray) y modal
+    // (ModalPagoBoldQR) para la aprobación QR Bold/Bre-B.
+    //
+    // Flujo APROBADO (migración 027, DispatchAutoSale post-commit):
+    // el backend emite el frame `qr_intent_update` con status=APROBADO
+    // + saleId + amountCop por DOS canales SSE distintos:
+    //
+    //   - `/pos/pagos-qr/caja-stream` → `useBoldQrTray` → `handleQrTrayApproved`
+    //     (ruta cuando el cajero ya dejó la intención en espera).
+    //   - `/pos/pagos-qr/stream?venta_temp_id=...` → `ModalPagoBoldQR` →
+    //     `UniversalPaymentModal.handleBoldQrApproved` → `handleBoldQrFinalized`
+    //     (ruta cuando el cajero sigue en el modal).
+    //
+    // Si APROBADO llega por los dos canales simultáneamente, el Set
+    // compartido garantiza que la alerta grande, el pitido y el
+    // broadcastRevalidate corren EXACTAMENTE UNA vez. La liberación
+    // del carrito activo vive sólo en la rama "modal": el cajero
+    // sigue en pantalla cuando el frame llega por el stream dedicado.
+    // La bandeja NUNCA toca carritos (el cajero puede estar atendiendo
+    // a otro cliente en otro carrito).
+    // =============================================================
+    const normalizeBoldQrKey = useCallback((info: { ventaTempId?: string; saleId?: number }): string => {
+        const venta = typeof info.ventaTempId === 'string' ? info.ventaTempId.trim() : '';
+        if (venta) return venta;
+        if (typeof info.saleId === 'number' && Number.isFinite(info.saleId) && info.saleId > 0) {
+            return `sale:${info.saleId}`;
+        }
+        return '';
+    }, []);
+
+    // Ref para romper el orden circular entre los handlers de
+    // aprobación (declarados ANTES de `useBoldQrTray`) y el `markPaid`
+    // que ese hook expone. Se sincroniza tras montar el hook con un
+    // `useEffect` abajo. Los handlers consultan el ref vía
+    // `qrMarkPaidRef.current?.(...)` sin generar warning de deps.
+    const qrMarkPaidRef = useRef<((info: { ventaTempId: string; saleId?: number; amountCop?: number }) => void) | null>(null);
+
+    // Guard único: aplica a alert + sound + revalidate + cleanup de
+    // la preparación. Dedupe fuerte por `ventaTempId` (preferido) o
+    // `sale:<saleId>` como fallback. Reusa `notifiedApprovedKeysRef`
+    // ya introducido para la bandeja.
+    const notifyBoldQrApprovedOnce = useCallback((info: BoldQrTrayApprovedInfo): boolean => {
+        const key = normalizeBoldQrKey(info);
+        if (!key) return false;
+        if (notifiedApprovedKeysRef.current.has(key)) return false;
+        notifiedApprovedKeysRef.current.add(key);
+        // Alerta grande + sonido: UNA sola vez por intención. El
+        // AlertDialog shadcn se renderiza con el shape
+        // `BoldQrTrayApprovedInfo`; la ruta modal también la respeta
+        // (mismo shape derivado del QREvent del backend).
+        setQrApprovedAlert(info);
+        // Audio + voz: ambos honran el mute global (`isSoundMuted`).
+        // El chime es el fallback cuando el navegador no tiene Web
+        // Speech API, o cuando `buildVoiceAnnouncement` descarta la
+        // frase por monto inválido (defensa).
+        const muted = (() => {
+            try { return isSoundMuted(); } catch { return false; }
+        })();
+        if (!muted) {
+            try { playNotificationSound('success'); } catch { /* audio no crítico */ }
+            if (isSpeechSynthesisSupported()) {
+                const phrase = buildVoiceAnnouncement(info.amountCop);
+                if (phrase) {
+                    try {
+                        const synth = window.speechSynthesis;
+                        // Cancelar cualquier anuncio previo para que
+                        // el cajero no acumule frases superpuestas si
+                        // llegan dos APROBADOS seguidos (poco probable
+                        // por el dedupe, pero defensivo).
+                        synth.cancel();
+                        const utter = new window.SpeechSynthesisUtterance(phrase);
+                        utter.lang = BOLD_QR_VOICE_PREFERRED_LANG;
+                        const voice = pickSpanishVoice(synth.getVoices());
+                        if (voice) utter.voice = voice as SpeechSynthesisVoice;
+                        synth.speak(utter);
+                    } catch {
+                        /* voz no crítica — el chime ya informó al cajero */
+                    }
+                }
+            }
+        }
+        // Preparación QR: borrar entrada del Map local. El clientTxId
+        // ya cumplió su ciclo end-to-end y el backend materializó la
+        // venta canónica; retener el snapshot sería basura memoria.
+        if (info.ventaTempId) qrPreparationsRef.current.delete(info.ventaTempId);
+        return true;
+    }, [normalizeBoldQrKey]);
+
+    const handleQrTrayApproved = useCallback((info: BoldQrTrayApprovedInfo) => {
+        // Ruta "bandeja global": el backend ya cerró la venta. Sólo
+        // emitimos la señal UX; NO tocamos ningún carrito porque el
+        // cajero puede estar atendiendo otra factura.
+        notifyBoldQrApprovedOnce(info);
+        // Marcar pagado en el storage del hook: aunque la bandeja ya
+        // hace su propio persist desde el SSE handler, esto blinda el
+        // caso en que la ruta "modal" sea quien dispara primero (el
+        // ref se sincroniza con `qrMarkPaid` tras `useBoldQrTray`).
+        const venta = typeof info.ventaTempId === 'string' ? info.ventaTempId.trim() : '';
+        if (venta) {
+            qrMarkPaidRef.current?.({
+                ventaTempId: venta,
+                saleId: info.saleId,
+                amountCop: info.amountCop,
+            });
+        }
+    }, [notifyBoldQrApprovedOnce]);
+
+    // Ruta "modal activo": el cajero sigue frente al QR cuando el
+    // backend materializa la venta. Delegado del UPM (vía
+    // `onBoldQrFinalized`). Comparte el dedupe con la bandeja: si
+    // la bandeja llegó primero, el alert/sonido no se repiten; aún
+    // así cerramos el UPM y liberamos el carrito actual (acciones
+    // únicas de la ruta modal, nunca duplicadas porque el modal
+    // hijo dispara `onApproved` una sola vez por sesión).
+    const handleBoldQrFinalized = useCallback((info: {
+        ventaTempId: string;
+        saleId: number;
+        amountCop?: number;
+        reference?: string;
+        approvedAt?: string;
+        approvedVia?: string;
+    }) => {
+        if (!info || typeof info !== 'object') return;
+        const saleId = Number.isFinite(info.saleId) && info.saleId > 0 ? Math.floor(info.saleId) : 0;
+        if (saleId <= 0) return;
+        // Compone el shape que consume el AlertDialog + hook de
+        // bandeja (ambos usan BoldQrTrayApprovedInfo). El
+        // `cashierName` no viaja en el QREvent del stream dedicado,
+        // así que queda undefined; el alert igual se muestra con el
+        // monto y la referencia.
+        const normalized: BoldQrTrayApprovedInfo = {
+            ventaTempId: typeof info.ventaTempId === 'string' ? info.ventaTempId.trim() : '',
+            saleId,
+            amountCop: typeof info.amountCop === 'number' && Number.isFinite(info.amountCop) && info.amountCop > 0
+                ? Math.round(info.amountCop)
+                : undefined,
+            reference: info.reference,
+            approvedAt: info.approvedAt,
+            approvedVia: info.approvedVia,
+        };
+        // Dedupe compartido: alerta + sonido + cleanup prep SÓLO si
+        // la bandeja no se adelantó. Si no, estas acciones ya corrieron.
+        notifyBoldQrApprovedOnce(normalized);
+        // Marcar pagado en la bandeja (persiste en sessionStorage).
+        // Esto garantiza que el pending no reaparezca ni se reabra el
+        // QR al abrir cobros de otra cuenta (bug 2026-10-23). Usamos
+        // el ref para no imponer orden entre esta declaración y
+        // `useBoldQrTray` (ver `qrMarkPaidRef`).
+        if (normalized.ventaTempId) {
+            qrMarkPaidRef.current?.({
+                ventaTempId: normalized.ventaTempId,
+                saleId: normalized.saleId,
+                amountCop: normalized.amountCop,
+            });
+        }
+        // Acciones exclusivas de la ruta modal: cerrar UPM y liberar
+        // el carrito activo. Se ejecutan SIEMPRE (fuera del guard
+        // de dedupe) porque sólo se disparan desde este callback
+        // único — el modal hijo garantiza `onApproved` una vez por
+        // sesión (`approvedFiredRef`).
+        setBoldQrReopenPayload(null);
+        setIsPaymentDialogOpen(false);
+        // QR reabierto desde la bandeja: su carrito ya se liberó al
+        // encolarlo y vive en el servidor. El carrito activo es OTRA
+        // venta que el cajero está registrando: no se toca.
+        const wasReopened = !!normalized.ventaTempId && reopenedVentaTempIdRef.current === normalized.ventaTempId;
+        reopenedVentaTempIdRef.current = null;
+        if (wasReopened) return;
+        confirmEnqueuedAndFreeCart();
+    }, [notifyBoldQrApprovedOnce, confirmEnqueuedAndFreeCart, setIsPaymentDialogOpen]);
+
+    const { pendings: qrPendings, unassignedPayments: qrUnassigned, latestError: qrTrayError, latestUnassignedError: qrUnassignedError, reconnect: qrTrayReconnect, reloadUnassigned: qrReloadUnassigned, dismissIntent: qrDismissIntent, assignPaymentToIntent: qrAssignPayment, confirmManualIntent: qrConfirmManual, markPaid: qrMarkPaid, isPaid: qrIsPaid } = useBoldQrTray({
+        cajaId,
+        onApprovedOnce: handleQrTrayApproved,
+    });
+
+    // Sincroniza el ref para que los handlers declarados ANTES de
+    // `useBoldQrTray` puedan llamar `qrMarkPaid` sin importar el orden.
+    useEffect(() => {
+        qrMarkPaidRef.current = qrMarkPaid;
+    }, [qrMarkPaid]);
+
+    const handleReopenPending = useCallback((item: BoldQrPendingItem) => {
+        if (!item.ventaTempId) return;
+        // Bug 2026-10-23: si el cobro ya fue pagado (APPROVED SSE,
+        // modal finalizado, o detectado como alreadyPaid por el
+        // backend), NUNCA reabrir el QR. Avisar al cajero y
+        // sacar el pending visualmente de la bandeja. Un segundo
+        // click no debe reaparecer el modal viejo con la misma
+        // ventaTempId.
+        if (qrIsPaid(item.ventaTempId)) {
+            toast({
+                variant: 'default',
+                title: 'YA PAGADO',
+                description: 'Este cobro ya fue pagado.',
+            });
+            qrDismissIntent(item.ventaTempId);
+            return;
+        }
+        // Reusar el ventaTempId + monto EXACTOS del pending. El UPM lee
+        // este payload en su useEffect de reapertura y abre el modal hijo
+        // con esos valores sin pasar por `handleOpenBoldQr` (que generaría
+        // un ventaTempId nuevo). El UPM dispara `onBoldQrReopenConsumed`
+        // cuando consume el payload para que lo limpiemos a null y evitar
+        // reconsumo accidental.
+        reopenedVentaTempIdRef.current = item.ventaTempId;
+        setBoldQrReopenPayload({ ventaTempId: item.ventaTempId, monto: Math.round(item.amountCop || 0) });
+        setIsPaymentDialogOpen(true);
+    }, [qrIsPaid, qrDismissIntent, toast, setIsPaymentDialogOpen]);
+
+    const handleBoldQrReopenConsumed = useCallback(() => {
+        // Contrato de un solo uso: el UPM consumió el payload y abrió
+        // el QR. Limpiamos inmediatamente para que al cerrar y abrir
+        // otra factura, el payload NO se reconsuma.
+        setBoldQrReopenPayload(null);
+    }, []);
+
+    // =============================================================
+    // Snapshot DURABLE del cobro QR al abrir (migración 027)
+    //
+    // El `UniversalPaymentModal` llama a `prepareBoldQrIntent` ANTES
+    // de abrir `ModalPagoBoldQR`. Aquí:
+    //   1. Fijamos un `clientTxId` fresco (idempotency key end-to-end).
+    //   2. Construimos el snapshot EXACTO del carrito, cliente y
+    //      totales que el cliente va a pagar.
+    //   3. POSTeamos `/pos/pagos-qr/iniciar` con el snapshot opcional
+    //      — el backend crea la intención con los detalles ya grabados
+    //      pero SIN marcar `queued_at`.
+    //   4. Guardamos la preparación en un `Map` keyed por
+    //      `ventaTempId`, para que `handleBoldQrEnqueueRequested` pueda
+    //      reusar el mismo `clientTxId` y snapshot cuando el cajero
+    //      pulse "DEJAR EN ESPERA Y SEGUIR ATENDIENDO".
+    //
+    // Si el POST falla, lanzamos: el UPM maneja el error y NO abre el
+    // modal QR. El carrito queda intacto; el cajero cambia de método.
+    //
+    // La bandeja global y la aprobación silenciosa del webhook
+    // MacroDroid pueden materializar la venta aunque el cajero nunca
+    // llegue a encolar: con el snapshot presente desde `/iniciar`, el
+    // backend ya conoce qué venta construir cuando recibe el pago.
+    // Esto corrige el `QR_REQUEST_FAILED` observado con el webhook de
+    // $300 (que llegaba antes de que el cajero pulsara encolar).
+    // =============================================================
+    type QrPreparedSnapshot = {
+        clientTxId: string;
+        monto: number;
+        salePayload: {
+            details: Array<{
+                barcode: string;
+                quantity: number;
+                unitPrice: number;
+                costPrice: number;
+                subtotal: number;
+            }>;
+            totalAmount: number;
+            amountPaid: number;
+            change: number;
+            transferAmount: number;
+            transferSource: string;
+            paymentMethod: string;
+            employeeDni: string;
+            clientDni: string;
+            clientName: string;
+        };
+        cashierName: string;
+        clientDni: string;
+    };
+    const qrPreparationsRef = useRef<Map<string, QrPreparedSnapshot>>(new Map());
+
+    const buildQrSalePayloadSnapshot = useCallback((normalizedMonto: number): QrPreparedSnapshot['salePayload'] | null => {
+        const items = currentCart;
+        if (!items || items.length === 0) return null;
+        const details = items.map((it: any) => {
+            const quantity = typeof it.cartQuantity === 'number'
+                ? it.cartQuantity
+                : (typeof it.quantity === 'number' ? it.quantity : Number(it.quantity) || 0);
+            const unitPrice = typeof it.salePrice === 'number'
+                ? it.salePrice
+                : (typeof it.unitPrice === 'number' ? it.unitPrice : Number(it.price) || 0);
+            const subtotal = roundSaleLineSubtotal(unitPrice, quantity);
+            return {
+                barcode: String(it.barcode || ''),
+                quantity,
+                unitPrice,
+                costPrice: typeof it.purchasePrice === 'number' ? it.purchasePrice : Number(it.costPrice) || 0,
+                subtotal,
+            };
+        });
+        return {
+            details,
+            totalAmount: normalizedMonto,
+            amountPaid: normalizedMonto,
+            change: 0,
+            transferAmount: normalizedMonto,
+            transferSource: 'BOLD_QR',
+            paymentMethod: 'BOLD_QR',
+            employeeDni: user?.dni || '',
+            clientDni: selectedCustomerDni || '0',
+            clientName: selectedCustomer?.name || '',
+        };
+    }, [currentCart, user, selectedCustomerDni, selectedCustomer]);
+
+    const prepareBoldQrIntent = useCallback(async (amount: number, ventaTempId: string) => {
+        if (isEditMode) {
+            throw new Error('No se puede preparar un cobro QR en modo edición');
+        }
+        const trimmedTemp = typeof ventaTempId === 'string' ? ventaTempId.trim() : '';
+        if (!trimmedTemp) {
+            throw new Error('Falta el identificador temporal de la venta QR');
+        }
+        const normalizedMonto = typeof amount === 'number' && Number.isFinite(amount) ? Math.round(amount) : 0;
+        if (normalizedMonto <= 0) {
+            throw new Error('Monto inválido para preparar el cobro QR');
+        }
+        const salePayload = buildQrSalePayloadSnapshot(normalizedMonto);
+        if (!salePayload) {
+            throw new Error('El carrito está vacío');
+        }
+        const clientTxId = generateQrClientTxId();
+        const cashierName = user?.name || '';
+        const clientDni = selectedCustomerDni || '';
+        const payload = buildIniciarPayload({
+            caja_id: cajaId,
+            monto: normalizedMonto,
+            venta_temp_id: trimmedTemp,
+            client_tx_id: clientTxId,
+            client_dni: clientDni,
+            cashier_name: cashierName,
+            sale_payload: salePayload,
+        });
+        if (!payload) {
+            throw new Error('Datos inválidos para preparar el cobro QR');
+        }
+        // POST /iniciar: si el backend responde 2xx, guardamos la
+        // preparación. Si cualquier error (red, 4xx, 5xx), lanzamos
+        // para que el UPM muestre el toast y NO abra el modal hijo.
+        //
+        // Caso especial: si el backend responde `alreadyPaid=true` (la
+        // intención asociada al ventaTempId ya quedó aprobada en una
+        // sesión anterior), NO abrimos el QR. Marcamos el pending como
+        // pagado en la bandeja, limpiamos el reopen payload, cerramos
+        // el UPM y mostramos un toast informativo. Luego lanzamos el
+        // sentinel para que el UPM aborte en silencio sin pintar error.
+        const res: { alreadyPaid?: boolean; saleId?: number | string; amountCop?: number; status?: string; streamStatus?: string } = await apiFetch('/pos/pagos-qr/iniciar', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            fallbackError: 'No se pudo preparar el cobro QR',
+            timeoutMs: 10000,
+        });
+        const alreadyPaid = isAlreadyPaidResponse(res);
+        if (alreadyPaid) {
+            qrMarkPaid({ ventaTempId: trimmedTemp, saleId: alreadyPaid.saleId, amountCop: alreadyPaid.amountCop });
+            qrPreparationsRef.current.delete(trimmedTemp);
+            setBoldQrReopenPayload(null);
+            toast({
+                variant: 'default',
+                title: 'YA PAGADO',
+                description: alreadyPaid.saleId
+                    ? `Este cobro QR ya fue aprobado (venta #${alreadyPaid.saleId}).`
+                    : 'Este cobro QR ya fue aprobado en el servidor.',
+            });
+            setIsPaymentDialogOpen(false);
+            throw new Error(BOLD_QR_ALREADY_PAID_SENTINEL);
+        }
+        qrPreparationsRef.current.set(trimmedTemp, {
+            clientTxId,
+            monto: normalizedMonto,
+            salePayload,
+            cashierName,
+            clientDni,
+        });
+    }, [buildQrSalePayloadSnapshot, cajaId, isEditMode, selectedCustomerDni, user, qrMarkPaid, setIsPaymentDialogOpen, toast]);
+
+    const handleBoldQrEnqueueRequested = useCallback(async (ventaTempId: string, monto: number) => {
+        if (isEditMode) {
+            throw new Error('No se puede dejar en espera un cobro en modo edición');
+        }
+        const trimmedTemp = typeof ventaTempId === 'string' ? ventaTempId.trim() : '';
+        if (!trimmedTemp) {
+            throw new Error('Falta el identificador temporal de la venta QR');
+        }
+        const normalizedMonto = typeof monto === 'number' && Number.isFinite(monto) ? Math.round(monto) : 0;
+        if (normalizedMonto <= 0) {
+            throw new Error('Monto inválido para dejar en espera');
+        }
+
+        // Reusar la preparación durable registrada al abrir el modal
+        // (mismo `clientTxId` y snapshot exacto). Si no existe (p. ej.
+        // reapertura desde la bandeja global, donde la intención ya
+        // vive en el backend), caemos al snapshot actual del carrito
+        // como defensa — el backend `/encolar` rechazará idempotentemente
+        // si la intención ya está encolada.
+        const stored = qrPreparationsRef.current.get(trimmedTemp);
+        let clientTxId: string;
+        let salePayload: QrPreparedSnapshot['salePayload'];
+        let cashierName: string;
+        let clientDni: string;
+        if (stored) {
+            clientTxId = stored.clientTxId;
+            salePayload = stored.salePayload;
+            cashierName = stored.cashierName;
+            clientDni = stored.clientDni;
+        } else {
+            const fallback = buildQrSalePayloadSnapshot(normalizedMonto);
+            if (!fallback) {
+                throw new Error('El carrito está vacío');
+            }
+            clientTxId = generateQrClientTxId();
+            salePayload = fallback;
+            cashierName = user?.name || '';
+            clientDni = selectedCustomerDni || '';
+        }
+
+        const payload = buildEncolarPayload({
+            ventaTempId: trimmedTemp,
+            cajaId,
+            monto: normalizedMonto,
+            clientTxId,
+            cashierName,
+            clientDni,
+            salePayload,
+        });
+        if (!payload) {
+            throw new Error('Datos inválidos para encolar el cobro QR');
+        }
+        // POST /encolar debe confirmar ANTES de liberar el carrito activo.
+        // Si el backend falla, lanzamos y el modal pintará ERROR sin
+        // tocar nada del carrito del cajero.
+        //
+        // Caso especial: 409 QR_INTENT_ALREADY_PAID. El backend indica
+        // que la intención asociada a este ventaTempId ya fue aprobada
+        // en una sesión anterior. NO es un error ruidoso: tratamos
+        // como finalizado — marcamos pagado en la bandeja, cerramos
+        // el UPM y liberamos el carrito activo (idempotente contra la
+        // ruta modal/APPROVED). El modal hijo no debe pintar ERROR.
+        try {
+            await apiFetch('/pos/pagos-qr/encolar', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+                fallbackError: 'No se pudo dejar en espera el cobro QR',
+                timeoutMs: 10000,
+            });
+        } catch (err) {
+            if (isAlreadyPaidError(err)) {
+                const info = (err && typeof err === 'object' && 'data' in err)
+                    ? ((err as { data?: unknown }).data as { saleId?: number; amountCop?: number } | undefined)
+                    : undefined;
+                const saleId = typeof info?.saleId === 'number' && Number.isFinite(info.saleId) && info.saleId > 0
+                    ? Math.floor(info.saleId)
+                    : undefined;
+                const amountCop = typeof info?.amountCop === 'number' && Number.isFinite(info.amountCop) && info.amountCop > 0
+                    ? Math.round(info.amountCop)
+                    : undefined;
+                qrMarkPaid({ ventaTempId: trimmedTemp, saleId, amountCop });
+                qrPreparationsRef.current.delete(trimmedTemp);
+                toast({
+                    variant: 'default',
+                    title: 'YA PAGADO',
+                    description: saleId
+                        ? `Este cobro QR ya fue aprobado (venta #${saleId}).`
+                        : 'Este cobro QR ya fue aprobado en el servidor.',
+                });
+                setBoldQrReopenPayload(null);
+                confirmEnqueuedAndFreeCart();
+                setIsPaymentDialogOpen(false);
+                return;
+            }
+            throw err;
+        }
+        // Éxito: la preparación ya cumplió su rol (quedó vinculada en
+        // backend). Limpiamos la entrada del Map local para no retener
+        // snapshots obsoletos tras liberar el carrito.
+        qrPreparationsRef.current.delete(trimmedTemp);
+        toast({ title: 'QR en espera', description: 'Puedes seguir atendiendo. Avisaremos cuando el pago llegue.' });
+        // Confirmado el 200: liberamos SÓLO el carrito activo + abrimos
+        // uno limpio sin tocar los demás carritos abiertos.
+        setBoldQrReopenPayload(null);
+        confirmEnqueuedAndFreeCart();
+        setIsPaymentDialogOpen(false);
+        void qrTrayReconnect();
+    }, [buildQrSalePayloadSnapshot, cajaId, confirmEnqueuedAndFreeCart, isEditMode, qrMarkPaid, qrTrayReconnect, selectedCustomerDni, setIsPaymentDialogOpen, toast, user]);
 
     // Wrapper unificado para abrir el modal de pago. En modo edición con
     // cero deltas (ninguna cantidad tocada) no tiene sentido abrir el
@@ -159,8 +708,8 @@ export default function NewSalePage() {
 
     const isModalOpenRef = useRef(false);
     useEffect(() => {
-        isModalOpenRef.current = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isMissingItemOpen || !!editingCartItem || isProductSearchOpen;
-    }, [isPaymentDialogOpen, isClientDialogOpen, isScannerOpen, isManualWeightOpen, isSplitDialogOpen, isMissingItemOpen, editingCartItem, isProductSearchOpen]);
+        isModalOpenRef.current = isPaymentDialogOpen || isClientDialogOpen || isScannerOpen || isManualWeightOpen || isSplitDialogOpen || isMissingItemOpen || !!editingCartItem || isProductSearchOpen || isHomeDrawerModalOpen;
+    }, [isPaymentDialogOpen, isClientDialogOpen, isScannerOpen, isManualWeightOpen, isSplitDialogOpen, isMissingItemOpen, editingCartItem, isProductSearchOpen, isHomeDrawerModalOpen]);
 
     const selectedItemIdRef = useRef(selectedItemId);
     useEffect(() => { selectedItemIdRef.current = selectedItemId; }, [selectedItemId]);
@@ -186,6 +735,36 @@ export default function NewSalePage() {
 
             const isSearchFocused = document.activeElement === searchRef.current;
             const isModalOpen = isModalOpenRef.current;
+
+            // --- APERTURA MANUAL DEL CAJÓN (tecla Home) ---
+            // La tecla física Home dispara el modal shadcn `HomeDrawerModal`.
+            // Admin: audit-first + bridge local. Empleado: challenge OTP.
+            // Guardas endurecidas vía helper puro `canCaptureHomeKey`:
+            //   - no input/textarea con foco
+            //   - ningún modal abierto (incluye éste; el ref evita doble-apertura)
+            //   - sin buffer de escáner activo (secuencia Jaltech en curso)
+            //   - sin pantalla de éxito ni envíos en progreso
+            //   - `e.repeat` filtra autorepeat del SO si el cajero deja la
+            //     tecla pulsada por error.
+            if (e.key === 'Home') {
+                const activeElement = document.activeElement;
+                const isInput = activeElement instanceof HTMLInputElement
+                    || activeElement instanceof HTMLTextAreaElement
+                    || (activeElement instanceof HTMLElement && activeElement.isContentEditable);
+                const canOpenDrawerModal = canCaptureHomeKey({
+                    isInputFocused: isSearchFocused || isInput,
+                    isModalOpen,
+                    hasScannerBuffer: scannerBufferRef.current.length > 0,
+                    showSuccessScreen,
+                    isSubmitting: submitting,
+                    isHomeRepeat: e.repeat,
+                });
+                if (canOpenDrawerModal) {
+                    e.preventDefault();
+                    setIsHomeDrawerModalOpen(true);
+                }
+                return;
+            }
 
             // REGLA DE ORO: Pausar motor global en busqueda o modales
             if (isSearchFocused && e.key !== 'Escape' && e.key !== 'Enter') return;
@@ -269,6 +848,7 @@ export default function NewSalePage() {
                     setIsMissingItemOpen(false);
                     setEditingCartItem(null);
                     setIsProductSearchOpen(false);
+                    setIsHomeDrawerModalOpen(false);
                 }
                 setScannerBuffer('');
                 isScanningRef.current = false;
@@ -393,10 +973,12 @@ export default function NewSalePage() {
                     )}
                     {/* PANEL IZQUIERDO: CARRITO */}
                     <div className="flex-1 flex flex-col rounded-2xl border border-gray-200 dark:border-white/5 card-base overflow-hidden shadow-[0_8px_30px_rgb(0,0,0,0.12)] min-h-0">
-                        <div className="bg-gray-50 dark:bg-[#18181b]/50 border-b border-gray-200 dark:border-white/5 p-2 shrink-0 flex justify-between items-center">
-                            <div className="flex items-center gap-2">
-                                <div className="flex items-center flex-wrap gap-1.5 max-w-[500px]">
-                                    {cartKeys.map((key) => {
+                        <div className="bg-gray-50 dark:bg-[#18181b]/50 border-b border-gray-200 dark:border-white/5 p-2 shrink-0 flex items-center gap-2 min-w-0">
+                            {/* Facturas: una sola fila con scroll horizontal. Nunca
+                                se apilan ni empujan las acciones hacia abajo. */}
+                            <div className="flex-1 min-w-0 overflow-x-auto overscroll-contain custom-scrollbar">
+                                <div className="flex items-center flex-nowrap gap-1.5 w-max pr-1">
+                                    {splitCartTabs(cartKeys, activeCartKey).visible.map((key) => {
                                         const isActive = activeCartKey === key;
                                         const custDni = cartCustomers[key] || '0';
                                         const cust = customers.find(c => c.dni === custDni);
@@ -415,15 +997,75 @@ export default function NewSalePage() {
                                             </div>
                                         );
                                     })}
+                                    {(() => {
+                                        const { overflow } = splitCartTabs(cartKeys, activeCartKey);
+                                        if (overflow.length === 0) return null;
+                                        return (
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <button
+                                                        type="button"
+                                                        aria-label={`Ver ${overflow.length} facturas más`}
+                                                        className="h-8 shrink-0 rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-zinc-800 px-3 text-[11px] font-bold text-gray-600 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-700"
+                                                    >
+                                                        +{overflow.length} ▾
+                                                    </button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="start" className="w-64 max-h-80 overflow-y-auto overscroll-contain">
+                                                    <DropdownMenuLabel className="text-[10px] uppercase tracking-widest">Otras facturas</DropdownMenuLabel>
+                                                    <DropdownMenuSeparator />
+                                                    {overflow.map((key) => {
+                                                        const custDni = cartCustomers[key] || '0';
+                                                        const cust = customers.find(c => c.dni === custDni);
+                                                        const custName = cust && cust.dni !== '0' ? cust.name : 'Consumidor final';
+                                                        const units = countCartUnits(carts[key] || []);
+                                                        return (
+                                                            <DropdownMenuItem
+                                                                key={key}
+                                                                onSelect={() => handleCartSwitch(key)}
+                                                                className="flex items-center justify-between gap-3 cursor-pointer"
+                                                            >
+                                                                <span className="flex min-w-0 flex-col">
+                                                                    <span className="font-bold text-xs">{key.replace('Factura ', 'F')}</span>
+                                                                    <span className="truncate text-[10px] text-zinc-500">{custName}</span>
+                                                                </span>
+                                                                <span className="shrink-0 text-[10px] font-semibold tabular-nums text-zinc-500">
+                                                                    {units} art.
+                                                                </span>
+                                                            </DropdownMenuItem>
+                                                        );
+                                                    })}
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
+                                        );
+                                    })()}
                                     <Button isIconOnly size="sm" variant="light" className="h-8 w-8 min-w-8 rounded-2xl text-zinc-900 dark:text-zinc-100 bg-emerald-50 dark:bg-emerald-500/5 hover:bg-emerald-500 hover:text-white transition-all shrink-0 border border-dashed border-emerald-200 dark:border-emerald-500/20" onPress={addNewCart}>
                                         <Plus size={20} strokeWidth={2.5} />
                                     </Button>
                                 </div>
                             </div>
 
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1.5 shrink-0">
+                                {/* Bandeja QR inline: debe vivir en esta barra visible,
+                                    junto a Catálogo/Sincro/Cliente. El montaje fixed
+                                    anterior quedaba debajo de la cabecera global y el
+                                    panel derecho aunque tuviera z-index. */}
+                                <BoldQrTrayPopover
+                                    pendings={qrPendings}
+                                    unassignedPayments={qrUnassigned}
+                                    latestError={qrTrayError}
+                                    latestUnassignedError={qrUnassignedError}
+                                    onReopen={handleReopenPending}
+                                    onDismiss={qrDismissIntent}
+                                    onReconnect={qrTrayReconnect}
+                                    onReloadUnassigned={qrReloadUnassigned}
+                                    onAssign={qrAssignPayment}
+                                    canConfirmManual={isAdminUser(user)}
+                                    onConfirmManual={qrConfirmManual}
+                                />
+
                                 {/* CANTIDAD DE PRODUCTOS EN MEMORIA / CACHÉ */}
-                                <div className="hidden sm:flex items-center gap-1.5 px-2 py-1 rounded-2xl border border-zinc-200 dark:border-white/5 bg-zinc-100 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
+                                <div className="hidden 2xl:flex items-center gap-1.5 px-2 py-1 rounded-2xl border border-zinc-200 dark:border-white/5 bg-zinc-100 dark:bg-zinc-800/80 text-zinc-900 dark:text-zinc-100 shadow-[0_8px_30px_rgb(0,0,0,0.12)]">
                                     <Package className="h-3 w-3 text-emerald-500" />
                                     <div className="flex flex-col leading-none text-right">
                                         <span className="text-[7px] font-bold uppercase tracking-widest leading-none text-zinc-400">Catálogo</span>
@@ -450,14 +1092,20 @@ export default function NewSalePage() {
                                         <span className="text-[9px] sm:text-[10px] font-medium tabular-nums">{isScaleReloading ? '---' : isScaleOnline ? `${scaleWeight.toFixed(3)} kg` : '---'}</span>
                                     </div>
                                 </div>
-                                <Button size="sm" variant="flat" onPress={() => setIsClientDialogOpen(true)} className="h-8 px-2 sm:px-3 rounded-2xl font-bold text-[10px] uppercase bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 border border-sky-200 dark:border-sky-500/20">
-                                    <User size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline tracking-tight">CLIENTE (Re Pág)</span>
+                                <Button size="sm" variant="flat" aria-label="Seleccionar cliente (Re Pág)" title="Cliente (Re Pág)" onPress={() => setIsClientDialogOpen(true)} className="h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 border border-sky-200 dark:border-sky-500/20">
+                                    <User size={18} strokeWidth={2.5} className="xl:mr-1" />
+                                    <span className="hidden xl:inline tracking-tight">Cliente</span>
+                                    <span className="hidden 2xl:inline ml-1 opacity-70">(Re Pág)</span>
                                 </Button>
-                                <Button size="sm" variant="flat" onPress={() => setIsSplitDialogOpen(true)} isDisabled={currentCart.length === 0} className="h-8 px-2 sm:px-3 rounded-2xl font-bold text-[10px] uppercase bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 hover:bg-amber-100 border border-amber-200 dark:border-amber-500/20">
-                                    <Grid size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline">Dividir (Av Pág)</span>
+                                <Button size="sm" variant="flat" aria-label="Dividir factura (Av Pág)" title="Dividir (Av Pág)" onPress={() => setIsSplitDialogOpen(true)} isDisabled={currentCart.length === 0} className="h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 hover:bg-amber-100 border border-amber-200 dark:border-amber-500/20">
+                                    <Grid size={18} strokeWidth={2.5} className="xl:mr-1" />
+                                    <span className="hidden xl:inline">Dividir</span>
+                                    <span className="hidden 2xl:inline ml-1 opacity-70">(Av Pág)</span>
                                 </Button>
-                                <Button size="sm" variant="flat" onPress={() => setIsProductSearchOpen(true)} className="h-8 px-2 sm:px-3 rounded-2xl font-bold text-[10px] uppercase bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-500 hover:bg-purple-100 border border-purple-200 dark:border-purple-500/20">
-                                    <Search size={20} strokeWidth={2.5} className="sm:mr-1.5" /> <span className="hidden sm:inline">BUSCAR PRODUCTO (Insert)</span>
+                                <Button size="sm" variant="flat" aria-label="Buscar producto (Insert)" title="Buscar producto (Insert)" onPress={() => setIsProductSearchOpen(true)} className="h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-500 hover:bg-purple-100 border border-purple-200 dark:border-purple-500/20">
+                                    <Search size={18} strokeWidth={2.5} className="xl:mr-1" />
+                                    <span className="hidden xl:inline">Buscar</span>
+                                    <span className="hidden 2xl:inline ml-1 opacity-70">(Insert)</span>
                                 </Button>
                             </div>
                         </div>
@@ -475,7 +1123,15 @@ export default function NewSalePage() {
                                     }}
                                 >
                                     <TableHeader>
-                                        <TableColumn>ARTÍCULO</TableColumn>
+                                        <TableColumn>
+                                            ARTÍCULO
+                                            <span
+                                                aria-label={`${countCartUnits(currentCart)} artículos en la venta`}
+                                                className="ml-2 rounded-md bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-bold text-emerald-600 dark:text-emerald-400 tabular-nums"
+                                            >
+                                                {countCartUnits(currentCart)} {countCartUnits(currentCart) === 1 ? 'artículo' : 'artículos'}
+                                            </span>
+                                        </TableColumn>
                                         <TableColumn align="center">PVP</TableColumn>
                                         <TableColumn align="center">CANT</TableColumn>
                                         <TableColumn align="end">TOTAL</TableColumn>
@@ -578,11 +1234,11 @@ export default function NewSalePage() {
                     </div>
 
                     {/* PANEL DERECHO: TECLADO Y ESCÁNER */}
-                    <aside className="w-full lg:w-[260px] flex flex-col shrink-0">
-                        <div className="flex-1 card-base rounded-2xl p-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-1 border border-gray-200 dark:border-white/5 overflow-hidden min-h-0">
-                            <div className="flex items-center gap-1 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 px-2 py-1 rounded-2xl shadow-inner h-10 shrink-0">
+                    <aside className="w-full lg:w-[280px] xl:w-[300px] flex flex-col shrink-0 min-h-[360px] lg:min-h-0">
+                        <div className="flex-1 card-base rounded-2xl p-2.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-2 border border-gray-200 dark:border-white/5 overflow-hidden min-h-0">
+                            <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 px-2 py-1 rounded-xl shadow-inner h-11 shrink-0">
                                 <Barcode className="h-4 w-4 text-zinc-900 dark:text-zinc-100 shrink-0" />
-                                <div className="relative flex-1 h-8 flex items-center px-1">
+                                <div className="relative flex-1 min-w-0 h-8 flex items-center px-1">
                                     <div className="font-mono font-bold text-xs text-gray-900 dark:text-zinc-100 bg-transparent flex-1 truncate">
                                         {scannerBuffer || (feedbackCode ? "" : "ESPERANDO ESCÁNER...")}
                                     </div>
@@ -592,46 +1248,59 @@ export default function NewSalePage() {
                                         </div>
                                     )}
                                 </div>
-                                <Button isIconOnly size="sm" variant="flat" className="h-7 w-7 min-w-7 rounded bg-emerald-100 dark:bg-white/5 text-emerald-600 dark:text-zinc-100 hover:bg-emerald-500 hover:text-white transition-colors" onPress={() => { setIsScannerOpen(true); returnFocusToScanner(); }}>
+                                <Button aria-label="Abrir cámara para escanear" isIconOnly size="sm" variant="flat" className="h-8 w-8 min-w-8 rounded-lg bg-emerald-100 dark:bg-white/5 text-emerald-600 dark:text-zinc-100 hover:bg-emerald-500 hover:text-white transition-colors" onPress={() => { setIsScannerOpen(true); returnFocusToScanner(); }}>
                                     <Camera className="h-3.5 w-3.5" />
                                 </Button>
-                                <Button isIconOnly size="sm" variant="flat" className="h-7 w-7 min-w-7 rounded bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-500 hover:bg-rose-500 hover:text-white transition-colors" onPress={() => { setIsMissingItemOpen(true); returnFocusToScanner(); }}>
+                                <Button aria-label="Reportar producto no encontrado" isIconOnly size="sm" variant="flat" className="h-8 w-8 min-w-8 rounded-lg bg-rose-100 dark:bg-rose-500/20 text-rose-600 dark:text-rose-500 hover:bg-rose-500 hover:text-white transition-colors" onPress={() => { setIsMissingItemOpen(true); returnFocusToScanner(); }}>
                                     <AlertTriangle className="h-3.5 w-3.5" />
                                 </Button>
                             </div>
 
-                            <div className="grid grid-cols-4 gap-1 flex-1 mt-1">
-                                <Button color="danger" variant="flat" className="h-full min-h-[40px] rounded-2xl font-bold text-xs" onPress={() => { setScannerBuffer(''); returnFocusToScanner(); }}>CE</Button>
-                                <Button variant="flat" className="h-full min-h-[40px] rounded-2xl font-bold text-base bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50" onPress={() => { setScannerBuffer(p => p + '*'); returnFocusToScanner(); }}>*</Button>
-                                <Button variant="flat" className="h-full min-h-[40px] rounded-2xl font-bold text-xl bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 leading-none" onPress={() => { if (selectedItemId) updateQuantity(selectedItemId, -1); returnFocusToScanner(); }}>-</Button>
-                                <Button variant="flat" className="h-full min-h-[40px] rounded-2xl font-bold text-xl bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 leading-none" onPress={() => {
+                            {/* Operaciones separadas del bloque numérico para que
+                                ninguna tecla se estire según el alto disponible. */}
+                            <div role="group" aria-label="Operaciones rápidas" className="grid grid-cols-4 gap-2 h-12 shrink-0">
+                                <Button aria-label="Limpiar entrada" color="danger" variant="flat" className="h-12 min-w-0 rounded-xl font-bold text-xs border border-rose-500/20" onPress={() => { setScannerBuffer(''); returnFocusToScanner(); }}>CE</Button>
+                                <Button aria-label="Multiplicar cantidad" variant="flat" className="h-12 min-w-0 rounded-xl font-bold text-lg bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border border-gray-200 dark:border-white/5" onPress={() => { setScannerBuffer(p => p + '*'); returnFocusToScanner(); }}>*</Button>
+                                <Button aria-label="Restar una unidad" variant="flat" className="h-12 min-w-0 rounded-xl font-bold text-xl bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border border-gray-200 dark:border-white/5 leading-none" onPress={() => { if (selectedItemId) updateQuantity(selectedItemId, -1); returnFocusToScanner(); }}>−</Button>
+                                <Button aria-label="Sumar una unidad" variant="flat" className="h-12 min-w-0 rounded-xl font-bold text-xl bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-50 border border-gray-200 dark:border-white/5 leading-none" onPress={() => {
                                     if (selectedItemId) {
                                         updateQuantity(selectedItemId, 1);
                                     }
                                     returnFocusToScanner();
                                 }}>+</Button>
-
-                                <div className="col-span-3 grid grid-cols-3 gap-1">
-                                    {['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '.'].map(n => (
-                                        <Button key={n} variant="bordered" className={`h-full min-h-[40px] rounded-2xl text-base font-bold bg-gray-50 dark:bg-zinc-950 border-gray-200 dark:border-white/5 text-zinc-900 dark:text-zinc-50 hover:border-emerald-500 ${n === '0' ? 'col-span-2' : ''}`} onPress={() => { setScannerBuffer(p => p + n); returnFocusToScanner(); }}>{n}</Button>
-                                    ))}
-                                </div>
-                                <Button 
-                                    className="col-span-1 h-full min-h-[40px] rounded-2xl font-medium text-2xl text-emerald-700 bg-emerald-100 border border-emerald-200 hover:bg-emerald-200 dark:bg-emerald-500/20 dark:text-emerald-400 dark:border-emerald-500/30 dark:hover:bg-emerald-500/30 shadow-[0_8px_30px_rgb(16,185,129,0.15)]" 
-                                    onPress={() => { 
-                                        if (scannerBuffer.length > 0) {
-                                            handleCodeSubmit(scannerBuffer);
-                                            setScannerBuffer('');
-                                        } else if (currentCart.length > 0) {
-                                            tryOpenPaymentDialog();
-                                        }
-                                        returnFocusToScanner();
-                                    }} 
-                                    isDisabled={currentCart.length === 0 && scannerBuffer.length === 0}
-                                >
-                                    =
-                                </Button>
                             </div>
+
+                            <div role="group" aria-label="Teclado numérico de ventas" className="grid grid-cols-3 grid-rows-4 gap-2 flex-1 min-h-0">
+                                {['7', '8', '9', '4', '5', '6', '1', '2', '3', '0', '.'].map(n => (
+                                    <Button
+                                        key={n}
+                                        aria-label={n === '.' ? 'Punto decimal' : `Número ${n}`}
+                                        variant="bordered"
+                                        className={`h-full min-h-[44px] min-w-0 rounded-xl text-lg font-bold bg-gray-50 dark:bg-zinc-950 border-gray-200 dark:border-white/5 text-zinc-900 dark:text-zinc-50 hover:border-emerald-500 active:scale-[0.97] ${n === '0' ? 'col-span-2' : ''}`}
+                                        onPress={() => { setScannerBuffer(p => p + n); returnFocusToScanner(); }}
+                                    >
+                                        {n}
+                                    </Button>
+                                ))}
+                            </div>
+
+                            <Button
+                                aria-label={scannerBuffer.length > 0 ? "Procesar código ingresado" : "Abrir cobro de la venta"}
+                                className="w-full h-14 min-h-14 shrink-0 rounded-xl font-bold text-base tracking-wide text-white bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 shadow-[0_8px_24px_rgb(16,185,129,0.22)] active:scale-[0.98]"
+                                onPress={() => {
+                                    if (scannerBuffer.length > 0) {
+                                        handleCodeSubmit(scannerBuffer);
+                                        setScannerBuffer('');
+                                    } else if (currentCart.length > 0) {
+                                        tryOpenPaymentDialog();
+                                    }
+                                    returnFocusToScanner();
+                                }}
+                                isDisabled={currentCart.length === 0 && scannerBuffer.length === 0}
+                            >
+                                <span className="text-xl leading-none" aria-hidden>=</span>
+                                <span>{scannerBuffer.length > 0 ? 'PROCESAR' : 'COBRAR'}</span>
+                            </Button>
                         </div>
                     </aside>
                 </div>
@@ -655,6 +1324,67 @@ export default function NewSalePage() {
             </div>
 
             {/* MODALES DINÁMICOS */}
+
+            {/* AlertDialog grande (shadcn) cuando un QR pendiente se aprueba
+                post-commit. Se muestra una sola vez por ventaTempId/saleId
+                (dedupe en useBoldQrTray + Set defensivo en esta pantalla).
+                NO explica printing: el backend SaleService materializa la
+                venta canónica y emite su tirilla; aquí sólo notificamos. */}
+            <AlertDialog
+                open={!!qrApprovedAlert}
+                onOpenChange={(open) => { if (!open) setQrApprovedAlert(null); }}
+            >
+                <AlertDialogContent
+                    data-testid="bold-qr-approved-dialog"
+                    className="border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-500/10 shadow-[0_18px_60px_rgb(16,185,129,0.35)] rounded-2xl sm:max-w-xl"
+                >
+                    <AlertDialogHeader className="items-center text-center space-y-3">
+                        <div
+                            aria-hidden
+                            className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_12px_40px_rgb(16,185,129,0.45)]"
+                        >
+                            <CheckCircle2 className="h-12 w-12" strokeWidth={2.5} />
+                        </div>
+                        <AlertDialogTitle className="text-3xl md:text-4xl font-bold uppercase tracking-tight text-emerald-700 dark:text-emerald-300">
+                            TRANSFERENCIA RECIBIDA
+                        </AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="flex flex-col items-center gap-1 text-emerald-900 dark:text-emerald-100">
+                                <p
+                                    data-testid="bold-qr-approved-amount"
+                                    className="text-6xl md:text-7xl font-black tabular-nums tracking-tight leading-none"
+                                >
+                                    ${qrApprovedAlert?.amountCop ? formatCurrency(qrApprovedAlert.amountCop) : ''}
+                                </p>
+                                {qrApprovedAlert?.cashierName ? (
+                                    <p className="text-sm font-semibold uppercase tracking-wider text-emerald-700/80 dark:text-emerald-200/80">
+                                        {qrApprovedAlert.cashierName}
+                                    </p>
+                                ) : null}
+                                {qrApprovedAlert?.reference ? (
+                                    <p className="text-xs font-mono text-emerald-800/70 dark:text-emerald-200/70">
+                                        Ref. {qrApprovedAlert.reference}
+                                    </p>
+                                ) : null}
+                                {qrApprovedAlert?.saleId !== undefined ? (
+                                    <p className="text-[11px] font-mono uppercase tracking-wider text-emerald-800/70 dark:text-emerald-200/70">
+                                        Venta #{qrApprovedAlert.saleId}
+                                    </p>
+                                ) : null}
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogAction
+                            onClick={() => setQrApprovedAlert(null)}
+                            className="h-12 w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-sm uppercase tracking-wide rounded-xl"
+                        >
+                            Entendido
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
             <UniversalPaymentModal 
                 isOpen={isPaymentDialogOpen}
                 onOpenChange={(open) => { if (!open && submitting) return; setIsPaymentDialogOpen(open); }}
@@ -692,6 +1422,26 @@ export default function NewSalePage() {
                 onPay={async (paymentData) => {
                     await handleConfirmSale(paymentData, pendingReturn);
                 }} 
+                // QR Bold / Bre-B: habilita el método en la grilla. El
+                // UniversalPaymentModal gestiona internamente el modal
+                // hijo (ModalPagoBoldQR); el padre pre-registra la
+                // intención (snapshot durable) via `prepareBoldQrIntent`
+                // ANTES de abrir el modal hijo (migración 027). Si el
+                // POST /iniciar falla, el UPM muestra toast y NO abre el
+                // modal; el carrito queda intacto para que el cajero
+                // cambie de método.
+                //
+                // La aprobación llega por el mismo `onPay` arriba con
+                // transferSource='BOLD_QR', así que no hay que tocar
+                // `handleConfirmSale`. En modo edición ocultamos el QR
+                // porque la ruta de corrección (/sales/update,
+                // /sales/add-items) no persiste el canal de origen;
+                // mantenemos solo canales explícitos.
+                onBoldQrRequested={isEditMode ? undefined : prepareBoldQrIntent}
+                onBoldQrEnqueueRequested={isEditMode ? undefined : handleBoldQrEnqueueRequested}
+                boldQrReopenPayload={boldQrReopenPayload ?? undefined}
+                onBoldQrReopenConsumed={handleBoldQrReopenConsumed}
+                onBoldQrFinalized={isEditMode ? undefined : handleBoldQrFinalized}
                 onCloseComplete={returnFocusToScanner} 
             />
             <ClientSelectionModal isOpen={isClientDialogOpen} onOpenChange={(open) => { setIsClientDialogOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }} clientSearch={clientSearch} setClientSearch={setClientSearch} filteredCustomers={filteredCustomers} handleClientSelect={handleClientSelect} selectedClientDni={selectedCustomerDni} />
@@ -782,6 +1532,12 @@ export default function NewSalePage() {
                 onOpenChange={(open) => { setIsProductSearchOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }}
                 products={products}
                 onSelect={(p) => addToCart(p)}
+            />
+            <HomeDrawerModal
+                isOpen={isHomeDrawerModalOpen}
+                onOpenChange={setIsHomeDrawerModalOpen}
+                user={user ?? null}
+                onCloseComplete={returnFocusToScanner}
             />
         </div>
     );

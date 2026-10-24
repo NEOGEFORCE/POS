@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
+import dynamic from "next/dynamic"
 import { usePathname } from "next/navigation"
 import { useAuth } from "@/lib/auth"
 import {
@@ -16,6 +17,15 @@ import { SoundToggle } from "@/components/sound-toggle"
 import { BackButton } from "@/components/back-button"
 import { NotificationDot } from "@/components/ui/notification-dot"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import { isAdminUser } from "@/lib/auth-helpers.mjs"
+
+// La bandeja global de QR vive sólo en pantallas que NO sean /sales/new
+// (para no duplicar la bandeja local de la caja) y sólo para admin /
+// superadmin. La cargamos dinámicamente para no engordar los bundles de
+// pantallas sin uso de QR.
+const GlobalBoldQrTray = dynamic(() => import("@/components/shared/GlobalBoldQrTray"), {
+  ssr: false,
+})
 
 export function AppHeader() {
   const { user, logout } = useAuth()
@@ -61,6 +71,11 @@ export function AppHeader() {
     ? "AUDITOR" : "OP SECTOR"
 
   const pathname = usePathname()
+  // La bandeja global de QR aparece sólo para admin / superadmin
+  // (`isAdminUser` cubre ambos aliases) y SÓLO fuera de /sales/new, para
+  // no duplicar la bandeja de la caja activa. En /sales/new el cajero ya
+  // ve su propia bandeja local con dedupe por sessionStorage.
+  const isGlobalQrTrayEnabled = isAdminUser(user) && pathname !== "/sales/new"
 
   return (
     <header className="sticky top-0 z-[100] flex h-14 items-center justify-between border-b border-[var(--border)] bg-[var(--bg-app)] px-4 shadow-sm transition-colors">
@@ -85,6 +100,17 @@ export function AppHeader() {
         <div className="hidden sm:flex items-center gap-2 mr-1">
            <NotificationDot tone={isOnline ? 'accent' : 'warning'} ping />
         </div>
+
+        {/*
+          Bandeja global de QR en espera. Sólo se monta si el usuario es
+          admin/superadmin y la ruta actual no es /sales/new. El componente
+          se oculta a sí mismo si no hay pendientes para no ensuciar el
+          header con un badge en 0.
+        */}
+        <GlobalBoldQrTray
+          enabled={isGlobalQrTrayEnabled}
+          canConfirmManual={isGlobalQrTrayEnabled}
+        />
 
         <SoundToggle />
         <ThemeToggle />

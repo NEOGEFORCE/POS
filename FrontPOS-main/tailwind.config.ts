@@ -7,7 +7,11 @@ export default {
     './src/pages/**/*.{ts,tsx,mdx}',
     './src/components/**/*.{ts,tsx,mdx}',
     './src/app/**/*.{ts,tsx,mdx}',
-    "./node_modules/@heroui/theme/dist/components/*.js",
+    // npm instala @heroui/theme anidado bajo varios paquetes @heroui/*.
+    // Escanear ambas formas evita que utilidades internas como bg-content1
+    // sean purgadas y dejen Select/Autocomplete transparentes.
+    "./node_modules/@heroui/theme/dist/components/*.{js,mjs}",
+    "./node_modules/@heroui/**/node_modules/@heroui/theme/dist/components/*.{js,mjs}",
   ],
   theme: {
     extend: {
@@ -23,6 +27,14 @@ export default {
         elevated: 'var(--bg-elevated)',
         background: 'var(--bg-page)',
         foreground: 'var(--text-primary)',
+        popover: {
+          DEFAULT: 'var(--bg-popover)',
+          foreground: 'var(--text-primary)',
+        },
+        muted: {
+          DEFAULT: 'var(--bg-elevated)',
+          foreground: 'var(--text-secondary)',
+        },
         input: 'var(--bg-elevated)',
         ring: 'var(--text-primary)',
       },

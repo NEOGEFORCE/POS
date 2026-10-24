@@ -23,14 +23,16 @@ interface SalesTableProps {
     onOpenDelete: (sale: Sale) => void;
     /**
      * Reimpresión explícita de la factura desde la fila. El padre
-     * (`sales/page.tsx`) usa `printThermalTicket(saleToTicket(sale))` para
-     * mantener el contrato con la caja: misma plantilla térmica, mismo
-     * iframe aislado, respeta `receipt.deliveryMode` cuando pasa por la
-     * ruta estratégica. La reimpresión también sigue disponible dentro
-     * de `SaleDetailModal` (vía ojo → modal) para auditoría de la fila
-     * completa.
+     * (`sales/page.tsx`) usa `printThermalTicketAuto(saleToTicket(sale))`
+     * para honrar el `deliveryMode` persistido: con `bridge` imprime
+     * directo sin diálogo, con `browser` abre el diálogo del navegador.
+     * El handler es async para poder esperar al bridge y mostrar un toast
+     * accionable si el bridge rechaza. La firma pública acepta
+     * `Promise<void>` o `void` porque React permite callbacks fire-and-forget.
+     * La reimpresión también sigue disponible dentro de `SaleDetailModal`
+     * (vía ojo → modal) con botones separados bridge/navegador.
      */
-    onOpenReprint: (sale: Sale) => void;
+    onOpenReprint: (sale: Sale) => void | Promise<void>;
 }
 
 const formatCurrency = (amount: number) => {
@@ -59,7 +61,7 @@ const SaleRow = React.memo(({
     onEdit: (s: Sale) => void,
     onAddItems: (s: Sale) => void,
     onDelete: (s: Sale) => void,
-    onReprint: (s: Sale) => void,
+    onReprint: (s: Sale) => void | Promise<void>,
     isAdmin: boolean,
     canCorrectPayment: boolean,
 }) => {

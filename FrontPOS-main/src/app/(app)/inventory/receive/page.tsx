@@ -24,6 +24,8 @@ import {
     enqueue as enqueueLabelPrintEntry,
     QUEUE_REASONS as LABEL_QUEUE_REASONS,
 } from '@/lib/label-print-queue.mjs';
+import { isInternalBarcode } from '@/lib/internal-barcode.mjs';
+import type { InternalBarcodeReservation } from '@/lib/internal-barcode.d.mts';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import Cookies from 'js-cookie';
 import dynamic from 'next/dynamic';
@@ -209,6 +211,11 @@ export default function ReceiveInventoryPage() {
         purchasePrice: '' as any, salePrice: '' as any, categoryId: 0, marginPercentage: 20,
         minStock: '' as any, packMultiplier: '' as any
     });
+
+    // Reserva vigente de código interno (emitida por ProductFormModal cuando
+    // el usuario pulsa "Generar código interno"). Sólo se usa para habilitar
+    // el LabelPrintSheet tras un create con éxito.
+    const [pendingInternalReservation, setPendingInternalReservation] = useState<InternalBarcodeReservation | null>(null);
 
     // ESTADOS PARA EL ESCANER DE CAMARA
     const [isScannerOpen, setIsScannerOpen] = useState(false);
@@ -1198,6 +1205,10 @@ export default function ReceiveInventoryPage() {
                 barcode: normalizeText(newProduct.barcode),
             };
             const data = sanitizeProductPayload(rawData);
+            // Snapshot del barcode enviado — se usa para decidir si abrir
+            // el LabelPrintSheet DESPUÉS del 201 (gating post-create).
+            const sentBarcode = String(data.barcode || '').trim().toUpperCase();
+            const wasInternal = isInternalBarcode(sentBarcode);
 
             const createdProduct = await apiFetch<Product>('/products/create-products', {
                 method: 'POST', body: JSON.stringify(data), fallbackError: 'FALLO AL CREAR PRODUCTO'
@@ -1240,6 +1251,32 @@ export default function ReceiveInventoryPage() {
                 toast({ variant: 'success', title: 'EXITO', description: 'PRODUCTO CREADO Y AGREGADO A LA LISTA.' });
                 addToReceive(createdProduct);
             }
+
+            // GATING: sólo tras el POST exitoso, si el producto nuevo tiene
+            // un código POSINT-, ofrecemos imprimir la etiqueta unitaria
+            // reutilizando el flujo /labels/codes + /labels/print-jobs.
+            // Nunca antes del create OK.
+            if (wasInternal) {
+                // El `receptionRef` enlaza este trabajo de impresión con la
+                // reserva consumida para que la auditoría de /labels/print-jobs
+                // pueda cruzarlo con `internal_barcode_reservations`. Si por
+                // alguna razón se perdió la reserva en memoria (p. ej. el
+                // modal se abrió sin generar código y el usuario tipeó
+                // manualmente un POSINT-), caemos a un ref basado en el
+                // barcode.
+                const reservedAt = pendingInternalReservation?.reservedAt;
+                const ref = reservedAt
+                    ? `internal-create-${sentBarcode}-${reservedAt}`
+                    : `internal-create-${sentBarcode}`;
+                setLabelSheetState({
+                    open: true,
+                    barcode: sentBarcode,
+                    productName: createdProduct.productName || sentBarcode,
+                    defaultCount: 1,
+                    receptionRef: ref,
+                });
+            }
+            setPendingInternalReservation(null);
 
             broadcastRevalidate('PRODUCT_UPDATE');
         } catch (err: any) {
@@ -2561,6 +2598,8 @@ export default function ReceiveInventoryPage() {
                 onScanBase={() => { setScanMode('baseProduct'); setIsScannerOpen(true); }}
                 allProducts={products}
                 apiFieldErrors={apiFieldErrors}
+                internalBarcodeSource="reception"
+                onInternalBarcodeReserved={setPendingInternalReservation}
             />
 
             {/* MODAL DE CONFIRMACION DE SINCRONIZACION */}

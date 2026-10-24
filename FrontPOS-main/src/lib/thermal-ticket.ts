@@ -58,10 +58,12 @@ import {
 } from "./thermal-page-size.mjs";
 
 import {
+    INVALID_DATE_LABEL,
     STORE,
     buildTicketText,
     charsPerLine,
     escapeHtml,
+    formatDateTime,
 } from "./thermal-ticket-text.mjs";
 
 import type {
@@ -75,7 +77,7 @@ import type {
 
 // Re-exportaciones públicas: los consumidores (`UniversalPaymentModal`,
 // `SaleDetailModal`, etc.) siguen importando de `@/lib/thermal-ticket`.
-export { STORE, buildTicketText };
+export { INVALID_DATE_LABEL, STORE, buildTicketText, formatDateTime };
 export type { TicketCutMode, TicketData, TicketLine, TicketPrintOptions, TicketWidth };
 
 /**

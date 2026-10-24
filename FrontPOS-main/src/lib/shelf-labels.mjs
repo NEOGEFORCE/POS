@@ -54,15 +54,42 @@ export const LABEL_WIDTH_MM = 80;
 export const LABEL_HEIGHT_MM = 40;
 
 /**
- * Formatos de hoja soportados para precios de góndola. El default es
- * `LETTER` (Carta) y es el único que se instala sin opt-in del admin.
+ * Formatos de hoja/rollo soportados para precios de góndola.
+ *
+ *   - `LETTER` (default) → hoja Carta landscape, grid 3×5 = 15.
+ *     Impresión por diálogo del navegador (iframe aislado).
+ *   - `LEGAL` → hoja Oficio/Legal landscape, grid 4×5 = 20.
+ *     Mismo flujo iframe que LETTER.
+ *   - `THERMAL_80` → rollo térmico continuo 80 mm (TSPL vía bridge).
+ *     Una etiqueta por "página"; NO se pagina por hoja. Las dimensiones
+ *     editables (ancho/alto, márgenes, fuentes, pie) viven en la rama
+ *     `gondola.thermal` de `printing-config.mjs` y se envían directo al
+ *     bridge por `window.posBridge.print({type:"shelf-labels"})`.
  */
 export const GONDOLA_FORMATS = Object.freeze({
     LETTER: "LETTER",
     LEGAL: "LEGAL",
+    THERMAL_80: "THERMAL_80",
 });
 
 export const DEFAULT_GONDOLA_FORMAT = GONDOLA_FORMATS.LETTER;
+
+/** Alias en español/short-hand aceptados por `resolveGondolaFormat`. */
+const GONDOLA_FORMAT_ALIASES = Object.freeze({
+    LETTER: GONDOLA_FORMATS.LETTER,
+    CARTA: GONDOLA_FORMATS.LETTER,
+    LEGAL: GONDOLA_FORMATS.LEGAL,
+    OFICIO: GONDOLA_FORMATS.LEGAL,
+    THERMAL_80: GONDOLA_FORMATS.THERMAL_80,
+    THERMAL80: GONDOLA_FORMATS.THERMAL_80,
+    TERMICA_80: GONDOLA_FORMATS.THERMAL_80,
+    TERMICA80: GONDOLA_FORMATS.THERMAL_80,
+    "TÉRMICA 80": GONDOLA_FORMATS.THERMAL_80,
+    "TERMICA 80": GONDOLA_FORMATS.THERMAL_80,
+    "TÉRMICA_80": GONDOLA_FORMATS.THERMAL_80,
+    RT80: GONDOLA_FORMATS.THERMAL_80,
+    RT_80: GONDOLA_FORMATS.THERMAL_80,
+});
 
 /**
  * Especificaciones físicas por formato. Son la única fuente de verdad:
@@ -100,15 +127,36 @@ export const GONDOLA_FORMAT_SPECS = Object.freeze({
         layoutMetaId: "gondola-80x40-legal-landscape-4x5",
         sheetLabel: "legal-landscape",
     }),
+    /**
+     * Rollo térmico continuo 80 mm. Las dimensiones nominales reflejan el
+     * default canónico de la config (80×40 mm con 76 mm imprimibles); los
+     * parámetros editables vienen del `gondola.thermal` del
+     * `printing-config.mjs` cuando se emite el payload para el bridge.
+     * No hay paginación por hoja: cada producto × cantidad es una
+     * etiqueta/página TSPL. El bridge aplana con `flattenLabelItems`.
+     */
+    THERMAL_80: Object.freeze({
+        id: "THERMAL_80",
+        label: "Térmica 80 mm",
+        sheetWidthMm: 80,
+        sheetHeightMm: 40,
+        columns: 1,
+        rows: 1,
+        labelsPerPage: 1,
+        cssPageSize: "80mm 40mm",
+        layoutMetaId: "gondola-shelf-thermal-80x40",
+        sheetLabel: "thermal-roll-80",
+    }),
 });
 
 /**
  * Normaliza un input (string arbitrario, undefined, null, un objeto con
- * `.format`) a uno de los formatos canónicos. Cualquier cosa desconocida
- * cae al default seguro `LETTER`.
+ * `.format`) a uno de los formatos canónicos soportados. Acepta alias en
+ * español/short-hand (`"CARTA"`, `"OFICIO"`, `"TERMICA_80"`, `"RT80"`,
+ * etc.). Cualquier cosa desconocida cae al default seguro `LETTER`.
  *
  * @param {unknown} input
- * @returns {"LETTER"|"LEGAL"}
+ * @returns {"LETTER"|"LEGAL"|"THERMAL_80"}
  */
 export function resolveGondolaFormat(input) {
     if (!input) return DEFAULT_GONDOLA_FORMAT;
@@ -118,9 +166,9 @@ export function resolveGondolaFormat(input) {
             ? /** @type {any} */ (input).format
             : "";
     const normalized = String(raw).trim().toUpperCase();
-    if (normalized === "LETTER" || normalized === "CARTA") return GONDOLA_FORMATS.LETTER;
-    if (normalized === "LEGAL" || normalized === "OFICIO") return GONDOLA_FORMATS.LEGAL;
-    return DEFAULT_GONDOLA_FORMAT;
+    if (!normalized) return DEFAULT_GONDOLA_FORMAT;
+    const match = GONDOLA_FORMAT_ALIASES[normalized];
+    return match || DEFAULT_GONDOLA_FORMAT;
 }
 
 /**
@@ -360,6 +408,38 @@ export function summarizeShelfLabels(items, format) {
     };
 }
 
+/**
+ * Resumen contable específico de la ruta THERMAL_80. En rollo continuo
+ * NO hay paginación por hoja: cada etiqueta es una "página" TSPL. El
+ * campo se expone igual que `summarizeShelfLabels` para que el consumidor
+ * pueda intercalar la UI (`"X etiquetas (una por producto)"`).
+ *
+ *   - `totalLabels`   = suma de cantidades (idéntico al expand+count).
+ *   - `fullPages`     = `totalLabels` (una etiqueta = una "página").
+ *   - `remainder`     = 0 (sin sobrantes, no hay troquel).
+ *   - `blanks`        = 0 (no se rellena con nada en rollo continuo).
+ *   - `labelsPerPage` = 1.
+ *   - `layout`        = `"gondola-shelf-thermal-80x40"` (canonical).
+ *
+ * @param {ReadonlyArray<Partial<import('./shelf-labels.d.mts').ShelfLabelItem>>} items
+ * @returns {import('./shelf-labels.d.mts').ShelfLabelsSummary}
+ */
+export function summarizeShelfLabelsThermal(items) {
+    const layout = resolveGondolaLayout(GONDOLA_FORMATS.THERMAL_80);
+    const slots = expandItemsToSlots(items);
+    const totalLabels = slots.length;
+    return {
+        format: GONDOLA_FORMATS.THERMAL_80,
+        totalLabels,
+        fullPages: totalLabels,
+        remainder: 0,
+        totalPages: totalLabels,
+        blanks: 0,
+        labelsPerPage: 1,
+        layout: layout.layoutMetaId,
+    };
+}
+
 // -----------------------------------------------------------------------------
 // Composición del HTML del documento aislado para impresión.
 // -----------------------------------------------------------------------------
@@ -556,6 +636,9 @@ export function buildShelfLabelsPrintHtml(items, opts = {}) {
  * NO pueden ser pisadas por el caller: el helper las impone siempre al
  * final del merge.
  *
+ * Para THERMAL_80 el layout canónico es `gondola-shelf-thermal-80x40` y
+ * `labelsPerPage: 1` (rollo continuo, no hay troquel por hoja).
+ *
  * @param {Record<string, unknown> | null | undefined} [extra]
  * @param {unknown} [format]
  */
@@ -577,4 +660,120 @@ export function buildAuditMeta(extra, format) {
         return { ...extra, ...canonical };
     }
     return canonical;
+}
+
+/**
+ * Construye el payload canónico para `window.posBridge.print({type:"shelf-labels", ...})`
+ * cuando el formato activo es THERMAL_80. Puro: no lee storage ni toca
+ * `document`. El consumidor (`LabelsWorkspace`) le pasa la config
+ * sanitizada y el helper arma un objeto plano serializable por JSON.
+ *
+ * Reglas duras del contrato:
+ *   - `type` canónico `"shelf-labels"` (plural, análogo a `"thermal-receipt"`).
+ *   - `activeMode: "LABEL"` (el bridge prioriza la impresora de etiquetas).
+ *   - `drawer` NUNCA honra `openDrawerOnSale` en esta ruta — se fuerza a
+ *     `openDrawerOnSale: false`. Garantía: ni esta ruta ni el bridge
+ *     emiten `kickDrawer` para shelf-labels.
+ *   - `thermal` viaja saneado como viene del `printing-config.mjs`; el
+ *     bridge NO re-sanea (frontera única = frontend).
+ *   - `items` conservan `{code, productName, salePrice, quantity}` tal
+ *     cual los sanea el workspace; el bridge aplana con
+ *     `flattenLabelItems` dentro de `normalizeLabelItems`.
+ *   - `meta` se construye con `buildAuditMeta(extra, "THERMAL_80")`.
+ *
+ * @param {{
+ *   items: ReadonlyArray<Partial<import('./shelf-labels.d.mts').ShelfLabelItem>>,
+ *   config: {
+ *     connection: unknown,
+ *     drawer?: unknown,
+ *     gondola?: { thermal?: unknown },
+ *   },
+ *   printerProfileId?: number | null,
+ *   printedBy?: string,
+ *   printerName?: string,
+ *   triggerSource?: string,
+ *   now?: Date | string | number,
+ * }} opts
+ * @returns {{
+ *   type: "shelf-labels",
+ *   connection: unknown,
+ *   drawer: unknown,
+ *   activeMode: "LABEL",
+ *   thermal: unknown,
+ *   printerProfileId: number | null,
+ *   sizeTemplateId: null,
+ *   triggerSource: string,
+ *   openDrawerOnSale: false,
+ *   items: Array<{code: string, productName: string, salePrice: number, quantity: number}>,
+ *   nowIso: string,
+ *   meta: Record<string, unknown>,
+ * }}
+ */
+export function buildShelfLabelsBridgePayload(opts) {
+    const options = (opts && typeof opts === "object") ? opts : {};
+    const config = (options.config && typeof options.config === "object") ? options.config : {};
+    const connection = config.connection ?? null;
+    const drawerSrc = config.drawer && typeof config.drawer === "object"
+        ? /** @type {Record<string, unknown>} */ (config.drawer)
+        : {};
+    // Clonamos drawer forzando `openDrawerOnSale: false` sin importar lo
+    // que trajera. Esta ruta NUNCA honra la apertura automática.
+    const drawer = { ...drawerSrc, openDrawerOnSale: false };
+    const thermal = (config.gondola && typeof config.gondola === "object" && config.gondola.thermal)
+        ? config.gondola.thermal
+        : null;
+
+    // Normalizamos items a la forma { code, productName, salePrice, quantity }
+    // conservando la posición original; descartamos entradas inválidas.
+    const items = Array.isArray(options.items) ? options.items : [];
+    const normalizedItems = [];
+    for (const raw of items) {
+        const n = normalizeShelfLabelItem(raw);
+        if (!n) continue;
+        normalizedItems.push({
+            code: n.code,
+            productName: n.productName,
+            salePrice: n.salePrice,
+            quantity: n.quantity,
+        });
+    }
+
+    // Fecha a estampar en el footer térmico. Si viene Date, serializamos ISO;
+    // string/number se preservan para que el bridge haga el formato.
+    let nowIso;
+    if (options.now instanceof Date) {
+        nowIso = options.now.toISOString();
+    } else if (typeof options.now === "string" && options.now.trim()) {
+        nowIso = options.now;
+    } else if (typeof options.now === "number" && Number.isFinite(options.now)) {
+        nowIso = new Date(options.now).toISOString();
+    } else {
+        nowIso = new Date().toISOString();
+    }
+
+    const meta = buildAuditMeta(
+        {
+            printedBy: typeof options.printedBy === "string" ? options.printedBy : "",
+            printerName: typeof options.printerName === "string" ? options.printerName : "navegador",
+            totalLabels: normalizedItems.reduce((acc, it) => acc + it.quantity, 0),
+        },
+        GONDOLA_FORMATS.THERMAL_80,
+    );
+
+    return {
+        type: "shelf-labels",
+        connection,
+        drawer,
+        activeMode: "LABEL",
+        thermal,
+        printerProfileId: typeof options.printerProfileId === "number" ? options.printerProfileId : null,
+        sizeTemplateId: null,
+        triggerSource: typeof options.triggerSource === "string" && options.triggerSource.trim()
+            ? options.triggerSource
+            : "shelf-thermal",
+        openDrawerOnSale: false,
+        items: normalizedItems,
+        nowIso,
+        meta,
+    };
 }

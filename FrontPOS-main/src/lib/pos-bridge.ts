@@ -81,6 +81,28 @@ export interface PosBridge {
     printTestPage?(payload: unknown): Promise<unknown>;
 
     /**
+     * Enumera las colas de impresión disponibles en el equipo donde corre
+     * el bridge. El contrato acordado con `scale-bridge`:
+     *
+     *   - Request envelope: `{ type:"printer.request", action:"listPrinters",
+     *     requestId, payload: { refresh?: boolean } }`.
+     *   - Respuesta: `{ ok:true, result: { kind:"printer-list", platform,
+     *     defaultName, printers: DetectedPrinter[] } }` o `{ ok:false,
+     *     errorCode:"PRINTER_LIST_FAILED", error }`.
+     *
+     * Es opcional porque los bridges nativos (Electron, Chromium shell)
+     * pueden exponer la enumeración de otra manera. El consumidor debe
+     * hacer `typeof window.posBridge?.listPrinters === "function"` antes
+     * de invocarla y respetar `isConnected()` cuando esté disponible.
+     *
+     * El bridge NUNCA debe interpolar nombres de impresora dentro de
+     * comandos de shell: el helper (`list-printers.ps1`) toma cero
+     * parámetros variables, y los campos devueltos se consumen como
+     * strings opacos.
+     */
+    listPrinters?(payload?: unknown): Promise<unknown>;
+
+    /**
      * Dispara el pulso ESC/POS al cajón. Payload típico:
      * `{ command, event, connection, printerProfileId, drawer }`.
      *
@@ -178,6 +200,45 @@ export function hasPosBridgeDrawer(): boolean {
     }
     return true;
 }
+
+/**
+ * Helper centralizado: `true` si el bridge puede enumerar las colas de
+ * impresión del equipo (acción `listPrinters` del contrato WS). Igual que
+ * los otros helpers, honra `isConnected()` cuando el bridge lo expone y
+ * asume disponible para bridges nativos sin el método.
+ */
+export function hasPosBridgeListPrinters(): boolean {
+    if (typeof window === "undefined") return false;
+    const bridge = window.posBridge;
+    if (!bridge || typeof bridge.listPrinters !== "function") return false;
+    if (typeof bridge.isConnected === "function") {
+        try {
+            return !!bridge.isConnected();
+        } catch {
+            return false;
+        }
+    }
+    return true;
+}
+
+/**
+ * Estados discretos reportados por el bridge por cola de impresión. Los
+ * valores son el enum normalizado (`cleanField` + enum fijo en el
+ * bridge). Un valor desconocido debe tratarse como `"unknown"` en la UI.
+ *
+ * Los tipos y el parser viven en `./pos-bridge-printers.mjs` para que
+ * tanto el frontend como los tests `node --test` compartan la fuente de
+ * verdad sin pasar por tsc.
+ */
+export type {
+    DetectedPrinter,
+    DetectedPrinterStatus,
+    DetectedPrintersResult,
+} from "./pos-bridge-printers.mjs";
+export {
+    DETECTED_PRINTER_STATUSES,
+    parseDetectedPrintersResult,
+} from "./pos-bridge-printers.mjs";
 
 /**
  * Suscripción al estado de conectividad del bridge activo. Si el bridge

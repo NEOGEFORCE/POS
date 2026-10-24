@@ -118,6 +118,18 @@ interface DashboardData {
         cash: number;
         nequi: number;
         daviplata: number;
+        /**
+         * Saldo acumulado del canal Bold QR / Bre-B.
+         * Contrato con el backend (ver informe research):
+         *   boldQr = globalSalesByMethod["BOLD_QR"] +
+         *            globalCollectedByMethod["BOLD_QR"] -
+         *            globalPaidByMethod["BOLD_QR"]
+         * Mientras el backend no exponga el campo, cae a undefined y la
+         * tarjeta muestra $0 sin romper el layout. Nunca lo sumamos al
+         * subtotal de TRANSFERENCIA en el frontend porque ya viaja aparte
+         * en los saldos por canal.
+         */
+        boldQr?: number;
         bills?: number;
         coins1000?: number;
         coins200?: number;
@@ -137,7 +149,28 @@ interface DashboardData {
     systemBalance: number;
     reportedBalance: number;
     globalDifference: number;
+    /**
+     * Shape REAL que entrega hoy el backend en `/dashboard/overview`:
+     * saldos acumulados del día por canal (no un split income/expense).
+     * El widget "Flujo Hoy" NO consume esta llave directamente — para
+     * el detalle por canal se usa `todayCashFlowDetail` (abajo).
+     */
     todayCashFlow?: {
+        cash: number;
+        nequi: number;
+        daviplata: number;
+        boldQr: number;
+    };
+    /**
+     * Detalle enriquecido del flujo diario que agrega el backend en
+     * paralelo (ver etapa backend del sprint): ingresos y egresos por
+     * canal del día actual, más el balance neto. Es lo que el widget
+     * `CashFlowWidget` consume para pintar las pastillas por canal.
+     *
+     * Claves esperadas (strings exactos): `EFECTIVO`, `NEQUI`,
+     * `DAVIPLATA`, `BOLD_QR`.
+     */
+    todayCashFlowDetail?: {
         income: Record<string, number>;
         expense: Record<string, number>;
         balance: number;
@@ -374,7 +407,7 @@ export default function DashboardPage() {
                                 {/* DERECHA: Acciones, Ranking y Graficas (Sticky) */}
                                 <div className="lg:col-span-4 flex flex-col gap-6 sticky top-[80px]">
                                     <QuickActionsPanel />
-                                    <CashFlowWidget data={data.todayCashFlow} />
+                                    <CashFlowWidget data={data.todayCashFlowDetail} />
                                     <RankingList products={data.topProducts} />
                                     <DashboardCharts
                                         dailySalesLast7={data.dailySalesLast7}

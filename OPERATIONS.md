@@ -288,3 +288,147 @@ por USB ni enviar el pulso de kickout al cajón. Opciones viables:
 Sin bridge: imprimir cae al diálogo del navegador y la apertura del
 cajón queda **auditada pero no se produce físicamente**. La UI lo
 documenta en pantalla.
+
+
+
+## Despliegue Home/OTP de cajón — 2026-10-13
+
+Despliegue completado en `DESKTOP-VK2U90S` con respaldo previo y ventana de
+servicio controlada. No hubo commit ni push.
+
+- Respaldo predeploy verificado:
+  `C:\Users\surti\Desktop\POS\.predeploy-backups\2026-10-13_19-57-08`.
+  Incluye `server.exe`, 308 archivos del `out` anterior, dump PostgreSQL custom
+  de 5,291,534 bytes, catálogo de `pg_restore` (612 líneas), SHA-256 y
+  `manifest.json`.
+- Migraciones aplicadas con el API detenido: `024_internal_barcode_reservations`
+  y `025_cash_drawer_otp_challenges`. Estado final: 25 aplicadas, 0 pendientes.
+- Release anterior conservado en:
+  `C:\Users\surti\Desktop\POS\.rollback\home-drawer-20261013-200211`.
+- Hash SHA-256 del `server.exe` activo:
+  `B82A7878FCD20B07B4E3AF94DD54E71E5BA0981A4F590C733CB101DC1CE90B5E`.
+- Verificación posterior: `POS_Server` Running, `/api/health` 200,
+  `/sales/new` 200, rutas OTP y override responden 401 sin sesión, tabla e
+  índices/checks de OTP presentes y bundle Home detectado en el frontend.
+
+### Pendiente físico JAL838L
+
+El fabricante confirma que la Jaltech JAL838L (referencia 80282) soporta USB,
+RJ45 LAN, RJ11 para cajón, TSPL y ESC/POS. En el servidor no hay una impresora
+térmica/driver instalada, `label_printer_profiles` está vacío y no hay bridge
+de impresión escuchando; por ello la autorización queda auditada pero el pulso
+físico no funcionará todavía. La página oficial no expone un instalador directo
+sin acceso de cliente. No se descargaron drivers de terceros no verificables.
+Para Ethernet puede evitarse el driver Windows usando el bridge local y la IP
+de la impresora en puerto 9100; para USB/SYSTEM se necesita el paquete oficial
+de Jaltech y registrar el nombre del spooler.
+
+
+
+## Cobro QR Bold / Bre-B
+
+El módulo QR está implementado, pero su activación productiva requiere una ventana operativa separada. No se debe desplegar el binario nuevo antes de aplicar las migraciones `026_pos_qr_payment_intents` y `027_pos_qr_async_checkout` con respaldo verificado y el API detenido. Las dos van en la misma ventana: la 027 extiende aditivamente la tabla creada por la 026 y asume que ya está aplicada.
+
+### Activo comercial
+
+El QR real suministrado por el comercio está versionado en:
+
+```text
+FrontPOS-main/public/qr-bold-breb.png
+```
+
+La UI lo sirve como `/qr-bold-breb.png`. No reemplazarlo por un QR generado, un placeholder ni una captura diferente sin validar previamente en la aplicación bancaria que el titular mostrado sea Sebastian Sarmiento y que corresponda al comercio Bre-B `0093097755`.
+
+### Variables de entorno
+
+Para el QR Bre-B estático gratuito se utiliza exclusivamente el puente Android por LAN. Configurar en el entorno protegido del servicio:
+
+- `BOLD_BRIDGE_TOKEN`: obligatorio para `POST /api/webhooks/bold-notificacion`.
+- `BOLD_SECRET_KEY`, `BOLD_SIGNATURE_HEADER` y `BOLD_EVENT_SALE_APPROVED`: no son necesarios para el QR Bre-B estático; pueden permanecer sin configurar mientras no exista un contrato oficial de pasarela.
+
+El token nunca debe incluirse en la URL ni en logs. MacroDroid debe enviarlo preferiblemente como header HTTP:
+
+```text
+X-Bridge-Token: <BOLD_BRIDGE_TOKEN>
+Content-Type: application/json
+```
+
+Body LAN canónico:
+
+```json
+{
+  "titulo": "{not_title}",
+  "mensaje": "{not_text}",
+  "app": "co.bold"
+}
+```
+
+Por compatibilidad también se aceptan el header legacy `X-Bold-Bridge-Token` y el campo JSON `"token"`, pero `X-Bridge-Token` es el contrato recomendado. El servidor valida el token en tiempo constante, exige `app = co.bold`, combina título y mensaje para buscar el monto y rechaza negadores como reversado, anulado, pendiente, rechazado o cancelado.
+
+Después de autenticar y validar `co.bold`, el servidor registra exactamente `titulo` y `mensaje` usando `%q` (saltos de línea escapados). Nunca registra el token, headers ni body crudo.
+
+### Endpoints
+
+Rutas POS autenticadas para cajero (`empleado` o superior):
+
+- `POST /api/pos/pagos-qr/iniciar`
+- `POST /api/pos/pagos-qr/encolar`
+- `GET /api/pos/pagos-qr/estado?venta_temp_id=...`
+- `GET /api/pos/pagos-qr/stream?venta_temp_id=...` (SSE del modal con `Authorization: Bearer`; nunca token en query)
+- `GET /api/pos/pagos-qr/pendientes?caja_id=...&limit=20`
+- `GET /api/pos/pagos-qr/caja-stream?caja_id=...` (SSE de la bandeja con `Authorization: Bearer`; nunca token en query)
+- `POST /api/pos/pagos-qr/cancelar`
+
+Ruta de emergencia, autenticada y restringida exclusivamente a `admin`:
+
+- `POST /api/pos/pagos-qr/confirmar-manual` — no forma parte del flujo normal y el frontend de caja no la expone.
+
+Endpoint LAN autenticado por token:
+
+- `POST http://192.168.1.6:3000/api/webhooks/bold-notificacion`
+
+El endpoint `/api/webhooks/bold` de pasarela permanece implementado pero no se publica ni se usa para el QR Bre-B estático.
+
+El emparejamiento automático exige monto exacto y exactamente una intención pendiente vigente. El parser elimina centavos (`$300,00`, `$300.00` y `$ 300,0` se normalizan a `300`) antes de comparar contra `amount_cop BIGINT`.
+
+El webhook responde `200` con un estado semántico cuando pudo procesar la notificación:
+
+- `APPROVED`: encontró exactamente una intención, materializó/reutilizó la venta y vinculó su `saleId`.
+- `UNMATCHED`: no había intención exacta; se conserva un evento de conciliación append-only y no se inventa una venta sin carrito.
+- `AMBIGUOUS`: había dos o más pendientes del mismo monto; se conserva la conciliación y se factura cero automáticamente.
+- `DUPLICATE`: el fingerprint ya había sido procesado.
+- `ignored`: la notificación no representa un pago aprobable.
+
+Sólo un fallo real de base de datos/infraestructura responde `500 QR_REQUEST_FAILED`. MacroDroid no entrega identificador externo: en ese canal `external_id` debe persistirse como `NULL`, nunca como `''`, porque `ck_pqwe_external_id_shape` rechaza la cadena vacía y revertiría el evento completo.
+
+### Flujo asíncrono QR
+
+1. Antes de mostrar el QR, el frontend llama `/iniciar` con un `venta_temp_id` estable, monto exacto, `sale_client_tx_id` y snapshots durables del carrito, cliente y totales. `queued_at` permanece `NULL` mientras el cajero espera en el modal.
+2. El modal repite `/iniciar` con el contrato mínimo; el backend reutiliza idempotentemente la misma intención y nunca reemplaza el snapshot ni el `sale_client_tx_id` ya reservados.
+3. Al pulsar **DEJAR EN ESPERA Y SEGUIR ATENDIENDO**, el frontend envía `/encolar` con el mismo `venta_temp_id`, monto, snapshot y `sale_client_tx_id`; el backend sólo marca `queued_at` sobre la misma fila.
+4. El carrito sólo se libera después de que `/encolar` responde correctamente. Se elimina únicamente el carrito activo y se abre/selecciona uno limpio; los demás carritos y los QR pendientes no se modifican.
+5. `/pendientes` repuebla la bandeja tras refresh y `/caja-stream` mantiene la escucha aunque el modal QR esté cerrado. Ambos SSE usan el token únicamente en el header `Authorization` y están excluidos de compresión/buffering.
+6. Cuando el webhook encuentra exactamente una intención viva por monto, marca el pago como aprobado y dispara la finalización fuera de la transacción del matcher. El materializador reutiliza `SaleService.CreateSale` con el `sale_client_tx_id` persistido; así la venta, movimientos de stock y reintentos conservan la idempotencia canónica.
+7. El evento `APPROVED` para modal/bandeja se publica sólo después de crear o recuperar idempotentemente la venta y vincular `related_sale_id`. Incluye `saleId`, monto y referencia. El frontend cierra/libera localmente el carrito, pero nunca vuelve a llamar `/sales/register`; la impresión queda en el flujo canónico de `SaleService`.
+8. Un barredor de finalización se ejecuta periódicamente y recupera aprobaciones `NOT_STARTED`, fallos cuyo backoff venció y trabajos `IN_PROGRESS` atascados. Usa siempre el mismo `sale_client_tx_id`; no crea otra venta ni descuenta stock dos veces.
+9. Las intenciones usan una vigencia de 15 minutos. `AMBIGUOUS` nunca inicia el materializador: dos o más pendientes del mismo monto producen cero facturación automática.
+10. Una intención legacy aprobada sin snapshot se conserva como evidencia, responde `200` y no crea venta/stock. Debe conciliarse administrativamente; el sistema nunca reconstruye un carrito inexistente.
+
+Estados operativos visibles en la bandeja: `ENQUEUED`, `APPROVED`, `AMBIGUOUS`, `UNMATCHED`, `EXPIRED`, `CANCELLED` y `ERROR`. Los estados no terminales o fallidos se pueden reabrir/consultar; cancelar exige una sesión autenticada y nunca revierte una venta ya finalizada.
+
+### Activación
+
+1. Crear y verificar respaldo completo.
+2. Detener `POS_Server`.
+3. Aplicar las migraciones 026 y 027 en orden con el runner canónico y confirmaciones operativas.
+4. Configurar las variables anteriores en el entorno protegido del servicio.
+5. Desplegar API y frontend del mismo build.
+6. Iniciar el servicio y verificar `/api/health`.
+7. Abrir el método QR con sesión autenticada; antes de que aparezca el código, confirmar que `/iniciar` dejó una sola fila con `queued_at IS NULL` y `cart_snapshot`, `client_snapshot`, `totals_snapshot` y `sale_client_tx_id` poblados.
+8. Pulsar **DEJAR EN ESPERA Y SEGUIR ATENDIENDO** y confirmar que `/encolar` reutilizó la misma fila y únicamente pobló `queued_at`.
+9. Validar MacroDroid con un pago real controlado y monto único; confirmar respuesta `200 {status:"APPROVED"}`, SSE post-commit, `finalization_status='SUCCEEDED'` y `related_sale_id` vinculado.
+10. Repetir el webhook y confirmar `DUPLICATE`, sin otra venta ni movimiento de stock.
+11. Probar un monto sin intención y confirmar `200 {status:"UNMATCHED"}` con evento de conciliación, sin venta automática.
+12. Crear dos intenciones vivas del mismo monto en una prueba controlada; confirmar `200 {status:"AMBIGUOUS"}`, ausencia de `related_sale_id` y cero movimientos de stock/ventas automáticas.
+
+No registrar ni compartir en capturas el valor de `BOLD_BRIDGE_TOKEN` o `BOLD_SECRET_KEY`.

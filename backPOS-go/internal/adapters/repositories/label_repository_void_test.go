@@ -132,6 +132,22 @@ func TestLabelRepo_IsSaleOwnedByCashier_FiltraPorEmpleadoDni(t *testing.T) {
 	if !strings.Contains(body, "deleted_at IS NULL") {
 		t.Error("IsSaleOwnedByCashier debe excluir ventas borradas (deleted_at IS NULL) para no legitimar aperturas sobre ventas canceladas")
 	}
+
+	// La tabla `sales` tiene su clave primaria en la columna quoted
+	// `"saleId"` (ver models.Sale.SaleID con tag `column:saleId`). Un
+	// `WHERE id = ?` NO filtra: `id` no existe en esta tabla y la
+	// consulta rompería en runtime, dejando el cross-check inútil.
+	// El guardián falla si alguien vuelve a introducir `id =` sin la
+	// comilla doble.
+	if !strings.Contains(body, `"saleId" = ?`) {
+		t.Error(`IsSaleOwnedByCashier debe filtrar por la columna real "saleId" (quoted camelCase); la columna id no existe en sales y la consulta devolvería un error de Postgres`)
+	}
+	// Rechazo explícito del patrón incorrecto que ya existió. Evita
+	// regresiones silenciosas: cualquier fragmento `id = ?` sin comilla
+	// doble en el cuerpo del método rompe este guardián.
+	if regexp.MustCompile(`[^"]id\s*=\s*\?`).MatchString(body) {
+		t.Error(`IsSaleOwnedByCashier NO debe filtrar por una columna "id" cruda; la clave primaria de sales se llama "saleId" (quoted)`)
+	}
 }
 
 // --- Guardianes de rutas y handlers reciénes agregados ---

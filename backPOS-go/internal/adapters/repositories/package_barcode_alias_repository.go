@@ -199,6 +199,16 @@ func (r *PackageBarcodeAliasRepository) EnsureAlias(
 	if unitsPerPack < 1 {
 		return nil, false, errors.New("unitsPerPack debe ser >= 1")
 	}
+	// Blindaje contra el namespace interno (migración 024): un
+	// package_code POSINT- nunca es legítimo (un alias de paquete apunta a
+	// un producto unitario; mezclar los dos espacios haría que un escaneo
+	// en recepción sumara stock a sí mismo multiplicado por un factor).
+	// La BD también lo rechaza vía CHECK ck_pba_no_internal_namespace, pero
+	// aquí abortamos antes para dar un error legible sin pasar por el 23514
+	// de Postgres.
+	if models.IsInternalBarcode(pc) {
+		return nil, false, errors.New("package_code no puede usar el namespace POSINT- (reservado para products.barcode)")
+	}
 
 	var out *models.PackageBarcodeAlias
 	var created bool

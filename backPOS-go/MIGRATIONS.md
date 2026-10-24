@@ -90,3 +90,35 @@ La única fuente de migraciones ejecutables es `migrations/catalog.go` junto con
 `cmd/migrate_old`, `cmd/reset_pass`, `scripts/backfill_users`, `scripts/fix_superadmin`, `gen_pdf_82.go` y todo `cmd/tools/*.go` requieren el build tag `tools_legacy`; quedan fuera de builds, tests y despliegues normales. Son archivos históricos, no comandos operativos soportados. Los DSN embebidos fueron neutralizados. Para recuperar alguna lógica se debe crear un comando nuevo con variables de entorno obligatorias, `--dry-run`, confirmación explícita, destino visible y respaldo verificado.
 
 Los batch `actualizar.bat` y `actualizar_servidor.bat` ahora cancelan salvo que reciban `--confirm-update`. Esa bandera sólo evita ejecuciones accidentales: no sustituye revisión del destino, respaldo ni ventana de despliegue.
+
+
+## Checkout asíncrono QR (versión 027)
+
+`migrations/sql/027_pos_qr_async_checkout.sql` extiende aditivamente la tabla `pos_qr_payment_intents` creada por la 026 para soportar el flujo 100 % asíncrono del cobro QR Bre-B. Es **transaccional** (no usa `CREATE INDEX CONCURRENTLY`) y **puramente DDL**: ADD COLUMN con defaults seguros, seis ADD CONSTRAINT envueltos en bloques `DO $$` idempotentes, cinco CREATE INDEX parciales y COMMENT ON. No modifica datos, no backfillea, no toca otras tablas.
+
+Qué agrega:
+
+- `cart_snapshot` / `client_snapshot` / `totals_snapshot` (JSONB): foto inmutable del carrito, cliente y totales al momento de emitir la intención. Permite que el servidor materialice la venta sin volver a preguntar al frontend cuando el webhook aprueba.
+- `sale_client_tx_id` (VARCHAR 8..64, UNIQUE parcial): clave de idempotencia reservada al emitir. Combina con la UNIQUE partial de `sales."clientTxId"` (migración 009) para cerrar la ventana de doble materialización ante reintentos o reconexiones.
+- `queued_at` (TIMESTAMPTZ NULL): marca de "cajero pulsó Dejar en espera y seguir atendiendo". No es un estado del pago (el `status` sigue en PENDIENTE); es sólo una señal para que la bandeja global de `/sales/new` muestre la intención sin bloquear el carrito activo.
+- `finalization_status` (`NOT_STARTED` → `IN_PROGRESS` → `SUCCEEDED` | `FAILED`) con sus `finalization_started_at`, `finalization_completed_at`, `finalization_attempts`, `finalization_last_error` (255 chars, sin stack trace ni secretos), `finalization_next_retry_at`. Describe el lifecycle de la MATERIALIZACIÓN de la venta en `sales`, separado del lifecycle del PAGO.
+- `cashier_notified_at`: última vez que el servidor emitió por SSE el evento post-commit (alerta grande + sonido + impresión). Idempotente: la venta ya está materializada, el frontend decide con un token local si repite el sonido.
+- UNIQUE parcial sobre `related_sale_id` (biyección "una intención ↔ una venta"), e índices parciales para la bandeja encolada por caja, los reintentos pendientes y la detección de atascos `IN_PROGRESS`.
+
+Reglas que la BD codifica a nivel CHECK:
+
+1. `SUCCEEDED` requiere que `status` sea `APROBADA` o `CONFIRMADA_MANUAL` (una venta no se materializa sin pago aprobado).
+2. `SUCCEEDED` requiere `related_sale_id IS NOT NULL AND sale_client_tx_id IS NOT NULL`.
+3. `FAILED` requiere `finalization_last_error IS NOT NULL AND related_sale_id IS NULL`.
+4. `finalization_attempts` ∈ [0, 100]; cien intentos es señal de bug sostenido.
+5. Secretos (`BOLD_BRIDGE_TOKEN`, `BOLD_SECRET_KEY`, firma HMAC) siguen fuera del esquema; `finalization_last_error` nunca debe contener el token ni el payload crudo (el handler recorta antes de persistir).
+
+Esta migración se aplica después de la 026 en la misma ventana operativa:
+
+1. Respaldo verificable (`respaldar_base_datos.ps1`) con API detenido.
+2. `migrate status` para confirmar que la 026 ya está `APLICADA` y la 027 figura `PENDIENTE`.
+3. `migrate up --confirm` dentro de `migrar_base_datos.ps1` con `-ConfirmMigrate` y `-ExpectedTarget` validados.
+4. `migrate status` final; la 027 debe pasar a `APLICADA`.
+5. Iniciar el servicio y verificar `/api/health`; probar `POST /api/pos/pagos-qr/iniciar` con sesión autenticada y validar que el snapshot queda persistido (consulta ad-hoc en la fila nueva).
+
+No se debe editar la 027 después de aplicada: cualquier corrección posterior debe ser una migración 028 consecutiva.

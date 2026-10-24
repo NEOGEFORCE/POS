@@ -213,4 +213,95 @@ function sendSystemWindows(printerName, buf, opts) {
     });
 }
 
-module.exports = { sendTcp, sendSystemWindows };
+/**
+ * Enumera las colas de impresión Windows disponibles. Es la contraparte
+ * de `sendSystemWindows`: usa el mismo mecanismo (spawn + PowerShell
+ * `-File` + script versionado) pero el script `list-printers.ps1` tiene
+ * `param()` vacío → no se pasan argumentos variables ni interpolaciones.
+ *
+ * Diseño:
+ *   - Argumentos de PowerShell CONSTANTES (no vienen del navegador).
+ *   - El script escribe un JSON compacto en stdout:
+ *       { platform, defaultName, printers: [{name, driver, port, ...}] }
+ *   - Timeout del lado Node (SIGKILL al cumplirse `timeoutMs`).
+ *   - En error (exit != 0, JSON inválido, timeout) rechaza con `Error`
+ *     cuyo `.code === "PRINTER_LIST_FAILED"` para que `printer-bridge.js`
+ *     lo propague tal cual al frontend.
+ *
+ * @param {{timeoutMs?: number, scriptPath?: string, refresh?: boolean}} [opts]
+ *        `refresh` se acepta por interfaz pero el helper actual no cachea;
+ *        se preserva para evolución futura sin romper el contrato WS.
+ * @returns {Promise<{platform:string, defaultName:string, printers:Array}>}
+ */
+function listSystemPrintersWindows(opts) {
+    return new Promise((resolve, reject) => {
+        const timeoutMs = opts?.timeoutMs ?? 10000;
+        const scriptPath = opts?.scriptPath || path.join(__dirname, "tools", "list-printers.ps1");
+
+        // Argumentos FIJOS. No incluimos nada que venga del navegador.
+        const args = [
+            "-NoProfile",
+            "-NoLogo",
+            "-NonInteractive",
+            "-ExecutionPolicy", "Bypass",
+            "-File", scriptPath,
+        ];
+        const child = spawn("powershell.exe", args, { stdio: ["ignore", "pipe", "pipe"] });
+
+        let stdout = "";
+        let stderr = "";
+        let settled = false;
+
+        const killer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try { child.kill("SIGKILL"); } catch (_) { /* already dead */ }
+            const err = new Error(`PRINTER_LIST_FAILED: timeout ${timeoutMs}ms`);
+            err.code = "PRINTER_LIST_FAILED";
+            reject(err);
+        }, timeoutMs);
+
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+        child.stdout.on("data", (d) => { stdout += d; });
+        child.stderr.on("data", (d) => { stderr += d; });
+
+        child.on("error", (e) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(killer);
+            const err = new Error(`PRINTER_LIST_FAILED: ${e.message}`);
+            err.code = "PRINTER_LIST_FAILED";
+            reject(err);
+        });
+
+        child.on("close", (code) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(killer);
+            if (code !== 0) {
+                const detail = stderr.trim() || stdout.trim() || `exit code ${code}`;
+                const err = new Error(`PRINTER_LIST_FAILED: ${detail}`);
+                err.code = "PRINTER_LIST_FAILED";
+                reject(err);
+                return;
+            }
+            const text = stdout.trim();
+            if (text.length === 0) {
+                // El script siempre debe emitir JSON; stdout vacío es un bug.
+                resolve({ platform: "win32", defaultName: "", printers: [] });
+                return;
+            }
+            try {
+                const parsed = JSON.parse(text);
+                resolve(parsed);
+            } catch (e) {
+                const err = new Error(`PRINTER_LIST_FAILED: JSON inválido (${e.message})`);
+                err.code = "PRINTER_LIST_FAILED";
+                reject(err);
+            }
+        });
+    });
+}
+
+module.exports = { sendTcp, sendSystemWindows, listSystemPrintersWindows };

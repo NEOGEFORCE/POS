@@ -57,6 +57,14 @@ interface LocalExpenseState {
   daviplataAmount: number;
   fondoAmount: number;
   coinsAmount: number;
+  /**
+   * Monto desglosado del canal Bold QR / Bre-B. Se propaga al endpoint
+   * POST /expenses como `boldQrAmount` (contrato con el backend: ver
+   * informe research). Si el backend aún no persiste la columna física
+   * `bold_qr_amount`, se usa `paymentSource='BOLD_QR'` para que el
+   * agregador legacy del dashboard lo meta en la bolsa correspondiente.
+   */
+  boldQrAmount: number;
 }
 
 interface PurchaseOrder {
@@ -111,7 +119,8 @@ const ExpenseFormModal = memo(({
     nequiAmount: 0,
     daviplataAmount: 0,
     fondoAmount: 0,
-    coinsAmount: 0
+    coinsAmount: 0,
+    boldQrAmount: 0
   });
 
   const [supplierInputValue, setSupplierInputValue] = useState('');
@@ -138,7 +147,8 @@ const ExpenseFormModal = memo(({
       nequiAmount: 0,
       daviplataAmount: 0,
       fondoAmount: 0,
-      coinsAmount: 0
+      coinsAmount: 0,
+      boldQrAmount: 0
     };
 
     if (isOpen && initialExpense) {
@@ -159,7 +169,8 @@ const ExpenseFormModal = memo(({
         nequiAmount: (initialExpense as any).nequiAmount || 0,
         daviplataAmount: (initialExpense as any).daviplataAmount || 0,
         fondoAmount: (initialExpense as any).fondoAmount || 0,
-        coinsAmount: (initialExpense as any).coinsAmount || 0
+        coinsAmount: (initialExpense as any).coinsAmount || 0,
+        boldQrAmount: (initialExpense as any).boldQrAmount || 0
       });
       // Sincronizar el input con el nombre del proveedor si existe
       const sName = activeSuppliers?.find((s: any) => s.id === activeSupplierId)?.name || '';
@@ -352,7 +363,7 @@ const ExpenseFormModal = memo(({
   async function handleProcessDebt() {
       setIsSubmitting(true);
       try {
-        const payload: Partial<Expense> = {
+        const payload: Partial<Expense> & { boldQrAmount?: number } = {
             ...localExpense,
             paymentSource: 'PRESTAMO',
             amount: Number(localExpense.amount) || 0,
@@ -362,7 +373,9 @@ const ExpenseFormModal = memo(({
             cashAmount: 0,
             nequiAmount: 0,
             daviplataAmount: 0,
-            fondoAmount: 0
+            fondoAmount: 0,
+            coinsAmount: 0,
+            boldQrAmount: 0
         };
         await onSave(payload);
       } catch (error) {
@@ -644,12 +657,13 @@ const ExpenseFormModal = memo(({
         initialDaviplata={Number(localExpense.daviplataAmount) || 0}
         initialFondo={Number(localExpense.fondoAmount) || 0}
         initialCoins={Number(localExpense.coinsAmount) || 0}
+        initialBoldQr={Number(localExpense.boldQrAmount) || 0}
         initialPaymentSource={localExpense.paymentSource}
         loanOption={loanOption}
         onPay={async (data) => {
             // Este onPay se llama desde el Modal Multi-Pago cuando autorizan el dinero
             const baseAmount = Number(localExpense.amount) || 0;
-            const payload: Partial<Expense> & { loanId?: number | string } = {
+            const payload: Partial<Expense> & { loanId?: number | string; boldQrAmount?: number } = {
                 ...localExpense,
                 paymentSource: data.paymentSourceString,
                 cashAmount: data.cash,
@@ -657,6 +671,12 @@ const ExpenseFormModal = memo(({
                 daviplataAmount: data.daviplata,
                 fondoAmount: data.fondo,
                 coinsAmount: data.coins,
+                // Bold QR / Bre-B — el padre reenvía este monto al POST
+                // /expenses como `boldQrAmount`. Si la columna física no
+                // existe aún (migración 028 fuera de alcance), el backend
+                // ignora el campo pero aún así reconoce el canal por
+                // `paymentSource` (ver informe research, sección 3).
+                boldQrAmount: data.boldQr,
                 amount: baseAmount,
                 taxAmount: data.taxAmount || 0,
                 linkedOrderId: selectedOrderId,

@@ -33,7 +33,11 @@ import (
 // Lo que se RECHAZA en todos los casos:
 //
 //   - Número seguido inmediatamente por G, GR, GRS, GRAMOS, KG, ML, L, LT,
-//     LTS, LITROS, OZ, CM, MM: es magnitud física, no multiplicador.
+//     LTS, LITROS, OZ, CM, MM, CC: es magnitud física, no multiplicador.
+//     Esta regla aplica tanto a sufijos PEGADOS al número ("CAP*18GR") como
+//     a sufijos SEPARADOS POR ESPACIO ("X 58 ML", "X 450 GRS") — en facturas
+//     el proveedor escribe la presentación con y sin espacio indistintamente
+//     y ambos casos son gramaje/volumen, nunca empaque.
 //   - Número seguido por '%': es un porcentaje.
 //   - Número fuera del rango seguro 2..999.
 //   - Marcador en el inicio del nombre o sin letras precediéndolo.
@@ -199,11 +203,11 @@ func findPackByMarker(name string, marker rune, requireWhitespace bool) int {
 			continue
 		}
 
-		// Recoger letras inmediatamente adyacentes al número (sin saltar
-		// espacios). Si existen y NO son una unidad de empaque conocida,
-		// descartamos el candidato: "DP*18 9GR" → "9GR" NO es candidato
-		// porque "9" no tiene marcador precediendo; "CAP*18GR" sí sería
-		// rechazado aquí (GR tras los dígitos).
+		// Fase 1 — Sufijo PEGADO (sin espacio): recoger letras inmediatamente
+		// adyacentes al número. Si existen y NO son una unidad de empaque
+		// conocida, descartamos el candidato: "DP*18 9GR" → "9GR" NO es
+		// candidato porque "9" no tiene marcador precediendo; "CAP*18GR" sí
+		// sería rechazado aquí (GR tras los dígitos).
 		suffixStart := rightIdx
 		for rightIdx < len(runes) && isAlphaRune(runes[rightIdx]) {
 			rightIdx++
@@ -221,6 +225,38 @@ func findPackByMarker(name string, marker rune, requireWhitespace bool) int {
 			// letra arbitraria), descartamos el candidato. La regla
 			// explícita del requisito es "no confundir códigos".
 			continue
+		}
+
+		// Fase 2 — Sufijo SEPARADO POR ESPACIO (lookahead): protege contra
+		// "CREMA ... X 58 ML" o "DETERGENTE ... X 450 GRS" donde el proveedor
+		// escribe la presentación (ml/g/kg/…) con un espacio entre el número
+		// y la unidad. El detector antes devolvía 58/450 como multiplicador y
+		// la UI pedía confirmar un pack inexistente. Si la siguiente palabra
+		// (saltando espacios) está en packRejectSuffixes, se descarta el
+		// candidato. Si está en packUnitSuffixes, se confirma. Si es
+		// desconocida (p. ej. "CAP X 24 CAJAS"), se mantiene la decisión
+		// permisiva actual (return n) para no romper empaques reales.
+		//
+		// IMPORTANTE: este bloque sólo corre cuando NO había letras pegadas
+		// al número (rightIdx == suffixStart). Si había letras pegadas, ya se
+		// decidió arriba y nunca llegamos aquí.
+		lookIdx := rightIdx
+		for lookIdx < len(runes) && isSpace(runes[lookIdx]) {
+			lookIdx++
+		}
+		wordStart := lookIdx
+		for lookIdx < len(runes) && isAlphaRune(runes[lookIdx]) {
+			lookIdx++
+		}
+		if lookIdx > wordStart {
+			word := strings.ToUpper(string(runes[wordStart:lookIdx]))
+			if _, isReject := packRejectSuffixes[word]; isReject {
+				continue // magnitud física separada por espacio → NO es pack
+			}
+			if _, isPack := packUnitSuffixes[word]; isPack {
+				return n // "CAP X 24 UN" / "CAP X 24 UND" → pack confirmado
+			}
+			// Palabra desconocida: mantener comportamiento permisivo actual.
 		}
 
 		return n

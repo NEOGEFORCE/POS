@@ -70,9 +70,11 @@ func roundOverviewMoney(r *DashboardOverview) {
 	r.RealCashFlow.Cash = cop(r.RealCashFlow.Cash)
 	r.RealCashFlow.Nequi = cop(r.RealCashFlow.Nequi)
 	r.RealCashFlow.Daviplata = cop(r.RealCashFlow.Daviplata)
+	r.RealCashFlow.BoldQr = cop(r.RealCashFlow.BoldQr)
 	r.TodayCashFlow.Cash = cop(r.TodayCashFlow.Cash)
 	r.TodayCashFlow.Nequi = cop(r.TodayCashFlow.Nequi)
 	r.TodayCashFlow.Daviplata = cop(r.TodayCashFlow.Daviplata)
+	r.TodayCashFlow.BoldQr = cop(r.TodayCashFlow.BoldQr)
 
 	r.PendingDebts.Amount = cop(r.PendingDebts.Amount)
 	r.TodayExpenses.Amount = cop(r.TodayExpenses.Amount)

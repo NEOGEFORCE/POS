@@ -5,7 +5,14 @@ import {
   Button, Input, Select, SelectItem, Autocomplete, AutocompleteItem, Chip
 } from "@heroui/react";
 import { Switch } from "@/components/ui/switch";
-import { Package, Barcode, Camera, Box, Info, Truck, Check } from 'lucide-react';
+// Shadcn Button + Alert para la UI de "Generar código interno" (contrato
+// fijado por el pipeline: `pos-next-frontend` usa shadcn para el botón
+// pequeño junto al campo Código, con aria-label; y Alert shadcn para el
+// panel de error con regenerar). HeroUI's Button sigue cubriendo el resto
+// del modal — ambos coexisten en el repo (ver tests/internal-barcode-*).
+import { Button as ShadButton } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Package, Barcode, Camera, Box, Info, Truck, Check, Wand2, Loader2, RotateCcw, AlertTriangle } from 'lucide-react';
 import { Product, Category } from '@/lib/definitions';
 import { formatCurrency, applySurtifamiliarRounding, parseCurrency, isProductWeighted, normalizeText, formatInputCOP, parseCOP, roundToNearestFifty, normalizeSalePrice, calculateStockHealth } from '@/lib/utils';
 import { validateProduct, FieldError } from '@/lib/formValidation';
@@ -15,10 +22,17 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { PlusCircle } from 'lucide-react';
 import SupplierFormModal from '../../suppliers/components/SupplierFormModal';
 import CategoryFormModal from '../../categories/components/CategoryFormModal';
-import { apiFetch } from '@/lib/api-error';
+import { apiFetch, ApiError } from '@/lib/api-error';
 import Cookies from 'js-cookie';
 import { useToast } from '@/hooks/use-toast';
 import { ProductSupplierPrice } from '@/lib/definitions';
+import {
+  buildReservePayload,
+  extractInternalErrorCode,
+  isInternalBarcode,
+  translateInternalErrorCode,
+} from '@/lib/internal-barcode.mjs';
+import type { InternalBarcodeReservation } from '@/lib/internal-barcode.d.mts';
 
 // Formateador de moneda local
 const formatCOP = (value: number) => {
@@ -48,6 +62,20 @@ interface ProductFormModalProps {
   mutateSuppliers?: () => void;
   mutateCategories?: () => void;
   apiFieldErrors?: Record<string, string>;
+  /**
+   * Origen operativo que se envía al endpoint POST /labels/internal-codes/reserve
+   * en el campo `source`. Default: product_form (/products).
+   * El modal se instancia también desde /inventory/receive, que pasa
+   * "reception" para que la auditoría distinga cada origen.
+   */
+  internalBarcodeSource?: 'product_form' | 'reception' | 'other';
+  /**
+   * Callback opcional que recibe la reserva cuando el usuario pulsa
+   * "Generar código interno". El padre puede guardarla para abrir el
+   * flujo de impresión de etiqueta DESPUÉS de que `onConfirm` complete
+   * el create con éxito. El modal NUNCA imprime por sí mismo.
+   */
+  onInternalBarcodeReserved?: (reservation: InternalBarcodeReservation) => void;
 }
 
 const ProductFormModal = memo(function ProductFormModal({
@@ -55,7 +83,9 @@ const ProductFormModal = memo(function ProductFormModal({
   newProduct, setNewProduct,
   editingProduct, setEditingProduct,
   categories, suppliers, onConfirm, onScan, onScanAlternate, onScanBase, allProducts, mutateSuppliers, mutateCategories,
-  apiFieldErrors = {}
+  apiFieldErrors = {},
+  internalBarcodeSource = 'product_form',
+  onInternalBarcodeReserved,
 }: ProductFormModalProps) {
   const { toast } = useToast();
   // Estado de errores de validacion
@@ -71,6 +101,129 @@ const ProductFormModal = memo(function ProductFormModal({
   const [searchTerm, setSearchTerm] = useState("");
   const [supplierSearchValue, setSupplierSearchValue] = useState("");
   const [categorySearchValue, setCategorySearchValue] = useState("");
+
+  // ---------------------------------------------------------------------
+  // GENERACIÓN DE CÓDIGO INTERNO (namespace POSINT-*)
+  // ---------------------------------------------------------------------
+  // Flujo:
+  //   1. Usuario pulsa el botón shadcn junto al campo "Código".
+  //   2. POST /labels/internal-codes/reserve → el backend genera un
+  //      POSINT-<hex> único (crypto/rand + PK + consultas de colisión en
+  //      5 fuentes). Nunca generamos en el cliente para no romper la
+  //      unicidad global (dos pestañas abiertas podrían colidir).
+  //   3. Guardamos la reserva en estado local, metemos `code` en
+  //      newProduct.barcode y publicamos la metadata al padre vía
+  //      `onInternalBarcodeReserved` para que éste pueda ofrecer la
+  //      impresión de etiqueta DESPUÉS del create OK.
+  //   4. "Regenerar" repite el POST — el servidor NO reutiliza la reserva
+  //      previa (queda en estado RESERVED hasta que expire). Es un costo
+  //      aceptable: evitamos reutilizar un código que podría estar siendo
+  //      consumido por otra operación en paralelo.
+  //   5. Si el POST falla con 409 (INTERNAL_PRODUCT_BARCODE_IN_USE o
+  //      similar), mostramos Alert destructivo con un botón "Regenerar".
+  //      Nunca entramos en bucle: cada clic es un POST explícito del
+  //      usuario, el error no dispara reintentos automáticos.
+  // ---------------------------------------------------------------------
+  const [internalReservation, setInternalReservation] = useState<InternalBarcodeReservation | null>(null);
+  const [isReservingInternal, setIsReservingInternal] = useState(false);
+  const [internalReserveError, setInternalReserveError] = useState<string | null>(null);
+
+  const currentBarcodeIsInternal = useMemo(
+    () => addDialogOpen && isInternalBarcode(newProduct.barcode),
+    [addDialogOpen, newProduct.barcode],
+  );
+
+  // Limpiar el estado de reserva/errores al cerrar el modal o al cambiar
+  // de modo (edición ↔ creación). En edición el botón ni siquiera se
+  // renderiza, pero el estado se purga para no filtrar reservas colgadas
+  // entre aperturas sucesivas del modal.
+  useEffect(() => {
+    if (!isOpen || !addDialogOpen) {
+      setInternalReservation(null);
+      setIsReservingInternal(false);
+      setInternalReserveError(null);
+    }
+  }, [isOpen, addDialogOpen]);
+
+  // Si el usuario borra manualmente el código reservado, descartamos la
+  // reserva en memoria: cualquier intento de crear con el shape POSINT-
+  // tendría que generar una reserva nueva (y el backend ya rechazaría
+  // reservas huérfanas con INTERNAL_RESERVATION_NOT_FOUND).
+  useEffect(() => {
+    if (!internalReservation) return;
+    const typed = String(newProduct?.barcode ?? '').trim().toUpperCase();
+    const reserved = String(internalReservation.code ?? '').trim().toUpperCase();
+    if (typed !== reserved) {
+      setInternalReservation(null);
+    }
+  }, [newProduct?.barcode, internalReservation]);
+
+  const handleGenerateInternalBarcode = useCallback(async () => {
+    if (isReservingInternal) return;
+    setIsReservingInternal(true);
+    setInternalReserveError(null);
+    const token = Cookies.get('org-pos-token');
+    const payload = buildReservePayload({ source: internalBarcodeSource });
+    try {
+      const reservation = await apiFetch<InternalBarcodeReservation>(
+        '/labels/internal-codes/reserve',
+        {
+          method: 'POST',
+          body: JSON.stringify(payload),
+          fallbackError: 'No se pudo generar el código interno',
+        },
+        token!,
+      );
+      if (!reservation?.code || !isInternalBarcode(reservation.code)) {
+        // Defensa: el servidor contestó 200 pero sin un código POSINT-
+        // válido. Mostramos error en Alert sin tocar el barcode actual.
+        setInternalReserveError('El servidor devolvió una reserva inválida. Inténtalo otra vez.');
+        return;
+      }
+      setInternalReservation(reservation);
+      // Sincroniza con el formulario — el backend normaliza
+      // (TrimSpace+ToUpper) al crear, pero mandamos el valor ya canonizado
+      // para que lo que ve el usuario coincida con lo que el POST final
+      // persistirá en products.barcode.
+      const code = String(reservation.code).trim().toUpperCase();
+      setNewProduct((p: any) => ({ ...p, barcode: code }));
+      // Publicar la reserva al padre para que pueda ofrecer la impresión
+      // de etiqueta DESPUÉS del create OK. El modal nunca imprime antes
+      // de create ni audita trabajos a /labels/print-jobs.
+      if (typeof onInternalBarcodeReserved === 'function') {
+        try { onInternalBarcodeReserved(reservation); } catch { /* no-op */ }
+      }
+      toast({
+        variant: 'success',
+        title: 'CÓDIGO INTERNO LISTO',
+        description: `${code} · se consumirá al guardar el producto.`,
+      });
+    } catch (err: any) {
+      const stableCode = extractInternalErrorCode(err);
+      const translated = translateInternalErrorCode(stableCode);
+      // Prioridades:
+      //   1. Mensaje traducido por código estable del backend (nunca
+      //      filtramos texto de BD).
+      //   2. Para 503 (ErrInternalBarcodeExhausted) hay un mensaje
+      //      específico sugiriendo reintentar en segundos.
+      //   3. Fallback genérico.
+      if (translated) {
+        setInternalReserveError(translated);
+      } else if (err instanceof ApiError && err.status === 503) {
+        setInternalReserveError('El generador está saturado. Intenta de nuevo en unos segundos.');
+      } else if (err instanceof ApiError && err.status === 401) {
+        setInternalReserveError('Tu sesión expiró. Vuelve a ingresar e intenta otra vez.');
+      } else {
+        setInternalReserveError(err?.message || 'No se pudo generar el código interno.');
+      }
+    } finally {
+      setIsReservingInternal(false);
+    }
+  }, [isReservingInternal, internalBarcodeSource, onInternalBarcodeReserved, setNewProduct, toast]);
+
+  const handleClearInternalReserveError = useCallback(() => {
+    setInternalReserveError(null);
+  }, []);
 
   // Limpiar estado de duplicados al abrir/cerrar y sincronizar busquedas
   useEffect(() => {
@@ -541,14 +694,110 @@ const ProductFormModal = memo(function ProductFormModal({
                           if (addDialogOpen) setNewProduct((p: any) => ({ ...p, barcode: val }));
                           else setEditingProduct((p: any) => p ? { ...p, barcode: val } : null);
                         }}
-                        classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} pr-14 ${duplicateFound ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : ''}` }}
+                        classNames={{ ...itemInputClass, inputWrapper: `${itemInputClass.inputWrapper} ${addDialogOpen ? 'pr-20' : 'pr-14'} ${duplicateFound ? 'border-amber-500 bg-amber-500/5 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : ''}` }}
                       />
                       <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 transform scale-90">
+                        {addDialogOpen && (
+                          <ShadButton
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            aria-label={
+                              internalReservation
+                                ? 'Regenerar código interno'
+                                : 'Generar código interno para producto sin código de barras'
+                            }
+                            aria-busy={isReservingInternal}
+                            title={
+                              internalReservation
+                                ? `Regenerar código interno (actual: ${internalReservation.code})`
+                                : 'Generar código interno POSINT-'
+                            }
+                            onClick={handleGenerateInternalBarcode}
+                            disabled={isReservingInternal}
+                            data-testid="btn-generate-internal-code"
+                            className="h-7 w-7 rounded-xl border border-emerald-500/30 bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300 focus-visible:ring-emerald-500"
+                          >
+                            {isReservingInternal ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : internalReservation ? (
+                              <RotateCcw size={12} />
+                            ) : (
+                              <Wand2 size={12} />
+                            )}
+                          </ShadButton>
+                        )}
                         <Button isIconOnly size="sm" onPress={onScan} className="h-7 w-7 bg-black/5 dark:bg-white/5 text-zinc-900 dark:text-zinc-100 rounded-2xl">
                           <Camera size={12} />
                         </Button>
                       </div>
                     </div>
+                    {/* Estado: reserva activa en memoria. Muestra chip verde
+                        informativa + hint para el usuario de que el código se
+                        consumirá al guardar. No bloquea editar manualmente el
+                        campo (si lo cambia, el useEffect limpia la reserva y
+                        el guardado volvería al flujo estándar — el backend
+                        aún así rechazaría cualquier POSINT- sin reserva). */}
+                    {currentBarcodeIsInternal && internalReservation && !internalReserveError && (
+                      <div
+                        role="status"
+                        aria-live="polite"
+                        className="mt-1 flex items-center gap-1.5 text-[9px] font-medium uppercase tracking-widest text-emerald-600 dark:text-emerald-400"
+                      >
+                        <Check size={10} aria-hidden="true" />
+                        <span>Código interno reservado · se consume al guardar</span>
+                      </div>
+                    )}
+                    {/* Panel de error del flujo de reserva. Usa Alert shadcn
+                        destructivo con un botón "Regenerar" (si corresponde)
+                        y "Cerrar aviso" para que el usuario cierre el panel
+                        sin reintentar. Nunca entra en bucle: cada clic en
+                        "Regenerar" es un POST explícito. */}
+                    {internalReserveError && (
+                      <Alert
+                        variant="destructive"
+                        role="alert"
+                        aria-live="assertive"
+                        data-testid="internal-code-error"
+                        className="mt-2"
+                      >
+                        <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                        <AlertTitle className="text-xs uppercase tracking-widest">
+                          No se pudo generar el código interno
+                        </AlertTitle>
+                        <AlertDescription className="text-[11px] mt-1">
+                          {internalReserveError}
+                          <div className="mt-2 flex items-center gap-2">
+                            <ShadButton
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              aria-label="Regenerar código interno"
+                              onClick={handleGenerateInternalBarcode}
+                              disabled={isReservingInternal}
+                              className="h-8 px-3 rounded-xl text-[10px] font-semibold uppercase tracking-wider border-rose-500/40 text-rose-600 dark:text-rose-300 hover:bg-rose-500/10"
+                            >
+                              {isReservingInternal ? (
+                                <Loader2 size={12} className="animate-spin mr-1" aria-hidden="true" />
+                              ) : (
+                                <RotateCcw size={12} className="mr-1" aria-hidden="true" />
+                              )}
+                              Regenerar
+                            </ShadButton>
+                            <ShadButton
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Cerrar aviso de error"
+                              onClick={handleClearInternalReserveError}
+                              className="h-8 px-3 rounded-xl text-[10px] font-semibold uppercase tracking-wider text-rose-500 dark:text-rose-300 hover:bg-rose-500/10"
+                            >
+                              Cerrar aviso
+                            </ShadButton>
+                          </div>
+                        </AlertDescription>
+                      </Alert>
+                    )}
                   </div>
                   <div className="flex flex-col justify-center gap-0.5">
                     <label className={itemInputClass.label}>NOMBRE PRODUCTO</label>

@@ -204,12 +204,15 @@ test("los consumidores esperados importan Switch desde '@/components/ui/switch'"
 
 test("conteo exacto de usos del Switch por consumidor (impide regresiones silenciosas)", async () => {
   const expectedUsageCounts = new Map([
-    // 10 switches tras ocultar la configuración visible del cajón:
+    // 14 switches tras rediseño "estante grande" 2026-10:
     //   - logo, impuestos, QR (3 del recibo)
     //   - visible / emphasized del precio (2) + visible del nombre (1)
     //   - 3 extras (fecha, código interno, categoría)
     //   - barcode humanReadable (dígitos legibles bajo el barcode)
-    ["src/app/(app)/labels/config/page.tsx", 10],
+    //   - gondola.thermal.showCode y showDate (2) — pie de etiqueta térmica 80
+    //   - gondola.thermal.showBarcode (CODE128 abajo-izq)
+    //   - gondola.thermal.showUnitLabel (literal 'PRECIO UND' bajo precio)
+    ["src/app/(app)/labels/config/page.tsx", 14],
     ["src/app/(app)/products/components/ProductFormModal.tsx", 2],
     ["src/app/(app)/inventory/orders/page.tsx", 1],
     ["src/components/shared/UniversalPaymentModal.tsx", 1],

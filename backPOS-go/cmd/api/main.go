@@ -19,6 +19,7 @@ import (
 	"backPOS-go/internal/adapters/middlewares"
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/sse"
 	"backPOS-go/migrations"
 
 	"github.com/gin-contrib/gzip"
@@ -79,6 +80,18 @@ func main() {
 	// Loans repository: usa las tablas creadas por la migración 019.
 	// Mantener fuera de schemaModels() por la misma razón que label_repo.
 	loanRepo := repositories.NewPostgresLoanRepository(repositories.DB)
+	// Internal barcode repository: emite y consume reservas del namespace
+	// POSINT- (migración 024). Fuera de schemaModels() para preservar el
+	// checksum de la 002, igual que labelRepo y packageAliasRepo.
+	internalBarcodeRepo := repositories.NewInternalBarcodeRepository(repositories.DB)
+	// Cash drawer OTP repository: challenges para apertura manual del
+	// cajón desde la tecla Home de /sales/new (migración 025). Fuera de
+	// schemaModels() por la misma razón.
+	cashDrawerOTPRepo := repositories.NewCashDrawerOTPRepository(repositories.DB)
+	// QR Bold / Bre-B repository: intenciones y eventos del cobro con
+	// QR estático "0 %" (migración 026). Fuera de schemaModels() por la
+	// misma razón que labelRepo y cashDrawerOTPRepo.
+	posQrRepo := repositories.NewQrPaymentRepository(repositories.DB)
 
 	// Initialize Services
 	emailService := services.NewEmailService()
@@ -107,11 +120,46 @@ func main() {
 	// normal (status='PAID') sin tocar la lógica legacy de PRESTAMO.
 	loanService := services.NewLoanService(loanRepo, expenseRepo, auditService)
 
+	// Hub SSE dedicado al flujo QR Bold/Bre-B (migración 026): entrega
+	// eventos por venta_temp_id, aislado del SSEService global.
+	posQrHub := sse.NewQRHub()
+	// Servicio QR Bold/Bre-B: orquesta Initiate/Stream/ConfirmManual/
+	// Cancel + webhooks oficial y bridge, verificando HMAC-SHA256 y
+	// token BOLD_BRIDGE_TOKEN en tiempo constante. El materializador
+	// asíncrono (migración 027) se activa via WithSaleService más
+	// abajo, una vez que saleService ya está construido.
+	posQrService := services.NewQrPaymentService(posQrRepo, posQrHub, auditService)
+	// Flujo asíncrono QR (migración 027): inyectar SaleService ya
+	// construido para que el materializador use el flujo canónico de
+	// venta/stock. Sin este wiring, intenciones APROBADAS no cierran
+	// venta automáticamente y quedan como legacy sincrónico.
+	posQrService.WithSaleService(saleService)
+	// Sweeper de finalización: cada 20 s busca intenciones APROBADAS
+	// cuya materialización no está cerrada y las despacha. Idempotente
+	// contra reconexiones y reinicios del binario (CreateSale es
+	// idempotente por ClientTxId).
+	go func() {
+		sweeperCtx := context.Background()
+		posQrService.StartFinalizationSweeper(sweeperCtx)
+	}()
+	// Recuperación de PENDIENTES al arranque: la BD es autoridad; la
+	// memoria sólo cachea. Si falla (BD aún sin migración 026) seguimos
+	// adelante sin bloquear el startup — las rutas devolverán 500/404
+	// hasta que la ventana de migración se aplique.
+	go func() {
+		warmCtx, cancelWarm := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancelWarm()
+		if _, err := posQrService.WarmupFromDB(warmCtx); err != nil {
+			log.Printf("[qr-pagos] warmup falló (ok si migración 026 aún no aplicada): %v", err)
+		}
+	}()
+
 	// ExportService: PDF/Excel/CSV + nuevos reportes (rentabilidad, mermas, rotaci\u00f3n, cuadre real)
 	exportService := services.NewExportService(repositories.DB, dashboardService)
 
 	// Initialize Handlers
-	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService, authService)
+	productHandler := handlers.NewProductHandler(productService, inventoryService, auditService, authService).
+		WithInternalBarcodeRepo(internalBarcodeRepo)
 	restockHandler := handlers.NewRestockHandler(restockService, inventoryService, telegramService, restockMetricsRepo)
 	restockV2Handler := handlers.NewRestockV2Handler(restockMetricsRepo, restockNightlyService)
 	saleHandler := handlers.NewSaleHandler(saleService, auditService, shiftRepo)
@@ -137,6 +185,21 @@ func main() {
 	// Módulo avanzado de préstamos (migración 019): dashboard, create,
 	// pay-installment y control de gastos.
 	loanHandler := handlers.NewLoanHandler(loanService)
+	// Módulo de códigos internos POSINT- (migración 024). El handler
+	// expone /api/labels/internal-codes/reserve y /:code. El CONSUMO
+	// atómico vive dentro de productHandler.Create a través del repo.
+	internalBarcodeHandler := handlers.NewInternalBarcodeHandler(internalBarcodeRepo)
+	// Módulo OTP del cajón (migración 025). El servicio inyecta Telegram
+	// como OTPTelegramSender para envío síncrono SIN encolar; el handler
+	// atiende /api/cash-drawer/otp/{request,confirm}.
+	cashDrawerOTPService := services.NewCashDrawerOTPService(cashDrawerOTPRepo, telegramService)
+	cashDrawerOTPHandler := handlers.NewCashDrawerOTPHandler(cashDrawerOTPService)
+
+	// Módulo de cobro QR Bold/Bre-B (migración 026). El handler atiende
+	// 5 rutas POS (dentro del grupo protected) y 2 webhooks públicos
+	// (fuera de protected). El SSE va por el hub dedicado posQrHub, NO
+	// por el singleton global, para no filtrar eventos entre cajas.
+	posQrHandler := handlers.NewPosQrHandler(posQrService, posQrRepo, posQrHub)
 
 	// Initialize and Start Cron Jobs (orquestador durable sobre PostgreSQL)
 	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService, restockNightlyService)
@@ -162,9 +225,12 @@ func main() {
 	}()
 
 	r := gin.New()
-	// NOTA: Gzip se aplica selectivamente (NO en SSE para evitar buffering)
+	// NOTA: Gzip se aplica selectivamente (NO en SSE para evitar buffering).
+	// Dos rutas emiten SSE: /api/sse (singleton global) y
+	// /api/pos/pagos-qr/stream (hub dedicado por venta_temp_id).
 	r.Use(func(c *gin.Context) {
-		if c.Request.URL.Path == "/api/sse" {
+		p := c.Request.URL.Path
+		if p == "/api/sse" || p == "/api/pos/pagos-qr/stream" || p == "/api/pos/pagos-qr/caja-stream" {
 			c.Next()
 			return
 		}
@@ -310,6 +376,29 @@ func main() {
 		// y emite un JWT corto que SaveClosure verifica para no confiar en
 		// `authorizedBy` como string libre.
 		auth.POST("/verify-admin", authHandler.VerifyAdmin)
+
+		// ================================================================
+		// WEBHOOKS PÚBLICOS - QR Bold / Bre-B (migración 026)
+		// ================================================================
+		// Rutas PÚBLICAS, autenticadas criptográficamente:
+		//   - /webhooks/bold recibe el callback oficial Bold firmado
+		//     por HMAC-SHA256 con BOLD_SECRET_KEY (header
+		//     X-Bold-Signature). Si la variable no está configurada,
+		//     falla cerrado con 401 y loguea WARN una sola vez.
+		//   - /webhooks/bold-notificacion recibe del puente MacroDroid
+		//     por LAN con BOLD_BRIDGE_TOKEN en X-Bridge-Token (preferido),
+		//     X-Bold-Bridge-Token o token JSON legacy.
+		//
+		// Rate limiter específico más estricto que el grupo auth
+		// (20 tokens máx, ~20/60 tokens/sec ≈ 1 token cada 3s), apto
+		// para ráfagas moderadas de reintentos de Bold y suficiente
+		// para bloquear el abuso.
+		webhooks := api.Group("/webhooks")
+		webhooks.Use(middlewares.RateLimitMiddleware(20, 20.0/60.0))
+		{
+			webhooks.POST("/bold", posQrHandler.WebhookOficial)
+			webhooks.POST("/bold-notificacion", posQrHandler.WebhookBridge)
+		}
 
 		// Protected Routes
 		protected := api.Group("/")
@@ -656,6 +745,13 @@ func main() {
 				// Fix 2026-10-04.
 				labels.PATCH("/print-jobs/:id/status", labelHandler.MarkPrintJobStatus)
 
+				// Códigos internos POSINT- (migración 024). Empleado+admin:
+				// cualquier operador puede pedir una reserva desde el modal.
+				// El CONSUMO ocurre al crear el producto (ver
+				// productHandler.Create → InternalBarcodeRepository).
+				labels.POST("/internal-codes/reserve", internalBarcodeHandler.Reserve)
+				labels.GET("/internal-codes/:code", internalBarcodeHandler.GetByCode)
+
 				labelsAdmin := labels.Group("/")
 				labelsAdmin.Use(middlewares.RoleMiddleware("admin"))
 				{
@@ -670,6 +766,75 @@ func main() {
 			// resuelve DENTRO del handler para que la respuesta sea 403
 			// con code=CASH_DRAWER_REQUIRES_SALE_OR_ADMIN y no 401 genérico.
 			protected.POST("/cash-drawer/open", labelHandler.OpenCashDrawer)
+
+			// ================================================================
+			// CASH DRAWER OTP (migración 025)
+			// ================================================================
+			// Flujo para apertura manual del cajón desde la tecla Home de
+			// /sales/new cuando el actor NO es admin: pide OTP → Telegram
+			// manda OTP → actor lo teclea → confirmación valida y audita.
+			//
+			// Rate limiter específico, más estricto que el grupo protegido
+			// general: 5 tokens máx y 1 token cada 12s (5/60 tokens/sec),
+			// alineado con el rate limiter de /auth. Suficiente para un
+			// uso humano (una apertura cada varios minutos) y bloquea
+			// bruteforce.
+			cashDrawerOTP := protected.Group("/cash-drawer/otp")
+			cashDrawerOTP.Use(middlewares.RateLimitMiddleware(5, 5.0/60.0))
+			{
+				cashDrawerOTP.POST("/request", cashDrawerOTPHandler.Request)
+				cashDrawerOTP.POST("/confirm", cashDrawerOTPHandler.Confirm)
+			}
+
+			// ================================================================
+			// POS QR BOLD / BRE-B (migración 026)
+			// ================================================================
+			// Rutas protegidas del flujo de cobro QR con QR estático "0 %":
+			//   - POST /iniciar: crea intención PENDIENTE (TTL 5 min).
+			//   - GET  /stream: SSE por venta_temp_id (Authorization:
+			//     Bearer; NUNCA token en query — así lo pidió el dueño).
+			//   - GET  /estado: snapshot JSON para reconexión.
+			//   - POST /confirmar-manual: aprueba manual con DNI del
+			//     contexto (nunca del body). Audita en audit_logs.
+			//   - POST /cancelar: transita a CANCELADA.
+			//
+			// Rate limiter específico más estricto que el grupo general:
+			// Limitador propio del grupo QR, por IP: 120 tokens de ráfaga y
+			// 2 tokens/s (120/min). Antes era 20/min, y el propio POS lo
+			// agotaba: el polling de la bandeja, las reconexiones SSE de
+			// caja-stream y stream, y abrir y cerrar varios QR seguidos
+			// devolvían 429 en /iniciar ("Demasiadas solicitudes") en
+			// operación normal. Sigue por debajo del grupo protegido
+			// (100 + 10/s) y todas las rutas exigen sesión y rol.
+			posQr := protected.Group("/pos/pagos-qr")
+			posQr.Use(middlewares.RateLimitMiddleware(120, 2))
+			posQr.Use(middlewares.RoleMiddleware("empleado"))
+			{
+				posQr.POST("/iniciar", posQrHandler.Iniciar)
+				posQr.GET("/estado", posQrHandler.Estado)
+				posQr.GET("/stream", posQrHandler.Stream)
+				posQr.POST("/cancelar", posQrHandler.Cancelar)
+				// Flujo asíncrono (migración 027).
+				posQr.POST("/encolar", posQrHandler.Encolar)
+				posQr.GET("/pendientes", posQrHandler.Pendientes)
+				posQr.GET("/caja-stream", posQrHandler.CajaStream)
+				// Bandeja de conciliación manual (SMS reenviado desde
+				// Automate que entró AMBIGUOUS/UNMATCHED).
+				posQr.GET("/pagos-sin-asignar", posQrHandler.PagosSinAsignar)
+				posQr.POST("/asignar", posQrHandler.Asignar)
+			}
+			// Confirmación manual: queda SÓLO para admin. Antes era de
+			// uso del cajero; con el flujo asíncrono de la 027 el
+			// cajero jamás necesita confirmar manualmente — el
+			// servidor cierra la venta cuando el webhook llega. La ruta
+			// se conserva como herramienta de emergencia operativa
+			// auditada (BD guarda manual_confirmed_by_dni del admin).
+			posQrAdmin := protected.Group("/pos/pagos-qr")
+			posQrAdmin.Use(middlewares.RateLimitMiddleware(20, 20.0/60.0))
+			posQrAdmin.Use(middlewares.RoleMiddleware("admin"))
+			{
+				posQrAdmin.POST("/confirmar-manual", posQrHandler.ConfirmarManual)
+			}
 
 			// ================================================================
 			// PACKAGE BARCODE ALIAS (migración 017)

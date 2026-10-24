@@ -28,7 +28,7 @@ const {
     isLocalOrigin,
     handlePrinterRequest,
 } = require('./printer-bridge');
-const { sendTcp, sendSystemWindows } = require('./print-transports');
+const { sendTcp, sendSystemWindows, listSystemPrintersWindows } = require('./print-transports');
 
 // Configuración
 const PREFERRED_PORT = process.env.SCALE_PORT || 'COM1';
@@ -42,6 +42,7 @@ console.log('⚖️  SCALE BRIDGE v2.1 (balanza + impresión térmica)');
 console.log('====================================================');
 console.log(`Puerto preferido: ${PREFERRED_PORT} | Baud: ${BAUD_RATE} | WS: ${WS_PORT}`);
 console.log(`Printer bridge: TCP (9100 default) + Windows RAW spool (print-raw.ps1)`);
+console.log(`Printer discovery: listPrinters WS action (list-printers.ps1)`);
 
 // ---------------------------------------------------------------------------
 // Servidor WebSocket
@@ -69,6 +70,11 @@ try {
         },
         () => {
             console.log(`✓ Servidor WebSocket escuchando en ws://localhost:${WS_PORT}`);
+            // Invariante singleton: sólo la instancia que logró reservar
+            // WS_PORT puede abrir la báscula. Antes scanAndConnect() corría
+            // al final del módulo incluso si otro bridge ya tenía 9876;
+            // ese duplicado quedaba invisible pero retenía COM1.
+            scanAndConnect();
         },
     );
 } catch (e) {
@@ -136,6 +142,7 @@ async function processPrinterMessage(ws, raw) {
         const result = await handlePrinterRequest({ requestId, action, payload }, {
             sendTcp,
             sendSystem: sendSystemWindows,
+            listSystemPrinters: listSystemPrintersWindows,
         });
         safeSend(ws, makeResponseMessage(requestId, result));
         const kind = result?.result?.kind || action;
@@ -235,6 +242,12 @@ if (wss) {
 
     wss.on('error', (err) => {
         console.error('❌ WS server error:', err?.message || err);
+        // EADDRINUSE significa que ya existe una instancia saludable dueña
+        // de 9876. Este proceso no debe seguir vivo ni intentar abrir COM1:
+        // salir evita el bridge fantasma que bloqueó la báscula en producción.
+        if (err?.code === 'EADDRINUSE') {
+            process.exit(1);
+        }
     });
 }
 
@@ -390,7 +403,9 @@ function scheduleReconnect() {
     }, RECONNECT_MS);
 }
 
-scanAndConnect();
+// `scanAndConnect()` se inicia exclusivamente en el callback `listening`
+// del WebSocket. No moverlo de nuevo al top-level: ése es el cerrojo que
+// impide que una segunda instancia sin 9876 capture COM1.
 
 setInterval(() => {
     if (isConnected) {

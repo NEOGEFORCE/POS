@@ -613,3 +613,250 @@ test("buildAuditMeta: sin format cae al default Letter", () => {
     assert.equal(meta.format, "LETTER");
     assert.equal(meta.layout, "gondola-80x40-letter-landscape-3x5");
 });
+
+
+
+// =============================================================================
+// Formato THERMAL_80: rollo térmico 80 mm (TSPL vía bridge).
+// =============================================================================
+
+import { buildShelfLabelsBridgePayload, summarizeShelfLabelsThermal } from "../src/lib/shelf-labels.mjs";
+
+test("GONDOLA_FORMATS: expone LETTER, LEGAL y THERMAL_80", () => {
+    assert.equal(GONDOLA_FORMATS.THERMAL_80, "THERMAL_80");
+    assert.deepEqual([...Object.values(GONDOLA_FORMATS)].sort(), ["LEGAL", "LETTER", "THERMAL_80"]);
+});
+
+test("GONDOLA_FORMAT_SPECS.THERMAL_80: rollo continuo 80x40 · 1x1 · 1 por página", () => {
+    const spec = GONDOLA_FORMAT_SPECS.THERMAL_80;
+    assert.equal(spec.id, "THERMAL_80");
+    assert.equal(spec.sheetWidthMm, 80);
+    assert.equal(spec.sheetHeightMm, 40);
+    assert.equal(spec.columns, 1);
+    assert.equal(spec.rows, 1);
+    assert.equal(spec.labelsPerPage, 1);
+    assert.equal(spec.layoutMetaId, "gondola-shelf-thermal-80x40");
+    assert.equal(spec.sheetLabel, "thermal-roll-80");
+});
+
+test("resolveGondolaFormat: aliases ES-short mapean a THERMAL_80", () => {
+    assert.equal(resolveGondolaFormat("THERMAL_80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("thermal_80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("TERMICA_80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("TERMICA80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("Térmica 80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("TERMICA 80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("RT80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("rt_80"), "THERMAL_80");
+    assert.equal(resolveGondolaFormat({ format: "THERMAL_80" }), "THERMAL_80");
+    assert.equal(resolveGondolaFormat("A4"), "LETTER", "basura cae al default");
+});
+
+test("resolveGondolaLayout THERMAL_80: dimensiones de rollo continuo", () => {
+    const l = resolveGondolaLayout("THERMAL_80");
+    assert.equal(l.format, "THERMAL_80");
+    assert.equal(l.sheetWidthMm, 80);
+    assert.equal(l.sheetHeightMm, 40);
+    assert.equal(l.columns, 1);
+    assert.equal(l.rows, 1);
+    assert.equal(l.labelsPerPage, 1);
+    assert.equal(l.layoutMetaId, "gondola-shelf-thermal-80x40");
+    assert.equal(l.sheetLabel, "thermal-roll-80");
+});
+
+test("summarizeShelfLabelsThermal: 0 items → todo cero con layout canónico", () => {
+    const s = summarizeShelfLabelsThermal([]);
+    assert.equal(s.format, "THERMAL_80");
+    assert.equal(s.totalLabels, 0);
+    assert.equal(s.fullPages, 0);
+    assert.equal(s.remainder, 0);
+    assert.equal(s.totalPages, 0);
+    assert.equal(s.blanks, 0);
+    assert.equal(s.labelsPerPage, 1);
+    assert.equal(s.layout, "gondola-shelf-thermal-80x40");
+});
+
+test("summarizeShelfLabelsThermal: una etiqueta = una página (sin paginación por hoja)", () => {
+    const s = summarizeShelfLabelsThermal([it("A", 1)]);
+    assert.equal(s.totalLabels, 1);
+    assert.equal(s.fullPages, 1);
+    assert.equal(s.totalPages, 1);
+    assert.equal(s.remainder, 0);
+    assert.equal(s.blanks, 0);
+    assert.equal(s.labelsPerPage, 1);
+});
+
+test("summarizeShelfLabelsThermal: 7 etiquetas → 7 páginas, sin blanks ni sobrantes", () => {
+    const s = summarizeShelfLabelsThermal([it("A", 3), it("B", 4)]);
+    assert.equal(s.totalLabels, 7);
+    assert.equal(s.fullPages, 7);
+    assert.equal(s.totalPages, 7);
+    assert.equal(s.remainder, 0);
+    assert.equal(s.blanks, 0);
+});
+
+test("summarizeShelfLabels: THERMAL_80 vía función general también produce labelsPerPage=1", () => {
+    // Sanity: la ruta general también funciona (resuelve por `labelsPerPage`
+    // del formato), aunque la ruta recomendada para THERMAL_80 sea
+    // `summarizeShelfLabelsThermal` por claridad semántica.
+    const s = summarizeShelfLabels([it("A", 5)], "THERMAL_80");
+    assert.equal(s.format, "THERMAL_80");
+    assert.equal(s.labelsPerPage, 1);
+    assert.equal(s.totalLabels, 5);
+    assert.equal(s.totalPages, 5);
+    assert.equal(s.layout, "gondola-shelf-thermal-80x40");
+});
+
+test("buildAuditMeta THERMAL_80: layout canónico y labelsPerPage=1", () => {
+    const meta = buildAuditMeta(undefined, "THERMAL_80");
+    assert.equal(meta.layout, "gondola-shelf-thermal-80x40");
+    assert.equal(meta.format, "THERMAL_80");
+    assert.equal(meta.sheet, "thermal-roll-80");
+    assert.equal(meta.labelsPerPage, 1);
+    assert.equal(meta.columns, 1);
+    assert.equal(meta.rows, 1);
+    assert.equal(meta.sheetWidthMm, 80);
+    assert.equal(meta.sheetHeightMm, 40);
+    assert.equal(meta.labelWidthMm, 80);
+    assert.equal(meta.labelHeightMm, 40);
+});
+
+test("buildAuditMeta THERMAL_80: layout/dimensions no pueden ser pisadas por `extra`", () => {
+    const meta = buildAuditMeta({
+        layout: "pirata-99x99",
+        format: "A5",
+        labelsPerPage: 99,
+        printedBy: "jaime",
+    }, "THERMAL_80");
+    assert.equal(meta.layout, "gondola-shelf-thermal-80x40");
+    assert.equal(meta.format, "THERMAL_80");
+    assert.equal(meta.labelsPerPage, 1);
+    assert.equal(meta.printedBy, "jaime");
+});
+
+test("buildShelfLabelsBridgePayload: shape canónico y type literal 'shelf-labels'", () => {
+    const items = [
+        { code: "LBL-001", productName: "AZUCAR", salePrice: 3500, quantity: 4 },
+        { code: "LBL-002", productName: "ARROZ", salePrice: 4000, quantity: 2 },
+    ];
+    const payload = buildShelfLabelsBridgePayload({
+        items,
+        config: {
+            connection: { interface: "NETWORK", protocol: "tspl", network: { host: "10.0.0.5", port: 9100 } },
+            drawer: { enabled: true, command: "literal", event: "MANUAL", openDrawerOnSale: true },
+            gondola: {
+                thermal: {
+                    widthMm: 80, printableWidthMm: 76, heightMm: 40,
+                    marginLeftMm: 2, marginTopMm: 2, marginBottomMm: 2,
+                    gapMm: 0, direction: 0, mirror: 0, density: 8, dpi: 203,
+                    nameFont: "3", nameScaleX: 1, nameScaleY: 1, nameMaxChars: 24,
+                    priceFont: "4", priceScaleX: 2, priceScaleY: 2,
+                    showCode: true, showDate: true,
+                    footerFont: "1", footerScaleX: 1, footerScaleY: 1,
+                },
+            },
+        },
+        printerProfileId: 42,
+        printedBy: "jaime",
+        printerName: "navegador",
+        now: new Date("2026-10-19T14:16:41.000Z"),
+    });
+    assert.equal(payload.type, "shelf-labels");
+    assert.equal(payload.activeMode, "LABEL");
+    assert.equal(payload.sizeTemplateId, null);
+    assert.equal(payload.printerProfileId, 42);
+    assert.equal(payload.triggerSource, "shelf-thermal");
+    assert.equal(payload.openDrawerOnSale, false, "esta ruta NUNCA abre cajón");
+    assert.equal(payload.nowIso, "2026-10-19T14:16:41.000Z");
+    assert.deepEqual(payload.items, [
+        { code: "LBL-001", productName: "AZUCAR", salePrice: 3500, quantity: 4 },
+        { code: "LBL-002", productName: "ARROZ", salePrice: 4000, quantity: 2 },
+    ]);
+    // Meta trae layout canónico THERMAL_80.
+    assert.equal(payload.meta.layout, "gondola-shelf-thermal-80x40");
+    assert.equal(payload.meta.format, "THERMAL_80");
+    assert.equal(payload.meta.labelsPerPage, 1);
+    assert.equal(payload.meta.printedBy, "jaime");
+    assert.equal(payload.meta.totalLabels, 6);
+});
+
+test("buildShelfLabelsBridgePayload: drawer.openDrawerOnSale SIEMPRE se fuerza a false", () => {
+    // Garantía dura: aunque el admin tenga autoapertura activada, esta
+    // ruta no la honra. Ningún `kickDrawer` puede nacer de shelf-labels.
+    const payload = buildShelfLabelsBridgePayload({
+        items: [{ code: "X", productName: "P", salePrice: 100, quantity: 1 }],
+        config: {
+            connection: {},
+            drawer: {
+                enabled: true,
+                command: "\\x1B\\x70\\x00\\x19\\xFA",
+                event: "AFTER_PRINT",
+                openDrawerOnSale: true,
+            },
+            gondola: { thermal: {} },
+        },
+    });
+    assert.equal(payload.openDrawerOnSale, false);
+    const drawerAsAny = /** @type {any} */ (payload.drawer);
+    assert.equal(drawerAsAny.openDrawerOnSale, false,
+        "la rama drawer también lleva el flag forzado a false");
+});
+
+test("buildShelfLabelsBridgePayload: items inválidos se descartan sin romper", () => {
+    const payload = buildShelfLabelsBridgePayload({
+        items: [
+            null,
+            { nope: true },
+            { code: "LBL-A", productName: "A", salePrice: 1000, quantity: 2 },
+            undefined,
+        ],
+        config: { connection: {}, gondola: { thermal: {} } },
+    });
+    assert.equal(payload.items.length, 1);
+    assert.equal(payload.items[0].code, "LBL-A");
+    assert.equal(payload.items[0].quantity, 2);
+});
+
+test("buildShelfLabelsBridgePayload: now opcional → nowIso válido ISO 8601", () => {
+    const p1 = buildShelfLabelsBridgePayload({
+        items: [{ code: "A", productName: "P", salePrice: 100, quantity: 1 }],
+        config: { connection: {}, gondola: { thermal: {} } },
+    });
+    assert.match(p1.nowIso, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    // String ISO entrante se preserva literal.
+    const p2 = buildShelfLabelsBridgePayload({
+        items: [{ code: "A", productName: "P", salePrice: 100, quantity: 1 }],
+        config: { connection: {}, gondola: { thermal: {} } },
+        now: "2026-10-19T14:16:41.000-05:00",
+    });
+    assert.equal(p2.nowIso, "2026-10-19T14:16:41.000-05:00");
+    // Timestamp numérico se convierte a ISO.
+    const p3 = buildShelfLabelsBridgePayload({
+        items: [{ code: "A", productName: "P", salePrice: 100, quantity: 1 }],
+        config: { connection: {}, gondola: { thermal: {} } },
+        now: new Date("2026-01-01T00:00:00.000Z").getTime(),
+    });
+    assert.equal(p3.nowIso, "2026-01-01T00:00:00.000Z");
+});
+
+test("buildShelfLabelsBridgePayload: triggerSource custom se preserva", () => {
+    const payload = buildShelfLabelsBridgePayload({
+        items: [{ code: "A", productName: "P", salePrice: 100, quantity: 1 }],
+        config: { connection: {}, gondola: { thermal: {} } },
+        triggerSource: "reception-shelf-batch",
+    });
+    assert.equal(payload.triggerSource, "reception-shelf-batch");
+});
+
+test("buildShelfLabelsBridgePayload: config vacía → shape canónico sin crashear", () => {
+    const payload = buildShelfLabelsBridgePayload({
+        items: [{ code: "A", productName: "P", salePrice: 100, quantity: 1 }],
+        config: {},
+    });
+    assert.equal(payload.type, "shelf-labels");
+    assert.equal(payload.openDrawerOnSale, false);
+    assert.equal(payload.sizeTemplateId, null);
+    assert.equal(payload.connection, null);
+    assert.equal(payload.thermal, null);
+    assert.equal(payload.meta.layout, "gondola-shelf-thermal-80x40");
+});

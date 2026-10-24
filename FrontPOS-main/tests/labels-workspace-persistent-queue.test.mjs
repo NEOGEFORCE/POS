@@ -290,10 +290,10 @@ test("handlePrint: limpieza de persistentes sólo si printInvoked === true", asy
     );
 });
 
-test("handlePrintShelfSheet (shelf): limpia persistentes DESPUÉS de iframe.print()", async () => {
+test("handlePrintShelfSheetSheet (shelf LETTER/LEGAL): limpia persistentes DESPUÉS de iframe.print()", async () => {
     const code = stripComments(await readWS());
-    const shelfFn = code.match(/const\s+handlePrintShelfSheet\s*=\s*useCallback\([\s\S]*?\n\s*\},\s*\[/);
-    assert.ok(shelfFn, "handlePrintShelfSheet debe existir.");
+    const shelfFn = code.match(/const\s+handlePrintShelfSheetSheet\s*=\s*useCallback\([\s\S]*?\n\s*\},\s*\[/);
+    assert.ok(shelfFn, "handlePrintShelfSheetSheet debe existir (rama LETTER/LEGAL).");
     const body = shelfFn[0];
     const auditIdx = body.indexOf('"/labels/print-jobs"');
     const printIdx = body.indexOf("iframe.contentWindow?.print()");
@@ -302,7 +302,7 @@ test("handlePrintShelfSheet (shelf): limpia persistentes DESPUÉS de iframe.prin
     assert.ok(auditIdx < printIdx, "AUDIT antes de iframe.print.");
     assert.ok(
         removeIdx > auditIdx,
-        "La limpieza de persistentes en shelf debe ocurrir tras la auditoría (dentro del cleanup).",
+        "La limpieza de persistentes en shelf LETTER/LEGAL debe ocurrir tras la auditoría (dentro del cleanup).",
     );
 });
 
@@ -322,26 +322,53 @@ test("shelf: shelfPriceOf prefiere persistentSalePrice sobre product.salePrice",
     );
 });
 
-test("shelf: usa EXCLUSIVAMENTE iframe + diálogo del navegador (sin bridge)", async () => {
+test("shelf (LETTER/LEGAL): usa EXCLUSIVAMENTE iframe + diálogo del navegador (sin bridge)", async () => {
     const code = stripComments(await readWS());
-    const shelfFn = code.match(/const\s+handlePrintShelfSheet\s*=\s*useCallback\([\s\S]*?\n\s*\},\s*\[/);
-    assert.ok(shelfFn, "handlePrintShelfSheet debe existir.");
+    const shelfFn = code.match(/const\s+handlePrintShelfSheetSheet\s*=\s*useCallback\([\s\S]*?\n\s*\},\s*\[/);
+    assert.ok(shelfFn, "handlePrintShelfSheetSheet debe existir (rama LETTER/LEGAL).");
     const body = shelfFn[0];
     assert.ok(
         /document\.createElement\(["']iframe["']\)/.test(body),
-        "shelf debe crear un iframe aislado.",
+        "shelf Carta/Oficio debe crear un iframe aislado.",
     );
     assert.ok(
         /iframe\.contentWindow\?\.print\(\)/.test(body),
-        "shelf debe imprimir con iframe.contentWindow.print().",
+        "shelf Carta/Oficio debe imprimir con iframe.contentWindow.print().",
     );
     assert.ok(
         !/posBridge\?\.print\(|posBridge\.print\(/.test(body),
-        "shelf NUNCA debe invocar al bridge térmico.",
+        "shelf Carta/Oficio NUNCA debe invocar al bridge térmico (esa ruta es THERMAL_80).",
     );
     assert.ok(
         !/window\.print\(\)/.test(body),
-        "shelf nunca llama a window.print() del documento principal.",
+        "shelf Carta/Oficio nunca llama a window.print() del documento principal.",
+    );
+});
+
+test("shelf (THERMAL_80): usa EXCLUSIVAMENTE bridge directo (sin iframe, sin window.print)", async () => {
+    const code = stripComments(await readWS());
+    const thermalFn = code.match(/const\s+handlePrintShelfSheetThermal\s*=\s*useCallback\([\s\S]*?\n\s*\},\s*\[/);
+    assert.ok(thermalFn, "handlePrintShelfSheetThermal debe existir (rama THERMAL_80).");
+    const body = thermalFn[0];
+    assert.ok(
+        /posBridge\?\.print|posBridge\.print/.test(body),
+        "shelf THERMAL_80 debe invocar al bridge.",
+    );
+    assert.ok(
+        /buildShelfLabelsBridgePayload/.test(body),
+        "shelf THERMAL_80 debe armar su payload con buildShelfLabelsBridgePayload.",
+    );
+    assert.ok(
+        !/document\.createElement\(["']iframe["']\)/.test(body),
+        "shelf THERMAL_80 NUNCA crea iframe — es ruta bridge pura.",
+    );
+    assert.ok(
+        !/window\.print\(\)/.test(body),
+        "shelf THERMAL_80 nunca llama a window.print() del documento principal.",
+    );
+    assert.ok(
+        !/kickDrawer/.test(body),
+        "shelf THERMAL_80 nunca abre el cajón.",
     );
 });
 

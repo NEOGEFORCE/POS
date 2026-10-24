@@ -1,12 +1,12 @@
 // Declaraciones TS para src/lib/shelf-labels.mjs.
 // El módulo real es puro JS para que corra en `node --test` sin bundler.
 
-export type GondolaFormat = "LETTER" | "LEGAL";
+export type GondolaFormat = "LETTER" | "LEGAL" | "THERMAL_80";
 
 export const LABEL_WIDTH_MM: 80;
 export const LABEL_HEIGHT_MM: 40;
 
-export const GONDOLA_FORMATS: Readonly<Record<"LETTER" | "LEGAL", GondolaFormat>>;
+export const GONDOLA_FORMATS: Readonly<Record<"LETTER" | "LEGAL" | "THERMAL_80", GondolaFormat>>;
 export const DEFAULT_GONDOLA_FORMAT: "LETTER";
 
 export interface GondolaFormatSpec {
@@ -132,6 +132,16 @@ export function summarizeShelfLabels(
     format?: unknown,
 ): ShelfLabelsSummary;
 
+/**
+ * Resumen contable específico para THERMAL_80. No hay paginación por
+ * hoja: `labelsPerPage: 1`, `remainder: 0`, `blanks: 0`, `fullPages ==
+ * totalLabels == totalPages`. El `layout` canónico es
+ * `"gondola-shelf-thermal-80x40"`.
+ */
+export function summarizeShelfLabelsThermal(
+    items: ReadonlyArray<Partial<ShelfLabelItem>>,
+): ShelfLabelsSummary;
+
 export function buildShelfLabelsCss(format?: unknown): string;
 export function buildSlotHtml(slot: ShelfLabelSlot | null, dateLabel: string): string;
 export function buildShelfLabelsPrintHtml(
@@ -145,8 +155,8 @@ export interface ShelfLabelsAuditMeta {
     sheet: string;
     sheetWidthMm: number;
     sheetHeightMm: number;
-    labelWidthMm: 80;
-    labelHeightMm: 40;
+    labelWidthMm: number;
+    labelHeightMm: number;
     columns: number;
     rows: number;
     labelsPerPage: number;
@@ -157,3 +167,66 @@ export function buildAuditMeta(
     extra?: Record<string, unknown> | null,
     format?: unknown,
 ): ShelfLabelsAuditMeta;
+
+/**
+ * Item saneado para el wire payload de shelf-labels. Siempre tiene las
+ * cuatro claves con tipos canónicos — es lo que viaja al bridge dentro
+ * de `payload.items`.
+ */
+export interface ShelfLabelsBridgeItem {
+    code: string;
+    productName: string;
+    salePrice: number;
+    quantity: number;
+}
+
+/**
+ * Payload canónico de `window.posBridge.print({type:"shelf-labels",...})`.
+ * Shape congelado por los tests contractuales del frontend y del bridge.
+ *
+ * Garantías duras:
+ *   - `type: "shelf-labels"` siempre literal.
+ *   - `openDrawerOnSale: false` siempre literal (esta ruta JAMÁS abre cajón).
+ *   - `activeMode: "LABEL"` siempre literal (hint al bridge).
+ *   - `sizeTemplateId: null` (shelf-labels no usa plantillas de etiqueta
+ *     térmica de /labels/sizes).
+ *   - `nowIso` es string ISO 8601 (el bridge llama a `formatPrintDate`).
+ *   - `meta` contiene el layout canónico `gondola-shelf-thermal-80x40`
+ *     y `labelsPerPage: 1` (vía `buildAuditMeta(... , "THERMAL_80")`).
+ */
+export interface ShelfLabelsBridgePayload {
+    type: "shelf-labels";
+    connection: unknown;
+    drawer: unknown;
+    activeMode: "LABEL";
+    thermal: unknown;
+    printerProfileId: number | null;
+    sizeTemplateId: null;
+    triggerSource: string;
+    openDrawerOnSale: false;
+    items: ShelfLabelsBridgeItem[];
+    nowIso: string;
+    meta: ShelfLabelsAuditMeta;
+}
+
+export interface BuildShelfLabelsBridgePayloadOptions {
+    items: ReadonlyArray<Partial<ShelfLabelItem>>;
+    config: {
+        connection?: unknown;
+        drawer?: unknown;
+        gondola?: { thermal?: unknown } | undefined;
+    };
+    printerProfileId?: number | null;
+    printedBy?: string;
+    printerName?: string;
+    triggerSource?: string;
+    now?: Date | string | number;
+}
+
+/**
+ * Construye el payload canónico para la ruta bridge de shelf-labels.
+ * Puro: no lee storage, no toca `document`, no abre red.
+ */
+export function buildShelfLabelsBridgePayload(
+    opts: BuildShelfLabelsBridgePayloadOptions,
+): ShelfLabelsBridgePayload;

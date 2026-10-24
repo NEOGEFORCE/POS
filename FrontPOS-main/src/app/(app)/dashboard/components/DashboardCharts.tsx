@@ -49,6 +49,13 @@ const PAYMENT_COLORS: Record<string, string> = {
     'DAVIPLATA': '#f43f5e',
     'TRANSFERENCIA': '#f59e0b',
     'FIADO': '#ef4444',
+    // Bold QR / Bre-B — cyan para distinguirlo del naranja de la
+    // transferencia genérica. Si el backend sigue devolviendo las ventas
+    // QR dentro de "TRANSFERENCIA" (porque no las separa en la MV
+    // mensual) el donut no mostrará slice extra; cuando empiece a enviar
+    // "BOLD_QR" como clave propia, el slice recibe este color sin tocar
+    // nada más.
+    'BOLD_QR': '#06b6d4',
 };
 
 const getPaymentColor = (method: string) => PAYMENT_COLORS[method] || '#6b7280';

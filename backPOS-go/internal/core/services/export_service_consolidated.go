@@ -100,6 +100,40 @@ func extractAmountFromText(text string) float64 {
 	return val
 }
 
+// ChannelAmounts es el reparto completo de un egreso en los seis canales
+// canónicos del POS: caja, Nequi, Daviplata, fondo/bóveda, alcancía/monedas
+// y Bold QR / Bre-B.
+//
+// POR QUÉ UN STRUCT EN VEZ DE SEIS RETURNS
+// ----------------------------------------------------------------------------
+// `parseExpenseChannels` ya existía con cinco retornos y está cableada en
+// una decena de sitios (reportes, exports, invariantes del cierre). Cambiar
+// la firma rompería un montón de callers que no se interesan por BOLD_QR.
+// Se agrega entonces una función hermana `parseExpenseChannelsFull` que
+// expone el reparto completo, y `parseExpenseChannels` queda como wrapper
+// que descarta el canal BOLD_QR. Los nuevos consumidores (dashboard,
+// agregadores por canal, PDF del cierre) usan Full.
+//
+// INVARIANTE
+// ----------------------------------------------------------------------------
+// Cash + Nequi + Davi + Fondo + Coins + BoldQR == monto operativo del
+// egreso (amount + tax_amount), SIEMPRE que el egreso sea operativo (ver
+// isOperationalExpense). Si falta un canal se cuenta plata que no salió.
+type ChannelAmounts struct {
+	Cash   float64
+	Nequi  float64
+	Davi   float64
+	Fondo  float64
+	Coins  float64
+	BoldQR float64
+}
+
+// Total devuelve la suma de los seis canales. Útil para validar la
+// invariante en tests y agregadores.
+func (a ChannelAmounts) Total() float64 {
+	return a.Cash + a.Nequi + a.Davi + a.Fondo + a.Coins + a.BoldQR
+}
+
 // parseExpenseChannels reparte el monto de un egreso entre los canales de pago.
 //
 // ALCANCIA (agregado 2026-08-31): antes esta funcion solo conocia cuatro
@@ -117,86 +151,127 @@ func extractAmountFromText(text string) float64 {
 // egreso pagado con monedas subia la venta del mes sin que hubiera venta.
 // Ahora la alcancia es un canal propio y no se mezcla con el efectivo.
 func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, finalFondo, finalCoins float64) {
-	if strings.ToUpper(e.Status) == "PENDING" {
-		return 0, 0, 0, 0, 0
+	a := parseExpenseChannelsFull(e)
+	return a.Cash, a.Nequi, a.Davi, a.Fondo, a.Coins
+}
+
+// parseExpenseChannelsFull es la versión canónica con los seis canales.
+// Reconoce Bold QR como canal propio (ver models.IsBoldQRPaymentSource).
+// El wrapper legacy `parseExpenseChannels` descarta BoldQR a propósito para
+// no romper callers que no distinguen ese canal (p. ej. el arqueo cash-only
+// de audited_income.go).
+//
+// REGLAS DE DECISIÓN (orden importa):
+//
+//  1. PENDING o PRÉSTAMO → cero en todos los canales (plata que todavía
+//     no salió de ningún lado).
+//  2. PaymentSource mixto "CAJA: $X / NEQUI: $Y / BOLD_QR: $Z" →
+//     distribuir por etiqueta.
+//  3. Columnas desglosadas (cash_amount/...) con suma > 0 → se respetan
+//     tal cual. Bold QR queda en 0 porque no hay columna física; eso se
+//     maneja en la rama legacy de los agregadores SQL.
+//  4. Columnas en 0 + PaymentSource texto → clasificar por palabra clave.
+//     Bold QR se detecta ANTES del fallback a EFECTIVO.
+func parseExpenseChannelsFull(e *models.Expense) ChannelAmounts {
+	var a ChannelAmounts
+	if e == nil {
+		return a
 	}
-	// Defensa en profundidad para egresos pagados con PRÉSTAMO (opción
-	// "pagar con préstamo", /api/loans/:id/pay-expense): aun si una fila
-	// heredada o un bug de ingestión trae CashAmount>0 con
-	// paymentSource='PRESTAMO', el egreso NO debe moverle plata a ningún
-	// canal de la tienda. El dueño confirmó que ese dinero recién sale de
-	// caja cuando se paga la cuota (eso ya existe por otra ruta). Centinela
-	// único: models.IsLoanFundedPaymentSource.
+	if strings.ToUpper(e.Status) == "PENDING" {
+		return a
+	}
+	// Defensa en profundidad para egresos pagados con PRÉSTAMO: aun si una
+	// fila heredada trae CashAmount>0 con paymentSource='PRESTAMO', el
+	// egreso NO debe moverle plata a ningún canal de la tienda.
 	if models.IsLoanFundedPaymentSource(e.PaymentSource) {
-		return 0, 0, 0, 0, 0
+		return a
 	}
 	src := strings.ToUpper(e.PaymentSource)
 	tax := e.TaxAmount
 	base := e.Amount
 	total := base + tax
 
+	// Rama de PaymentSource mixto "CAJA: $X / NEQUI: $Y / BOLD_QR: $Z".
 	if strings.Contains(src, "/") {
 		parts := strings.Split(src, "/")
 		for _, part := range parts {
 			p := strings.TrimSpace(part)
 			val := extractAmountFromText(p)
-			if strings.Contains(p, "NEQUI") || strings.Contains(p, "NEQ") {
-				finalNequi += val
-			} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
-				finalDavi += val
-			} else if strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÃ“VEDA") || strings.Contains(p, "FOND") {
-				finalFondo += val
-			} else if strings.Contains(p, "MONEDA") || strings.Contains(p, "ALCANC") {
-				finalCoins += val
-			} else if strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") || strings.Contains(p, "EFEC") {
-				finalCash += val
+			switch {
+			case strings.Contains(p, "NEQUI") || strings.Contains(p, "NEQ"):
+				a.Nequi += val
+			case strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI"):
+				a.Davi += val
+			case strings.Contains(p, "FONDO") || strings.Contains(p, "BOVEDA") || strings.Contains(p, "BÓVEDA") || strings.Contains(p, "FOND"):
+				a.Fondo += val
+			case strings.Contains(p, "MONEDA") || strings.Contains(p, "ALCANC"):
+				a.Coins += val
+			// Bold QR se evalúa ANTES de CAJA/EFECTIVO: comparte el token
+			// genérico "QR" con códigos QR descriptivos, pero
+			// IsBoldQRPaymentSource exige la marca "BOLD" (o "BOLDQR") para
+			// no falso-positivarse.
+			case models.IsBoldQRPaymentSource(p):
+				a.BoldQR += val
+			case strings.Contains(p, "CAJA") || strings.Contains(p, "EFECTIVO") || strings.Contains(p, "CASH") || strings.Contains(p, "EFEC"):
+				a.Cash += val
 			}
 		}
-		if finalCash+finalNequi+finalDavi+finalFondo+finalCoins > 0 {
-			return finalCash, finalNequi, finalDavi, finalFondo, finalCoins
+		if a.Total() > 0 {
+			return a
 		}
 	}
 
-	// PRIORIDAD: las columnas por canal son dato duro y se normalizan al
-	// guardar/editar el cierre; el texto de PaymentSource es solo el respaldo
-	// para egresos legacy que nunca tuvieron columnas.
-	//
-	// Este orden (mixto -> columnas -> texto) es el MISMO que usa el frontend en
-	// reports/components/ClosuresHistory.tsx. No invertirlo: si el texto gana
-	// sobre las columnas, un egreso con PaymentSource='FONDO' y CashAmount=50.000
-	// se clasifica distinto en el dashboard que en el historial de cierres.
+	// PRIORIDAD de datos duros: las columnas por canal se normalizan al
+	// guardar/editar el cierre; el texto de PaymentSource es solo el
+	// respaldo para egresos legacy que nunca tuvieron columnas.
 	rawCash := e.CashAmount
 	rawNequi := e.NequiAmount
 	rawDavi := e.DaviplataAmount
 	rawFondo := e.FondoAmount
 	rawCoins := e.CoinsAmount
-	sum := rawCash + rawNequi + rawDavi + rawFondo + rawCoins
+	// BoldQrAmount es gorm:"-" (no persiste). Puede venir pre-llenado por
+	// un pase anterior de parseExpenseChannelsFull sobre la misma fila.
+	rawBoldQR := e.BoldQrAmount
+	sum := rawCash + rawNequi + rawDavi + rawFondo + rawCoins + rawBoldQR
 
 	if sum == 0 {
-		// La alcancia se evalua primero: sus palabras no colisionan con los
-		// otros canales y antes caia al return final, que la contaba como
-		// efectivo de caja e inflaba la venta del mes.
+		// Bold QR se evalúa ANTES del fallback a EFECTIVO para no caer en el
+		// bug que la alcancía tenía antes de 2026-08-31: un canal sin
+		// columna física se perdía como "efectivo de caja" e inflaba la
+		// venta del mes. Mismo patrón.
+		if models.IsBoldQRPaymentSource(src) {
+			a.BoldQR = total
+			return a
+		}
 		if strings.Contains(src, "MONEDA") || strings.Contains(src, "ALCANC") {
-			return 0, 0, 0, 0, total
+			a.Coins = total
+			return a
 		}
 		if strings.Contains(src, "NEQUI") || strings.Contains(src, "NEQ") {
-			return 0, total, 0, 0, 0
-		} else if strings.Contains(src, "DAVIPLATA") || strings.Contains(src, "DAVI") {
-			return 0, 0, total, 0, 0
-		} else if src == "BOVEDA" || src == "BÃ“VEDA" || strings.Contains(src, "FOND") {
-			return 0, 0, 0, total, 0
-		} else if strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") {
-			// Deuda a proveedor: no mueve caja ni bancos todavÃ­a.
-			return 0, 0, 0, 0, 0
+			a.Nequi = total
+			return a
+		}
+		if strings.Contains(src, "DAVIPLATA") || strings.Contains(src, "DAVI") {
+			a.Davi = total
+			return a
+		}
+		if src == "BOVEDA" || src == "BÓVEDA" || strings.Contains(src, "FOND") {
+			a.Fondo = total
+			return a
+		}
+		if strings.Contains(src, "PREST") || strings.Contains(src, "DEUDA") {
+			// Deuda a proveedor: no mueve caja ni bancos todavía.
+			return a
 		}
 	}
 
 	if sum > 0 {
-		finalCash = rawCash
-		finalNequi = rawNequi
-		finalDavi = rawDavi
-		finalFondo = rawFondo
-		finalCoins = rawCoins
+		a.Cash = rawCash
+		a.Nequi = rawNequi
+		a.Davi = rawDavi
+		a.Fondo = rawFondo
+		a.Coins = rawCoins
+		a.BoldQR = rawBoldQR
 		if tax > 0 && sum == base {
 			count := 0
 			if rawCash > 0 {
@@ -214,40 +289,49 @@ func parseExpenseChannels(e *models.Expense) (finalCash, finalNequi, finalDavi, 
 			if rawCoins > 0 {
 				count++
 			}
+			if rawBoldQR > 0 {
+				count++
+			}
 			if count <= 1 {
-				if rawCash > 0 {
-					finalCash += tax
-				}
-				if rawNequi > 0 {
-					finalNequi += tax
-				}
-				if rawDavi > 0 {
-					finalDavi += tax
-				}
-				if rawFondo > 0 {
-					finalFondo += tax
-				}
-				if rawCoins > 0 {
-					finalCoins += tax
+				switch {
+				case rawCash > 0:
+					a.Cash += tax
+				case rawNequi > 0:
+					a.Nequi += tax
+				case rawDavi > 0:
+					a.Davi += tax
+				case rawFondo > 0:
+					a.Fondo += tax
+				case rawCoins > 0:
+					a.Coins += tax
+				case rawBoldQR > 0:
+					a.BoldQR += tax
 				}
 			} else {
-				if rawNequi > 0 {
-					finalNequi += tax
-				} else if rawDavi > 0 {
-					finalDavi += tax
-				} else if rawFondo > 0 {
-					finalFondo += tax
-				} else if rawCoins > 0 {
-					finalCoins += tax
-				} else {
-					finalCash += tax
+				switch {
+				case rawNequi > 0:
+					a.Nequi += tax
+				case rawDavi > 0:
+					a.Davi += tax
+				case rawBoldQR > 0:
+					a.BoldQR += tax
+				case rawFondo > 0:
+					a.Fondo += tax
+				case rawCoins > 0:
+					a.Coins += tax
+				default:
+					a.Cash += tax
 				}
 			}
 		}
-		return finalCash, finalNequi, finalDavi, finalFondo, finalCoins
+		return a
 	}
 
-	return total, 0, 0, 0, 0
+	// Fallback final: egreso sin canal reconocido → cae a efectivo de caja.
+	// Es el comportamiento histórico y lo que espera el arqueo cuando la
+	// descripción no identifica un canal digital.
+	a.Cash = total
+	return a
 }
 
 // RenderClosurePDFData dibuja una pÃ¡gina completa de auditorÃ­a de cierre en el PDF
@@ -296,18 +380,23 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 	if expectedCash == 0 {
 		expectedCash = data.TotalCash - data.TotalExpenses - data.TotalReturns
 	}
-	// FUENTE UNICA de clasificacion por canal: parseExpenseChannels.
+	// FUENTE UNICA de clasificacion por canal: parseExpenseChannelsFull.
 	// Antes habia aqui una copia inline con reglas distintas (el texto de
 	// PaymentSource ganaba sobre las columnas con la plata), y por eso el PDF
 	// no coincidia con el detalle del cierre en pantalla.
+	//
+	// Full devuelve también el canal BOLD_QR (gorm:"-" en models.Expense),
+	// para que los egresos pagados con el QR Bre-B de Bold se pinten en su
+	// propia sección en lugar de perderse como "efectivo de caja".
 	for i := range data.Expenses {
 		e := &data.Expenses[i]
-		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
-		e.CashAmount = cash
-		e.NequiAmount = nequi
-		e.DaviplataAmount = davi
-		e.FondoAmount = fondo
-		e.CoinsAmount = coins
+		a := parseExpenseChannelsFull(e)
+		e.CashAmount = a.Cash
+		e.NequiAmount = a.Nequi
+		e.DaviplataAmount = a.Davi
+		e.FondoAmount = a.Fondo
+		e.CoinsAmount = a.Coins
+		e.BoldQrAmount = a.BoldQR
 	}
 
 	egresosCaja := 0.0
@@ -322,7 +411,7 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 		if !strings.EqualFold(strings.TrimSpace(e.Category), "DEVOLUCIONES") {
 			egresosCaja += e.CashAmount
 		}
-		egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount + e.CoinsAmount
+		egresosGlobales += e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount + e.CoinsAmount + e.BoldQrAmount
 	}
 
 	digitalIncome := data.TotalNequi + data.TotalDaviplata + data.TotalCard + data.TotalBancolombia + data.TotalOtherTransfer
@@ -568,8 +657,11 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 			if !isOperationalExpense(e) {
 				continue
 			}
-			cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
-			lineTotal := cash + nequi + davi + fondo + coins
+			// parseExpenseChannelsFull para que un egreso pagado con BOLD_QR
+			// (que vive sin columna física) también aporte a lineTotal y no
+			// se omita del consolidado.
+			ch := parseExpenseChannelsFull(e)
+			lineTotal := ch.Total()
 			if lineTotal <= 0 {
 				continue
 			}
@@ -634,7 +726,13 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 			})
 	} else {
 		// ---- CIERRE INDIVIDUAL: se conservan las secciones por canal ----
-		methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "ALCANCIA"}
+		//
+		// BOLD_QR se agrega como sexta sección (2026-10-23). Un egreso pagado
+		// con el QR Bre-B de Bold se guarda con PaymentSource='BOLD_QR' y las
+		// columnas desglosadas en cero porque no hay columna física; el monto
+		// se reconstruye en runtime vía parseExpenseChannelsFull y se asigna
+		// a e.BoldQrAmount (gorm:"-") más arriba.
+		methods := []string{"EFECTIVO", "NEQUI", "DAVIPLATA", "FONDO", "ALCANCIA", "BOLD_QR"}
 		for _, m := range methods {
 			var rows [][]string
 			total := 0.0
@@ -644,7 +742,7 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 				if !e.Date.IsZero() {
 					desc = fmt.Sprintf("%s - %s", e.Date.In(loc).Format("02/01"), e.Description)
 				}
-				isMixedOrNewSchema := e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 || e.CoinsAmount > 0
+				isMixedOrNewSchema := e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 || e.CoinsAmount > 0 || e.BoldQrAmount > 0
 
 				if isMixedOrNewSchema {
 					if m == "EFECTIVO" && e.CashAmount > 0 {
@@ -667,8 +765,12 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.CoinsAmount))})
 						total += e.CoinsAmount
 					}
+					if m == "BOLD_QR" && e.BoldQrAmount > 0 {
+						rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(e.BoldQrAmount))})
+						total += e.BoldQrAmount
+					}
 					if m == "PRESTAMO" {
-						sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount + e.CoinsAmount
+						sumPaid := e.CashAmount + e.NequiAmount + e.DaviplataAmount + e.FondoAmount + e.CoinsAmount + e.BoldQrAmount
 						if e.Status == "PENDING" && math.Round(e.Amount-sumPaid) > 0 {
 							diff := e.Amount - sumPaid
 							rows = append(rows, []string{desc, fmt.Sprintf("$%s", formatCOP(diff))})
@@ -691,8 +793,12 @@ func RenderClosurePDFData(pdf *gofpdf.Fpdf, tr func(string) string, loc *time.Lo
 				}
 			}
 			if len(rows) > 0 {
+				title := fmt.Sprintf("EGRESOS: %s", m)
+				if m == "BOLD_QR" {
+					title = "EGRESOS: BOLD QR"
+				}
 				rows = append(rows, []string{fmt.Sprintf("TOTAL EGRESOS %s", m), fmt.Sprintf("$%s", formatCOP(total))})
-				drawTable(fmt.Sprintf("EGRESOS: %s", m), []string{"Descripcion", "Monto"}, []float64{140, 50}, rows)
+				drawTable(title, []string{"Descripcion", "Monto"}, []float64{140, 50}, rows)
 			}
 		}
 	}
@@ -1062,7 +1168,7 @@ func ConsolidateExpensesForGeneralReport(rawExpenses []models.Expense) []models.
 
 	for _, e := range rawExpenses {
 		concept := extractConsolidatedConcept(e.Description, e.Category)
-		cash, nequi, davi, fondo, coins := parseExpenseChannels(&e)
+		ch := parseExpenseChannelsFull(&e)
 
 		addAmount := func(channel string, amount float64) {
 			if amount <= 0 {
@@ -1070,16 +1176,22 @@ func ConsolidateExpensesForGeneralReport(rawExpenses []models.Expense) []models.
 			}
 			key := channel + "|" + concept
 			if existing, found := groupedMap[key]; found {
-				if channel == "EFECTIVO" {
+				switch channel {
+				case "EFECTIVO":
 					existing.CashAmount += amount
-				} else if channel == "NEQUI" {
+				case "NEQUI":
 					existing.NequiAmount += amount
-				} else if channel == "DAVIPLATA" {
+				case "DAVIPLATA":
 					existing.DaviplataAmount += amount
-				} else if channel == "FONDO" {
+				case "FONDO":
 					existing.FondoAmount += amount
-				} else if channel == "ALCANCIA" {
+				case "ALCANCIA":
 					existing.CoinsAmount += amount
+				case "BOLD_QR":
+					// Bold QR vive en BoldQrAmount (gorm:"-"): se preserva
+					// en memoria para que el consolidado lo pinte en su
+					// fila BOLD_QR aun cuando no exista columna física.
+					existing.BoldQrAmount += amount
 				}
 				existing.Amount += amount
 			} else {
@@ -1088,32 +1200,37 @@ func ConsolidateExpensesForGeneralReport(rawExpenses []models.Expense) []models.
 					Amount:      amount,
 					Category:    e.Category,
 				}
-				if channel == "EFECTIVO" {
+				switch channel {
+				case "EFECTIVO":
 					item.CashAmount = amount
 					item.PaymentSource = "EFECTIVO"
-				} else if channel == "NEQUI" {
+				case "NEQUI":
 					item.NequiAmount = amount
 					item.PaymentSource = "NEQUI"
-				} else if channel == "DAVIPLATA" {
+				case "DAVIPLATA":
 					item.DaviplataAmount = amount
 					item.PaymentSource = "DAVIPLATA"
-				} else if channel == "FONDO" {
+				case "FONDO":
 					item.FondoAmount = amount
 					item.PaymentSource = "FONDO"
-				} else if channel == "ALCANCIA" {
+				case "ALCANCIA":
 					item.CoinsAmount = amount
 					item.PaymentSource = "ALCANCIA"
+				case "BOLD_QR":
+					item.BoldQrAmount = amount
+					item.PaymentSource = models.PaymentSourceBoldQR
 				}
 				groupedMap[key] = item
 				orderedKeys = append(orderedKeys, key)
 			}
 		}
 
-		addAmount("EFECTIVO", cash)
-		addAmount("NEQUI", nequi)
-		addAmount("DAVIPLATA", davi)
-		addAmount("FONDO", fondo)
-		addAmount("ALCANCIA", coins)
+		addAmount("EFECTIVO", ch.Cash)
+		addAmount("NEQUI", ch.Nequi)
+		addAmount("DAVIPLATA", ch.Davi)
+		addAmount("FONDO", ch.Fondo)
+		addAmount("ALCANCIA", ch.Coins)
+		addAmount("BOLD_QR", ch.BoldQR)
 	}
 
 	sort.Strings(orderedKeys)

@@ -129,10 +129,21 @@ func (r *LabelRepository) UpsertPrinterProfile(ctx context.Context, p *models.La
 // barcode del producto (idempotente).
 //
 //   - Si productBarcode está vacío, siempre crea un código nuevo
-//     (etiqueta "libre": granel, lote interno, etc.).
+//     (etiqueta "libre": granel, lote interno, etc.) usando el generador
+//     comercial LC-<hex>.
 //   - Si existe un LabelCode con ese productBarcode y !voided_at, lo
-//     devuelve tal cual.
-//   - Si no, genera un código único y lo persiste junto con el barcode.
+//     devuelve tal cual (idempotencia por producto).
+//   - Si no existe y el barcode está en el namespace POSINT- (producto
+//     interno de la migración 024), persiste `code = product_barcode =
+//     POSINT-<hex>` LITERAL, sin invocar al generador LC-<hex>. Es el
+//     flujo audit-first de LabelPrintSheet para productos internos: la
+//     etiqueta que se imprime ES el barcode del producto, de modo que
+//     ResolveLabelCode al escanear encuentra la fila por `code =
+//     POSINT-X` y hace JOIN `products.barcode = product_barcode` sobre
+//     el mismo valor. Los productos comerciales siguen con LC-<hex>.
+//   - Si no existe y el barcode es comercial, genera un LC-<hex> único
+//     contra las cuatro fuentes de colisión (products.barcode,
+//     alternate_codes, label_codes.code, package_barcode_aliases.package_code).
 //
 // Devuelve el LabelCode final + un flag `created` que indica si acaba de
 // crearse.
@@ -145,6 +156,22 @@ func (r *LabelRepository) UpsertPrinterProfile(ctx context.Context, p *models.La
 // bloquea nada cuando todavía no existe fila. El lock se libera solo al
 // terminar la tx. Mitiga la falta de un UNIQUE parcial
 // `(product_barcode) WHERE voided_at IS NULL` sin requerir migración.
+//
+// RAMA POSINT (migración 024): además de la coherencia intra-fila
+// garantizada por `ck_label_codes_posint_matches_product_barcode`
+// (code = product_barcode cuando code empieza por POSINT-), aquí se
+// validan DOS invariantes extra antes del INSERT:
+//
+//  1. El producto POSINT-X debe existir en `products.barcode`. La
+//     etiqueta sólo tiene sentido si hay un producto real que
+//     ResolveLabelCode pueda resolver. Esto refleja que la reserva en
+//     `internal_barcode_reservations` ya fue consumida.
+//  2. Si existe una fila previa con `code = POSINT-X` que no cumple el
+//     lookup idempotente (voided o con product_barcode distinto), el
+//     INSERT choca por PK (23505) y se traduce en un error legible. No
+//     se intenta "resucitar" la fila ni silenciar la colisión: un POSINT
+//     no puede mapearse a otro product_barcode y una vez anulado el
+//     admin debe revisar manualmente antes de reimprimir.
 func (r *LabelRepository) EnsureCodeForProduct(
 	ctx context.Context,
 	productBarcode string,
@@ -156,6 +183,22 @@ func (r *LabelRepository) EnsureCodeForProduct(
 	actor := strings.TrimSpace(createdByDNI)
 	if actor == "" {
 		return nil, false, errors.New("createdByDNI obligatorio")
+	}
+
+	// Detectamos el namespace reservado ANTES de abrir la transacción
+	// para rechazar inputs mal formados sin pegarle a la BD. La
+	// normalización canónica (TrimSpace + ToUpper) empata con la que
+	// product_handler.Create aplica a products.barcode: ambos valores
+	// deben ser idénticos para que ResolveLabelCode haga JOIN exitoso.
+	isInternal := normalized != "" && models.IsInternalBarcode(normalized)
+	if isInternal {
+		normalized = models.NormalizeInternalBarcode(normalized)
+		if !models.IsValidInternalBarcode(normalized) {
+			return nil, false, fmt.Errorf(
+				"label code POSINT inválido %q: esperado ^POSINT-[0-9A-F]{8,24}$ (ver migración 024)",
+				productBarcode,
+			)
+		}
 	}
 
 	var final *models.LabelCode
@@ -171,6 +214,18 @@ func (r *LabelRepository) EnsureCodeForProduct(
 				Order("created_at DESC").
 				First(&existing).Error
 			if err == nil {
+				// Defensa en profundidad para POSINT: el CHECK
+				// `ck_label_codes_posint_matches_product_barcode` ya
+				// garantiza que una fila con code POSINT- tenga
+				// product_barcode == code. Verificamos aquí también para
+				// dar un error claro si por alguna ruta administrativa
+				// quedara una fila incoherente en la BD.
+				if isInternal && existing.Code != normalized {
+					return fmt.Errorf(
+						"colisión POSINT: label_codes.code=%q no coincide con product_barcode=%q (deben ser iguales por ck_label_codes_posint_matches_product_barcode)",
+						existing.Code, normalized,
+					)
+				}
 				final = &existing
 				created = false
 				return nil
@@ -179,6 +234,61 @@ func (r *LabelRepository) EnsureCodeForProduct(
 				return err
 			}
 		}
+
+		// Rama POSINT: el `code` es LITERALMENTE el product_barcode. No
+		// se emite LC-<hex> ni se consulta al generador comercial. La
+		// biyección "etiqueta impresa == barcode del producto" es lo
+		// que hace que ResolveLabelCode funcione al escanear.
+		if isInternal {
+			// Validar que el producto POSINT-X exista. Sin producto no
+			// hay etiqueta que imprimir (y ResolveLabelCode exige el
+			// JOIN con products.barcode para resolver un escaneo). Esto
+			// cubre la validación "reserva/producto": la reserva en
+			// internal_barcode_reservations se traduce en una fila de
+			// products.barcode = POSINT-X al consumirse; verificando el
+			// producto cubrimos la cadena completa.
+			var cnt int64
+			if err := tx.Table("products").
+				Where("barcode = ?", normalized).
+				Count(&cnt).Error; err != nil {
+				return fmt.Errorf("validando producto POSINT %q: %w", normalized, err)
+			}
+			if cnt == 0 {
+				return fmt.Errorf(
+					"no existe producto con barcode %q (POSINT): la reserva debe estar CONSUMED antes de generar la etiqueta",
+					normalized,
+				)
+			}
+			bc := normalized
+			row := models.LabelCode{
+				Code:           normalized,
+				ProductBarcode: &bc,
+				SizeTemplateID: sizeTemplateID,
+				Note:           note,
+				CreatedByDNI:   actor,
+				CreatedAt:      time.Now(),
+			}
+			if err := tx.Create(&row).Error; err != nil {
+				if isUniqueViolationErr(err) {
+					// Existe otra fila con code=POSINT-X que no pasó el
+					// lookup idempotente (voided, o product_barcode
+					// nulo, etc.). No la reutilizamos ni la "resucitamos"
+					// aquí: queda a decisión administrativa qué hacer.
+					return fmt.Errorf(
+						"ya existe un label_code con code=%q (posiblemente anulado o incoherente); un POSINT no puede mapearse a otro product_barcode, revisar manualmente antes de reimprimir",
+						normalized,
+					)
+				}
+				return err
+			}
+			final = &row
+			created = true
+			return nil
+		}
+
+		// Rama comercial: genera LC-<hex> único y lo asocia al producto
+		// (si productBarcode != ""). La idempotencia por producto ya se
+		// evaluó arriba; aquí llegamos sólo cuando no había código vivo.
 		code, err := r.generateUniqueCodeTx(ctx, tx, normalized)
 		if err != nil {
 			return err
@@ -256,10 +366,28 @@ func (r *LabelRepository) VoidCode(ctx context.Context, code, actorDNI string) (
 }
 
 // generateUniqueCodeTx produce un candidato aleatorio y comprueba
-// colisión contra products.barcode, products.alternateCodes y
-// label_codes.code en la misma transacción. Reintenta hasta 25 veces
-// antes de rendirse; con un espacio de 16^12 (hex12), 25 reintentos son
-// más que suficientes incluso con millones de códigos.
+// colisión contra products.barcode, products.alternateCodes,
+// label_codes.code y package_barcode_aliases.package_code en la misma
+// transacción. Reintenta hasta 25 veces antes de rendirse; con un espacio
+// de 16^12 (hex12), 25 reintentos son más que suficientes incluso con
+// millones de códigos.
+//
+// Este generador es la RAMA COMERCIAL de EnsureCodeForProduct: emite
+// SIEMPRE "LC-<hex>". Los productos internos del namespace POSINT-
+// (migración 024) NO pasan por aquí: EnsureCodeForProduct detecta
+// `models.IsInternalBarcode(productBarcode)` arriba y persiste
+// directamente `label_codes.code = product_barcode = POSINT-<hex>` sin
+// invocar este generador, para que la etiqueta impresa sea
+// LITERALMENTE el barcode del producto.
+//
+// Blindaje adicional: el prefijo literal "LC-" nunca coincide con
+// "POSINT-", así que un LC-<hex> jamás puede caer en el namespace
+// interno aun si alguien ajusta la longitud del cuerpo. La coherencia
+// intra-fila en BD la fija el CHECK
+// `ck_label_codes_posint_matches_product_barcode` de la migración 024:
+// una fila con `code` POSINT- debe tener `product_barcode = code`. Para
+// filas comerciales LC-<hex> la rama `code !~ '^POSINT-'` del OR aplica
+// y no hay restricción adicional.
 func (r *LabelRepository) generateUniqueCodeTx(ctx context.Context, tx *gorm.DB, hint string) (string, error) {
 	// 12 hex chars → 48 bits de entropía por candidato.
 	const attempts = 25
@@ -307,12 +435,21 @@ func lockProductBarcodeTx(tx *gorm.DB, barcode string) error {
 	return tx.Exec(labelBarcodeLockSQL, labelBarcodeLockKey(barcode)).Error
 }
 
-// codeExistsAnywhereTx consulta las tres fuentes de colisión en una
+// codeExistsAnywhereTx consulta las cuatro fuentes de colisión en una
 // transacción:
 //
 //   - products.barcode = candidate
 //   - alternate_codes contiene candidate (CSV, comparación por elemento)
 //   - label_codes.code = candidate
+//   - package_barcode_aliases.package_code = candidate (migración 017;
+//     se consulta directo sin probe to_regclass porque la 017 ya está
+//     aplicada en todo ambiente con la 024 disponible — si falla, la
+//     tx aborta y la generación de LC- se interrumpe, que es el
+//     comportamiento correcto)
+//
+// La extensión a package_barcode_aliases cierra el hueco "label code vs
+// package alias": antes un LC-<hex> podía coincidir por azar con un
+// package_code escaneado en recepción. Ahora el generador reintenta.
 func codeExistsAnywhereTx(ctx context.Context, tx *gorm.DB, candidate string) (bool, error) {
 	// Products por barcode.
 	var cnt int64
@@ -345,6 +482,19 @@ func codeExistsAnywhereTx(ctx context.Context, tx *gorm.DB, candidate string) (b
 		Where("code = ?", candidate).
 		Count(&cnt).Error; err != nil {
 		return false, fmt.Errorf("colisión label_codes: %w", err)
+	}
+	if cnt > 0 {
+		return true, nil
+	}
+	// package_barcode_aliases.package_code (fix 2026-10-13): un label_code
+	// generado podía chocar por azar con un package alias de recepción.
+	// La verificación es simétrica a la del package_barcode_alias_repository,
+	// que ya consulta label_codes.
+	if err := tx.WithContext(ctx).
+		Table("package_barcode_aliases").
+		Where("package_code = ?", candidate).
+		Count(&cnt).Error; err != nil {
+		return false, fmt.Errorf("colisión package_barcode_aliases: %w", err)
 	}
 	return cnt > 0, nil
 }
@@ -649,6 +799,14 @@ func (r *LabelRepository) MarkPrintJob(ctx context.Context, id uint, status stri
 // (sin venta → requiere admin) viven en el handler; aquí garantizamos
 // que al menos uno de los CHECKs se cumpla antes de pegarle a la BD,
 // para dar error legible en lugar de un CHECK violation genérico.
+//
+// Migración 025: desde la aplicación de la 025, una apertura puede
+// tener su justificación en un `otp_challenge_id` (reason='otp_manual').
+// La precondición refleja al CHECK `ck_cash_drawer_opens_sale_admin_return_otp`:
+// basta con que esté poblado uno de los cuatro justificativos. El
+// servicio OTP escribe el OtpChallengeID en la MISMA transacción en la
+// que marca el challenge CONSUMED; este helper se mantiene para los
+// otros tres caminos (sale/return/admin_override).
 func (r *LabelRepository) RecordCashDrawerOpen(ctx context.Context, open *models.CashDrawerOpen) error {
 	if open == nil {
 		return errors.New("evento nulo")
@@ -656,22 +814,38 @@ func (r *LabelRepository) RecordCashDrawerOpen(ctx context.Context, open *models
 	if strings.TrimSpace(open.ActorDNI) == "" {
 		return errors.New("actorDNI obligatorio")
 	}
-	// Precondición: CHECK ck_cash_drawer_opens_sale_or_admin
-	if !open.OverrideAdmin && open.SaleID == nil && open.ReturnID == nil {
-		return errors.New("apertura sin venta ni devolución requiere override admin")
+	// Precondición: CHECK ck_cash_drawer_opens_sale_admin_return_otp.
+	if !open.OverrideAdmin && open.SaleID == nil && open.ReturnID == nil && open.OtpChallengeID == nil {
+		return errors.New("apertura sin venta, devolución, override admin ni challenge OTP")
 	}
 	// Precondición: CHECK ck_cash_drawer_opens_override_requires_authorizer
 	if open.OverrideAdmin && strings.TrimSpace(open.AuthorizedByDNI) == "" {
 		return errors.New("override admin requiere authorized_by_dni")
 	}
+	// Precondición: CHECK ck_cash_drawer_opens_otp_reason_coherent — biyección exacta.
+	//
+	// Un `OtpChallengeID` sin reason='otp_manual' sería basura semántica;
+	// una fila con reason='otp_manual' sin su challenge perdería la
+	// trazabilidad. El servicio OTP siempre pobla ambos campos juntos;
+	// este chequeo es defensa en profundidad para los callers que
+	// inicialicen sólo uno.
+	if open.OtpChallengeID != nil && open.Reason != "" && open.Reason != models.CashDrawerReasonOtpManual {
+		return errors.New("otp_challenge_id requiere reason='otp_manual'")
+	}
+	if open.Reason == models.CashDrawerReasonOtpManual && open.OtpChallengeID == nil {
+		return errors.New("reason='otp_manual' requiere otp_challenge_id")
+	}
 	if open.Reason == "" {
-		if open.OverrideAdmin {
+		switch {
+		case open.OverrideAdmin:
 			open.Reason = models.CashDrawerReasonAdminOverride
-		} else if open.SaleID != nil {
+		case open.SaleID != nil:
 			open.Reason = models.CashDrawerReasonSale
-		} else if open.ReturnID != nil {
+		case open.ReturnID != nil:
 			open.Reason = models.CashDrawerReasonReturn
-		} else {
+		case open.OtpChallengeID != nil:
+			open.Reason = models.CashDrawerReasonOtpManual
+		default:
 			open.Reason = models.CashDrawerReasonOther
 		}
 	}
@@ -706,6 +880,18 @@ func (r *LabelRepository) HasRecentSaleByCashier(ctx context.Context, dni string
 // Devuelve (false, nil) si la venta no existe o no pertenece al cajero;
 // (true, nil) si pertenece. Admins/superadmins pasan por otra rama en
 // el handler y no llegan a este chequeo.
+//
+// COLUMNA REAL: la tabla `sales` tiene su clave primaria en la columna
+// `saleId` (quoted camelCase, ver models.Sale.SaleID con tag
+// `column:saleId`). Un `WHERE id = ?` compilaba pero NO filtraba por la
+// venta correcta: Postgres resolvería `id` como una columna inexistente
+// y la consulta rompería en runtime, o peor, con una fila basura si
+// alguien agrega una columna `id` en el futuro. Usar siempre `"saleId"`
+// quoted para empatar con la convención camelCase del esquema. La
+// respuesta HTTP 201 de /api/sales/register devuelve `saleId` en el
+// body (json tag `id` → valor del campo SaleID), y el frontend lo pasa
+// tal cual a /api/cash-drawer/open; el handler recibe req.SaleID y
+// llega aquí.
 func (r *LabelRepository) IsSaleOwnedByCashier(ctx context.Context, saleID uint, dni string) (bool, error) {
 	if saleID == 0 || strings.TrimSpace(dni) == "" {
 		return false, nil
@@ -713,7 +899,7 @@ func (r *LabelRepository) IsSaleOwnedByCashier(ctx context.Context, saleID uint,
 	var cnt int64
 	if err := r.db.WithContext(ctx).
 		Table("sales").
-		Where(`id = ? AND "employeeDni" = ? AND deleted_at IS NULL`, saleID, dni).
+		Where(`"saleId" = ? AND "employeeDni" = ? AND deleted_at IS NULL`, saleID, dni).
 		Count(&cnt).Error; err != nil {
 		return false, err
 	}

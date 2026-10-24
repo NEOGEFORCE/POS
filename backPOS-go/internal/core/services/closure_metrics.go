@@ -48,13 +48,18 @@ type ClosureMetrics struct {
 
 	// Egresos separados por canal. Solo EgresosCaja afecta el arqueo físico.
 	EgresosCaja    float64
-	EgresosFondo   float64
 	EgresosDigital float64
+	EgresosFondo   float64
 	// EgresosAlcancia son los egresos pagados con las monedas de la alcancía.
 	// Van aparte a propósito: la alcancía NO es la gaveta, así que no afectan
 	// el arqueo del efectivo ni pueden sumarse a la venta del cajero.
 	EgresosAlcancia float64
-	EgresosTotales  float64
+	// EgresosBoldQr son los egresos pagados con el QR Bre-B de Bold. Van
+	// aparte igual que Nequi/Daviplata: son dinero digital que no toca la
+	// gaveta pero sí reduce el saldo del canal correspondiente. El dashboard
+	// los expone en `realCashFlow.boldQr`.
+	EgresosBoldQr  float64
+	EgresosTotales float64
 
 	// Returns es el dinero devuelto a clientes.
 	Returns float64
@@ -65,7 +70,7 @@ type ClosureMetrics struct {
 
 // ComputeShiftExpenseTotals calcula el UNIVERSO CANÓNICO de egresos operativos
 // de un turno: total multicanal (efectivo + Nequi + Daviplata + fondo +
-// alcancía) y cuenta de líneas que aportaron a ese total.
+// alcancía + Bold QR) y cuenta de líneas que aportaron a ese total.
 //
 // EXCLUSIONES (idénticas a las que aplica ComputeClosureMetrics al alimentar
 // el arqueo del cierre):
@@ -73,17 +78,16 @@ type ClosureMetrics struct {
 //   - PaymentSource con PREST/DEUDA (préstamos/deudas no mueven caja aún).
 //   - Categoría DEVOLUCIONES (se contabilizan aparte vía TotalReturns).
 //
-// La clasificación por canal delega en parseExpenseChannels (SSOT). El count
-// se calcula sobre el MISMO universo que aportó al total, para preservar la
-// invariante amount ↔ count que consume el dashboard.
+// La clasificación por canal delega en parseExpenseChannelsFull (SSOT). El
+// count se calcula sobre el MISMO universo que aportó al total, para preservar
+// la invariante amount ↔ count que consume el dashboard.
 func ComputeShiftExpenseTotals(expenses []models.Expense) (total float64, count int) {
 	for i := range expenses {
 		e := &expenses[i]
 		if !isOperationalExpense(e) {
 			continue
 		}
-		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
-		lineTotal := cash + nequi + davi + fondo + coins
+		lineTotal := parseExpenseChannelsFull(e).Total()
 		if lineTotal <= 0 {
 			continue
 		}
@@ -94,12 +98,12 @@ func ComputeShiftExpenseTotals(expenses []models.Expense) (total float64, count 
 }
 
 // ExpenseChannelBuckets agrupa un lote de egresos por canal canónico usando
-// parseExpenseChannels (SSOT). Excluye PENDING, PRESTAMOS/DEUDAS y
+// parseExpenseChannelsFull (SSOT). Excluye PENDING, PRESTAMOS/DEUDAS y
 // DEVOLUCIONES, igual que ComputeShiftExpenseTotals, para mantener alineado
 // el flujo de caja del dashboard con el arqueo del cierre.
 //
 // Devuelve un mapa con las llaves EFECTIVO, NEQUI, DAVIPLATA, FONDO, MONEDAS
-// (siempre presentes, aun con valor 0 para simplificar el consumo).
+// y BOLD_QR (siempre presentes, aun con valor 0 para simplificar el consumo).
 func ExpenseChannelBuckets(expenses []models.Expense) map[string]float64 {
 	buckets := map[string]float64{
 		"EFECTIVO":  0,
@@ -107,18 +111,20 @@ func ExpenseChannelBuckets(expenses []models.Expense) map[string]float64 {
 		"DAVIPLATA": 0,
 		"FONDO":     0,
 		"MONEDAS":   0,
+		"BOLD_QR":   0,
 	}
 	for i := range expenses {
 		e := &expenses[i]
 		if !isOperationalExpense(e) {
 			continue
 		}
-		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
-		buckets["EFECTIVO"] += cash
-		buckets["NEQUI"] += nequi
-		buckets["DAVIPLATA"] += davi
-		buckets["FONDO"] += fondo
-		buckets["MONEDAS"] += coins
+		ch := parseExpenseChannelsFull(e)
+		buckets["EFECTIVO"] += ch.Cash
+		buckets["NEQUI"] += ch.Nequi
+		buckets["DAVIPLATA"] += ch.Davi
+		buckets["FONDO"] += ch.Fondo
+		buckets["MONEDAS"] += ch.Coins
+		buckets["BOLD_QR"] += ch.BoldQR
 	}
 	return buckets
 }
@@ -151,8 +157,7 @@ func SplitExpensesByKind(expenses []models.Expense) (suppliers, others float64) 
 		if !isOperationalExpense(e) {
 			continue
 		}
-		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
-		lineTotal := cash + nequi + davi + fondo + coins
+		lineTotal := parseExpenseChannelsFull(e).Total()
 		if lineTotal <= 0 {
 			continue
 		}
@@ -199,6 +204,7 @@ type ClosureExpenseLine struct {
 	Davi          float64
 	Fondo         float64
 	Coins         float64
+	BoldQR        float64
 	Total         float64
 	IsReturn      bool
 }
@@ -215,7 +221,7 @@ func ResolveClosureExpenses(c *models.CashierClosure) []ClosureExpenseLine {
 	lines := make([]ClosureExpenseLine, 0, len(expenses))
 	for i := range expenses {
 		e := &expenses[i]
-		cash, nequi, davi, fondo, coins := parseExpenseChannels(e)
+		ch := parseExpenseChannelsFull(e)
 
 		lines = append(lines, ClosureExpenseLine{
 			ID:            e.ID,
@@ -223,12 +229,13 @@ func ResolveClosureExpenses(c *models.CashierClosure) []ClosureExpenseLine {
 			Category:      e.Category,
 			PaymentSource: e.PaymentSource,
 			Status:        e.Status,
-			Cash:          cash,
-			Nequi:         nequi,
-			Davi:          davi,
-			Fondo:         fondo,
-			Coins:         coins,
-			Total:         cash + nequi + davi + fondo + coins,
+			Cash:          ch.Cash,
+			Nequi:         ch.Nequi,
+			Davi:          ch.Davi,
+			Fondo:         ch.Fondo,
+			Coins:         ch.Coins,
+			BoldQR:        ch.BoldQR,
+			Total:         ch.Total(),
 			IsReturn:      strings.EqualFold(strings.TrimSpace(e.Category), "DEVOLUCIONES"),
 		})
 	}
@@ -264,8 +271,12 @@ func ComputeClosureMetrics(c *models.CashierClosure) ClosureMetrics {
 		m.EgresosDigital += l.Nequi + l.Davi
 		m.EgresosFondo += l.Fondo
 		m.EgresosAlcancia += l.Coins
+		// Bold QR va aparte: es dinero digital pero vive en su propio canal
+		// para que el dashboard pueda exponer el saldo "cuánto hay en Bold QR"
+		// sin mezclarlo con Nequi/Daviplata.
+		m.EgresosBoldQr += l.BoldQR
 	}
-	m.EgresosTotales = m.EgresosCaja + m.EgresosDigital + m.EgresosFondo + m.EgresosAlcancia
+	m.EgresosTotales = m.EgresosCaja + m.EgresosDigital + m.EgresosFondo + m.EgresosAlcancia + m.EgresosBoldQr
 
 	// VENTA TOTAL DEL CAJERO.
 	//

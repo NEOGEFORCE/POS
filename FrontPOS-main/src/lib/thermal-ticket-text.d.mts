@@ -87,7 +87,17 @@ export function pad(text: string, len: number): string;
 export function padLeft(text: string, len: number): string;
 export function center(text: string, width: number): string;
 export function wrap(text: string, width: number): string[];
-export function formatDateTime(d: Date): string;
+/**
+ * Literal estable que `formatDateTime` devuelve cuando la entrada no es
+ * un `Date` válido (undefined, string indescifrable, Invalid Date,...).
+ */
+export const INVALID_DATE_LABEL: string;
+/**
+ * Formatea una fecha a `dd/MM/yyyy hh:mm AM`. Acepta `Date`, un string
+ * parseable (ISO 8601 preferido) o un número epoch. Cualquier otra cosa
+ * cae en {@link INVALID_DATE_LABEL} y jamás emite `NaN`.
+ */
+export function formatDateTime(d: Date | string | number | null | undefined): string;
 export function resolveStore(
     storeOverride?: Partial<StoreHeader> | null,
     cfgHeader?: Partial<StoreHeader> | null,

@@ -15,7 +15,7 @@ export type CutMode = "AUTO" | "MANUAL" | "NONE";
 export type ReceiptDeliveryMode = "bridge" | "browser";
 export type PaperPreset = "80" | "58" | "JAL_838L" | "CUSTOM";
 export type ActiveMode = "RECEIPT" | "LABEL";
-export type GondolaFormat = "LETTER" | "LEGAL";
+export type GondolaFormat = "LETTER" | "LEGAL" | "THERMAL_80";
 export type LabelSizePreset =
   | "50x30"
   | "40x30"
@@ -36,7 +36,7 @@ export const SPOOLERS: Readonly<Record<"WINDOWS" | "CUPS", PrinterSpooler>>;
 export const DRAWER_EVENTS: Readonly<Record<"BEFORE_PRINT" | "AFTER_PRINT" | "MANUAL", DrawerEvent>>;
 export const CUT_MODES: Readonly<Record<"AUTO" | "MANUAL" | "NONE", CutMode>>;
 export const RECEIPT_DELIVERY_MODES: Readonly<Record<"BRIDGE" | "BROWSER", ReceiptDeliveryMode>>;
-export const GONDOLA_FORMATS: Readonly<Record<"LETTER" | "LEGAL", GondolaFormat>>;
+export const GONDOLA_FORMATS: Readonly<Record<"LETTER" | "LEGAL" | "THERMAL_80", GondolaFormat>>;
 export const DEFAULT_GONDOLA_FORMAT: "LETTER";
 export const PAPER_PRESETS: Readonly<{ WIDTH_80: "80"; WIDTH_58: "58"; JAL_838L: "JAL_838L"; CUSTOM: "CUSTOM" }>;
 export const PAPER_COLUMNS: Readonly<Record<"80" | "58" | "82", number>>;
@@ -100,6 +100,16 @@ export interface Bounds {
   layoutPosMm: { min: number; max: number };
   layoutFontScale: { min: number; max: number };
   barcodeModule: { min: number; max: number };
+  gondolaThermalWidthMm: { min: number; max: number };
+  gondolaThermalPrintableWidthMm: { min: number; max: number };
+  gondolaThermalHeightMm: { min: number; max: number };
+  gondolaThermalMarginMm: { min: number; max: number };
+  gondolaThermalGapMm: { min: number; max: number };
+  gondolaThermalDensity: { min: number; max: number };
+  gondolaThermalNameMaxChars: { min: number; max: number };
+  gondolaThermalScale: { min: number; max: number };
+  gondolaThermalBarcodeHeightMm: { min: number; max: number };
+  gondolaThermalUnitLabelMaxChars: { min: number; max: number };
   maxStringLength: number;
 }
 export const BOUNDS: Readonly<Bounds>;
@@ -252,15 +262,87 @@ export interface PrintingLabels {
 }
 
 /**
- * Rama góndola: configuración persistida para precios de góndola en hoja
- * de impresora normal. El default es "LETTER" (Carta). "LEGAL" (Oficio)
- * es la variante extendida con grid 4×5 = 20 etiquetas por hoja. La
- * geometría exacta (dimensiones físicas, padding, columnas, filas,
- * `@page size`) se calcula en `shelf-labels.mjs` para no duplicar
- * números físicos aquí.
+ * Configuración térmica de la rama góndola. Se aplica cuando
+ * `gondola.format === "THERMAL_80"`. Los campos están saneados: todos
+ * los numéricos están dentro de `BOUNDS.gondolaThermal*`, las fuentes
+ * pertenecen a `TSPL_BUILTIN_FONTS` y los booleanos son estrictos.
+ *
+ * Semántica física (unidades en mm donde aplica):
+ *   - `widthMm`           Ancho físico del rollo (20..82).
+ *   - `printableWidthMm`  Ancho útil ≤ `widthMm` (10..82).
+ *   - `heightMm`          Alto de cada etiqueta (20..200).
+ *   - `marginLeftMm/top/bottom` Márgenes seguros (0..20).
+ *   - `gapMm`             Separación entre etiquetas (0..10). 0 =
+ *     continuo. El bridge emite `GAP {gapMm} mm, 0 mm`.
+ *   - `direction`/`mirror` Comando `DIRECTION x,y` de TSPL. 0 = por
+ *     defecto; 1 = invertido/espejado.
+ *   - `density`           Comando `DENSITY` (0..15).
+ *   - `dpi`               Resolución de la cabeza (72..600). Default 203.
+ *   - `nameFont`/`priceFont`/`footerFont` IDs TSPL `"1".."8"`.
+ *   - `*ScaleX`/`*ScaleY` Escala de la fuente (1..10).
+ *   - `nameMaxChars`      Trunca el nombre antes de medir (1..60).
+ *   - `showBarcode`       Imprime CODE128 abajo a la izquierda cuando el
+ *                         código es ASCII seguro. Default `true`.
+ *   - `barcodeHeightMm`   Alto nominal del barcode (3..30). El renderer
+ *                         lo acota al área libre.
+ *   - `showUnitLabel`     Pinta el literal corto bajo el precio.
+ *   - `unitLabel`         Texto del literal (ej. "PRECIO UND", "x LT").
+ *                         Máx. 24 chars. Default "PRECIO UND".
+ *   - `showCode`/`showDate` Toggles del pie (PLU + fecha).
+ */
+export interface GondolaThermalConfig {
+  widthMm: number;
+  printableWidthMm: number;
+  heightMm: number;
+  marginLeftMm: number;
+  marginTopMm: number;
+  marginBottomMm: number;
+  gapMm: number;
+  direction: 0 | 1;
+  mirror: 0 | 1;
+  density: number;
+  dpi: number;
+  nameFont: TsplBuiltinFontId;
+  nameScaleX: number;
+  nameScaleY: number;
+  nameMaxChars: number;
+  priceFont: TsplBuiltinFontId;
+  priceScaleX: number;
+  priceScaleY: number;
+  showCode: boolean;
+  showDate: boolean;
+  /** Imprime CODE128 cuando el código del producto es ASCII seguro. */
+  showBarcode: boolean;
+  /** Alto nominal del barcode en mm (3..30). */
+  barcodeHeightMm: number;
+  /** Pinta el literal corto `unitLabel` bajo el precio. */
+  showUnitLabel: boolean;
+  /** Texto del literal unitario ("PRECIO UND" por defecto). */
+  unitLabel: string;
+  footerFont: TsplBuiltinFontId;
+  footerScaleX: number;
+  footerScaleY: number;
+}
+
+export const DEFAULT_GONDOLA_THERMAL_CONFIG: Readonly<GondolaThermalConfig>;
+
+/**
+ * Rama góndola: configuración persistida para precios de góndola.
+ *
+ * Formatos soportados:
+ *   - LETTER / LEGAL  → impresión por diálogo del navegador (iframe).
+ *     La geometría exacta (hoja, grid, padding) vive en `shelf-labels.mjs`
+ *     para no duplicar números físicos aquí.
+ *   - THERMAL_80      → impresión directa por bridge TSPL. Los parámetros
+ *     térmicos editables viven en `thermal`.
+ *
+ * `thermal` está presente en todas las instalaciones tras sanitize (BC
+ * con localStorage legacy sin la rama). Si el formato activo es LETTER
+ * o LEGAL, el campo se conserva pero no se consume.
  */
 export interface PrintingGondola {
   format: GondolaFormat;
+  thermal: GondolaThermalConfig;
 }
 
 export interface PrintingConfig {
@@ -312,14 +394,37 @@ export function applyJaltechJAL838LPreset(
 ): PrintingConfig;
 
 /**
- * Mutador puro del formato de hoja de góndola. Idempotente. Un valor
- * desconocido deja la rama intacta (sanitize ya aplicó el default
- * cuando se cargó la config).
+ * Mutador puro del formato de hoja/rollo de góndola. Idempotente.
+ *
+ *   - LETTER / LEGAL → impresión por diálogo del navegador (iframe).
+ *   - THERMAL_80     → impresión directa por bridge TSPL (sin iframe).
+ *
+ * Acepta alias en español/short-hand: "CARTA", "OFICIO", "TERMICA_80",
+ * "TÉRMICA 80", "RT80", etc. Un valor desconocido deja la rama intacta
+ * (sanitize ya aplicó el default cuando se cargó).
  */
 export function applyGondolaFormatPreset(
   config: unknown,
-  format: GondolaFormat,
+  format: GondolaFormat | string,
 ): PrintingConfig;
+
+/**
+ * Mutador puro de los campos térmicos de la rama `gondola.thermal`.
+ * Hace merge superficial sobre la rama actual y pasa el resultado por
+ * `sanitizeGondolaThermal` (clamp dentro de bounds). NO cambia
+ * `gondola.format`. Idempotente.
+ */
+export function setGondolaThermalParams(
+  config: unknown,
+  patch: Partial<GondolaThermalConfig>,
+): PrintingConfig;
+
+/**
+ * Sanea un objeto parcial para que respete `GondolaThermalConfig`. Nunca
+ * lanza; cualquier campo fuera de bounds se clampea; fuentes desconocidas
+ * caen al default.
+ */
+export function sanitizeGondolaThermal(input: unknown): GondolaThermalConfig;
 
 export interface StorageLike {
   getItem(key: string): string | null;

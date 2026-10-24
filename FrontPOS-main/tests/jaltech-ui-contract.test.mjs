@@ -203,21 +203,21 @@ test("workspace: ya no expone handleOpenDrawer ni la apertura manual del cajón"
     "Ninguna cadena visible del workspace puede mencionar al cajón.");
 });
 
-test("workspace: la hoja góndola sigue 100% separada — handlePrintShelfSheet NO toca labelItems", async () => {
+test("workspace: la hoja góndola Carta/Oficio sigue 100% separada — handlePrintShelfSheetSheet NO toca labelItems", async () => {
   const src = await read(workspace);
-  const idx = src.indexOf("const handlePrintShelfSheet = useCallback");
-  assert.ok(idx > 0, "handlePrintShelfSheet debe seguir vivo (hoja góndola).");
-  const endIdx = src.indexOf("const handleOpenDrawer = useCallback", idx);
-  const scope = src.slice(idx, endIdx);
+  const idx = src.indexOf("const handlePrintShelfSheetSheet = useCallback");
+  assert.ok(idx > 0, "handlePrintShelfSheetSheet debe seguir vivo (rama LETTER/LEGAL).");
+  const endIdx = src.indexOf("const handlePrintShelfSheetThermal = useCallback", idx);
+  const scope = src.slice(idx, endIdx > 0 ? endIdx : idx + 10000);
   // Góndola NO introduce labelItems (es un helper separado con su propio shape).
   assert.ok(!/labelItems/.test(scope),
-    "La hoja góndola NO debe compartir el shape labelItems del térmico.");
+    "La hoja góndola Carta/Oficio NO debe compartir el shape labelItems del térmico.");
   // Góndola sigue usando el iframe aislado + buildShelfLabelsPrintHtml.
   assert.match(scope, /buildShelfLabelsPrintHtml/,
-    "La hoja góndola debe seguir usando buildShelfLabelsPrintHtml (iframe aislado).");
+    "La hoja góndola Carta/Oficio debe seguir usando buildShelfLabelsPrintHtml (iframe aislado).");
   // Y conservando el audit meta con layout canónico.
   assert.match(scope, /buildAuditMeta/,
-    "La hoja góndola debe seguir pasando buildAuditMeta al POST.");
+    "La hoja góndola Carta/Oficio debe seguir pasando buildAuditMeta al POST.");
 });
 
 // ============================================================================

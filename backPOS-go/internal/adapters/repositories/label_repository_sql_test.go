@@ -97,8 +97,12 @@ func TestLabelRepo_CodeExistsAnywhereTx_SQLEmitido(t *testing.T) {
 	if exists {
 		t.Fatal("en DryRun no hay filas; no debería reportar colisión")
 	}
-	if len(capture.stmts) != 3 {
-		t.Fatalf("se esperaban exactamente 3 consultas (barcode, alternate_codes, label_codes), hubo %d: %+v", len(capture.stmts), capture.stmts)
+	// Fix 2026-10-13: ahora se consultan CUATRO fuentes (products.barcode,
+	// alternate_codes, label_codes.code y package_barcode_aliases.package_code)
+	// para cerrar el hueco "label code vs package alias". Si alguien
+	// vuelve a 3, el guardián cruzado de la 024 deja un flanco abierto.
+	if len(capture.stmts) != 4 {
+		t.Fatalf("se esperaban exactamente 4 consultas (barcode, alternate_codes, label_codes, package_barcode_aliases), hubo %d: %+v", len(capture.stmts), capture.stmts)
 	}
 	for i, st := range capture.stmts {
 		if strings.Contains(st.SQL, "alternateCodes") {
@@ -116,6 +120,12 @@ func TestLabelRepo_CodeExistsAnywhereTx_SQLEmitido(t *testing.T) {
 	}
 	if !strings.Contains(capture.stmts[2].SQL, "label_codes") {
 		t.Errorf("la tercera consulta debe ir contra label_codes: %s", capture.stmts[2].SQL)
+	}
+	if !strings.Contains(capture.stmts[3].SQL, "package_barcode_aliases") {
+		t.Errorf("la cuarta consulta debe ir contra package_barcode_aliases: %s", capture.stmts[3].SQL)
+	}
+	if !strings.Contains(capture.stmts[3].SQL, "package_code") {
+		t.Errorf("la cuarta consulta debe filtrar por package_code: %s", capture.stmts[3].SQL)
 	}
 }
 

@@ -51,6 +51,7 @@
     --bg-card:       #111a17;
     --bg-card-hover: #162320;
     --bg-elevated:   #1c2e29;
+    --bg-popover:    #17211e;
     --border:        rgba(255, 255, 255, 0.06);
     --border-strong: rgba(255, 255, 255, 0.11);
     --text-primary:  #e8f0ee;
@@ -78,6 +79,7 @@
     --bg-card:       #ffffff;
     --bg-card-hover: #f5faf8;
     --bg-elevated:   #edf4f1;
+    --bg-popover:    #ffffff;
     --border:        rgba(0, 0, 0, 0.07);
     --border-strong: rgba(0, 0, 0, 0.13);
     --text-primary:  #0a1f1a;
@@ -372,6 +374,52 @@
 
   input[type=number] {
     -moz-appearance: textfield;
+  }
+
+  /*
+   * SUPERFICIES FLOTANTES OPACAS
+   *
+   * HeroUI monta Select/Autocomplete en un portal y usa bg-content1.
+   * Si npm anida @heroui/theme y Tailwind no ve esa clase, el contenido
+   * queda transparente. El glob del tailwind.config corrige la generación;
+   * estas reglas por slots son una defensa estable frente a cambios de
+   * hoisting/versiones. Radix/shadcn usa bg-popover y también queda cubierto
+   * por el token del tema más el fallback del popper.
+   */
+  [data-slot="content"]:has([data-slot="listboxWrapper"]),
+  [data-slot="content"]:has([role="listbox"]),
+  [data-slot="content"]:has([role="menu"]),
+  [data-slot="listboxWrapper"],
+  [data-radix-popper-content-wrapper] > [role="listbox"],
+  [data-radix-popper-content-wrapper] > [role="menu"] {
+    background-color: var(--bg-popover) !important;
+    color: var(--text-primary) !important;
+    opacity: 1 !important;
+    backdrop-filter: none !important;
+  }
+
+  [data-slot="content"]:has([data-slot="listboxWrapper"]),
+  [data-slot="content"]:has([role="listbox"]),
+  [data-slot="content"]:has([role="menu"]),
+  [data-radix-popper-content-wrapper] > [role="listbox"],
+  [data-radix-popper-content-wrapper] > [role="menu"] {
+    border: 1px solid var(--border-strong) !important;
+    border-radius: 1rem !important;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.46) !important;
+  }
+
+  [data-slot="listboxWrapper"] [role="option"],
+  [data-radix-popper-content-wrapper] [role="option"],
+  [data-radix-popper-content-wrapper] [role="menuitem"] {
+    color: var(--text-primary) !important;
+  }
+
+  [data-slot="listboxWrapper"] [role="option"][data-hover="true"],
+  [data-slot="listboxWrapper"] [role="option"][data-focus="true"],
+  [data-slot="listboxWrapper"] [role="option"]:focus,
+  [data-radix-popper-content-wrapper] [role="option"]:focus,
+  [data-radix-popper-content-wrapper] [role="menuitem"]:focus {
+    background-color: var(--bg-card-hover) !important;
   }
 
   /* FIX: Sileo Toast Notification Z-Index (Debe estar por encima del Header z-[100]) */

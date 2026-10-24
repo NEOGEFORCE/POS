@@ -1202,3 +1202,346 @@ test("handlePrinterRequest kickDrawer manual de admin sigue enviando sin flag de
     assert.equal(result.ok, true);
     assert.equal(calls.tcp.length, 1, "el botón admin explícito conserva la apertura manual");
 });
+
+
+// =============================================================================
+// bridge-printing-v3 — shelf-labels (hoja térmica de góndola)
+//
+// Cubre el routing nuevo en `dispatchPrint` (type:"shelf-labels") y en
+// `dispatchTestPage` (target:"shelf"), incluyendo:
+//   * UNSUPPORTED_PROTOCOL para protocolos distintos a TSPL.
+//   * NO_LABELS cuando items está vacío.
+//   * LAYOUT_OUT_OF_BOUNDS con widthMm > 82.
+//   * INVALID_SHELF_CONFIG en test-page cuando gondola.thermal falta.
+//   * GARANTÍA DURA: aunque el payload traiga drawer + openDrawerOnSale,
+//     el output es BYTE-IDÉNTICO al mismo payload sin drawer.
+// =============================================================================
+
+const {
+    buildTsplShelfLabelsDocument,
+    SHELF_THERMAL_DEFAULTS,
+} = require("../printer-bridge");
+
+function shelfPayload(overrides = {}) {
+    return {
+        type: "shelf-labels",
+        connection: {
+            interface: "NETWORK",
+            protocol: "tspl",
+            network: { host: "10.0.0.5", port: 9100 },
+        },
+        thermal: SHELF_THERMAL_DEFAULTS,
+        items: [{ code: "LBL-001", productName: "AZUCAR", salePrice: 3500, quantity: 2 }],
+        nowIso: "2026-10-19T14:16:00",
+        ...overrides,
+    };
+}
+
+// --- OK path: TSPL + items válidos → sendTcp con bytes de shelf-labels ----
+
+test("dispatchPrint shelf-labels: protocol=tspl + items válidos → sendTcp con TSPL", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-ok",
+        action: "print",
+        payload: shelfPayload(),
+    }, deps);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(calls.tcp.length, 1);
+    assert.equal(calls.system.length, 0);
+    assert.equal(r.result.kind, "shelf-labels");
+    const text = calls.tcp[0].buf.toString("ascii");
+    assert.match(text, /SIZE 80 mm, 40 mm/);
+    assert.match(text, /GAP 0 mm, 0 mm/);
+    assert.match(text, /DIRECTION 0,0/);
+    // 2 copias (quantity 2) = 2 PRINT 1,1.
+    assert.equal((text.match(/PRINT 1,1/g) || []).length, 2);
+    // Y nunca inicia con ESC @ (no es ESC/POS).
+    assert.ok(!(calls.tcp[0].buf[0] === 0x1B && calls.tcp[0].buf[1] === 0x40));
+});
+
+test("dispatchPrint shelf-labels: SYSTEM + TSPL → sendSystem", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-sys",
+        action: "print",
+        payload: shelfPayload({
+            connection: {
+                interface: "SYSTEM",
+                protocol: "tspl",
+                system: { printerName: "POS-SHELF" },
+            },
+        }),
+    }, deps);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(calls.tcp.length, 0);
+    assert.equal(calls.system.length, 1);
+    assert.equal(calls.system[0].printerName, "POS-SHELF");
+});
+
+// --- Protocolo distinto a TSPL → UNSUPPORTED_PROTOCOL ----------------------
+
+test("dispatchPrint shelf-labels: protocol=escpos → UNSUPPORTED_PROTOCOL sin tocar transporte", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-escpos",
+        action: "print",
+        payload: shelfPayload({
+            connection: {
+                interface: "NETWORK",
+                protocol: "escpos",
+                network: { host: "10.0.0.5", port: 9100 },
+            },
+        }),
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, ERR.UNSUPPORTED_PROTOCOL);
+    assert.equal(calls.tcp.length, 0);
+    assert.equal(calls.system.length, 0);
+});
+
+test("dispatchPrint shelf-labels: protocol=zpl → UNSUPPORTED_PROTOCOL", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-zpl",
+        action: "print",
+        payload: shelfPayload({
+            connection: {
+                interface: "NETWORK",
+                protocol: "zpl",
+                network: { host: "10.0.0.5", port: 9100 },
+            },
+        }),
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, ERR.UNSUPPORTED_PROTOCOL);
+    assert.equal(calls.tcp.length, 0);
+});
+
+// --- NO_LABELS cuando items vacío ------------------------------------------
+
+test("dispatchPrint shelf-labels: items vacío → NO_LABELS", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-empty",
+        action: "print",
+        payload: shelfPayload({ items: [] }),
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, ERR.NO_LABELS);
+    assert.equal(calls.tcp.length, 0);
+});
+
+// --- LAYOUT_OUT_OF_BOUNDS cuando widthMm > 82 ------------------------------
+
+test("dispatchPrint shelf-labels: thermal.widthMm=100 → LAYOUT_OUT_OF_BOUNDS", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-oob",
+        action: "print",
+        payload: shelfPayload({
+            thermal: { ...SHELF_THERMAL_DEFAULTS, widthMm: 100 },
+        }),
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, "LAYOUT_OUT_OF_BOUNDS");
+    assert.equal(calls.tcp.length, 0);
+});
+
+// --- GARANTÍA DURA: ningún pulso de cajón en shelf-labels ------------------
+
+test("dispatchPrint shelf-labels: drawer+openDrawerOnSale produce output IDÉNTICO al sin drawer", async () => {
+    // Payload base sin drawer.
+    const basePayload = shelfPayload();
+    const sinDrawer = makeStubDeps();
+    const rNoDrawer = await handlePrinterRequest({
+        requestId: "sh-nodrawer",
+        action: "print",
+        payload: basePayload,
+    }, sinDrawer.deps);
+    assert.equal(rNoDrawer.ok, true);
+    const bufNo = sinDrawer.calls.tcp[0].buf;
+
+    // Mismo payload PERO con drawer + openDrawerOnSale.
+    const conDrawer = makeStubDeps();
+    const rWithDrawer = await handlePrinterRequest({
+        requestId: "sh-withdrawer",
+        action: "print",
+        payload: {
+            ...basePayload,
+            openDrawerOnSale: true,
+            drawer: {
+                enabled: true,
+                command: "\\x1B\\x70\\x00\\x19\\xFA",
+                event: "AFTER_PRINT",
+            },
+        },
+    }, conDrawer.deps);
+    assert.equal(rWithDrawer.ok, true);
+    const bufWith = conDrawer.calls.tcp[0].buf;
+
+    // GARANTÍA DURA: los bytes son exactamente idénticos.
+    assert.ok(bufNo.equals(bufWith),
+        "shelf-labels NUNCA debe variar los bytes por drawer/openDrawerOnSale");
+    // Y jamás contiene los bytes del pulso del cajón.
+    const hex = Array.from(bufWith).map((b) => b.toString(16).padStart(2, "0")).join("");
+    assert.ok(!hex.includes("1b700019fa"),
+        "shelf-labels nunca debe incluir ESC p 0 (abrir cajón)");
+});
+
+// --- Error TCP se propaga -------------------------------------------------
+
+test("dispatchPrint shelf-labels: TCP_TIMEOUT se propaga como errorCode accionable", async () => {
+    const { deps } = makeStubDeps({
+        sendTcp: async () => {
+            const err = new Error("TCP_TIMEOUT: 10.0.0.5:9100 no respondió");
+            err.code = "TCP_TIMEOUT";
+            throw err;
+        },
+    });
+    const r = await handlePrinterRequest({
+        requestId: "sh-timeout",
+        action: "print",
+        payload: shelfPayload(),
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, "TCP_TIMEOUT");
+});
+
+// --- test-page target=shelf ------------------------------------------------
+
+test("dispatchTestPage target=shelf: protocol=tspl + gondola.thermal → TSPL con TEST-SHELF", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "ts-shelf",
+        action: "printTestPage",
+        payload: {
+            target: "shelf",
+            config: {
+                connection: {
+                    interface: "NETWORK",
+                    protocol: "tspl",
+                    network: { host: "10.0.0.5", port: 9100 },
+                },
+                gondola: {
+                    format: "THERMAL_80",
+                    thermal: SHELF_THERMAL_DEFAULTS,
+                },
+            },
+        },
+    }, deps);
+    assert.equal(r.ok, true, r.error);
+    assert.equal(r.result.kind, "test-shelf");
+    assert.equal(calls.tcp.length, 1);
+    const text = calls.tcp[0].buf.toString("ascii");
+    assert.match(text, /SIZE 80 mm, 40 mm/);
+    assert.ok(text.includes("TEST-SHELF"), "la etiqueta de prueba lleva el código TEST-SHELF");
+});
+
+test("dispatchTestPage target=shelf: sin gondola.thermal → INVALID_SHELF_CONFIG", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "ts-no-thermal",
+        action: "printTestPage",
+        payload: {
+            target: "shelf",
+            config: {
+                connection: {
+                    interface: "NETWORK",
+                    protocol: "tspl",
+                    network: { host: "10.0.0.5", port: 9100 },
+                },
+                // Sin gondola.thermal.
+            },
+        },
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, ERR.INVALID_SHELF_CONFIG);
+    assert.equal(calls.tcp.length, 0);
+});
+
+test("dispatchTestPage target=shelf: protocol=escpos → UNSUPPORTED_PROTOCOL", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "ts-shelf-escpos",
+        action: "printTestPage",
+        payload: {
+            target: "shelf",
+            config: {
+                connection: {
+                    interface: "NETWORK",
+                    protocol: "escpos",
+                    network: { host: "10.0.0.5", port: 9100 },
+                },
+                gondola: { format: "THERMAL_80", thermal: SHELF_THERMAL_DEFAULTS },
+            },
+        },
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, ERR.UNSUPPORTED_PROTOCOL);
+    assert.equal(calls.tcp.length, 0);
+});
+
+test("dispatchTestPage target=shelf: thermal con widthMm fuera de rango propaga LAYOUT_OUT_OF_BOUNDS", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "ts-shelf-oob",
+        action: "printTestPage",
+        payload: {
+            target: "shelf",
+            config: {
+                connection: {
+                    interface: "NETWORK",
+                    protocol: "tspl",
+                    network: { host: "10.0.0.5", port: 9100 },
+                },
+                gondola: {
+                    format: "THERMAL_80",
+                    thermal: { ...SHELF_THERMAL_DEFAULTS, widthMm: 150 },
+                },
+            },
+        },
+    }, deps);
+    assert.equal(r.ok, false);
+    assert.equal(r.errorCode, "LAYOUT_OUT_OF_BOUNDS");
+    assert.equal(calls.tcp.length, 0);
+});
+
+// --- Reexport del renderer para integración directa ------------------------
+
+test("printer-bridge reexporta buildTsplShelfLabelsDocument y SHELF_THERMAL_DEFAULTS", () => {
+    assert.equal(typeof buildTsplShelfLabelsDocument, "function");
+    assert.ok(SHELF_THERMAL_DEFAULTS && typeof SHELF_THERMAL_DEFAULTS === "object");
+    assert.equal(SHELF_THERMAL_DEFAULTS.widthMm, 80);
+});
+
+// --- Payload compat: labelItems preferido sobre items ----------------------
+
+test("dispatchPrint shelf-labels: labelItems enriquecido gana sobre items reducido", async () => {
+    const { deps, calls } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-labelitems",
+        action: "print",
+        payload: shelfPayload({
+            items: [{ code: "C1", quantity: 2 }],
+            labelItems: [{ code: "C1", productName: "ARROZ PREMIUM", salePrice: 12500, quantity: 2 }],
+        }),
+    }, deps);
+    assert.equal(r.ok, true, r.error);
+    const text = calls.tcp[0].buf.toString("ascii");
+    assert.ok(text.includes("ARROZ PREMIUM"), "el nombre debe venir del labelItems enriquecido");
+    assert.ok(text.includes("12.500"), "el precio debe venir del labelItems enriquecido");
+});
+
+// --- Reimpresión / audit: no se mezcla con otros kinds ---------------------
+
+test("dispatchPrint shelf-labels: kind del resultado es 'shelf-labels' (nunca 'labels' ni 'receipt')", async () => {
+    const { deps } = makeStubDeps();
+    const r = await handlePrinterRequest({
+        requestId: "sh-kind",
+        action: "print",
+        payload: shelfPayload(),
+    }, deps);
+    assert.equal(r.ok, true);
+    assert.equal(r.result.kind, "shelf-labels");
+});

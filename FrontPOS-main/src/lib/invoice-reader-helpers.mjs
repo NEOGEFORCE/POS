@@ -332,6 +332,115 @@ function roundHalfAway(n) {
   return n >= 0 ? Math.floor(n + 0.5) : -Math.floor(-n + 0.5);
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Modo de carga por item: PRESENTACION vs EMPAQUE
+// ─────────────────────────────────────────────────────────────────────────
+//
+// El detector del backend emite un `packHintUnits` cuando ve un número
+// después de un marcador (`x`/`*`/`×`) en el nombre del producto. Ese número
+// es ambiguo:
+//
+//   - EMPAQUE  → el número es un multiplicador (p.ej. "COCA x 24" = 24
+//                unidades sueltas dentro de un paquete). Se multiplica
+//                cantidad y se divide el precio.
+//   - PRESENTACION / GRAMAJE → el número es parte de la presentación del
+//                producto (p.ej. "CREMA DENTAL x 58 ML" = una crema de 58 ml,
+//                no 58 cremas). Se recibe como UNA unidad por renglón, sin
+//                multiplicar ni dividir precio.
+//
+// El modo final siempre lo decide el operario en el modal, pero clasificamos
+// un default pragmático a partir del nombre para evitar errores legacy.
+//
+// Prioridad del default (ver `classifyPackMode`):
+//   1. Marcadores de empaque explícitos (`UND`, `UNID`, `UNIDADES`, `UN`,
+//      `PAQUETE`, `CAJAS`, `BOTELLAS`, `LATAS`) → EMPAQUE.
+//   2. Magnitudes físicas (`ML`, `L`, `LT`, `CC`, `OZ`, `G`, `GR`, `GRS`,
+//      `KG`, `MG`) → PRESENTACION.
+//   3. Nada reconocible → EMPAQUE (comportamiento histórico — honramos el
+//      hint del backend tal cual).
+
+export const PACK_MODE_EMPAQUE = 'EMPAQUE';
+export const PACK_MODE_PRESENTACION = 'PRESENTACION';
+
+// Palabras explícitas que señalan que el número ES un multiplicador real:
+// p.ej. "CAP X 24 UND" o "GASEOSA PAQUETE X 6". Si una de éstas aparece en
+// el nombre, el default es EMPAQUE sin importar que haya una magnitud.
+const PACK_WORDS_REGEX = /\b(UND|UNIDS?|UNIDADES?|PAQUETES?|CAJAS?|BOTELLAS?|LATAS?|BOLSAS?|TARROS?|FRASCOS?|SOBRES?|SIX\s?PACK)\b/;
+
+// Magnitudes físicas que señalan que el número es parte de la presentación.
+// Incluimos la gran mayoría de abreviaturas colombianas vistas en facturas
+// de abarrotes. OZ y CC son más raras pero inofensivas.
+const MAGNITUDE_WORDS_REGEX = /\b(ML|L|LT|LTS|CC|OZ|G|GR|GRS|GRAMOS?|KG|KILOS?|MG)\b/;
+
+/**
+ * Clasifica el modo de carga por default para un item con hint de empaque.
+ * Resultado determinístico y puro:
+ *   - 'EMPAQUE' si el nombre menciona un marcador de empaque explícito
+ *     (UND/UNIDADES/PAQUETE/CAJAS/BOTELLAS/LATAS/...).
+ *   - 'PRESENTACION' si el nombre contiene una magnitud física
+ *     (ML/G/GR/GRS/KG/MG/...).
+ *   - 'EMPAQUE' en cualquier otro caso (default conservador: honramos el
+ *     hint del backend).
+ *
+ * Esta clasificación NO cambia el objeto; sólo sugiere un default que la UI
+ * puede sobrescribir. Al elegir manualmente otro modo, se descarta.
+ */
+export function classifyPackMode(item) {
+  if (!item || typeof item !== 'object') return PACK_MODE_EMPAQUE;
+  const name = typeof item.invoiceName === 'string' && item.invoiceName.trim()
+    ? item.invoiceName
+    : typeof item.productName === 'string' && item.productName.trim()
+      ? item.productName
+      : typeof item.name === 'string'
+        ? item.name
+        : '';
+  if (!name) return PACK_MODE_EMPAQUE;
+  const upper = name.toUpperCase();
+  // Marcadores explícitos ganan primero: un "CAP X 24 UND" quiere EMPAQUE
+  // aunque también contuviera "ML" por accidente ("CAP X 24 UND DE 58ML").
+  if (PACK_WORDS_REGEX.test(upper)) return PACK_MODE_EMPAQUE;
+  if (MAGNITUDE_WORDS_REGEX.test(upper)) return PACK_MODE_PRESENTACION;
+  return PACK_MODE_EMPAQUE;
+}
+
+/**
+ * Convierte un item OCR en modo PRESENTACION / GRAMAJE: cada renglón de la
+ * factura entra al stock como UNA unidad (no se multiplica cantidad ni se
+ * divide precio). Pensado para casos donde el "x 58 ML" del nombre es parte
+ * de la presentación, no un multiplicador real.
+ *
+ * Reglas:
+ *   - Deja `quantity`, `unitPrice`, `costUnit`, `costoReal`, `pvpSugerido`,
+ *     `pvpActual`, `totalPrice`, `bonus_quantity`, `currentStock`,
+ *     `currentWac`, `marginUsed` intactos: el precio del paquete YA es el
+ *     precio de la unidad final.
+ *   - LIMPIA la bandera `requiresPackConfirmation` y el hint
+ *     `packHintUnits`/`pack_hint_units` para que ningún paso aguas abajo
+ *     reabra el flujo de confirmación.
+ *   - Marca trazabilidad simétrica a EMPAQUE:
+ *       `packMode = 'PRESENTACION'`
+ *       `confirmedUnitsPerPack = 1` (consumidores que lean "unidades por
+ *       paquete" interpretan 1 como "sin conversión").
+ *       `packConversionApplied = true` (evita que downstream intente volver
+ *       a procesar el item).
+ *
+ * NUNCA muta el objeto original: siempre retorna una copia.
+ */
+export function convertItemAsPresentation(item) {
+  if (!item || typeof item !== 'object') return item;
+  const next = { ...item };
+  next.confirmedUnitsPerPack = 1;
+  next.packConversionApplied = true;
+  next.packMode = PACK_MODE_PRESENTACION;
+  // Al elegir presentación limpiamos las banderas del detector para que
+  // ningún consumidor aguas abajo vuelva a abrir la revisión de empaque.
+  next.requiresPackConfirmation = false;
+  next.requires_pack_confirmation = false;
+  next.packHintUnits = 0;
+  next.pack_hint_units = 0;
+  return next;
+}
+
 /**
  * Convierte un item OCR cuyo precio y cantidad vienen expresados en PAQUETES
  * a su representación en UNIDADES INDIVIDUALES, preservando el valor total
@@ -403,6 +512,7 @@ export function convertItemToIndividualUnits(item, unitsPerPack) {
   // Marcamos que el item ya ha sido convertido para que ningún punto
   // aguas abajo multiplique de nuevo accidentalmente.
   next.packConversionApplied = true;
+  next.packMode = PACK_MODE_EMPAQUE;
 
   return next;
 }

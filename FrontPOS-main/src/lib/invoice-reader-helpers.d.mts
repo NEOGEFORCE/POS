@@ -121,9 +121,28 @@ export interface PackConvertedItem extends InvoiceItemLike {
   confirmedUnitsPerPack?: number;
   /** Marca que la conversión ya corrió — evita doble multiplicación. */
   packConversionApplied?: boolean;
+  /** Modo elegido por el operario (EMPAQUE o PRESENTACION). */
+  packMode?: PackMode;
 }
 
 export function convertItemToIndividualUnits<T extends InvoiceItemLike>(
   item: T | null | undefined,
   unitsPerPack: number | string,
+): T & PackConvertedItem;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Modo de carga por item: PRESENTACION vs EMPAQUE
+// ─────────────────────────────────────────────────────────────────────────
+
+export const PACK_MODE_EMPAQUE: 'EMPAQUE';
+export const PACK_MODE_PRESENTACION: 'PRESENTACION';
+
+export type PackMode = 'EMPAQUE' | 'PRESENTACION';
+
+export function classifyPackMode(
+  item: PackHintItemLike | null | undefined,
+): PackMode;
+
+export function convertItemAsPresentation<T extends InvoiceItemLike>(
+  item: T | null | undefined,
 ): T & PackConvertedItem;

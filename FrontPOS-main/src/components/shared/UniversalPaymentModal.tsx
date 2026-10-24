@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, ReactNode } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, ReactNode } from "react";
 import {
   Modal, ModalContent, Button, Avatar
 } from "@heroui/react";
@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import {
   Banknote, Zap, Check, Wallet, ArrowRight, X,
   Calculator, ShieldCheck, TrendingUp, Grid3X3, Users, AlertTriangle,
-  Printer, Send, MessageCircle, Trash2
+  Printer, Send, MessageCircle, Trash2, QrCode
 } from 'lucide-react';
 import { Customer } from '@/lib/definitions';
 import { formatCurrency } from "@/lib/utils";
@@ -16,9 +16,13 @@ import { useToast } from "@/hooks/use-toast";
 import { apiFetch } from "@/lib/api-error";
 import { API_URL } from "@/lib/constants";
 import { getSessionToken } from "@/lib/session";
+import { useAuth } from "@/lib/auth";
+import ModalPagoBoldQR from "@/components/shared/ModalPagoBoldQR";
+import { BOLD_QR_ALREADY_PAID_SENTINEL, BOLD_QR_METHOD_LABEL } from "@/lib/bold-qr-helpers.mjs";
 import {
   type TicketData,
   DIRECT_PRINT_UNAVAILABLE,
+  formatDateTime,
   getAutoPrint as readAutoPrint,
   hasPosBridgePrint,
   printThermalTicket,
@@ -92,6 +96,128 @@ interface UniversalPaymentModalProps {
   onClientSelectorOpen?: () => void;
   pendingReturnAmount?: number;
   originalPaymentMethod?: string;
+  /**
+   * Se dispara cuando el cajero elige "QR Bold / Bre-B" en la grilla de
+   * métodos. Firma `(amount, ventaTempId)` — el UPM genera el
+   * `ventaTempId` *antes* de abrir el modal hijo para que el padre
+   * pueda pre-registrar un snapshot durable del carrito con ese
+   * identificador exacto (migración 027 — snapshot al abrir, no al
+   * encolar).
+   *
+   * El callback **puede devolver `Promise<void>`**: si lo hace, el UPM
+   * espera a que resuelva antes de abrir `ModalPagoBoldQR`. Si el
+   * callback lanza, el UPM NO abre el modal hijo y muestra un toast
+   * explicativo (sin tocar el carrito ni los canales ya acumulados).
+   *
+   * Si el padre no provee este callback, el tab QR queda deshabilitado
+   * silenciosamente (back-compat: consumidores legacy no se enteran
+   * del método nuevo).
+   *
+   * Contrato:
+   *   - El callback NO cierra el UniversalPaymentModal; el padre decide
+   *     cerrarlo cuando la aprobación del QR dispara el flujo normal
+   *     `onPay({ cash:0, transfer: effectiveTotal, transferSource: 'BOLD_QR', ... })`.
+   *   - El QR es ESTÁTICO: no acepta montos parciales. Por eso el tab
+   *     deshabilita el numpad de montos parciales (no se muestra el
+   *     panel de cash/NEQUI/DAVIPLATA cuando activePaymentTab === 'BOLD_QR').
+   *   - El `ventaTempId` que recibe el callback es EXACTAMENTE el mismo
+   *     que luego se pasa a `onBoldQrEnqueueRequested`, para que el
+   *     backend reutilice (reused=true) la intención pre-registrada.
+   */
+  onBoldQrRequested?: (amount: number, ventaTempId: string) => void | Promise<void>;
+  /**
+   * Flujo asíncrono QR (migración 027). Si el padre lo provee, el modal
+   * `ModalPagoBoldQR` muestra el botón primario "DEJAR EN ESPERA Y
+   * SEGUIR ATENDIENDO". El callback debe:
+   *   1. Construir el snapshot del carrito con `clientTxId` fresco.
+   *   2. POST /api/pos/pagos-qr/encolar y esperar 200.
+   *   3. Al éxito, llamar `useNewSale.confirmEnqueuedAndFreeCart()` para
+   *      liberar SÓLO el carrito activo y abrir uno limpio.
+   * Al fallo debe lanzar una excepción con mensaje legible para que el
+   * modal pinte el estado ERROR sin tocar el carrito.
+   *
+   * **Contrato exacto (migración 027)**: el callback recibe
+   * `(ventaTempId, monto)` tomados de las props del modal hijo. El
+   * padre NUNCA debe regenerar el `ventaTempId` ni recalcular el
+   * `monto`: usar los valores exactos recibidos evita que la bandeja
+   * global termine con dos pendientes por el mismo monto.
+   *
+   * Si el callback no se provee, el botón queda deshabilitado y el
+   * modal se comporta como el flujo sincrónico heredado (el cajero
+   * espera frente al QR).
+   */
+  onBoldQrEnqueueRequested?: (ventaTempId: string, monto: number) => Promise<void>;
+  /**
+   * Solicitud de REAPERTURA de un cobro QR ya encolado. Shape canónico
+   * `{ ventaTempId, monto }` tomado literalmente del pending (bandeja).
+   * Contrato de **un solo uso**:
+   *
+   *   - El padre `/sales/new/page.tsx` setea el payload cuando el cajero
+   *     pulsa "Reabrir QR" en la bandeja y abre el UPM.
+   *   - El UPM detecta el payload presente al abrir, abre el modal QR
+   *     hijo con ESOS valores exactos (sin regenerar nada) y dispara
+   *     `onBoldQrReopenConsumed()` para que el padre LIMPIE el payload
+   *     a `null` inmediatamente.
+   *   - Si el padre NO limpia (consumidor legacy), el UPM igual
+   *     garantiza que el mismo payload no se reconsuma: cada apertura
+   *     requiere un payload fresco; nunca se reabre el QR al reabrir
+   *     el UPM.
+   *
+   * Sin este payload el QR **NUNCA** se abre automáticamente al abrir
+   * el UPM; el cajero debe pulsar "QR Bold / Bre-B" explícitamente.
+   * Esta regla cierra el bug observado en 2026-10-23 (el modal reabría
+   * un QR pagado al abrir cobros de otra cuenta).
+   */
+  boldQrReopenPayload?: { readonly ventaTempId: string; readonly monto: number } | null;
+  /**
+   * Callback que el UPM dispara EXACTAMENTE UNA VEZ al consumir un
+   * `boldQrReopenPayload`. El padre debe reaccionar poniendo el payload
+   * a `null` (y cualquier estado derivado) para evitar que el payload
+   * sobreviva al cierre del UPM y se reconsuma al abrir otra cuenta.
+   */
+  onBoldQrReopenConsumed?: () => void;
+  /**
+   * Callback explícito del flujo APROBADO con `saleId > 0` (migración
+   * 027, DispatchAutoSale post-commit). Se dispara EXACTAMENTE UNA
+   * VEZ por intención cuando el backend emite el frame SSE
+   * `qr_intent_update` con status=APROBADO + saleId positivo.
+   *
+   * **Contrato duro**:
+   *   - Al recibir APROBADO con `saleId > 0`, el UPM **NO llama
+   *     `onPay`**: eso regeneraría un `clientTxId` fresco en
+   *     `handleConfirmSale` y crearía una SEGUNDA venta en
+   *     `/sales/register`, duplicando el stock. La venta ya existe
+   *     canónicamente en el backend (`SaleService.CreateSale` +
+   *     `MarkFinalizationSucceeded` vinculó `related_sale_id`).
+   *   - El UPM invoca `onBoldQrFinalized` con el `ventaTempId` que
+   *     generó al abrir el modal + el `saleId` del backend + los
+   *     metadatos del frame SSE. El padre `/sales/new/page.tsx`
+   *     deduplica contra la bandeja global (`useBoldQrTray`) con un
+   *     Set compartido por `ventaTempId`/`saleId` para no mostrar dos
+   *     alertas ni limpiar dos carritos.
+   *   - El padre es responsable de cerrar el UPM
+   *     (`onOpenChange(false)`), borrar la preparación guardada en
+   *     `qrPreparationsRef` y liberar SOLO el carrito actual vía
+   *     `confirmEnqueuedAndFreeCart`. El UPM garantiza idempotencia
+   *     interna con `isProcessingRef` + el guard
+   *     `approvedFiredRef` del modal hijo.
+   *   - Si APROBADO llega **sin** `saleId > 0`, el UPM muestra una
+   *     alerta UX "Esperando conciliación" y **nunca** llama a
+   *     `onPay` automáticamente — el backend reconciliará con el
+   *     bridge/webhook y la bandeja global.
+   *
+   * El flujo heredado donde la aprobación QR disparaba un POST
+   * `/sales/register` desde el frontend quedó aislado: ya no vive
+   * como fallback de este modal.
+   */
+  onBoldQrFinalized?: (info: {
+    readonly ventaTempId: string;
+    readonly saleId: number;
+    readonly amountCop?: number;
+    readonly reference?: string;
+    readonly approvedAt?: string;
+    readonly approvedVia?: string;
+  }) => void;
 }
 
 /* ---------------------------------------------------------------------------
@@ -148,17 +274,31 @@ interface NumpadKeyProps {
   variant?: "digit" | "clear" | "add";
   fullHeight?: boolean;
   themeBgClass?: string;
+  size?: "compact" | "tall";
 }
 
-function NumpadKey({ value, onPress, variant = "digit", fullHeight = false, themeBgClass = "" }: NumpadKeyProps) {
-  const base = "font-semibold rounded-2xl transition-all shadow-[0_8px_30px_rgb(0,0,0,0.12)] active:scale-95";
-  const sizing = fullHeight ? "h-full text-2xl" : "h-12 text-lg";
+function NumpadKey({ value, onPress, variant = "digit", fullHeight = false, themeBgClass = "", size }: NumpadKeyProps) {
+  const base = "font-semibold rounded-2xl transition-all active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-emerald-500/60";
+  // Tamaños UNIFICADOS. Antes había 3 variantes visuales (h-12 text-lg móvil
+  // cash, h-12 text-lg móvil no-cash, h-full text-2xl desktop fullHeight);
+  // ahora se consolidan en dos: `compact` (móvil, h-12 text-lg) y `tall`
+  // (desktop, h-14 text-xl). `fullHeight` queda como alias legacy para la
+  // forma antigua que estiraba al alto del contenedor; evitamos usarlo en
+  // los nuevos renders para mantener alturas constantes al cambiar de tab
+  // y evitar que el pad desktop se "achate" según el contenido del centro.
+  const resolvedSize = size ?? (fullHeight ? "legacy-full" : "compact");
+  const sizing =
+    resolvedSize === "tall"
+      ? "h-14 text-xl"
+      : resolvedSize === "legacy-full"
+        ? "h-full text-2xl"
+        : "h-12 text-lg";
   const tone =
     variant === "clear"
-      ? "text-rose-500 bg-rose-500/10 border-2 border-rose-500/20 active:bg-rose-500/20"
+      ? "text-rose-500 bg-rose-500/10 border border-rose-500/20 hover:bg-rose-500/20 active:bg-rose-500/25 shadow-sm"
       : variant === "add"
-        ? `${themeBgClass} text-white`
-        : "bg-white dark:bg-zinc-800 text-gray-900 dark:text-white active:bg-gray-200 dark:active:bg-zinc-700 border border-transparent";
+        ? `${themeBgClass} text-white border border-transparent shadow-md hover:brightness-110`
+        : "bg-white dark:bg-zinc-800 text-gray-900 dark:text-white border border-gray-200 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-zinc-700/70 active:bg-gray-200 dark:active:bg-zinc-700 shadow-sm";
   return (
     <Button
       tabIndex={-1}
@@ -171,6 +311,94 @@ function NumpadKey({ value, onPress, variant = "digit", fullHeight = false, them
     >
       {value}
     </Button>
+  );
+}
+
+/* ---------------------------------------------------------------------------
+ * PaymentKeypad — teclado numérico ÚNICO del modal de cobro.
+ *
+ * Antes del sprint 2026-10 había tres numpads inline con proporciones
+ * distintas (dos móviles con `h-12 text-lg` y un desktop con `h-full
+ * text-2xl`). Lo que al cajero le parecía "duplicado" era en realidad el
+ * mismo teclado reescrito tres veces, con alturas distintas y el flip
+ * cash↔billetes acentuando la inconsistencia.
+ *
+ * Ahora PaymentKeypad centraliza la grilla 4×3 con el array canónico
+ * `[1..9, 0, '+', 'CE']` y una variante de tamaño (`compact` para móvil,
+ * `tall` para el pad fijo de escritorio). Se renderiza en dos lugares
+ * del árbol:
+ *   - Móvil (`md:hidden`): se usa en el flujo cash y en los tabs digitales,
+ *     siempre con la misma proporción y jerarquía visual.
+ *   - Desktop (`hidden md:flex`): vive en el pad derecho, con el mismo
+ *     componente pero `size="tall"` para igualar la densidad táctil.
+ *
+ * Reglas duras del componente:
+ *   - NO toca `dialogAmount` directamente: expone callbacks puros
+ *     (`onDigit`, `onAdd`, `onClear`) y deja la decisión al padre.
+ *   - NO roba foco al input (los `NumpadKey` ya traen tabIndex={-1} +
+ *     onMouseDown.preventDefault).
+ *   - MANTIENE el array canónico (dígitos 1-9, 0, '+', 'CE')
+ *     dentro de su cuerpo. El guardián `payment-combined-ui.test.mjs`
+ *     verifica que el `+` siga alcanzable tanto en móvil como en
+ *     escritorio (dos renders del PaymentKeypad en el DOM).
+ * ------------------------------------------------------------------------- */
+
+interface PaymentKeypadProps {
+  size: "compact" | "tall";
+  themeBgClass: string;
+  onDigit: (digit: string) => void;
+  onAdd: () => void;
+  onClear: () => void;
+  gapClassName?: string;
+  containerClassName?: string;
+  /**
+   * Si es true, el contenedor usa `flex-1` para ocupar el alto disponible.
+   * Útil para el pad desktop fijo. En móvil siempre va `false` para
+   * respetar la altura compacta del keypad.
+   */
+  stretchVertical?: boolean;
+  ariaLabel?: string;
+}
+
+function PaymentKeypad({
+  size,
+  themeBgClass,
+  onDigit,
+  onAdd,
+  onClear,
+  gapClassName,
+  containerClassName,
+  stretchVertical = false,
+  ariaLabel = "Teclado numérico de monto",
+}: PaymentKeypadProps) {
+  const gap = gapClassName ?? (size === "tall" ? "gap-3" : "gap-2");
+  const stretch = stretchVertical ? "flex-1" : "";
+  // Array canónico del numpad. La forma 4 filas × 3 columnas con `+` en
+  // la fila final permite acumular canales en pagos mixtos sin salir del
+  // teclado. Mantener el literal explícito también sirve de ancla para
+  // el guardián `payment-combined-ui.test.mjs`.
+  const keys: ReadonlyArray<string | number> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0, "+", "CE"];
+  return (
+    <div
+      role="group"
+      aria-label={ariaLabel}
+      className={`grid grid-cols-3 ${gap} ${stretch} ${containerClassName ?? ""}`.trim()}
+    >
+      {keys.map((n) => (
+        <NumpadKey
+          key={n}
+          value={n}
+          size={size}
+          variant={n === "CE" ? "clear" : n === "+" ? "add" : "digit"}
+          themeBgClass={themeBgClass}
+          onPress={() => {
+            if (n === "CE") onClear();
+            else if (n === "+") onAdd();
+            else onDigit(String(n));
+          }}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -199,7 +427,12 @@ export default function UniversalPaymentModal({
   isRefund = false,
   onClientSelectorOpen,
   pendingReturnAmount = 0,
-  originalPaymentMethod = "EFECTIVO"
+  originalPaymentMethod = "EFECTIVO",
+  onBoldQrRequested,
+  onBoldQrEnqueueRequested,
+  boldQrReopenPayload,
+  onBoldQrReopenConsumed,
+  onBoldQrFinalized,
 }: UniversalPaymentModalProps) {
 
   const netExchangeBalance = totalToPay - (pendingReturnAmount || 0);
@@ -214,6 +447,38 @@ export default function UniversalPaymentModal({
   const [isMobileNumpadOpen, setIsMobileNumpadOpen] = useState(false);
   const [dialogAmount, setDialogAmount] = useState('');
   const [cashTendered, setCashTendered] = useState<string>('');
+
+  // --- QR Bold / Bre-B (cobro real) ---
+  //
+  // El modal ModalPagoBoldQR vive encapsulado aquí para que el cajero no
+  // tenga que salir del cobro, elegir un flujo paralelo o cambiar de
+  // página. Reglas duras del integración:
+  //   - El trigger `handleOpenBoldQr` sólo abre el modal cuando queda
+  //     saldo pendiente real (`remainingDebt > 0`) y no es flujo de salida
+  //     (reembolsos / egresos no admiten QR entrante).
+  //   - El trigger NUNCA fuerza el total: usamos exactamente lo que falta
+  //     por cubrir (`remainingDebt`), para que el cajero pueda cobrar
+  //     parcialmente en efectivo y el resto por QR si así lo decide.
+  //   - La aprobación dispara `processPayment` UNA sola vez tras aplicar
+  //     el canal `BOLD_QR` como transferencia; la guarda interna
+  //     `isProcessingRef` sigue vigente para prevenir doble envío.
+  //   - No se expone BOLD_BRIDGE_TOKEN ni BOLD_SECRET_KEY: la lectura de
+  //     `cajaId` (DNI del cajero) viene de `useAuth`.
+  const [isBoldQrOpen, setIsBoldQrOpen] = useState(false);
+  // QR abierto desde "Reabrir QR" de la bandeja (cobro ya en espera, con
+  // su carrito guardado en el servidor). Nunca se encola ni se cancela
+  // desde aquí, y cerrar devuelve al cajero a la venta que registraba.
+  const [isBoldQrReopen, setIsBoldQrReopen] = useState(false);
+  const [boldQrAmount, setBoldQrAmount] = useState(0);
+  const boldSessionIdRef = useRef<string>("");
+  const boldApprovedPayloadRef = useRef<{ cash: number; transfer: number; transferSource: string; transferNequi: number; transferDaviplata: number; credit: number; totalPaid: number; change: number } | null>(null);
+  const { user } = useAuth();
+  // `toast` se hoistea aquí porque `handleOpenBoldQr` lo captura en sus
+  // dependencias (TDZ con `const` destructurado si lo declaramos más
+  // abajo). Antes vivía justo antes de los helpers de impresión; moverlo
+  // no cambia su valor runtime pero evita el ReferenceError que apareció
+  // al añadir el camino asíncrono de preparación QR.
+  const { toast } = useToast();
 
   // Clases estaticas para evitar problemas con el purgado de Tailwind y errores de referencia
   const isOut = flowType === "out";
@@ -401,12 +666,269 @@ export default function UniversalPaymentModal({
     }
   }, [isCreditInvalid, isOverCreditLimit, isBlockedTransferRefund, submittingPayment, cashPaid, nequiPaid, daviplataPaid, creditPaid, cashTendered, currentDialogVal, activePaymentTab, remainingDebt, effectiveTotal, baseReturnRefund, onPay, isAbono, actualPayment]);
 
+  // --- QR Bold / Bre-B: trigger y aprobación ---
+  //
+  // El cajero puede abrir el modal con cualquier canal activo (cash,
+  // Nequi, Daviplata, fiado); el saldo pendiente real (`remainingDebt`)
+  // es lo que se cobra por Bre-B. Si no queda saldo, estamos en flujo
+  // de salida (reembolsos) o el padre no provee `onBoldQrRequested`
+  // (consumidor legacy), el botón NO se habilita.
+  const canUseBoldQr = useMemo(
+    () => !!onBoldQrRequested
+      && flowType === "in"
+      && !isReturnExchange
+      && !isAbono
+      && !isRefund
+      && remainingDebt > 0.5
+      && !submittingPayment,
+    [onBoldQrRequested, flowType, isReturnExchange, isAbono, isRefund, remainingDebt, submittingPayment],
+  );
+
+  const handleOpenBoldQr = useCallback(async () => {
+    if (!canUseBoldQr) return;
+    // Cada click en "QR Bold" DEBE arrancar fresco. Limpiamos los refs
+    // de la sesión anterior ANTES de generar el nuevo ventaTempId: así,
+    // si la preparación falla, nunca reutilizamos un identificador
+    // viejo ni un monto obsoleto en reaperturas futuras.
+    boldApprovedPayloadRef.current = null;
+    boldSessionIdRef.current = "";
+    setBoldQrAmount(0);
+    setIsBoldQrOpen(false);
+    // Generamos el ventaTempId ANTES de pedir la preparación al padre:
+    // ese mismo identificador quedará escrito en el backend durante
+    // `/iniciar` (migración 027 — snapshot durable) y será reutilizado
+    // por `/encolar` sin regenerarse. Usamos `crypto.randomUUID` cuando
+    // existe y caemos a timestamp+random si el navegador es viejo —
+    // nunca reaprovechamos una intención ya cerrada.
+    const uuid = typeof globalThis.crypto !== "undefined"
+      && typeof globalThis.crypto.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `bold-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const amount = Math.round(remainingDebt);
+
+    // Si el padre provee un callback, lo esperamos ANTES de abrir el
+    // modal hijo. Esto permite al padre pre-registrar la intención en
+    // el backend con el snapshot del carrito; si el backend responde
+    // error (400/500/red caída), el callback debe lanzar y el QR
+    // nunca se mostrará al cliente. El carrito queda intacto y el
+    // cajero puede escoger otro canal.
+    //
+    // Caso especial: cuando el backend indica que la intención YA
+    // está pagada (`alreadyPaid=true` en `/iniciar`), el padre lanza
+    // `BOLD_QR_ALREADY_PAID_SENTINEL`. Lo detectamos aquí y
+    // retornamos SIN abrir el modal hijo ni mostrar toast de error:
+    // el padre ya cerró el UPM y mostró su propio UX informativo.
+    if (typeof onBoldQrRequested === "function") {
+      try {
+        await onBoldQrRequested(amount, uuid);
+      } catch (err) {
+        if (err instanceof Error && err.message === BOLD_QR_ALREADY_PAID_SENTINEL) {
+          // Flujo "ya pagada" — abortar en silencio, el padre ya
+          // finalizó visualmente.
+          return;
+        }
+        const description = err instanceof Error && err.message
+          ? err.message
+          : "Intenta de nuevo o cambia de método.";
+        toast({
+          variant: "destructive",
+          title: "NO SE PUDO PREPARAR EL QR",
+          description,
+        });
+        return;
+      }
+    }
+
+    // Preparación OK (o sin callback — flujo legacy): recién ahora
+    // publicamos el identificador en el ref y abrimos el modal hijo.
+    boldSessionIdRef.current = uuid;
+    setIsBoldQrReopen(false);
+    setBoldQrAmount(amount);
+    setIsBoldQrOpen(true);
+  }, [canUseBoldQr, remainingDebt, onBoldQrRequested, toast]);
+
+  const handleBoldQrApproved = useCallback(async (info?: {
+    reference: string;
+    approvedAt: string;
+    approvedVia: string;
+    saleId?: number;
+    amountCop?: number;
+  }) => {
+    // ---------------------------------------------------------------
+    // Flujo APROBADO con `saleId > 0` — ÚNICA ruta válida post-027.
+    //
+    // El backend (`DispatchAutoSale` + `MarkFinalizationSucceeded`)
+    // ya materializó la venta canónica y vinculó `related_sale_id`.
+    // El modal hijo nos entrega el `saleId` dentro del frame SSE
+    // `qr_intent_update`. Aquí ÚNICAMENTE delegamos al padre vía
+    // `onBoldQrFinalized`: el padre deduplica contra la bandeja
+    // global, cierra el UPM, borra la preparación local y libera el
+    // carrito activo.
+    //
+    // **Línea roja:** JAMÁS llamamos a `onPay` en esta rama. Hacerlo
+    // regeneraría un `clientTxId` fresco en `handleConfirmSale`
+    // (useNewSale.ts) y dispararía un POST `/sales/register`
+    // completo, creando una segunda venta duplicada con stock doble
+    // descontado. El bug observado "APROBADO post-commit crea otra
+    // venta" vivía exactamente aquí.
+    //
+    // Si APROBADO llega sin `saleId > 0` (snapshot inconsistente,
+    // backend fuera de sync), tampoco llamamos a `onPay`: mostramos
+    // alerta UX y esperamos conciliación. El backend reconciliará vía
+    // bridge/webhook y la bandeja global.
+    // ---------------------------------------------------------------
+    if (isProcessingRef.current || submittingPayment) return;
+
+    const rawSaleId = info?.saleId;
+    const saleId = typeof rawSaleId === "number"
+      && Number.isFinite(rawSaleId)
+      && Number.isInteger(rawSaleId)
+      && rawSaleId > 0
+      ? rawSaleId
+      : 0;
+    const ventaTempId = typeof boldSessionIdRef.current === "string" && boldSessionIdRef.current.trim()
+      ? boldSessionIdRef.current.trim()
+      : "";
+
+    if (saleId > 0) {
+      isProcessingRef.current = true;
+      try {
+        if (typeof onBoldQrFinalized === "function") {
+          onBoldQrFinalized({
+            ventaTempId,
+            saleId,
+            amountCop: typeof info?.amountCop === "number" && Number.isFinite(info.amountCop) && info.amountCop > 0
+              ? Math.round(info.amountCop)
+              : undefined,
+            reference: info?.reference,
+            approvedAt: info?.approvedAt,
+            approvedVia: info?.approvedVia,
+          });
+        } else {
+          // Consumidor legacy (no proveyó `onBoldQrFinalized`): la
+          // venta ya quedó cerrada en el backend. Avisamos sin
+          // disparar `onPay` (nunca duplicamos ventas desde el
+          // frontend para BOLD_QR).
+          toast({
+            variant: "success",
+            title: "QR APROBADO EN SERVIDOR",
+            description: `Venta #${saleId} cerrada por el backend. Recarga el POS para ver el estado.`,
+          });
+        }
+      } finally {
+        // Resetear el ventaTempId local y limpiar el sub-modal QR;
+        // el UPM lo cierra el padre vía `onOpenChange(false)`. Si el
+        // padre no cerró (caso legacy), al menos el QR hijo queda
+        // limpio para el siguiente cobro.
+        boldSessionIdRef.current = "";
+        boldApprovedPayloadRef.current = null;
+        setIsBoldQrOpen(false);
+        isProcessingRef.current = false;
+      }
+      return;
+    }
+
+    // saleId ausente/<=0: NO toque `onPay`. En el flujo post-027 el
+    // backend sólo publica APROBADO después del commit; esta rama
+    // es defensiva por si llega un frame histórico corrupto. Mostramos
+    // alerta y conservamos la UI para que el cajero decida.
+    toast({
+      variant: "destructive",
+      title: "QR APROBADO — ESPERANDO CONCILIACIÓN",
+      description: "El pago llegó pero el servidor aún no vinculó la venta. Consulta la bandeja global antes de reintentar.",
+    });
+    setIsBoldQrOpen(false);
+  }, [submittingPayment, onBoldQrFinalized, toast]);
+
+  // Cancelar / cambiar método: NO disparamos `onPay`. El cajero vuelve al
+  // UniversalPaymentModal, puede escoger otro canal o cerrar. El ref de
+  // sesión queda inválido para la próxima apertura y se limpia el flag de
+  // isBoldQrOpen para que el próximo click de "QR Bold" arranque fresco.
+  const handleBoldQrCancel = useCallback(() => {
+    boldSessionIdRef.current = "";
+    boldApprovedPayloadRef.current = null;
+    setBoldQrAmount(0);
+    setIsBoldQrOpen(false);
+    if (isBoldQrReopen) {
+      // Reapertura desde la bandeja: el UPM se abrió sólo para mostrar
+      // el QR. Cerramos todo y el cajero sigue con su venta intacta.
+      setIsBoldQrReopen(false);
+      onOpenChange(false);
+    }
+  }, [isBoldQrReopen, onOpenChange]);
+
+  // --- Consumidor del `boldQrReopenPayload` (un solo uso) ---
+  //
+  // El padre (`/sales/new/page.tsx`) coloca `boldQrReopenPayload` cuando
+  // el cajero pulsa "Reabrir QR" en la bandeja. El UPM:
+  //
+  //   1. Al abrirse (o cuando llega un payload fresco), si el payload
+  //      es válido, abre el modal hijo con ESOS valores exactos (sin
+  //      regenerar nada) y marca el payload como consumido en un ref
+  //      local.
+  //   2. Inmediatamente dispara `onBoldQrReopenConsumed()` para que el
+  //      padre LIMPIE el payload a `null`. Si el padre no provee el
+  //      callback (consumidor legacy), igual el ref local anti-replay
+  //      evita que la misma referencia de payload se reconsuma al
+  //      cerrar/abrir el UPM.
+  //
+  // **Línea roja (bug 2026-10-23):** si no hay payload, el UPM
+  // JAMÁS abre el QR por sí mismo. El cajero debe pulsar "QR Bold /
+  // Bre-B" explícitamente dentro de la grilla de métodos. Abrir el
+  // modal de pago nunca abre el QR solo.
+  const lastConsumedReopenRef = useRef<{ readonly ventaTempId: string; readonly monto: number } | null>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    if (!boldQrReopenPayload) return;
+    const reopenVenta = typeof boldQrReopenPayload.ventaTempId === "string"
+      ? boldQrReopenPayload.ventaTempId.trim()
+      : "";
+    const reopenMonto = typeof boldQrReopenPayload.monto === "number"
+      && Number.isFinite(boldQrReopenPayload.monto)
+      && boldQrReopenPayload.monto > 0
+      ? Math.round(boldQrReopenPayload.monto)
+      : 0;
+    if (!reopenVenta || reopenMonto <= 0) return;
+    const last = lastConsumedReopenRef.current;
+    if (last && last.ventaTempId === reopenVenta && last.monto === reopenMonto) {
+      // Mismo payload que ya consumimos en esta sesión del UPM. El
+      // padre no limpió a tiempo; no reabrimos el QR por nuestra cuenta.
+      return;
+    }
+    lastConsumedReopenRef.current = { ventaTempId: reopenVenta, monto: reopenMonto };
+    // Reapertura canónica desde la bandeja: usar exactamente el
+    // ventaTempId y monto registrados en el backend. Esto permite al
+    // POST /iniciar interno responder reused=true sin duplicar la
+    // intención viva.
+    boldApprovedPayloadRef.current = null;
+    boldSessionIdRef.current = reopenVenta;
+    setIsBoldQrReopen(true);
+    setBoldQrAmount(reopenMonto);
+    setIsBoldQrOpen(true);
+    // Pedimos al padre que limpie el payload: contrato de un solo uso.
+    if (typeof onBoldQrReopenConsumed === "function") {
+      try { onBoldQrReopenConsumed(); } catch { /* no-op defensivo */ }
+    }
+  }, [isOpen, boldQrReopenPayload, onBoldQrReopenConsumed]);
+
+  // Limpieza al cerrar el UPM: resetea el ref de reopen consumido y las
+  // referencias del sub-modal QR para que la próxima apertura (misma u
+  // otra factura) arranque fresca y nunca reabra un QR anterior.
+  useEffect(() => {
+    if (isOpen) return;
+    lastConsumedReopenRef.current = null;
+    boldSessionIdRef.current = "";
+    boldApprovedPayloadRef.current = null;
+    setIsBoldQrOpen(false);
+    setIsBoldQrReopen(false);
+    setBoldQrAmount(0);
+  }, [isOpen]);
+
   const keyboardActionsRef = useRef({ processPayment, handleAddPayment, onOpenChange, onCloseComplete });
   useEffect(() => {
     keyboardActionsRef.current = { processPayment, handleAddPayment, onOpenChange, onCloseComplete };
   }, [processPayment, handleAddPayment, onOpenChange, onCloseComplete]);
 
-  const { toast } = useToast();
   const [isTelegramSending, setIsTelegramSending] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
   // Preferencia unificada: se lee desde `thermal-ticket.getAutoPrint`, que
@@ -445,7 +967,13 @@ export default function UniversalPaymentModal({
   const generateTicketText = useCallback(() => {
     const rClient = lastReceipt?.clientName || client?.name || "CONSUMIDOR FINAL";
     const rDni = lastReceipt?.clientDni || client?.dni || "0";
-    const rDate = lastReceipt?.date || new Date().toLocaleString('es-CO');
+    // `lastReceipt.date` ahora se guarda como ISO 8601 en useNewSale para
+    // evitar que `saleToTicket` → `new Date(string)` produzca Invalid Date
+    // por locale. Para la factura de texto plano (Telegram), pasamos ese
+    // ISO por `formatDateTime` para rendirla como `dd/MM/yyyy hh:mm AM`
+    // (y si por alguna razón el campo llegara mal, el helper devuelve
+    // `FECHA NO DISPONIBLE` en vez de un ISO crudo o NaN).
+    const rDate = formatDateTime(lastReceipt?.date ?? new Date());
 
     let text = `🧾 *FACTURA DE VENTA N° #${lastReceipt?.saleId || 'POS'}*\n`;
     text += `🏢 *SUPERMERCADO SURTIFAMILIAR*\n`;
@@ -640,9 +1168,9 @@ export default function UniversalPaymentModal({
   // Es la ÚNICA ruta física automática por venta: `dispatchAutoPrint` nunca
   // embebe el pulso dentro del recibo, por diseño. El browser NUNCA puede
   // abrir físicamente el cajón, así que si no hay bridge, auditamos y
-  // seguimos silenciosamente (sin notificar al cajero: la configuración
-  // visible del cajón se retiró de la UI, así que cualquier fallo del
-  // bridge no debe estorbar la venta). Si hay bridge, le pasamos:
+  // devolvemos un resultado estructurado para que el orquestador decida si
+  // avisar al cajero vía toast (nunca bloquea la venta). Si hay bridge, le
+  // pasamos:
   //   - `drawer`: comando ESC/POS literal + evento (BEFORE_PRINT /
   //     AFTER_PRINT / MANUAL — MANUAL ya quedó filtrado antes de llegar).
   //   - `connection`: a qué impresora enviar el pulso.
@@ -654,30 +1182,94 @@ export default function UniversalPaymentModal({
   // La auditoría a `/cash-drawer/open` se hace primero (audit-first) con
   // `override: false`: el backend acepta porque hay una venta reciente
   // asociada al token del cajero (CASH_DRAWER_REQUIRES_SALE_OR_ADMIN).
+  // Cuando `lastReceipt.saleId` existe (viene del 201 real del backend),
+  // el audit lo adjunta para que la verificación de propiedad del backend
+  // (`IsSaleOwnedByCashier`) actúe sobre la venta exacta y no sólo sobre
+  // la ventana de 90 s de "venta reciente del cajero".
+  //
+  // Deliberadamente NO depende de `autoPrint`, `receipt.deliveryMode`,
+  // ni de `hasPosBridgePrint`: el único gate es `drawer.enabled` +
+  // `drawer.openDrawerOnSale` + `event !== MANUAL`, validado por el
+  // orquestador. Si el bridge de impresión está muerto o el modo es
+  // "browser", el pulso del cajón sigue intentándose porque es una ruta
+  // física independiente del canal del recibo.
+  type DrawerKickResult =
+    | { readonly status: "ok" }
+    | { readonly status: "audit-failed"; readonly message: string }
+    | { readonly status: "bridge-missing" }
+    | { readonly status: "bridge-failed"; readonly message: string };
+
+  // El dispatcher lee el saleId "último conocido" de un ref porque usamos
+  // `useCallback([])` para mantener la referencia estable (el existing
+  // contract test ancla la firma `dispatchDrawerKickOnSale(cfg)` sin
+  // argumentos extra). El ref se sincroniza desde `lastReceipt?.saleId`
+  // en un efecto aparte: `lastReceipt` muta sólo cuando una venta real
+  // se registra con éxito, así que el ref siempre refleja la última
+  // venta que corresponde al cajero sesión actual.
+  const lastReceiptSaleIdRef = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const candidate = (lastReceipt && typeof lastReceipt === "object")
+      ? (lastReceipt as { saleId?: unknown }).saleId
+      : undefined;
+    if (
+      typeof candidate === "number"
+      && Number.isFinite(candidate)
+      && Number.isInteger(candidate)
+      && candidate > 0
+    ) {
+      lastReceiptSaleIdRef.current = candidate;
+    } else {
+      lastReceiptSaleIdRef.current = undefined;
+    }
+  }, [lastReceipt]);
+
   const dispatchDrawerKickOnSale = useCallback(async (
     cfg: ReturnType<typeof loadPrintingConfig>,
-  ) => {
+  ): Promise<DrawerKickResult> => {
+    // Construimos el body de auditoría. `saleId` se adjunta sólo cuando
+    // es entero positivo: nunca inventamos un id y nunca enviamos string
+    // vacío/0 al backend. El backend sin `saleId` aún acepta usando la
+    // ventana de 90 s de venta reciente del cajero.
+    const auditBody: Record<string, unknown> = {
+      override: false,
+      note: "Autoapertura tras venta exitosa",
+      source: "universal-payment-modal",
+      event: cfg.drawer.event,
+    };
+    const saleIdForAudit = lastReceiptSaleIdRef.current;
+    if (
+      typeof saleIdForAudit === "number"
+      && Number.isInteger(saleIdForAudit)
+      && saleIdForAudit > 0
+    ) {
+      auditBody.saleId = saleIdForAudit;
+    }
     try {
       await apiFetch("/cash-drawer/open", {
         method: "POST",
-        body: JSON.stringify({
-          override: false,
-          note: "Autoapertura tras venta exitosa",
-          source: "universal-payment-modal",
-          event: cfg.drawer.event,
-        }),
+        body: JSON.stringify(auditBody),
       });
-    } catch {
-      // Si la auditoría falla (sesión caída, backend sin endpoint, etc.)
-      // seguimos silenciosamente: nunca interrumpimos la UX de éxito de la
-      // venta por un flujo lateral que ni siquiera está visible al cajero.
-      return;
+    } catch (err) {
+      // La auditoría falló (sesión caída, backend sin endpoint, 403 de
+      // propiedad, etc.). NO interrumpimos la venta ni la revertimos:
+      // devolvemos el resultado para que el orquestador avise con un
+      // toast claro no bloqueante.
+      const message = err instanceof Error ? err.message : "No se pudo registrar la autoapertura.";
+      return { status: "audit-failed", message };
     }
-    const w = window as any;
-    if (!w.posBridge?.kickDrawer) {
-      // Sin bridge, el navegador no puede abrir físicamente. Devolvemos
-      // sin ruido: la auditoría quedó registrada.
-      return;
+
+    // Llamada directa a window.posBridge.kickDrawer. NO usamos
+    // `hasPosBridgePrint`: ese helper mide la ruta de IMPRESIÓN. Aquí
+    // sólo nos interesa el pulso lateral, que es un canal independiente
+    // y debe intentarse aunque la impresión esté desconectada.
+    const w = window as typeof window & {
+      posBridge?: { kickDrawer?: (p: unknown) => Promise<unknown> };
+    };
+    if (!w.posBridge || typeof w.posBridge.kickDrawer !== "function") {
+      // Sin bridge, el navegador no puede abrir físicamente. La
+      // auditoría ya quedó registrada; avisamos al cajero para que no
+      // crea que el equipo está roto cuando el pulso no llega.
+      return { status: "bridge-missing" };
     }
     try {
       await w.posBridge.kickDrawer({
@@ -687,10 +1279,44 @@ export default function UniversalPaymentModal({
         drawer: cfg.drawer,
         openDrawerOnSale: true,
       });
-    } catch {
-      // El bridge rechazó el pulso. La auditoría ya quedó registrada.
+      return { status: "ok" };
+    } catch (err) {
+      // El bridge rechazó el pulso (puerto ocupado, impresora apagada,
+      // etc.). La auditoría ya quedó registrada; devolvemos para que el
+      // orquestador avise. NUNCA se revierte la venta.
+      const message = err instanceof Error ? err.message : "El bridge rechazó el pulso.";
+      return { status: "bridge-failed", message };
     }
   }, []);
+
+  // Traduce el resultado del dispatcher a un toast NO BLOQUEANTE. El
+  // texto evita jerga del dispositivo (hay un guardián que prohíbe la
+  // palabra visible, ver `drawer-visible-strings-hidden.test.mjs`) y
+  // deja claro que la venta YA quedó registrada: el fallo es lateral.
+  const notifyDrawerKickResult = useCallback((result: DrawerKickResult): void => {
+    if (result.status === "ok") return;
+    if (result.status === "audit-failed") {
+      toast({
+        variant: "destructive",
+        title: "AUDITORÍA LATERAL FALLÓ",
+        description: "La venta quedó registrada; no se pudo registrar la autoapertura automática.",
+      });
+      return;
+    }
+    if (result.status === "bridge-missing") {
+      toast({
+        variant: "destructive",
+        title: "BRIDGE LATERAL NO DISPONIBLE",
+        description: "La venta quedó registrada; sin bridge local no se puede completar el pulso lateral.",
+      });
+      return;
+    }
+    toast({
+      variant: "destructive",
+      title: "PULSO LATERAL FALLÓ",
+      description: "La venta quedó registrada; el bridge rechazó el pulso lateral.",
+    });
+  }, [toast]);
 
   // Auto-impresión persistente y cajón al completar venta — ORQUESTADOR
   // ÚNICO, SINGLE-FIRE por venta.
@@ -729,14 +1355,28 @@ export default function UniversalPaymentModal({
       && cfg.drawer.event !== DRAWER_EVENTS.MANUAL;
 
     const runSaleCompletionEffects = async () => {
+      // BEFORE_PRINT: el pulso lateral se intenta ANTES de imprimir,
+      // completamente desacoplado de autoPrint y de `receipt.deliveryMode`.
+      // Si falla, el orquestador avisa con un toast lateral y sigue; nunca
+      // se bloquea la venta.
       if (cfg && shouldKick && cfg.drawer.event === DRAWER_EVENTS.BEFORE_PRINT) {
-        await dispatchDrawerKickOnSale(cfg);
+        const result = await dispatchDrawerKickOnSale(cfg);
+        notifyDrawerKickResult(result);
       }
       if (shouldAutoPrint) {
+        // `dispatchAutoPrint` nunca lanza: muestra sus propios toasts si
+        // falla. Esperamos que termine para preservar el orden lógico
+        // AUTO-IMPRESIÓN → AFTER_PRINT, pero su resultado NO condiciona
+        // el intento del pulso lateral que viene después.
         await dispatchAutoPrint();
       }
+      // AFTER_PRINT: se intenta aunque la impresión directa haya fallado
+      // (ej. bridge de impresión muerto, modo browser sin diálogo útil).
+      // El pulso lateral es una ruta física independiente del canal del
+      // recibo y no debe perderse por un error lateral de impresión.
       if (cfg && shouldKick && cfg.drawer.event === DRAWER_EVENTS.AFTER_PRINT) {
-        await dispatchDrawerKickOnSale(cfg);
+        const result = await dispatchDrawerKickOnSale(cfg);
+        notifyDrawerKickResult(result);
       }
     };
 
@@ -750,6 +1390,10 @@ export default function UniversalPaymentModal({
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (!isOpen) return;
+      // Mientras el QR está abierto, Radix es el único dueño del teclado.
+      // Evita que Enter cobre por el método subyacente o que Escape cierre
+      // también el modal principal después de cancelar el hijo.
+      if (isBoldQrOpen) return;
 
       const actions = keyboardActionsRef.current;
       if (showSuccessScreen) {
@@ -800,7 +1444,7 @@ export default function UniversalPaymentModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, showSuccessScreen]);
+  }, [isOpen, showSuccessScreen, isBoldQrOpen]);
 
   if (!isOpen) return null;
 
@@ -812,6 +1456,9 @@ export default function UniversalPaymentModal({
   const cashHeroLabel = baseReturnRefund > 0
     ? 'DEVOLUCIÓN AL CLIENTE (VUELTAS)'
     : (amountToPayRaw > remainingDebt ? 'CAMBIO (VUELTAS)' : 'EFECTIVO RECIBIDO');
+  // En escritorio el recuadro de efectivo está oculto: la tarjeta "Restante"
+  // pasa a mostrar las vueltas cuando el efectivo supera lo adeudado.
+  const tileShowsChange = baseReturnRefund > 0 || (activePaymentTab === 'cash' && amountToPayRaw > remainingDebt);
 
   const primaryActionLabel = isCreditInvalid
     ? "CLIENTE REQUERIDO"
@@ -837,45 +1484,76 @@ export default function UniversalPaymentModal({
   ]
     .filter(tab => tab.id !== 'credit' || showCreditTab)
     .filter(tab => !isRefund || tab.id === 'cash');
+  // Nota: BOLD_QR vive como botón independiente dentro de la grilla de
+  // métodos (ver `<button aria-label={BOLD_QR_METHOD_LABEL}>` abajo). NO
+  // forma parte de `paymentTabs` porque su interacción es diferente:
+  // cambia la vista del mismo `ModalContent` a `ModalPagoBoldQR` en vez de
+  // abrir otro modal. Mantener el botón fuera de `paymentTabs` también permite
+  // ocultarlo cuando `onBoldQrRequested` no está provisto (back-compat con
+  // consumidores legacy del `UniversalPaymentModal`) o cuando el flujo es refund/abono.
 
   return (
+    <>
     <Modal
       isOpen={isOpen}
       onOpenChange={onOpenChange}
+      // El mismo ModalContent alterna entre cobro y QR. El padre no se
+      // descarta por clic exterior y Escape se deshabilita mientras la vista
+      // QR está activa, evitando cierres accidentales del flujo completo.
+      isDismissable={false}
+      isKeyboardDismissDisabled={isBoldQrOpen}
       placement="center"
       backdrop="blur"
-      size="full"
+      size="5xl"
       onClose={onCloseComplete}
     classNames={{
-        // base: ancho real limitado a 100vw en movil para que el flex-row
-        // interno NO empuje la caja fuera de la pantalla (bug reportado:
-        // el pad desktop y las imagenes grandes de billetes sobresalian
-        // por la derecha en 360-640 px). `w-screen max-w-[100vw]` fuerza
-        // 100vw real en movil; en escritorio recupera el ancho fluido.
-        base: "bg-gray-50 dark:bg-zinc-950 w-screen md:w-auto max-w-[100vw] md:max-w-[1300px] h-[100dvh] md:h-auto md:max-h-[88vh] md:rounded-[2.5rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none",
+        // base: dos envolventes estables según la vista.
+        //   - Móvil: `w-screen max-w-[100vw] h-[100dvh]` mantiene pantalla
+        //     completa para que ningún control quede fuera del viewport.
+        //   - Cobro desktop: 980×500 px, compacto y con scroll interno.
+        //   - QR desktop: la vista necesita más altura por el código de
+        //     320 px + estado + acciones. El sufijo condicional usa clases
+        //     importantes para pasar a 620×720 px (máx. 90vh) sólo mientras
+        //     `isBoldQrOpen`; así el QR no se recorta y el cobro no vuelve a
+        //     quedar verticalmente largo.
+        // HeroUI conserva `size="5xl"`: nunca volver a `size="full"`, que
+        // inyecta min-height:100dvh incluso en escritorio.
+        base: "bg-gray-50 dark:bg-zinc-950 w-screen md:w-[980px] max-w-[100vw] md:max-w-[1050px] h-[100dvh] md:h-[500px] md:max-h-[78vh] md:rounded-[1.75rem] border-0 md:border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden m-0 md:mx-2 rounded-none" + (isBoldQrOpen ? " md:!w-[620px] md:!max-w-[620px] md:!h-[720px] md:!max-h-[90vh]" : ""),
         closeButton: "hidden",
         wrapper: "fixed top-0 left-0 w-screen h-screen bg-black/70 z-[9999] flex items-center justify-center"
       }}
     >
       <ModalContent>
-        {() => (
+        {() => isBoldQrOpen ? (
+          <ModalPagoBoldQR
+            isOpen={isBoldQrOpen}
+            onOpenChange={setIsBoldQrOpen}
+            monto={Math.round(boldQrAmount)}
+            cajaId={user?.dni ?? user?.id ?? "CAJA"}
+            ventaTempId={boldSessionIdRef.current || "temp-pos"}
+            onApproved={(info) => { void handleBoldQrApproved(info); }}
+            onEnqueueAndClose={isBoldQrReopen ? undefined : onBoldQrEnqueueRequested}
+            onCancel={handleBoldQrCancel}
+            reopened={isBoldQrReopen}
+          />
+        ) : (
           <div className="flex flex-col md:flex-row h-full min-h-0 min-w-0 overflow-hidden relative">            {showSuccessScreen && (
-              <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center justify-center p-4 md:p-8 animate-in fade-in zoom-in duration-300">
-                <div className="bg-white dark:bg-[#18181b] p-6 md:p-8 rounded-[2.5rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-md relative overflow-hidden group">
-                  <div className={`h-16 w-16 rounded-2xl ${theme.bg} text-white flex items-center justify-center mb-4 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}>
-                    <Check size={36} strokeWidth={3.5} />
+              <div className="absolute inset-0 z-[100] bg-white dark:bg-zinc-950/95 flex flex-col items-center overflow-y-auto overscroll-contain p-3 md:p-4 animate-in fade-in zoom-in duration-300">
+                <div className="my-auto bg-white dark:bg-[#18181b] p-5 md:p-6 rounded-[2rem] flex flex-col items-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] border border-black/5 dark:border-white/10 w-full max-w-md relative overflow-hidden group">
+                  <div className={`h-12 w-12 rounded-2xl ${theme.bg} text-white flex items-center justify-center mb-2 shadow-[0_8px_30px_rgb(0,0,0,0.12)]`}>
+                    <Check size={28} strokeWidth={3.5} />
                   </div>
-                  <h2 className="text-2xl md:text-3xl font-semibold text-gray-900 dark:text-white uppercase mb-5 tracking-tight text-center leading-tight">
+                  <h2 className="text-2xl font-semibold text-gray-900 dark:text-white uppercase mb-3 tracking-tight text-center leading-tight">
                     Operación <span className={theme.text}>Exitosa</span>
                   </h2>
 
-                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} px-4 py-5 rounded-2xl text-center w-full mb-5`}>
-                    <p className={`text-[11px] font-semibold ${theme.text} uppercase mb-2 tracking-wider`}>CAMBIO A ENTREGAR</p>
-                    <p className="text-4xl md:text-5xl font-bold text-gray-900 dark:text-white tabular-nums tracking-tight leading-none">${formatCurrency(lastChange)}</p>
+                  <div className={`${theme.bgLight} border-2 ${theme.borderLight} px-4 py-3 rounded-2xl text-center w-full mb-3`}>
+                    <p className={`text-[11px] font-semibold ${theme.text} uppercase mb-1 tracking-wider`}>CAMBIO A ENTREGAR</p>
+                    <p className="text-4xl font-bold text-gray-900 dark:text-white tabular-nums tracking-tight leading-none">${formatCurrency(lastChange)}</p>
                   </div>
 
                   {/* FACTURA Y COMPARTIR ACCIONES */}
-                  <div className="w-full flex flex-col gap-3 pt-3 border-t border-gray-200 dark:border-white/10">
+                  <div className="w-full flex flex-col gap-2 pt-2 border-t border-gray-200 dark:border-white/10">
                     <div className="grid grid-cols-2 gap-2 w-full">
                       <Button
                         size="sm"
@@ -930,7 +1608,7 @@ export default function UniversalPaymentModal({
                     )}
 
                     {/* INTERRUPTOR DE IMPRESION AUTOMATICA PERSISTENTE */}
-                    <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 dark:bg-zinc-900/60 rounded-xl border border-gray-200 dark:border-white/5">
+                    <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-zinc-900/60 rounded-xl border border-gray-200 dark:border-white/5">
                       <div className="flex items-center gap-3">
                         <Printer size={18} className={autoPrint ? "text-emerald-500" : "text-zinc-400"} />
                         <div className="flex flex-col text-left">
@@ -952,7 +1630,7 @@ export default function UniversalPaymentModal({
                   </div>
 
                   <Button
-                    className="mt-5 bg-gray-900 dark:bg-white text-white dark:text-black font-semibold px-8 h-12 rounded-2xl w-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-3 active:scale-95 transition-all text-[13px] tracking-wider uppercase hover:opacity-90"
+                    className="mt-3 shrink-0 bg-gray-900 dark:bg-white text-white dark:text-black font-semibold px-8 h-11 rounded-2xl w-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex items-center justify-center gap-3 active:scale-95 transition-all text-[13px] tracking-wider uppercase hover:opacity-90"
                     onPress={() => {
                       onCloseComplete?.();
                       onOpenChange(false);
@@ -964,8 +1642,8 @@ export default function UniversalPaymentModal({
               </div>
             )}
 
-            <div className="w-full md:w-[220px] md:shrink-0 min-w-0 bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-6 flex flex-col gap-2 md:gap-3 z-20">
-              <div className="hidden md:flex flex-col mb-6 px-1">
+            <div className="w-full md:w-[190px] md:shrink-0 min-w-0 bg-white dark:bg-[#18181b] border-b md:border-b-0 md:border-r border-gray-200 dark:border-white/5 p-2 md:p-3 flex flex-col gap-2 md:gap-2 z-20">
+              <div className="hidden md:flex flex-col mb-3 px-1">
                 <h3 className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 uppercase tracking-widest leading-none">
                   Método de pago
                 </h3>
@@ -1006,6 +1684,34 @@ export default function UniversalPaymentModal({
                 ))}
 
                 <button
+                  type="button"
+                  tabIndex={-1}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => {
+                    (e.currentTarget as HTMLElement)?.blur();
+                    void handleOpenBoldQr();
+                  }}
+                  disabled={!canUseBoldQr}
+                  aria-label={BOLD_QR_METHOD_LABEL}
+                  title={canUseBoldQr ? BOLD_QR_METHOD_LABEL : "Sin saldo pendiente para QR Bold"}
+                  className={`col-span-2 md:col-span-1 h-11 md:h-14 px-2 md:px-4 rounded-2xl flex items-center justify-center md:justify-start gap-2 md:gap-3 border transition-all group ${
+                    canUseBoldQr
+                      ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 active:scale-[0.98]"
+                      : "bg-gray-50 dark:bg-zinc-800 border-transparent text-gray-400 dark:text-zinc-500 cursor-not-allowed"
+                  }`}
+                >
+                  <div className={`p-1.5 md:p-2 rounded-xl transition-colors ${canUseBoldQr ? "bg-emerald-500 text-white shadow-[0_8px_30px_rgb(0,0,0,0.12)]" : "bg-gray-200 dark:bg-zinc-700/50"}`}>
+                    <QrCode size={18} className="md:w-6 md:h-6" aria-hidden />
+                  </div>
+                  <span className="text-[11px] md:text-[12px] font-semibold uppercase tracking-wider leading-tight text-left">
+                    QR Bold / Bre-B
+                    <span className="hidden md:block text-[10px] font-medium normal-case tracking-normal opacity-80">
+                      Nequi · DaviPlata · Bancos
+                    </span>
+                  </span>
+                </button>
+
+                <button
                   onClick={() => onOpenChange(false)}
                   className="h-11 md:hidden px-2 rounded-2xl flex items-center justify-center gap-2 border border-rose-500/20 bg-rose-500/5 text-rose-500 active:scale-95 transition-all"
                 >
@@ -1025,8 +1731,8 @@ export default function UniversalPaymentModal({
               </Button>
             </div>
 
-            <div className="flex-1 min-w-0 bg-gray-50 dark:bg-zinc-950 pt-3 md:pt-6 px-3 md:px-8 pb-3 flex flex-col relative overflow-hidden z-10">
-              <header className="mb-3 md:mb-4 flex flex-col md:flex-row md:items-end justify-between gap-2 md:gap-4">
+            <div className="flex-1 min-w-0 bg-gray-50 dark:bg-zinc-950 pt-3 px-3 md:px-4 pb-3 flex flex-col relative overflow-hidden z-10">
+              <header className="mb-3 flex flex-col md:flex-row md:items-end justify-between gap-2 md:gap-3">
                 <div className="flex flex-col min-w-0">
                   <h1 className="text-xl md:text-3xl font-semibold text-gray-900 dark:text-white uppercase tracking-tight leading-tight mb-1 text-center md:text-left">
                     {title.split(' ')[0]} <span className={theme.text}>{title.split(' ').slice(1).join(' ')}</span>
@@ -1137,11 +1843,11 @@ export default function UniversalPaymentModal({
                   containerClassName="border-gray-100 dark:border-white/5"
                 />
                 <SummaryTile
-                  label={baseReturnRefund > 0 ? 'Cambio a entregar' : 'Restante'}
-                  icon={<TrendingUp size={12} className={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'} />}
-                  value={baseReturnRefund > 0 ? baseReturnRefund : remainingDebt}
-                  valueClassName={baseReturnRefund > 0 ? 'text-emerald-500' : 'text-sky-500'}
-                  containerClassName={baseReturnRefund > 0
+                  label={baseReturnRefund > 0 ? 'Cambio a entregar' : (tileShowsChange ? 'Cambio (vueltas)' : 'Restante')}
+                  icon={<TrendingUp size={12} className={tileShowsChange ? 'text-emerald-500' : 'text-sky-500'} />}
+                  value={tileShowsChange ? (activePaymentTab === 'cash' ? cashHeroValue : baseReturnRefund) : remainingDebt}
+                  valueClassName={tileShowsChange ? 'text-emerald-500' : 'text-sky-500'}
+                  containerClassName={tileShowsChange
                     ? 'border-emerald-500/50 bg-emerald-500/5'
                     : 'border-gray-100 dark:border-white/5'}
                 />
@@ -1149,7 +1855,9 @@ export default function UniversalPaymentModal({
 
               {activePaymentTab === 'cash' ? (
                 <div className="flex flex-col flex-1 min-h-0 overflow-y-auto pr-1 custom-scrollbar">
-                  <div className={`p-4 md:p-5 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden transition-colors duration-300 ${
+                  {/* Sólo móvil: en escritorio el monto vive en MONTO INGRESADO
+                      y el cambio en la tarjeta de resumen "Cambio (vueltas)". */}
+                  <div className={`md:hidden p-4 md:p-5 rounded-2xl border-2 flex flex-col justify-center shadow-[0_8px_30px_rgb(0,0,0,0.12)] relative overflow-hidden transition-colors duration-300 ${
                     showChangeHero
                       ? 'bg-emerald-500/10 border-emerald-500/40'
                       : 'bg-white dark:bg-[#18181b] border-gray-200 dark:border-white/10'
@@ -1250,25 +1958,21 @@ export default function UniversalPaymentModal({
                     </>
                    ) : (
                     <>
-                      {/* Numpad movil del tab efectivo. Antes mostraba '00';
-                          se reemplazo por '+' para igualar al numpad desktop
-                          y permitir acumular canales en MOVIL (critico al
-                          corregir pagos combinados desde el historial). */}
-                      <div className="grid grid-cols-3 gap-2 mt-3">
-                        {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
-                          <NumpadKey
-                            key={n}
-                            value={n}
-                            variant={n === 'CE' ? 'clear' : n === '+' ? 'add' : 'digit'}
-                            themeBgClass={theme.bg}
-                            onPress={() => {
-                              if (n === 'CE') setDialogAmount('');
-                              else if (n === '+') handleAddPayment();
-                              else setDialogAmount((p: string) => p + String(n));
-                            }}
-                          />
-                        ))}
-                      </div>
+                      {/* Numpad móvil del tab efectivo. Usa el PaymentKeypad
+                          unificado con `size="compact"` para igualar la
+                          jerarquía visual con el teclado del pad desktop y
+                          con el de los tabs digitales. Antes había tres
+                          variantes de tamaño distintas; ahora todas comparten
+                          el mismo sub-componente. */}
+                      <PaymentKeypad
+                        size="compact"
+                        themeBgClass={theme.bg}
+                        containerClassName="mt-3"
+                        ariaLabel="Teclado numérico de efectivo"
+                        onDigit={(d) => setDialogAmount((p: string) => p + d)}
+                        onAdd={handleAddPayment}
+                        onClear={() => setDialogAmount("")}
+                      />
                       <div className="flex gap-2 mt-3">
                         <Button
                           className="flex-1 h-12 bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-white font-semibold uppercase rounded-2xl text-[12px] tracking-wider active:scale-95 transition-all flex items-center justify-center gap-2"
@@ -1296,7 +2000,10 @@ export default function UniversalPaymentModal({
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col min-h-0 overflow-y-auto pr-1 custom-scrollbar">
-                  <label className={`bg-white dark:bg-[#18181b] p-4 md:p-5 rounded-2xl border-2 border-${themeColor}-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center justify-center gap-2 mb-3 relative overflow-hidden cursor-text`}>
+                  {/* En escritorio el monto ya se ve en "MONTO INGRESADO" del
+                      pad derecho; este recuadro sólo se muestra en móvil, donde
+                      no existe ese pad. */}
+                  <label className={`md:hidden bg-white dark:bg-[#18181b] p-4 md:p-5 rounded-2xl border-2 border-${themeColor}-500/20 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col items-center justify-center gap-2 mb-3 relative overflow-hidden cursor-text`}>
                     <div className={`absolute inset-0 bg-${themeColor}-500/5`} />
                     <div className="text-center relative z-10 w-full">
                       <p className="text-[11px] font-semibold text-gray-500 dark:text-zinc-400 tracking-wider uppercase mb-2">
@@ -1420,26 +2127,18 @@ export default function UniversalPaymentModal({
                     + AGREGAR CANAL
                   </Button>
 
-                  {/* Numpad movil del tab Nequi/Daviplata/Fiado. Antes
-                      mostraba '00'; se reemplazo por '+' para que en MOVIL
-                      el cajero pueda ACUMULAR mas de un canal al corregir
-                      pagos combinados desde el historial. En desktop el '+'
-                      vive en el pad lateral derecho (ya existente). */}
-                  <div className="grid grid-cols-3 gap-2">
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
-                      <NumpadKey
-                        key={n}
-                        value={n}
-                        variant={n === 'CE' ? 'clear' : n === '+' ? 'add' : 'digit'}
-                        themeBgClass={theme.bg}
-                        onPress={() => {
-                          if (n === 'CE') setDialogAmount('');
-                          else if (n === '+') handleAddPayment();
-                          else setDialogAmount((p: string) => p + String(n));
-                        }}
-                      />
-                    ))}
-                  </div>
+                  {/* Numpad móvil del tab Nequi/Daviplata/Fiado. Mismo
+                      componente PaymentKeypad `size="compact"` que el
+                      numpad del tab efectivo, para que el cajero no vea
+                      dos teclados distintos al cambiar de método en móvil. */}
+                  <PaymentKeypad
+                    size="compact"
+                    themeBgClass={theme.bg}
+                    ariaLabel={`Teclado numérico de ${activePaymentTab === 'credit' ? 'fiado' : activePaymentTab}`}
+                    onDigit={(d) => setDialogAmount((p: string) => p + d)}
+                    onAdd={handleAddPayment}
+                    onClear={() => setDialogAmount("")}
+                  />
 
                   {onReasonChange && (
                     <div className="mt-4 animate-in slide-in-from-top-2 duration-300">
@@ -1475,8 +2174,8 @@ export default function UniversalPaymentModal({
                 `hidden md:flex` lo saca del DOM visual en movil pero el
                 `shrink-0` sigue siendo clave en desktop para que no se
                 comprima al tener mucho contenido en la columna central. */}
-            <div className="hidden md:flex w-[320px] shrink-0 min-w-0 bg-white dark:bg-[#18181b] border-l border-gray-200 dark:border-white/5 p-6 flex-col gap-4 z-20">
-              <label className="bg-gray-50 dark:bg-zinc-950 p-5 rounded-2xl border border-gray-200 dark:border-white/10 text-right shadow-inner relative overflow-hidden cursor-text">
+            <div className="hidden md:flex w-[280px] shrink-0 min-w-0 bg-white dark:bg-[#18181b] border-l border-gray-200 dark:border-white/5 p-3 flex-col gap-2.5 z-20">
+              <label className="bg-gray-50 dark:bg-zinc-950 p-3 rounded-2xl border border-gray-200 dark:border-white/10 text-right shadow-inner relative overflow-hidden cursor-text">
                 <div className={`absolute top-2 left-2 opacity-5 ${theme.text}`}><Calculator size={44} /></div>
                 <p className={`text-[11px] font-semibold ${theme.text} uppercase tracking-wider flex items-center justify-end gap-2 relative z-10 mb-2`}>
                   <Calculator size={13} /> Monto ingresado
@@ -1523,24 +2222,25 @@ export default function UniversalPaymentModal({
                   />
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-3 flex-1 pb-2">
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 0, '+', 'CE'].map(n => (
-                  <NumpadKey
-                    key={n}
-                    value={n}
-                    variant={n === 'CE' ? 'clear' : n === '+' ? 'add' : 'digit'}
-                    themeBgClass={theme.bg}
-                    fullHeight
-                    onPress={() => {
-                      if (n === 'CE') setDialogAmount('');
-                      else if (n === '+') handleAddPayment();
-                      else setDialogAmount((p: string) => p + String(n));
-                    }}
-                  />
-                ))}
-              </div>
+              {/* Numpad desktop fijo. Usa el mismo PaymentKeypad que el
+                  móvil, con `size="tall"` para elevar la altura táctil al
+                  nivel que exige una pantalla de cajero (h-14 text-xl). */}
+              <PaymentKeypad
+                size="tall"
+                themeBgClass={theme.bg}
+                stretchVertical
+                containerClassName="pb-2"
+                ariaLabel="Teclado numérico de monto (escritorio)"
+                onDigit={(d) => setDialogAmount((p: string) => p + d)}
+                onAdd={handleAddPayment}
+                onClear={() => {
+                  setDialogAmount("");
+                  // La papelera del recuadro de efectivo sólo existe en móvil.
+                  if (activePaymentTab === 'cash') setCashTendered('');
+                }}
+              />
               <Button
-                className={`h-20 font-semibold uppercase rounded-2xl tracking-wider shadow-[0_20px_50px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[13px] border-b-4 ${
+                className={`h-16 font-semibold uppercase rounded-2xl tracking-wider shadow-[0_20px_50px_rgba(0,0,0,0.1)] active:scale-95 transition-all text-[13px] border-b-4 ${
                     isCreditInvalid || isOverCreditLimit || isBlockedTransferRefund
                         ? 'bg-amber-500/20 text-amber-500 border-amber-500/40 cursor-not-allowed'
                         : 'bg-gray-900 dark:bg-white text-white dark:text-black border-gray-600 dark:border-gray-300'
@@ -1578,5 +2278,6 @@ export default function UniversalPaymentModal({
           </div>
         )}
       </Modal>
+    </>
   );
 }

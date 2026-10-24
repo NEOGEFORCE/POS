@@ -89,6 +89,18 @@ const ERR = Object.freeze({
     INVALID_BARCODE_EAN13: "INVALID_BARCODE_EAN13",
     UNSUPPORTED_BARCODE_SYMBOLOGY: "UNSUPPORTED_BARCODE_SYMBOLOGY",
     INVALID_LABEL_CONFIG: "INVALID_LABEL_CONFIG",
+    // bridge-printing-v2: enumeración de colas Windows y renderer TSPL
+    // de recibos. `PRINTER_LIST_FAILED` cubre cualquier fallo del helper
+    // PowerShell (timeout, exit != 0, JSON inválido). `INVALID_RECEIPT_CONFIG`
+    // dispara cuando el admin manda widthMm < 20 o columns < mínimo.
+    PRINTER_LIST_FAILED: "PRINTER_LIST_FAILED",
+    INVALID_RECEIPT_CONFIG: "INVALID_RECEIPT_CONFIG",
+    // bridge-printing-v3: hoja térmica de góndola. `INVALID_SHELF_CONFIG`
+    // dispara cuando el payload de `type:"shelf-labels"` (o el `config`
+    // del test-page target "shelf") trae `thermal` ausente/incompleto que
+    // escape al clamp del renderer. `LAYOUT_OUT_OF_BOUNDS` reutilizado
+    // cuando `widthMm > 82mm` o `marginLeft + printable > width`.
+    INVALID_SHELF_CONFIG: "INVALID_SHELF_CONFIG",
 });
 
 // -----------------------------------------------------------------------------
@@ -556,6 +568,77 @@ function resolveAutoDrawerBytes({ drawer, openDrawerOnSale, event }) {
 }
 
 // -----------------------------------------------------------------------------
+// TSPL receipt helpers (bridge-printing-v2 §D/§E)
+//
+// Wrappers finos que delegan a `label-generator.buildTsplReceiptDocument`
+// pero resuelven la config del payload (receipt + top-level) de forma
+// consistente entre `thermal-receipt` y `test-page`.
+// -----------------------------------------------------------------------------
+
+/**
+ * Mergea `payload.receipt` con fallback a los campos top-level que envía
+ * `printThermalTicketDirect` (`widthMm`, `printableWidthMm`, `columns`, `cut`).
+ * Esto evita que el admin tenga que duplicar la config en ambos lados.
+ */
+function mergeReceiptCfgFromPayload(payload) {
+    const r = isPlainObject(payload?.receipt) ? payload.receipt : {};
+    return {
+        widthMm: r.widthMm !== undefined ? r.widthMm : payload?.widthMm,
+        printableWidthMm: r.printableWidthMm !== undefined ? r.printableWidthMm : payload?.printableWidthMm,
+        columns: r.columns !== undefined ? r.columns : payload?.columns,
+        cut: r.cut || payload?.cut,
+        dpi: r.dpi,
+        tspl: r.tspl,
+    };
+}
+
+/**
+ * Construye el batch TSPL para un `thermal-receipt`. Lanza con `.code`
+ * (`LAYOUT_OUT_OF_BOUNDS`/`INVALID_RECEIPT_CONFIG`) cuando la config
+ * saneada del admin excede los límites físicos.
+ */
+function buildTsplReceiptBytes({ ticketText, payload }) {
+    const receipt = mergeReceiptCfgFromPayload(payload || {});
+    return labelGen.buildTsplReceiptDocument({
+        ticketText,
+        receipt,
+        escapeFn: escapeForTspl,
+    });
+}
+
+/**
+ * Página de prueba del canal RECEIPT usando TSPL. Es análoga a
+ * `buildTestPageReceipt` (ESC/POS) y comparte el mismo cuerpo de texto
+ * para que el admin pueda comparar visualmente ambos canales.
+ */
+function buildTsplTestPageReceipt(sanitizedConfig) {
+    const columns = clampInt(sanitizedConfig?.receipt?.columns, 20, 80, 32);
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+    const biz = cleanField(sanitizedConfig?.receipt?.header?.businessName, 80) || "scale-bridge";
+    const sep = "-".repeat(columns);
+    const lines = [
+        center("PAGINA DE PRUEBA", columns),
+        center(biz, columns),
+        sep,
+        `Fecha : ${now}`,
+        `Ancho : ${sanitizedConfig?.receipt?.widthMm ?? "?"} mm`,
+        `Cols  : ${columns}`,
+        `Corte : ${sanitizedConfig?.receipt?.cut || "AUTO"}`,
+        `Canal : TSPL`,
+        sep,
+        "Acentos: n N a e i o u ? !",
+        sep,
+        center("OK", columns),
+        "",
+    ];
+    return labelGen.buildTsplReceiptDocument({
+        ticketText: lines.join("\n"),
+        receipt: sanitizedConfig?.receipt || { widthMm: 80, columns },
+        escapeFn: escapeForTspl,
+    });
+}
+
+// -----------------------------------------------------------------------------
 // Test-page builders — recibo y etiqueta de prueba.
 // -----------------------------------------------------------------------------
 
@@ -903,7 +986,7 @@ function validatePrinterRequest(raw) {
         return { ok: false, code: ERR.INVALID_REQUEST, message: "requestId requerido" };
     }
     const action = String(raw.action || "").trim();
-    if (!["print", "printTestPage", "kickDrawer"].includes(action)) {
+    if (!["print", "printTestPage", "kickDrawer", "listPrinters"].includes(action)) {
         return { ok: false, code: ERR.UNSUPPORTED_ACTION, message: `acción no soportada: ${action}` };
     }
     const payload = isPlainObject(raw.payload) ? raw.payload : {};
@@ -976,6 +1059,9 @@ async function handlePrinterRequest(request, deps) {
         if (action === "kickDrawer") {
             return await dispatchKickDrawer(payload, deps);
         }
+        if (action === "listPrinters") {
+            return await dispatchListPrinters(payload, deps);
+        }
         return actionableError(ERR.UNSUPPORTED_ACTION, `acción ${action} no soportada`);
     } catch (err) {
         return errFromThrow(err);
@@ -1004,17 +1090,71 @@ async function dispatchPrint(payload, deps) {
             return actionableError(ERR.PAYLOAD_TOO_LARGE, "ticketText excede el límite");
         }
         const cut = payload?.cut || payload?.receipt?.cut || "AUTO";
-        bytes = buildReceiptBytes({
-            ticketText,
-            cut,
-            // Drawer BEFORE/AFTER: sólo cuando el payload explicita
-            // `openDrawerOnSale=true`. Reimpresión no lo setea; MANUAL
-            // nunca dispara automático. Ver `resolveAutoDrawerBytes`.
-            drawer: payload.drawer,
-            openDrawerOnSale: payload.openDrawerOnSale === true,
-            event: payload.event,
-        });
+        // Protocol switch (bridge-printing-v2 §D): el admin elige por canal.
+        //   - escpos / system / zpl (fallback) → ESC/POS puro (comportamiento histórico).
+        //   - tspl                              → renderer TSPL dinámico (`buildTsplReceiptDocument`).
+        //   - pdf                               → NO sale al bridge (deliveryMode browser).
+        const protocol = String(connection?.protocol || "escpos").toLowerCase();
+        if (protocol === "pdf") {
+            return actionableError(
+                ERR.UNSUPPORTED_PAYLOAD_TYPE,
+                "deliveryMode PDF no se envía al bridge; usa 'Imprimir en navegador (PDF)' como acción manual",
+            );
+        }
+        if (protocol === "tspl") {
+            // El drawer embebido NO aplica para TSPL — ese canal es
+            // típicamente label-printers sin cajón conectado. El pulso
+            // del cajón sigue vivo vía action="kickDrawer" por el canal
+            // ESC/POS. Documentado en el contrato para que el admin
+            // configure el cajón en la impresora de recibos ESC/POS.
+            bytes = buildTsplReceiptBytes({ ticketText, payload });
+        } else {
+            // Rama histórica ESC/POS (acepta protocol = "escpos", "system",
+            // "zpl" por best-effort, y undefined para instalaciones viejas).
+            bytes = buildReceiptBytes({
+                ticketText,
+                cut,
+                // Drawer BEFORE/AFTER: sólo cuando el payload explicita
+                // `openDrawerOnSale=true`. Reimpresión no lo setea; MANUAL
+                // nunca dispara automático. Ver `resolveAutoDrawerBytes`.
+                drawer: payload.drawer,
+                openDrawerOnSale: payload.openDrawerOnSale === true,
+                event: payload.event,
+            });
+        }
         kind = "receipt";
+    } else if (type === "shelf-labels") {
+        // Hoja térmica de góndola (bridge-printing-v3). Es su propia rama
+        // porque:
+        //   - sólo tiene sentido con `protocol:"tspl"` (rechazamos cualquier
+        //     otro protocolo con `UNSUPPORTED_PROTOCOL`).
+        //   - no comparte renderer con `labels` normales: la hoja de
+        //     estante usa `buildTsplShelfLabelsDocument` (precio centrado,
+        //     nombre wrap 2 líneas, código/fecha opcionales, cero barcode).
+        //   - NUNCA abre el cajón: aunque el payload traiga `drawer` o
+        //     `openDrawerOnSale:true`, esta rama los ignora. Garantía dura
+        //     en `test/printer-bridge.test.js` por diff de bytes.
+        const protocol = String(connection.protocol || "escpos").toLowerCase();
+        if (protocol !== "tspl") {
+            return actionableError(
+                ERR.UNSUPPORTED_PROTOCOL,
+                "shelf-labels requiere protocol:'tspl' (TSPL es el único soportado para hoja térmica de góndola).",
+            );
+        }
+        const items = normalizeLabelItems(payload);
+        bytes = labelGen.buildTsplShelfLabelsDocument({
+            items,
+            // `thermal` llega SANEADO desde el frontend. El renderer
+            // aplica defaults para campos faltantes y lanza
+            // LAYOUT_OUT_OF_BOUNDS / INVALID_SHELF_CONFIG si las
+            // dimensiones no son coherentes (defensa en profundidad,
+            // no "arreglamos" el payload).
+            thermal: payload.thermal,
+            escapeFn: escapeForTspl,
+            formatMoney,
+            now: payload.nowIso || new Date().toISOString(),
+        });
+        kind = "shelf-labels";
     } else if (Array.isArray(payload?.items) || Array.isArray(payload?.labelItems) || typeof payload?.code === "string") {
         // Lote de etiquetas (o unitario). El protocolo lo trae connection.
         const protocol = String(connection.protocol || "escpos").toLowerCase();
@@ -1034,10 +1174,163 @@ async function dispatchTestPage(payload, deps) {
     const connCheck = validateConnectionForPrint(connection);
     if (!connCheck.ok) return actionableError(connCheck.code, connCheck.message);
     const target = String(payload?.target || "").toLowerCase();
-    const bytes = target === "label"
-        ? buildTestPageLabel(config)
-        : buildTestPageReceipt(config);
+    let bytes;
+    if (target === "label") {
+        bytes = buildTestPageLabel(config);
+    } else if (target === "shelf") {
+        // Test-page de hoja térmica de góndola (bridge-printing-v3).
+        // Requiere:
+        //   1. `config.gondola.thermal` presente (parámetros térmicos del
+        //      admin). Sin eso, `INVALID_SHELF_CONFIG`.
+        //   2. `connection.protocol === "tspl"`. Cualquier otro,
+        //      `UNSUPPORTED_PROTOCOL`.
+        // Imprime una sola etiqueta de prueba (TEST-SHELF/9900) usando
+        // los parámetros térmicos tal cual. El `kind` del resultado es
+        // `"test-shelf"` para que logs y el testID del frontend
+        // (`labels-config-print-test-shelf`) distingan de `test-label`.
+        const thermal = config?.gondola?.thermal;
+        if (!isPlainObject(thermal)) {
+            return actionableError(
+                ERR.INVALID_SHELF_CONFIG,
+                "config.gondola.thermal ausente — configura la hoja térmica antes de probar",
+            );
+        }
+        const protocol = String(connection?.protocol || "escpos").toLowerCase();
+        if (protocol !== "tspl") {
+            return actionableError(
+                ERR.UNSUPPORTED_PROTOCOL,
+                "shelf test-page requiere protocol:'tspl' (TSPL es el único soportado para hoja térmica de góndola).",
+            );
+        }
+        bytes = labelGen.buildTsplShelfLabelsDocument({
+            items: [{
+                code: "TEST-SHELF",
+                productName: "ETIQUETA TERMICA DE PRUEBA",
+                salePrice: 9900,
+                quantity: 1,
+            }],
+            thermal,
+            escapeFn: escapeForTspl,
+            formatMoney,
+            now: new Date().toISOString(),
+        });
+    } else {
+        // Receipt (default). Mismo switch de protocolo que `dispatchPrint`
+        // para `thermal-receipt`: ESC/POS por default, TSPL cuando el
+        // admin lo seleccionó, error accionable para PDF.
+        const protocol = String(connection?.protocol || "escpos").toLowerCase();
+        if (protocol === "pdf") {
+            return actionableError(
+                ERR.UNSUPPORTED_PAYLOAD_TYPE,
+                "deliveryMode PDF no se envía al bridge; usa el botón manual del navegador",
+            );
+        }
+        if (protocol === "tspl") {
+            bytes = buildTsplTestPageReceipt(config);
+        } else {
+            bytes = buildTestPageReceipt(config);
+        }
+    }
     return sendBytes(connection, bytes, deps, { kind: `test-${target || "receipt"}` });
+}
+
+/**
+ * Enumera impresoras Windows disponibles delegando al transporte
+ * `deps.listSystemPrinters()`. Es la contraparte de
+ * `print-transports.js#listSystemPrintersWindows` pero no hace ninguna
+ * suposición de plataforma: si el transporte no está cableado (p.ej. en
+ * tests o en entornos no-Windows), devuelve `PRINTER_LIST_FAILED` con
+ * mensaje accionable.
+ *
+ * NO llama a `sendTcp` ni `sendSystem` — este dispatch es puramente de
+ * lectura y no debe tocar impresoras. Esto está verificado por tests.
+ */
+async function dispatchListPrinters(payload, deps) {
+    if (!deps || typeof deps.listSystemPrinters !== "function") {
+        return actionableError(
+            ERR.PRINTER_LIST_FAILED,
+            "listSystemPrinters no disponible en esta plataforma",
+        );
+    }
+    const refresh = isPlainObject(payload) && payload.refresh === true;
+    try {
+        const raw = await deps.listSystemPrinters({ refresh, timeoutMs: 10000 });
+        return { ok: true, result: normalizePrinterListResult(raw) };
+    } catch (err) {
+        return errFromThrow(err, ERR.PRINTER_LIST_FAILED);
+    }
+}
+
+/** Enum público de estados aceptados por el frontend. */
+const PRINTER_STATUSES = Object.freeze([
+    "online", "offline", "paper-out", "error", "paused", "unknown",
+]);
+const PRINTER_STATUS_SET = new Set(PRINTER_STATUSES);
+
+/**
+ * Normaliza la salida del helper nativo a la shape canónica del WS.
+ *   - `name` requerido; filas sin nombre se descartan.
+ *   - `status` cae a `"unknown"` si no viene en el enum conocido.
+ *   - `online` se DERIVA de `status === "online"` para evitar que un
+ *     helper mal escrito reporte `online:true` con status "offline".
+ *   - `jobs` clamp a `[0, 99999]`.
+ *   - Strings pasan por `cleanField` (control chars fuera, trim, max 160).
+ */
+function normalizePrinterListResult(raw) {
+    const platform = typeof raw?.platform === "string"
+        ? cleanField(raw.platform, 32) || "win32"
+        : "win32";
+    const defaultName = typeof raw?.defaultName === "string"
+        ? cleanField(raw.defaultName, 160)
+        : "";
+    const list = Array.isArray(raw?.printers)
+        ? raw.printers
+        : (Array.isArray(raw) ? raw : []);
+    const printers = [];
+    const seen = new Set();
+    for (const row of list) {
+        if (!isPlainObject(row)) continue;
+        const name = cleanField(row.name, 160);
+        if (!name) continue;
+        // De-duplicamos por nombre canónico (algunas instalaciones Windows
+        // reportan la misma cola dos veces desde CIM y Spooler).
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const driver = cleanField(row.driver, 160);
+        const port = cleanField(row.port, 160);
+        const statusRaw = typeof row.status === "string" ? row.status.toLowerCase().trim() : "";
+        const status = PRINTER_STATUS_SET.has(statusRaw) ? statusRaw : "unknown";
+        const online = status === "online";
+        const isDefault = row.isDefault === true || name === defaultName;
+        const shared = row.shared === true;
+        const jobsNum = Number(row.jobs);
+        const jobs = Number.isFinite(jobsNum)
+            ? Math.max(0, Math.min(99999, Math.round(jobsNum)))
+            : 0;
+        const attrs = Array.isArray(row.attributes)
+            ? row.attributes
+                .map((a) => cleanField(a, 32))
+                .filter((a) => a.length > 0)
+                .slice(0, 16)
+            : [];
+        printers.push({
+            name,
+            driver,
+            port,
+            status,
+            online,
+            isDefault,
+            shared,
+            jobs,
+            attributes: attrs,
+        });
+    }
+    return {
+        kind: "printer-list",
+        platform,
+        defaultName,
+        printers,
+    };
 }
 
 async function dispatchKickDrawer(payload, deps) {
@@ -1124,6 +1417,7 @@ module.exports = {
     ESCPOS,
     CP850_MAP,
     DRAWER_EVENTS,
+    PRINTER_STATUSES,
     encodeCP850,
     transliterate,
     parseDrawerCommand,
@@ -1132,9 +1426,12 @@ module.exports = {
     validateConnectionForPrint,
     pickTransport,
     buildReceiptBytes,
+    buildTsplReceiptBytes,
     buildTestPageReceipt,
+    buildTsplTestPageReceipt,
     buildTestPageLabel,
     normalizeLabelItems,
+    normalizePrinterListResult,
     buildLabelBytes,
     buildEscposBatch,
     buildTsplBatch,
@@ -1144,6 +1441,7 @@ module.exports = {
     validatePrinterRequest,
     isLocalOrigin,
     handlePrinterRequest,
+    dispatchListPrinters,
     // Re-export del generador modular para que el frontend y los tests
     // puedan importar `mmToDots`, `computeColumnOffsets`, presets, etc.
     // desde un único punto estable.
@@ -1154,8 +1452,22 @@ module.exports = {
     LABEL_PRESETS: labelGen.LABEL_PRESETS,
     DPI_203: labelGen.DPI_203,
     PHYSICAL_MAX_MM: labelGen.PHYSICAL_MAX_MM,
+    RECEIPT_TSPL_LIMITS: labelGen.RECEIPT_TSPL_LIMITS,
     sanitizeEan13: labelGen.sanitizeEan13,
     computeEan13CheckDigit: labelGen.computeEan13CheckDigit,
+    buildTsplReceiptDocument: labelGen.buildTsplReceiptDocument,
+    tsplLineHeightMm: labelGen.tsplLineHeightMm,
+    pickTsplReceiptFont: labelGen.pickTsplReceiptFont,
+    pickTsplReceiptColumns: labelGen.pickTsplReceiptColumns,
+    TSPL_FONT_METRICS: labelGen.TSPL_FONT_METRICS,
+    TSPL_RECEIPT_FONT_LADDER: labelGen.TSPL_RECEIPT_FONT_LADDER,
+    buildTsplShelfLabelsDocument: labelGen.buildTsplShelfLabelsDocument,
+    normalizeShelfThermalConfig: labelGen.normalizeShelfThermalConfig,
+    SHELF_THERMAL_DEFAULTS: labelGen.SHELF_THERMAL_DEFAULTS,
+    formatShelfDate: labelGen.formatShelfDate,
+    wrapNameTwoLines: labelGen.wrapNameTwoLines,
+    isCode128SafeAscii: labelGen.isCode128SafeAscii,
+    code128SymbolWidthDots: labelGen.code128SymbolWidthDots,
     // Expuestos para tests y para loguear números limpios en index.js
-    _internals: { formatMoney, fitLine, center, clampInt },
+    _internals: { formatMoney, fitLine, center, clampInt, mergeReceiptCfgFromPayload },
 };

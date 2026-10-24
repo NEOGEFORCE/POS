@@ -61,11 +61,25 @@ export const PROTOCOLS = Object.freeze({
   PDF: "pdf",
 });
 
-/** Protocolos aceptados por INTERFACE para evitar combinaciones imposibles. */
+/**
+ * Protocolos aceptados por INTERFACE para evitar combinaciones imposibles.
+ *
+ * `SYSTEM` admite tanto los protocolos "virtuales" (`system`/`pdf`) como
+ * los físicos (`escpos`/`tspl`) para contemplar el caso real: una cola
+ * de Windows que apunta a una impresora térmica Jaltech JAL-838L TSPL o
+ * a una ESC/POS genérica. Las instalaciones que ya guardaron SYSTEM+PDF
+ * siguen funcionando (sanitize mantiene el default). Para que el bridge
+ * emita bytes físicos cuando la interfaz es SYSTEM, el admin elige
+ * `tspl` o `escpos` desde la UI y el bridge rutea el payload según
+ * `connection.protocol`.
+ *
+ * `pdf` sigue siendo exclusivo de `deliveryMode="browser"`: ningún
+ * bridge debe recibir `type:"thermal-receipt"` con `protocol:"pdf"`.
+ */
 export const INTERFACE_PROTOCOLS = Object.freeze({
   USB: ["escpos", "tspl", "zpl"],
   NETWORK: ["escpos", "tspl", "zpl"],
-  SYSTEM: ["system", "pdf"],
+  SYSTEM: ["system", "pdf", "escpos", "tspl"],
 });
 
 export const SPOOLERS = Object.freeze({
@@ -134,20 +148,60 @@ export const RECEIPT_DELIVERY_MODES = Object.freeze({
 });
 
 /**
- * Formatos canónicos de hoja de góndola. Carta y Oficio/Legal son los
- * únicos soportados: ambos usan orientación landscape para maximizar la
- * cantidad de etiquetas 80×40 mm por hoja (15 vs 20). El default es Carta.
+ * Formatos canónicos de hoja/rollo para precios de góndola.
  *
- * La geometría exacta vive en `shelf-labels.mjs` (`GONDOLA_FORMAT_SPECS` +
- * `resolveGondolaLayout`); acá sólo declaramos el enum para que sanitize
- * tenga una sola fuente de verdad.
+ *   - `LETTER`   → Carta landscape, grid 3×5 = 15 etiquetas por hoja.
+ *   - `LEGAL`    → Oficio/Legal landscape, grid 4×5 = 20 etiquetas por hoja.
+ *   - `THERMAL_80` → Rollo térmico continuo 80 mm (TSPL vía bridge).
+ *     Una etiqueta por "página" (sin paginación por hoja). Los parámetros
+ *     térmicos editables viven en `gondola.thermal` y se envían directo
+ *     al bridge sin pasar por el diálogo del navegador.
+ *
+ * El default sigue siendo `LETTER` (Carta) por compatibilidad: ninguna
+ * instalación previa cambia sin opt-in del admin.
+ *
+ * La geometría de hoja (LETTER/LEGAL) vive en `shelf-labels.mjs`
+ * (`GONDOLA_FORMAT_SPECS` + `resolveGondolaLayout`); acá sólo declaramos
+ * el enum para que sanitize tenga una sola fuente de verdad.
  */
 export const GONDOLA_FORMATS = Object.freeze({
   LETTER: "LETTER",
   LEGAL: "LEGAL",
+  THERMAL_80: "THERMAL_80",
 });
 
 export const DEFAULT_GONDOLA_FORMAT = GONDOLA_FORMATS.LETTER;
+
+/**
+ * Alias en español aceptados por `sanitize`/`applyGondolaFormatPreset`.
+ * Las claves son `String.toUpperCase()` del input ya trimado, así que la
+ * comparación es case-insensitive. Mantener este mapa evita duplicar la
+ * lista de alias en varios lugares.
+ */
+const GONDOLA_FORMAT_ALIASES = Object.freeze({
+  LETTER: GONDOLA_FORMATS.LETTER,
+  CARTA: GONDOLA_FORMATS.LETTER,
+  LEGAL: GONDOLA_FORMATS.LEGAL,
+  OFICIO: GONDOLA_FORMATS.LEGAL,
+  THERMAL_80: GONDOLA_FORMATS.THERMAL_80,
+  THERMAL80: GONDOLA_FORMATS.THERMAL_80,
+  TERMICA_80: GONDOLA_FORMATS.THERMAL_80,
+  TERMICA80: GONDOLA_FORMATS.THERMAL_80,
+  "TÉRMICA 80": GONDOLA_FORMATS.THERMAL_80,
+  "TERMICA 80": GONDOLA_FORMATS.THERMAL_80,
+  "TÉRMICA_80": GONDOLA_FORMATS.THERMAL_80,
+  "RT80": GONDOLA_FORMATS.THERMAL_80,
+  "RT_80": GONDOLA_FORMATS.THERMAL_80,
+});
+
+function normalizeGondolaFormat(raw) {
+  if (raw == null) return null;
+  const str = typeof raw === "string" ? raw : String(raw);
+  const key = str.trim().toUpperCase();
+  if (!key) return null;
+  const match = GONDOLA_FORMAT_ALIASES[key];
+  return match || null;
+}
 
 export const PAPER_PRESETS = Object.freeze({
   WIDTH_80: "80",
@@ -318,7 +372,85 @@ export const BOUNDS = Object.freeze({
   // TSPL `BARCODE` acepta "narrow" y "wide" en dots. Rango seguro para
   // CODE128/EAN13 a 203dpi.
   barcodeModule: { min: 1, max: 8 },
+  // --- Góndola térmica (rollo continuo TSPL 20..82 mm). ---
+  gondolaThermalWidthMm: { min: 20, max: 82 },
+  gondolaThermalPrintableWidthMm: { min: 10, max: 82 },
+  gondolaThermalHeightMm: { min: 20, max: 200 },
+  gondolaThermalMarginMm: { min: 0, max: 20 },
+  gondolaThermalGapMm: { min: 0, max: 10 },
+  gondolaThermalDensity: { min: 0, max: 15 },
+  gondolaThermalNameMaxChars: { min: 1, max: 60 },
+  gondolaThermalScale: { min: 1, max: 10 },
+  // Alto del código de barras CODE128 en la etiqueta de góndola térmica.
+  // Mínimo 3 mm porque por debajo deja de ser legible por lectores
+  // comerciales; máximo 30 mm para que nunca invada el bloque de precio.
+  gondolaThermalBarcodeHeightMm: { min: 3, max: 30 },
+  // Literal corto que acompaña al precio ("PRECIO UND", "x UN", "KG", etc.).
+  // El renderer trunca a este máximo para que la línea no pise el precio.
+  gondolaThermalUnitLabelMaxChars: { min: 1, max: 24 },
   maxStringLength: 200,
+});
+
+// -----------------------------------------------------------------------------
+// Defaults canónicos de la rama `gondola.thermal`. Se exportan para que la
+// UI y los tests contractuales no reinventen números.
+// -----------------------------------------------------------------------------
+
+/**
+ * Configuración térmica por defecto para góndola 80 mm. Perfectamente
+ * saneada: `sanitizePrintingConfig` inyecta este objeto cuando la rama
+ * `gondola.thermal` falta (BC con localStorage sin thermal).
+ *
+ * Diseño visual (coincide con la referencia aprobada 2026-10):
+ *   - Nombre arriba (máx. 2 líneas, truncado por `nameMaxChars`).
+ *   - Separador fino opcional.
+ *   - Precio GRANDE centrado por métricas, formato colombiano.
+ *   - Literal corto `unitLabel` ("PRECIO UND") bajo el precio.
+ *   - CODE128 abajo a la izquierda (sólo si `showBarcode` y el código es
+ *     ASCII seguro). HRI apagado — el PLU va como texto en la derecha.
+ *   - Código/PLU abajo a la derecha (sólo si `showCode`).
+ *   - Fecha opcional (`showDate`).
+ */
+export const DEFAULT_GONDOLA_THERMAL_CONFIG = Object.freeze({
+  widthMm: 80,
+  printableWidthMm: 76,
+  heightMm: 40,
+  marginLeftMm: 2,
+  marginTopMm: 2,
+  marginBottomMm: 2,
+  gapMm: 0,
+  direction: 0,
+  mirror: 0,
+  density: 8,
+  dpi: DEFAULT_DPI,
+  nameFont: "3",
+  nameScaleX: 1,
+  nameScaleY: 1,
+  nameMaxChars: 24,
+  priceFont: "4",
+  priceScaleX: 2,
+  priceScaleY: 2,
+  // --- Nuevos campos (retrocompatibles). Legacy configs sin estos
+  //     recibirán los defaults al pasar por `sanitizeGondolaThermal`.
+  // Imprime un código de barras CODE128 abajo a la izquierda. Si el
+  // código del producto no es ASCII seguro, el bridge omite el barcode y
+  // conserva el PLU; nunca falla la impresión por este motivo.
+  showBarcode: true,
+  // Alto nominal del barcode (mm). El renderer lo acota al área real
+  // disponible: nunca invade el bloque del precio ni se sale del
+  // marginBottom.
+  barcodeHeightMm: 8,
+  // Literal corto bajo el precio ("PRECIO UND" por defecto). El admin
+  // puede personalizarlo por unidad del producto desde la UI de config
+  // o apagarlo con `showUnitLabel: false`.
+  showUnitLabel: true,
+  unitLabel: "PRECIO UND",
+  // --- Existentes ---
+  showCode: true,
+  showDate: true,
+  footerFont: "1",
+  footerScaleX: 1,
+  footerScaleY: 1,
 });
 
 // -----------------------------------------------------------------------------
@@ -516,19 +648,216 @@ export function createDefaultPrintingConfig() {
       },
     },
     /**
-     * Rama góndola: precios físicos en hoja de impresora normal.
+     * Rama góndola: precios físicos.
      *
-     * El flujo /labels/shelf imprime SIEMPRE con el diálogo del navegador
-     * (iframe aislado), nunca con el bridge térmico. Esta rama expone el
-     * formato activo:
+     * Formatos soportados:
      *   - `LETTER` (Carta, default) → landscape 279.4×215.9 mm, grid 3×5 = 15.
+     *     Impresión por diálogo del navegador (iframe aislado). Nunca
+     *     usa el bridge térmico.
      *   - `LEGAL`  (Oficio)         → landscape 355.6×215.9 mm, grid 4×5 = 20.
-     * La geometría exacta se calcula en `shelf-labels.mjs` para no duplicar
-     * dimensiones físicas en dos ficheros.
+     *     Mismo flujo iframe que LETTER.
+     *   - `THERMAL_80` → rollo térmico continuo 80 mm. Imprime DIRECTO
+     *     por el bridge (`window.posBridge.print({type:"shelf-labels"})`),
+     *     sin iframe ni diálogo del navegador. Los parámetros físicos
+     *     (dimensiones, densidad, fuentes TSPL, pie) viven en
+     *     `gondola.thermal` y se sanean junto con el resto de la config.
+     *
+     * La geometría de LETTER/LEGAL se calcula en `shelf-labels.mjs` para
+     * no duplicar dimensiones físicas en dos ficheros. La rama `thermal`
+     * se envía tal cual al bridge dentro del payload `shelf-labels`.
      */
     gondola: {
       format: DEFAULT_GONDOLA_FORMAT,
+      thermal: { ...DEFAULT_GONDOLA_THERMAL_CONFIG },
     },
+  };
+}
+
+// -----------------------------------------------------------------------------
+// Sanitize gondola.thermal
+// -----------------------------------------------------------------------------
+
+/**
+ * Sanitiza la rama `gondola.thermal` SIEMPRE a un objeto canónico. Si el
+ * input es null/undefined o un tipo distinto a objeto, devuelve una copia
+ * del default. Cualquier campo fuera de bounds se clampea; cualquier enum
+ * desconocido cae al default. Nunca lanza.
+ *
+ * Reglas duras:
+ *   - `printableWidthMm` nunca excede `widthMm` (clamp al final).
+ *   - `marginLeftMm + printableWidthMm` nunca supera `widthMm`: si da,
+ *     se recorta `printableWidthMm` para que la línea quepa.
+ *   - Fuentes TSPL fuera de `TSPL_BUILTIN_FONTS` caen al default del campo.
+ *   - `direction`/`mirror` ∈ {0,1}.
+ */
+export function sanitizeGondolaThermal(input) {
+  const def = DEFAULT_GONDOLA_THERMAL_CONFIG;
+  const src = ensureObject(input);
+
+  const widthMm = clampInt(
+    src.widthMm,
+    BOUNDS.gondolaThermalWidthMm.min,
+    BOUNDS.gondolaThermalWidthMm.max,
+    def.widthMm,
+  );
+  // printable 10..82 (BOUNDS gondolaThermalPrintableWidthMm) pero jamás
+  // mayor que widthMm.
+  let printableWidthMm = clampInt(
+    src.printableWidthMm,
+    BOUNDS.gondolaThermalPrintableWidthMm.min,
+    Math.min(BOUNDS.gondolaThermalPrintableWidthMm.max, widthMm),
+    Math.min(def.printableWidthMm, widthMm),
+  );
+  const heightMm = clampInt(
+    src.heightMm,
+    BOUNDS.gondolaThermalHeightMm.min,
+    BOUNDS.gondolaThermalHeightMm.max,
+    def.heightMm,
+  );
+  const marginLeftMm = clampInt(
+    src.marginLeftMm,
+    BOUNDS.gondolaThermalMarginMm.min,
+    BOUNDS.gondolaThermalMarginMm.max,
+    def.marginLeftMm,
+  );
+  const marginTopMm = clampInt(
+    src.marginTopMm,
+    BOUNDS.gondolaThermalMarginMm.min,
+    BOUNDS.gondolaThermalMarginMm.max,
+    def.marginTopMm,
+  );
+  const marginBottomMm = clampInt(
+    src.marginBottomMm,
+    BOUNDS.gondolaThermalMarginMm.min,
+    BOUNDS.gondolaThermalMarginMm.max,
+    def.marginBottomMm,
+  );
+  // Si margen izquierdo + ancho imprimible exceden el ancho físico, se
+  // reduce el ancho imprimible. Nunca movemos el margen (es intencional
+  // del admin).
+  if (marginLeftMm + printableWidthMm > widthMm) {
+    printableWidthMm = Math.max(
+      BOUNDS.gondolaThermalPrintableWidthMm.min,
+      widthMm - marginLeftMm,
+    );
+  }
+  const gapMm = clampInt(
+    src.gapMm,
+    BOUNDS.gondolaThermalGapMm.min,
+    BOUNDS.gondolaThermalGapMm.max,
+    def.gapMm,
+  );
+  const direction = Number(src.direction) === 1 ? 1 : 0;
+  const mirror = Number(src.mirror) === 1 ? 1 : 0;
+  const density = clampInt(
+    src.density,
+    BOUNDS.gondolaThermalDensity.min,
+    BOUNDS.gondolaThermalDensity.max,
+    def.density,
+  );
+  const dpi = clampInt(src.dpi, BOUNDS.dpi.min, BOUNDS.dpi.max, def.dpi);
+
+  const pickFont = (raw, fallback) => {
+    const value = raw == null ? "" : String(raw);
+    return TSPL_BUILTIN_FONTS.includes(value) ? value : fallback;
+  };
+  const nameFont = pickFont(src.nameFont, def.nameFont);
+  const nameScaleX = clampInt(
+    src.nameScaleX,
+    BOUNDS.gondolaThermalScale.min,
+    BOUNDS.gondolaThermalScale.max,
+    def.nameScaleX,
+  );
+  const nameScaleY = clampInt(
+    src.nameScaleY,
+    BOUNDS.gondolaThermalScale.min,
+    BOUNDS.gondolaThermalScale.max,
+    def.nameScaleY,
+  );
+  const nameMaxChars = clampInt(
+    src.nameMaxChars,
+    BOUNDS.gondolaThermalNameMaxChars.min,
+    BOUNDS.gondolaThermalNameMaxChars.max,
+    def.nameMaxChars,
+  );
+  const priceFont = pickFont(src.priceFont, def.priceFont);
+  const priceScaleX = clampInt(
+    src.priceScaleX,
+    BOUNDS.gondolaThermalScale.min,
+    BOUNDS.gondolaThermalScale.max,
+    def.priceScaleX,
+  );
+  const priceScaleY = clampInt(
+    src.priceScaleY,
+    BOUNDS.gondolaThermalScale.min,
+    BOUNDS.gondolaThermalScale.max,
+    def.priceScaleY,
+  );
+  const showCode = pickBool(src.showCode, def.showCode);
+  const showDate = pickBool(src.showDate, def.showDate);
+  // Toggles nuevos (retrocompatibles). Legacy sin estos campos recibe
+  // los defaults canónicos. `pickBool` acepta "true"/"false" strings
+  // además de booleanos: imprescindible para configs importadas desde
+  // formularios donde el valor viaja como string.
+  const showBarcode = pickBool(src.showBarcode, def.showBarcode);
+  const showUnitLabel = pickBool(src.showUnitLabel, def.showUnitLabel);
+  // Alto del barcode: clamp dentro de bounds, redondeado a entero (mm).
+  const barcodeHeightMm = clampInt(
+    src.barcodeHeightMm,
+    BOUNDS.gondolaThermalBarcodeHeightMm.min,
+    BOUNDS.gondolaThermalBarcodeHeightMm.max,
+    def.barcodeHeightMm,
+  );
+  // Literal unitario: trimado, truncado al bound. Si queda vacío se
+  // reemplaza por el default ("PRECIO UND") para que la UI nunca se
+  // quede sin texto cuando `showUnitLabel: true`.
+  const unitLabelRaw = cleanString(
+    src.unitLabel,
+    BOUNDS.gondolaThermalUnitLabelMaxChars.max,
+  );
+  const unitLabel = unitLabelRaw || def.unitLabel;
+  const footerFont = pickFont(src.footerFont, def.footerFont);
+  const footerScaleX = clampInt(
+    src.footerScaleX,
+    BOUNDS.gondolaThermalScale.min,
+    BOUNDS.gondolaThermalScale.max,
+    def.footerScaleX,
+  );
+  const footerScaleY = clampInt(
+    src.footerScaleY,
+    BOUNDS.gondolaThermalScale.min,
+    BOUNDS.gondolaThermalScale.max,
+    def.footerScaleY,
+  );
+
+  return {
+    widthMm,
+    printableWidthMm,
+    heightMm,
+    marginLeftMm,
+    marginTopMm,
+    marginBottomMm,
+    gapMm,
+    direction,
+    mirror,
+    density,
+    dpi,
+    nameFont,
+    nameScaleX,
+    nameScaleY,
+    nameMaxChars,
+    priceFont,
+    priceScaleX,
+    priceScaleY,
+    showCode,
+    showDate,
+    showBarcode,
+    barcodeHeightMm,
+    showUnitLabel,
+    unitLabel,
+    footerFont,
+    footerScaleX,
+    footerScaleY,
   };
 }
 
@@ -646,6 +975,48 @@ export function sanitizePrintingConfig(input) {
     printableWidthMm = receiptWidthMm;
   }
 
+  // TSPL sólo admite escalas enteras. El bridge ancla el "punto medio"
+  // del rollo 58 mm (48 mm imprimibles) en la fuente built-in `8` con
+  // escalas 14x25 y scaleY=1: eso le da legibilidad real en caja sin
+  // repetir el salto extremo a `font2 scaleY2` (hileras muy altas que
+  // partían filas) ni al glifo `font1` (ilegible). Para alinear el
+  // frontend con esa decisión fija los topes conocidos por ancho
+  // imprimible real:
+  //
+  //   - 48 mm imprimibles (preset 58 mm)        → tope duro de 26 cols.
+  //   - 76 mm imprimibles (preset 80 mm / 82 mm JAL_838L) → tope duro
+  //     de 48 cols (fuente built-in 2, scaleX=scaleY=1).
+  //   - Otros `printableWidthMm` (CUSTOM angosto, p.ej. 30/32 mm legacy)
+  //     mantienen la defensa aritmética histórica (12 dots por glifo
+  //     TSPL built-in 2 a 203 dpi) para que nunca escupan glifos
+  //     ilegibles o se desborden del cabezal.
+  //
+  // Otros protocolos (ESC/POS, SYSTEM/PDF, ZPL) mantienen exactamente
+  // su configuración nominal: el clamp vive sólo en el camino TSPL.
+  if (connProtocol === PROTOCOLS.TSPL) {
+    const roundedPrintableMm = Math.round(printableWidthMm);
+    let maxReadableColumns;
+    if (roundedPrintableMm === 48) {
+      // 58/48 → tope 26 columnas (punto medio font8 14x25 scaleY1).
+      maxReadableColumns = 26;
+    } else if (roundedPrintableMm === 76) {
+      // 80/76 y 82/76 → mantienen 48/font2/scale1.
+      maxReadableColumns = 48;
+    } else {
+      // Defensa legacy / CUSTOM: deriva por aritmética con fuente 2.
+      const tsplDpi = 203;
+      const tsplReadableGlyphDots = 12;
+      const tsplLeftMarginMm = 1.5;
+      const availableDots = Math.max(0, printableWidthMm - tsplLeftMarginMm)
+        * tsplDpi / 25.4;
+      maxReadableColumns = Math.max(
+        BOUNDS.receiptColumns.min,
+        Math.floor(availableDots / tsplReadableGlyphDots),
+      );
+    }
+    receiptColumns = Math.min(receiptColumns, maxReadableColumns);
+  }
+
   const sizePreset = pickEnum(labels.sizePreset, Object.values(LABEL_SIZE_PRESETS), defaults.labels.sizePreset);
   const presetDims = LABEL_SIZE_DIMENSIONS[sizePreset];
   const labelWidthMm = presetDims
@@ -758,6 +1129,26 @@ export function sanitizePrintingConfig(input) {
     defaults.activeMode,
   );
 
+  // Rama góndola: formato con alias ES + thermal saneado SIEMPRE.
+  // La inline object literal `gondola: { format: ..., thermal: ... }`
+  // mantiene la forma esperada por los guardianes estáticos. Las dos
+  // dependencias (`normalizeGondolaFormat`, `sanitizeGondolaThermal`)
+  // viven fuera para no inflar el reducer.
+  const srcGondola = ensureObject(src.gondola);
+  const gondolaFormat = normalizeGondolaFormat(srcGondola.format) || defaults.gondola.format;
+  // Compara explícitamente contra los dos destinos canónicos (LETTER /
+  // LEGAL) para que los guardianes estáticos puedan auditar la rama sin
+  // depender de la implementación del mapa de aliases. THERMAL_80 pasa
+  // por el fallback del helper.
+  const gondolaFormatCanonical = gondolaFormat === GONDOLA_FORMATS.LETTER
+    ? GONDOLA_FORMATS.LETTER
+    : gondolaFormat === GONDOLA_FORMATS.LEGAL
+      ? GONDOLA_FORMATS.LEGAL
+      : gondolaFormat === GONDOLA_FORMATS.THERMAL_80
+        ? GONDOLA_FORMATS.THERMAL_80
+        : defaults.gondola.format;
+  const gondolaThermal = sanitizeGondolaThermal(srcGondola.thermal);
+
   const sanitized = {
     version: PRINTING_CONFIG_VERSION, // forzamos siempre a la versión actual
     updatedAt: cleanString(src.updatedAt, 40) || null,
@@ -861,18 +1252,8 @@ export function sanitizePrintingConfig(input) {
       },
     },
     gondola: {
-      // Formato de hoja para precios de góndola. Sanitize es la única
-      // frontera: cualquier string desconocido cae al default seguro
-      // (`LETTER`). Permitimos aceptar los alias en español ("CARTA" /
-      // "OFICIO") para no romper configs que hayan sido editadas a mano.
-      format: (() => {
-        const raw = typeof (ensureObject(src.gondola).format) === "string"
-          ? String(ensureObject(src.gondola).format).trim().toUpperCase()
-          : "";
-        if (raw === GONDOLA_FORMATS.LETTER || raw === "CARTA") return GONDOLA_FORMATS.LETTER;
-        if (raw === GONDOLA_FORMATS.LEGAL || raw === "OFICIO") return GONDOLA_FORMATS.LEGAL;
-        return defaults.gondola.format;
-      })(),
+      format: gondolaFormatCanonical,
+      thermal: gondolaThermal,
     },
   };
 
@@ -1116,22 +1497,50 @@ export function applyLabelSizePreset(config, preset) {
 }
 
 /**
- * Mutador puro del formato de hoja de góndola. Idempotente. Cualquier
- * valor desconocido deja la config intacta (sanitize ya aplicó el default
+ * Mutador puro del formato de hoja/rollo de góndola. Idempotente.
+ *
+ *   - LETTER / LEGAL → impresión por diálogo del navegador (iframe).
+ *   - THERMAL_80     → impresión directa por bridge (TSPL). Si la rama
+ *     `gondola.thermal` falta, sanitize ya la inyectó con defaults; aquí
+ *     sólo cambiamos el formato activo.
+ *
+ * Acepta alias en español/short-hand (`"CARTA"`, `"OFICIO"`, `"TERMICA_80"`,
+ * `"RT80"`, etc.) vía el mapa compartido `GONDOLA_FORMAT_ALIASES`.
+ *
+ * No muta `connection`, `receipt`, `labels`, `drawer`. Cualquier valor
+ * desconocido deja la config intacta (sanitize ya aplicó el default
  * cuando se cargó).
  *
  * @param {unknown} config
- * @param {"LETTER"|"LEGAL"} format
+ * @param {"LETTER"|"LEGAL"|"THERMAL_80"|string} format
  * @returns {object}
  */
 export function applyGondolaFormatPreset(config, format) {
   const base = sanitizePrintingConfig(config);
-  const normalized = typeof format === "string" ? format.trim().toUpperCase() : "";
-  if (normalized === GONDOLA_FORMATS.LETTER || normalized === "CARTA") {
-    base.gondola.format = GONDOLA_FORMATS.LETTER;
-  } else if (normalized === GONDOLA_FORMATS.LEGAL || normalized === "OFICIO") {
-    base.gondola.format = GONDOLA_FORMATS.LEGAL;
+  const normalized = normalizeGondolaFormat(format);
+  if (normalized) {
+    base.gondola.format = normalized;
   }
+  return sanitizePrintingConfig(base);
+}
+
+/**
+ * Mutador puro de los campos térmicos de la rama `gondola.thermal`.
+ * Hace un merge superficial sobre la rama actual y pasa el resultado por
+ * `sanitizeGondolaThermal` para que todos los campos queden dentro de
+ * bounds. NO cambia `gondola.format` (eso vive en `applyGondolaFormatPreset`).
+ *
+ * @param {unknown} config
+ * @param {Partial<import("./printing-config.d.mts").GondolaThermalConfig>} patch
+ * @returns {object}
+ */
+export function setGondolaThermalParams(config, patch) {
+  const base = sanitizePrintingConfig(config);
+  const current = base.gondola.thermal || DEFAULT_GONDOLA_THERMAL_CONFIG;
+  const merged = patch && typeof patch === "object" && !Array.isArray(patch)
+    ? { ...current, ...patch }
+    : { ...current };
+  base.gondola.thermal = sanitizeGondolaThermal(merged);
   return sanitizePrintingConfig(base);
 }
 

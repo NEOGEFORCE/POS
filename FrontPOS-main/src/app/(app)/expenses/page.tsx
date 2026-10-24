@@ -570,6 +570,13 @@ export default function ExpensesPage() {
         daviplataAmount: isPending ? 0 : (data.daviplataAmount || 0),
         fondoAmount: isPending ? 0 : (data.fondoAmount || 0),
         coinsAmount: isPending ? 0 : (data.coinsAmount || 0),
+        // Bold QR / Bre-B — se envía como campo top-level para que, en
+        // cuanto el backend persista la columna física `bold_qr_amount`
+        // (migración 028 fuera de alcance), el canal cuadre al centavo.
+        // Mientras tanto el agregador legacy del dashboard lo cuenta por
+        // el string `paymentSource='BOLD_QR'` (o el token `BOLD_QR: $N`
+        // dentro de un string compuesto).
+        boldQrAmount: isPending ? 0 : (data.boldQrAmount || 0),
         paidAmount: isPending ? 0 : expenseAmount,
         remainingAmount: isPending ? expenseAmount : 0,
         date: addDialogOpen ? currentDate : (editingExpense?.date || currentDate),

@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -609,4 +610,101 @@ func (s *TelegramService) Stop() {
 	if s.bot != nil {
 		s.bot.StopReceivingUpdates()
 	}
+}
+
+// =========================================================================
+// Envío SÍNCRONO para OTPs del cajón (migración 025)
+// =========================================================================
+//
+// Decisiones clave:
+//
+//   - El OTP de apertura manual del cajón NO puede entrar a la cola
+//     offline. Dos razones:
+//       1. TTL de 90 segundos: para cuando el worker reintente, el
+//          challenge ya expiró y el OTP viajaría a destiempo.
+//       2. El OTP es un secreto de un solo uso: una cola en memoria con
+//          el texto en claro multiplica la superficie de exposición.
+//
+//   - La respuesta del handler depende del resultado del envío. Si el
+//     bot no está activo o Telegram timeoutea, respondemos 503 y
+//     marcamos el challenge CANCELLED en el servicio. Sin este método
+//     el handler no tiene forma de distinguir "mandado" de "encolado".
+//
+//   - El timeout corto (5s) empata con la UX esperada: el modal pide
+//     un OTP y el usuario espera ver el mensaje de Telegram en segundos.
+//
+// Este método NUNCA debe:
+//   - Imprimir el OTP (ni el payload completo) en logs.
+//   - Reusar la ruta `SendAlert` / `SendMarkdownAlert`, que encolan.
+//   - Reintentar en caso de fallo transitorio: eso lo decide la UX.
+
+// ErrTelegramInactive se devuelve cuando el bot no está activo (sin
+// token, sin red o cola offline temporal). El servicio OTP lo traduce
+// a `DRAWER_OTP_TELEGRAM_UNAVAILABLE` y marca el challenge CANCELLED.
+var ErrTelegramInactive = errors.New("telegram: bot inactivo (sin token, chat o conectividad)")
+
+// SendSyncOTPMessage envía un mensaje al chat admin configurado de
+// manera SÍNCRONA, con timeout corto y sin pasar por la cola offline.
+// El método está pensado específicamente para el OTP de apertura
+// manual del cajón: fallos deben ser inmediatos para que el handler
+// pueda cancelar el challenge y responder 503.
+//
+// Contrato:
+//   - `message` NUNCA se registra en logs: el que llama (service OTP)
+//     escribe un log sanitizado antes/después, sin el OTP.
+//   - `ErrTelegramInactive` cuando el bot no está disponible.
+//   - Error con prefijo "telegram:" ante fallo de envío/timeout.
+//   - `nil` si Telegram confirmó la entrega.
+//
+// El timeout se aplica como ventana total: si el bot está lento, el
+// envío se cancela y el handler responde 503 en vez de bloquear el
+// request HTTP.
+func (s *TelegramService) SendSyncOTPMessage(ctx context.Context, message string) error {
+	if s == nil || s.bot == nil || !s.active {
+		return ErrTelegramInactive
+	}
+	if strings.TrimSpace(message) == "" {
+		return errors.New("telegram: mensaje vacío")
+	}
+
+	// Ventana total de 5s. Si el `ctx` del handler ya trae un deadline
+	// más corto, respetamos el más estricto.
+	callCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	type result struct{ err error }
+	done := make(chan result, 1)
+	go func() {
+		msg := tgbotapi.NewMessage(s.chatID, message)
+		msg.ParseMode = "Markdown"
+		_, err := s.bot.Send(msg)
+		if err != nil {
+			// Reintento sin ParseMode: evita que un caracter mal
+			// escapado en Markdown rompa el envío. No encolamos ni
+			// escribimos el mensaje al log.
+			msg.ParseMode = ""
+			if _, err2 := s.bot.Send(msg); err2 != nil {
+				done <- result{err: fmt.Errorf("telegram: envío falló: %w", err2)}
+				return
+			}
+		}
+		done <- result{err: nil}
+	}()
+
+	select {
+	case <-callCtx.Done():
+		return fmt.Errorf("telegram: timeout tras 5s esperando confirmación de envío")
+	case r := <-done:
+		return r.err
+	}
+}
+
+// IsActive informa si el bot está arriba. Lo usan los tests y el
+// handler Admin para presentar health checks. NO expone el token ni el
+// chat; sólo un booleano.
+func (s *TelegramService) IsActive() bool {
+	if s == nil {
+		return false
+	}
+	return s.bot != nil && s.active
 }

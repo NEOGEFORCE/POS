@@ -34,6 +34,10 @@ import {
   getPackHintUnits,
   isValidUnitsPerPack,
   convertItemToIndividualUnits,
+  convertItemAsPresentation,
+  classifyPackMode,
+  PACK_MODE_EMPAQUE,
+  PACK_MODE_PRESENTACION,
   PACK_MIN_UNITS,
   PACK_MAX_UNITS,
 } from '@/lib/invoice-reader-helpers.mjs';
@@ -59,15 +63,26 @@ type Stage = 'upload' | 'packReview';
  * referencia al item original (por `__ocrLocalId` cuando viene y por
  * `isMatched` + nombre como fallback) para que al confirmar podamos aplicar
  * la conversión al objeto correcto sin alterar los demás items.
+ *
+ * El `mode` captura la decisión del operario entre:
+ *   - EMPAQUE: el número detectado es un multiplicador real
+ *     (p.ej. "CAP X 24" = 24 unidades sueltas). Pide input de unidades.
+ *   - PRESENTACION: el número es parte del gramaje/presentación del
+ *     producto (p.ej. "X 58 ML" = una crema de 58 ml). Cada paquete entra
+ *     como 1 unidad; no se pide input.
  */
+type PackMode = 'EMPAQUE' | 'PRESENTACION';
+
 interface PackReviewRow {
   key: string;
   isMatched: boolean;
   displayName: string;
   invoiceQuantity: number;
   hint: number;
-  /** Texto crudo del input para preservar edición. */
+  /** Texto crudo del input para preservar edición (solo útil en EMPAQUE). */
   unitsInput: string;
+  /** Modo elegido por el operario para este producto. */
+  mode: PackMode;
 }
 
 export default function InvoiceReaderModal({
@@ -246,6 +261,10 @@ export default function InvoiceReaderModal({
         : (typeof it.productName === 'string' && it.productName.trim()
             ? it.productName
             : (typeof it.name === 'string' ? it.name : 'Sin nombre'));
+      // Default inteligente: nombres con magnitud ("X 58 ML", "X 450 GRS")
+      // caen en PRESENTACION; nombres con marcador explícito ("X 24 UND")
+      // caen en EMPAQUE. El operario puede cambiarlo en la UI.
+      const mode: PackMode = classifyPackMode(it);
       rows.push({
         key: typeof it.__ocrLocalId === 'string' && it.__ocrLocalId
           ? it.__ocrLocalId
@@ -254,7 +273,10 @@ export default function InvoiceReaderModal({
         displayName: name,
         invoiceQuantity: Number(it.quantity) || 0,
         hint,
-        unitsInput: String(hint || ''),
+        // Input vacío si el default es PRESENTACION (no se usa); el hint
+        // sólo se muestra como placeholder cuando el modo es EMPAQUE.
+        unitsInput: mode === PACK_MODE_EMPAQUE ? String(hint || '') : '',
+        mode,
       });
     });
     setPendingItems(neutralized);
@@ -263,7 +285,7 @@ export default function InvoiceReaderModal({
     toast({
       variant: 'default',
       title: `${rows.length} ${rows.length === 1 ? 'empaque detectado' : 'empaques detectados'}`,
-      description: 'Confirma las unidades por paquete antes de cargar al carrito.',
+      description: 'Elige presentación o empaque por producto antes de cargar al carrito.',
     });
   };
 
@@ -417,22 +439,56 @@ export default function InvoiceReaderModal({
     setPackReviewRows(prev => prev.map(r => r.key === key ? { ...r, unitsInput: sanitized } : r));
   };
 
+  /**
+   * Cambia el modo de carga para una fila. Al pasar a PRESENTACION limpiamos
+   * el input de unidades (visualmente no se usa) y al volver a EMPAQUE
+   * rehidratamos con el hint para no obligar a tipear de nuevo si el OCR
+   * ya había sugerido un número.
+   */
+  const setRowMode = (key: string, mode: PackMode) => {
+    setPackReviewRows(prev => prev.map(r => {
+      if (r.key !== key) return r;
+      if (mode === PACK_MODE_PRESENTACION) {
+        return { ...r, mode, unitsInput: '' };
+      }
+      return {
+        ...r,
+        mode,
+        unitsInput: r.unitsInput && r.unitsInput !== ''
+          ? r.unitsInput
+          : String(r.hint || ''),
+      };
+    }));
+  };
+
   const allRowsValid = packReviewRows.length > 0
-    && packReviewRows.every(r => isValidUnitsPerPack(r.unitsInput));
+    && packReviewRows.every(r =>
+      r.mode === PACK_MODE_PRESENTACION || isValidUnitsPerPack(r.unitsInput),
+    );
 
   /**
-   * Al confirmar, para cada fila de la revisión aplicamos
-   * `convertItemToIndividualUnits` sobre el item correspondiente de
-   * `pendingItems`. Los demás items (sin hint) pasan intactos — nunca se
-   * los multiplica.
+   * Al confirmar, para cada fila:
+   *   - Modo PRESENTACION → aplicamos `convertItemAsPresentation` (deja
+   *     cantidad/precio intactos, limpia requiresPackConfirmation y hint,
+   *     marca trazabilidad simétrica).
+   *   - Modo EMPAQUE → aplicamos `convertItemToIndividualUnits` con el N
+   *     tecleado (multiplica cantidad y divide precio).
+   *
+   * Los items que no requerían confirmación pasan intactos.
    */
   const handleConfirmPacks = () => {
     if (!allRowsValid || isCommittingPacks) return;
     setIsCommittingPacks(true);
-    const unitsByKey = new Map<string, number>();
+    const decisions = new Map<string, { mode: PackMode; units?: number }>();
     packReviewRows.forEach(r => {
+      if (r.mode === PACK_MODE_PRESENTACION) {
+        decisions.set(r.key, { mode: PACK_MODE_PRESENTACION });
+        return;
+      }
       const n = Number(r.unitsInput);
-      if (isValidUnitsPerPack(n)) unitsByKey.set(r.key, n);
+      if (isValidUnitsPerPack(n)) {
+        decisions.set(r.key, { mode: PACK_MODE_EMPAQUE, units: n });
+      }
     });
 
     const converted = pendingItems.map((it: any, idx: number) => {
@@ -441,9 +497,12 @@ export default function InvoiceReaderModal({
         : `${it.isMatched ? 'm' : 'u'}-${idx}-${
             it.invoiceName || it.productName || it.name || 'Sin nombre'
           }`;
-      const n = unitsByKey.get(key);
-      if (!n) return it; // No requirió confirmación.
-      return convertItemToIndividualUnits(it, n);
+      const decision = decisions.get(key);
+      if (!decision) return it; // No requirió confirmación.
+      if (decision.mode === PACK_MODE_PRESENTACION) {
+        return convertItemAsPresentation(it);
+      }
+      return convertItemToIndividualUnits(it, decision.units!);
     });
 
     onExtractedItems(converted);
@@ -536,12 +595,12 @@ export default function InvoiceReaderModal({
                 </div>
                 <div>
                   <h2 className="text-xl font-medium tracking-tight text-zinc-900 dark:text-white uppercase">
-                    {stage === 'packReview' ? 'CONFIRMAR UNIDADES POR PAQUETE' : 'ESCANEO DE FACTURA'}
+                    {stage === 'packReview' ? 'MODO DE CARGA POR PRODUCTO' : 'ESCANEO DE FACTURA'}
                   </h2>
                   <p className="text-[10px] text-gray-500 uppercase tracking-widest font-medium flex items-center gap-1">
                     {stage === 'packReview'
                       ? <>
-                          <Boxes size={10} aria-hidden="true" /> Siempre se cargará en unidades individuales
+                          <Boxes size={10} aria-hidden="true" /> Elige presentación o empaque por item
                         </>
                       : <>
                           <ShieldCheck size={10} aria-hidden="true" /> Procesamiento OCR
@@ -662,17 +721,18 @@ export default function InvoiceReaderModal({
                   )}
                 </>
               ) : (
-                /* ───────────────── Etapa interna: revisión de empaques ───────────────── */
+                /* ───────────────── Etapa interna: modo de carga por producto ───────────────── */
                 <section
-                  aria-label="Confirmación de unidades por paquete"
+                  aria-label="Selección de modo de carga por producto"
                   className="flex flex-col gap-3"
                 >
                   <div className="rounded-2xl bg-blue-500/5 border border-blue-500/20 p-3">
                     <p className="text-[11px] font-medium text-blue-700 dark:text-blue-300 leading-snug">
-                      Detectamos empaques en el nombre de uno o más productos. La política del negocio
-                      es cargar <strong>siempre</strong> al stock en unidades individuales. Confirma
-                      cuántas unidades trae cada paquete; el precio se dividirá automáticamente para
-                      preservar el valor de la factura.
+                      El OCR detectó un número junto a <strong>x</strong> / <strong>*</strong> en estos
+                      productos. Puede ser un empaque (p.ej. <em>CAP X 24</em>) o parte de la
+                      presentación (p.ej. <em>CREMA X 58 ML</em>). Elige el modo por producto:
+                      <strong> PRESENTACIÓN</strong> entra como 1 unidad por renglón;{' '}
+                      <strong>EMPAQUE</strong> multiplica cantidad y divide precio.
                     </p>
                   </div>
 
@@ -682,13 +742,16 @@ export default function InvoiceReaderModal({
                   >
                     {packReviewRows.map(row => {
                       const n = Number(row.unitsInput);
-                      const valid = isValidUnitsPerPack(row.unitsInput);
-                      const total = valid ? row.invoiceQuantity * n : 0;
+                      const isEmpaque = row.mode === PACK_MODE_EMPAQUE;
+                      const inputValid = isEmpaque && isValidUnitsPerPack(row.unitsInput);
+                      const rowValid = row.mode === PACK_MODE_PRESENTACION || inputValid;
+                      const total = inputValid ? row.invoiceQuantity * n : 0;
                       const inputId = `pack-row-${row.key}`;
+                      const modeGroupId = `pack-mode-${row.key}`;
                       return (
                         <li
                           key={row.key}
-                          className="flex flex-col gap-2 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900 p-3 sm:p-4"
+                          className="flex flex-col gap-3 rounded-2xl border border-zinc-200 dark:border-white/10 bg-white dark:bg-zinc-900 p-3 sm:p-4"
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
@@ -700,66 +763,153 @@ export default function InvoiceReaderModal({
                               </p>
                             </div>
                             <div className="text-right shrink-0">
-                              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">Paquetes</p>
+                              <p className="text-[9px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">Renglones</p>
                               <p className="text-base font-medium tabular-nums text-zinc-900 dark:text-zinc-100">
                                 {row.invoiceQuantity}
                               </p>
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
-                            <div className="flex flex-col gap-1">
-                              <label
-                                htmlFor={inputId}
-                                className="text-[10px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400"
-                              >
-                                Unidades por paquete
-                              </label>
-                              <input
-                                id={inputId}
-                                type="text"
-                                inputMode="numeric"
-                                autoComplete="off"
-                                value={row.unitsInput}
-                                onChange={(e) => updateRowUnits(row.key, e.target.value)}
-                                aria-invalid={!valid}
-                                aria-describedby={`${inputId}-hint`}
-                                required
-                                className={`h-12 w-full text-center text-lg font-bold rounded-xl bg-white dark:bg-[#121214] border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
-                                  valid
-                                    ? 'border-emerald-500/50 text-emerald-700 dark:text-emerald-400'
-                                    : 'border-amber-500/50 text-amber-700 dark:text-amber-400'
-                                }`}
-                                placeholder={row.hint > 0 ? String(row.hint) : 'Ej. 24'}
+                          {/* Selector de modo PRESENTACION / EMPAQUE */}
+                          <div
+                            role="radiogroup"
+                            aria-labelledby={`${modeGroupId}-label`}
+                            className="grid grid-cols-2 gap-2"
+                          >
+                            <span id={`${modeGroupId}-label`} className="sr-only">
+                              Modo de carga para {row.displayName}
+                            </span>
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={row.mode === PACK_MODE_PRESENTACION}
+                              onClick={() => setRowMode(row.key, PACK_MODE_PRESENTACION)}
+                              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 ${
+                                row.mode === PACK_MODE_PRESENTACION
+                                  ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-700 dark:text-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.08)]'
+                                  : 'bg-gray-100 dark:bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-emerald-500/20'
+                              }`}
+                            >
+                              <Package
+                                size={16}
+                                aria-hidden="true"
+                                className={row.mode === PACK_MODE_PRESENTACION ? 'text-emerald-500' : 'text-zinc-500'}
                               />
-                              <p id={`${inputId}-hint`} className="text-[9px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500">
-                                Entero entre {PACK_MIN_UNITS} y {PACK_MAX_UNITS}
-                                {row.hint > 0 ? ` · OCR sugirió ${row.hint}` : ''}
-                              </p>
-                            </div>
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-[10px] font-bold uppercase tracking-tight">
+                                  Presentación
+                                </span>
+                                <span className="text-[9px] font-medium uppercase tracking-widest opacity-70">
+                                  1 unidad por renglón
+                                </span>
+                              </div>
+                            </button>
 
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={row.mode === PACK_MODE_EMPAQUE}
+                              onClick={() => setRowMode(row.key, PACK_MODE_EMPAQUE)}
+                              className={`flex items-center gap-2 rounded-xl border px-3 py-2 text-left transition-all active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 ${
+                                row.mode === PACK_MODE_EMPAQUE
+                                  ? 'bg-blue-500/10 border-blue-500/50 text-blue-700 dark:text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.08)]'
+                                  : 'bg-gray-100 dark:bg-[#121214] border-black/5 dark:border-white/5 text-gray-500 dark:text-zinc-400 hover:border-blue-500/20'
+                              }`}
+                            >
+                              <Boxes
+                                size={16}
+                                aria-hidden="true"
+                                className={row.mode === PACK_MODE_EMPAQUE ? 'text-blue-500' : 'text-zinc-500'}
+                              />
+                              <div className="flex flex-col min-w-0">
+                                <span className="text-[10px] font-bold uppercase tracking-tight">
+                                  Empaque
+                                </span>
+                                <span className="text-[9px] font-medium uppercase tracking-widest opacity-70">
+                                  × unidades / ÷ precio
+                                </span>
+                              </div>
+                            </button>
+                          </div>
+
+                          {/* Input + preview — layout depende del modo */}
+                          {row.mode === PACK_MODE_EMPAQUE ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                              <div className="flex flex-col gap-1">
+                                <label
+                                  htmlFor={inputId}
+                                  className="text-[10px] font-bold uppercase tracking-widest text-blue-600 dark:text-blue-400"
+                                >
+                                  Unidades por paquete
+                                </label>
+                                <input
+                                  id={inputId}
+                                  type="text"
+                                  inputMode="numeric"
+                                  autoComplete="off"
+                                  value={row.unitsInput}
+                                  onChange={(e) => updateRowUnits(row.key, e.target.value)}
+                                  aria-invalid={!inputValid}
+                                  aria-describedby={`${inputId}-hint`}
+                                  required
+                                  className={`h-11 w-full text-center text-base font-bold rounded-xl bg-white dark:bg-[#121214] border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${
+                                    inputValid
+                                      ? 'border-emerald-500/50 text-emerald-700 dark:text-emerald-400'
+                                      : 'border-amber-500/50 text-amber-700 dark:text-amber-400'
+                                  }`}
+                                  placeholder={row.hint > 0 ? String(row.hint) : 'Ej. 24'}
+                                />
+                                <p id={`${inputId}-hint`} className="text-[9px] font-medium uppercase tracking-widest text-gray-500 dark:text-zinc-500">
+                                  Entero entre {PACK_MIN_UNITS} y {PACK_MAX_UNITS}
+                                  {row.hint > 0 ? ` · OCR sugirió ${row.hint}` : ''}
+                                </p>
+                              </div>
+
+                              <div className="flex flex-col gap-1">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">
+                                  Entrará al stock como
+                                </span>
+                                <div
+                                  className={`h-11 rounded-xl border px-3 flex items-center justify-between gap-2 ${
+                                    inputValid
+                                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
+                                      : 'bg-gray-100 dark:bg-zinc-800/50 border-dashed border-gray-300 dark:border-white/10 text-gray-500 dark:text-zinc-500'
+                                  }`}
+                                  aria-live="polite"
+                                >
+                                  <span className="text-[11px] font-medium tabular-nums tracking-wide">
+                                    {row.invoiceQuantity} × {inputValid ? n : '—'}
+                                  </span>
+                                  <span className="text-base font-bold tabular-nums">
+                                    {inputValid ? total.toLocaleString('es-CO') : '—'}
+                                    <span className="ml-1 text-[9px] uppercase tracking-widest font-medium">UND</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
                             <div className="flex flex-col gap-1">
                               <span className="text-[10px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-500">
                                 Entrará al stock como
                               </span>
                               <div
-                                className={`h-12 rounded-xl border px-3 flex items-center justify-between gap-2 ${
-                                  valid
-                                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400'
-                                    : 'bg-gray-100 dark:bg-zinc-800/50 border-dashed border-gray-300 dark:border-white/10 text-gray-500 dark:text-zinc-500'
-                                }`}
+                                className="h-11 rounded-xl border bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-400 px-3 flex items-center justify-between gap-2"
                                 aria-live="polite"
                               >
-                                <span className="text-[11px] font-medium tabular-nums tracking-wide">
-                                  {row.invoiceQuantity} × {valid ? n : '—'}
+                                <span className="text-[11px] font-medium uppercase tracking-widest">
+                                  Sin conversión · precio intacto
                                 </span>
-                                <span className="text-lg font-bold tabular-nums">
-                                  {valid ? total.toLocaleString('es-CO') : '—'}
-                                  <span className="ml-1 text-[9px] uppercase tracking-widest font-medium">UND</span>
+                                <span className="text-base font-bold tabular-nums">
+                                  {row.invoiceQuantity.toLocaleString('es-CO')}
+                                  <span className="ml-1 text-[9px] uppercase tracking-widest font-medium">
+                                    {row.invoiceQuantity === 1 ? 'UND' : 'UNDS'}
+                                  </span>
                                 </span>
                               </div>
                             </div>
-                          </div>
+                          )}
+                          {/* Marcador invisible: ayuda a tests detectar invalidez a nivel fila */}
+                          <span className="sr-only" aria-hidden="true" data-row-valid={rowValid ? '1' : '0'} />
                         </li>
                       );
                     })}
@@ -806,7 +956,7 @@ export default function InvoiceReaderModal({
                     isLoading={isCommittingPacks}
                     className="rounded-xl text-[10px] uppercase tracking-widest font-medium text-white shadow-lg"
                   >
-                    Cargar en unidades individuales
+                    Confirmar y Continuar
                   </Button>
                 </>
               )}

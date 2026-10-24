@@ -128,6 +128,33 @@ test("protocolo: validatePrinterRequest ACEPTA lo que sendRequest envía (kickDr
   assert.equal(r.request.action, "kickDrawer");
 });
 
+test("protocolo: validatePrinterRequest ACEPTA lo que sendRequest envía (listPrinters)", async () => {
+  // Cierra el guardián cruzado para la cuarta acción WS: el frontend emite
+  // `{type:"printer.request", action:"listPrinters", payload:{refresh:true}}`
+  // y el bridge DEBE aceptarlo bajo la misma puerta de validación que
+  // print/printTestPage/kickDrawer. Si cualquiera de los dos drifta
+  // (ej. el frontend empieza a mandar `action:"list_printers"` o el
+  // bridge quita la acción del allowlist), este test rompe antes del
+  // despliegue, no en producción con un `INVALID_REQUEST` al admin.
+  const { validatePrinterRequest } = require(printerBridgePath);
+  const run = await buildSendRequestRunner();
+  const instance = makeInstance("pos-cross-list");
+  run(instance, "listPrinters", { refresh: true }, MockWebSocket, "DIRECT_PRINT_UNAVAILABLE")
+    .catch(() => {});
+  assert.equal(instance.ws.sent.length, 1);
+  const parsed = JSON.parse(instance.ws.sent[0]);
+  assert.equal(parsed.type, "printer.request");
+  assert.equal(parsed.action, "listPrinters");
+  assert.equal(parsed.requestId, "pos-cross-list");
+  assert.deepEqual(parsed.payload, { refresh: true });
+
+  const r = validatePrinterRequest(parsed);
+  assert.equal(r.ok, true,
+    `validatePrinterRequest debe aceptar listPrinters. Rechazó: ${r.message || "(sin mensaje)"}`);
+  assert.equal(r.request.action, "listPrinters");
+  assert.deepEqual(r.request.payload, { refresh: true });
+});
+
 test("protocolo: validatePrinterRequest RECHAZA el envelope viejo type:'pos.print' (regresión)", async () => {
   // Guardián de regresión: si alguien reintroduce el shape incompatible
   // `{type:"pos.print", ...}` el bridge lo rechazaría con INVALID_REQUEST.

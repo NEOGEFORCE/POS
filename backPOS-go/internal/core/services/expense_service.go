@@ -68,6 +68,14 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 		expense.PaidAmount = expense.Amount
 	}
 
+	// B4 (2026-10-23): rechazar combinaciones imposibles con Bold QR
+	// y normalizar el PaymentSource a la constante canónica. Debe
+	// correr ANTES de parsePaymentSourceAmounts para que el fallback
+	// de ese helper vea el source ya normalizado.
+	if err := validateAndNormalizeBoldQRExpense(expense); err != nil {
+		return err
+	}
+
 	parsePaymentSourceAmounts(expense)
 
 	err := s.repo.Save(expense)
@@ -113,6 +121,22 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 		return
 	}
 
+	// Egreso pagado con el QR Bre-B de Bold (ver
+	// models.PaymentSourceBoldQR): como no hay columna física
+	// `bold_qr_amount` (requeriría migración), el egreso queda con las cinco
+	// columnas desglosadas en 0 y `paymentSource='BOLD_QR'`. Los
+	// agregadores SQL (postgres_expense_repository.go) lo levantan por la
+	// rama legacy UPPER(paymentSource) → results["BOLD_QR"], y el dashboard
+	// lo expone en `realCashFlow.boldQr` sin contaminar el efectivo de caja.
+	//
+	// Se evalúa ANTES del regex de mixtos porque el regex no reconoce
+	// "BOLD_QR:" como etiqueta (requeriría ampliarlo con una columna
+	// correspondiente; sin columna, el canal se preserva vía el texto
+	// completo del PaymentSource).
+	if models.IsBoldQRPaymentSource(src) {
+		return
+	}
+
 	re := regexp.MustCompile(`(NEQUI|DAVIPLATA|CAJA|CASH|EFECTIVO|FONDO|BOVEDA|BÓVEDA|MONEDAS|ALCANCIA|ALCANCÍA):\s*\$?([\d.,]+)`)
 	matches := re.FindAllStringSubmatch(src, -1)
 
@@ -140,6 +164,11 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 	}
 
 	switch {
+	case models.IsBoldQRPaymentSource(src):
+		// Bold QR: no toca ninguna columna desglosada; el canal se preserva
+		// vía PaymentSource='BOLD_QR'. Rama defensiva por si el short-circuit
+		// de arriba se pasa por alto en una edición futura.
+		return
 	case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
 		expense.NequiAmount = expense.Amount
 	case strings.Contains(src, "DAVIPLATA"):
@@ -220,6 +249,12 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 		expense.Status = "PAID"
 		expense.RemainingAmount = 0
 		expense.PaidAmount = expense.Amount
+		// B4: misma regla que en CreateExpense — primero validamos la
+		// coherencia Bold QR y luego dejamos que parsePaymentSourceAmounts
+		// pueble las columnas desglosadas.
+		if err := validateAndNormalizeBoldQRExpense(expense); err != nil {
+			return err
+		}
 		parsePaymentSourceAmounts(expense)
 	} else if expense.Status == "PENDING" {
 		expense.RemainingAmount = expense.Amount
@@ -291,6 +326,14 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		NequiAmount:     nequiAmount,
 		DaviplataAmount: daviplataAmount,
 		FondoAmount:     fondoAmount,
+	}
+
+	// B4 (2026-10-23): si el abono se registra por Bold QR, no se puede
+	// combinar con otros canales porque no hay columna física para
+	// desglosarlo. Rechazamos antes de tocar BD para que el flujo no
+	// quede a medias (deuda descontada + abono inconsistente).
+	if err := validateAndNormalizeBoldQRExpense(abonoExpense); err != nil {
+		return nil, err
 	}
 
 	// 2. Descontar la deuda original sin cambiar su PaymentSource ni fecha inicial

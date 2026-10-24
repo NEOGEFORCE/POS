@@ -28,6 +28,34 @@ export interface CartItem extends Product {
     isPreexisting?: boolean;
 }
 
+/**
+ * Extrae el `saleId` entero positivo de la respuesta 201 de
+ * `/sales/register`. El backend expone el campo con JSON tag `id`
+ * (ver `models.Sale.SaleID`), pero toleramos variantes legacy
+ * (`saleId`, `SaleID`) por si la forma cambia. Devuelve `undefined`
+ * cuando el valor no es un entero positivo validable; nunca inventa
+ * un ID. Esta función aísla al llamador de parsear basura: si el
+ * backend respondiera cadena vacía, 0, negativos o un objeto, se
+ * descarta aquí mismo y el flujo de UI sigue sin `saleId` real.
+ */
+function extractSaleIdFromRegisterResponse(resp: unknown): number | undefined {
+    if (!resp || typeof resp !== 'object') return undefined;
+    const bag = resp as Record<string, unknown>;
+    const candidates = [bag.id, bag.saleId, bag.SaleID];
+    for (const raw of candidates) {
+        if (typeof raw === 'number' && Number.isFinite(raw) && Number.isInteger(raw) && raw > 0) {
+            return raw;
+        }
+        if (typeof raw === 'string') {
+            const trimmed = raw.trim();
+            if (!/^[1-9]\d*$/.test(trimmed)) continue;
+            const parsed = Number.parseInt(trimmed, 10);
+            if (Number.isFinite(parsed) && parsed > 0) return parsed;
+        }
+    }
+    return undefined;
+}
+
 export function useNewSale() {
     const router = useRouter();
     const { toast } = useToast();
@@ -597,6 +625,64 @@ export function useNewSale() {
         // LOG DE AUDITORIA: Eliminacion de factura completa
         registerAuditLog('CART_CLEAR', 'VENTAS', `Factura eliminada: ${targetKey}. Tenia productos registrados.`, true);
     };
+
+    /**
+     * confirmEnqueuedAndFreeCart — flujo asíncrono QR (migración 027).
+     *
+     * El cajero pulsó "DEJAR EN ESPERA Y SEGUIR ATENDIENDO" y el padre
+     * ya confirmó que el backend persistió el snapshot (POST /encolar
+     * respondió 200). Este helper libera SÓLO el carrito actual: borra
+     * los items + el cliente asociado + la selección activa, y abre
+     * un carrito limpio para el siguiente cliente. Los demás carritos
+     * (Factura 2, Factura 3, ...) y sus clientes NO se tocan.
+     *
+     * Las ventas QR encoladas viven en el backend (bandeja global); el
+     * frontend las ve vía useBoldQrTray. Nunca se persisten como un
+     * carrito local, así que no tenemos que serializar nada aquí.
+     */
+    const confirmEnqueuedAndFreeCart = useCallback(() => {
+        const currentKey = activeCartKeyRef.current;
+        if (!currentKey) return;
+        const otherKeys = cartKeys.filter((k) => k !== currentKey);
+        if (otherKeys.length === 0) {
+            // Era el único carrito: generar uno limpio con el siguiente
+            // número disponible. Mantener el nombre viejo generaría
+            // confusión visual porque el cajero esperaría el carrito
+            // "anterior" pero éste ya no tiene su contenido.
+            let nextNum = 1;
+            while (cartKeys.includes(`Factura ${nextNum}`)) nextNum++;
+            const freshKey = `Factura ${nextNum === 1 ? 1 : nextNum}`;
+            setCartKeys([freshKey]);
+            setCarts({ [freshKey]: [] });
+            setCartCustomers({ [freshKey]: '0' });
+            setSelectedItemId(null);
+            handleCartSwitch(freshKey);
+            // Audit: encolado QR vacía el carrito activo (no se destruyó
+            // nada: la venta vive en el backend hasta que el webhook la
+            // apruebe).
+            registerAuditLog('CART_CLEAR', 'VENTAS', `Carrito ${currentKey} liberado por encolado QR (venta en bandeja global).`, true);
+            reloadScale();
+            return;
+        }
+        // Había otros carritos: borrar el activo y cambiar al primero
+        // disponible, SIN tocar la lista de los demás.
+        const newKeys = otherKeys;
+        setCartKeys(newKeys);
+        setCarts((prev) => {
+            const next = { ...prev };
+            delete next[currentKey];
+            return next;
+        });
+        setCartCustomers((prev) => {
+            const next = { ...prev };
+            delete next[currentKey];
+            return next;
+        });
+        setSelectedItemId(null);
+        handleCartSwitch(newKeys[0]);
+        registerAuditLog('CART_CLEAR', 'VENTAS', `Carrito ${currentKey} liberado por encolado QR (venta en bandeja global).`, true);
+        reloadScale();
+    }, [cartKeys, handleCartSwitch, reloadScale]);
 
     const updateQuantity = useCallback((cartItemId: string, delta: number) => {
         setCarts(prev => {
@@ -1347,15 +1433,24 @@ export function useNewSale() {
                 reqMethod = 'PUT';
             }
 
-            await apiFetch(endpointPath, {
+            // Capturamos el 201 real del backend. En `/sales/register` el
+            // body JSON trae el `id` entero positivo (ver json tag en
+            // models.Sale.SaleID), que vamos a adjuntar al audit del
+            // pulso lateral. En modo edición (`/sales/update/:id`) o en
+            // offline (que ni siquiera entra a esta rama) no se usa el
+            // id del server y jamás fabricamos uno.
+            const registerResponse = await apiFetch<Record<string, unknown>>(endpointPath, {
                 method: reqMethod,
                 body: JSON.stringify(saleData),
                 fallbackError: 'ERROR AL REGISTRAR VENTA',
                 timeoutMs: 30000,
             });
+            const serverSaleId = (!isEditMode && endpointPath === '/sales/register')
+                ? extractSaleIdFromRegisterResponse(registerResponse)
+                : undefined;
 
             toast({ variant: 'success', title: 'VENTA REGISTRADA', description: 'TRANSACCION COMPLETADA CON EXITO' });
-            finalizeLocalSale(itemsToPay, saleData, change);
+            finalizeLocalSale(itemsToPay, saleData, change, serverSaleId);
         } catch (err: any) {
             const isNetworkError = !(err instanceof ApiError) && (
                 err instanceof TypeError ||
@@ -1391,7 +1486,7 @@ export function useNewSale() {
         }
     };
 
-    const finalizeLocalSale = (itemsToPay: any[], saleData: any, change: number) => {
+    const finalizeLocalSale = (itemsToPay: any[], saleData: any, change: number, serverSaleId?: number) => {
         try {
             setLastChange(change);
             setShowSuccessScreen(true);
@@ -1460,7 +1555,14 @@ export function useNewSale() {
             reloadScale();
 
             setLastReceipt({
-                date: new Date().toLocaleString(),
+                // ISO 8601 (UTC). El consumidor (`saleToTicket` →
+                // `new Date(rawDate)`) necesita un string parseable sin
+                // ambigüedad de locale. Antes guardábamos
+                // `new Date().toLocaleString()` (p.ej. "14/10/2026, 12:48:15
+                // p. m."), que `new Date(...)` reinterpretaba como Invalid
+                // Date y acababa imprimiendo `NaN/NaN/NaN NaN:NaN NaN` en la
+                // tirilla térmica real. ISO 8601 es idempotente al parsear.
+                date: new Date().toISOString(),
                 clientName: selectedCustomer.name,
                 clientDni: selectedCustomerDni,
                 total: total,
@@ -1469,6 +1571,15 @@ export function useNewSale() {
                 transferAmount: saleData.transferAmount,
                 creditAmount: saleData.creditAmount,
                 change: change,
+                // `saleId` entero positivo cuando viene del 201 real del
+                // backend. En offline o edición queda `undefined`; nunca
+                // fabricamos uno. El consumidor (UniversalPaymentModal)
+                // lo propaga al audit del cajón sólo si está presente.
+                saleId: typeof serverSaleId === 'number'
+                    && Number.isInteger(serverSaleId)
+                    && serverSaleId > 0
+                    ? serverSaleId
+                    : undefined,
                 items: itemsToPay
             });
             
@@ -1616,7 +1727,9 @@ export function useNewSale() {
         // Handlers
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart, confirmDeleteCart,
         updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity, updateCartItem,
-        handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight
+        handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight,
+        // Flujo asíncrono QR (migración 027)
+        confirmEnqueuedAndFreeCart,
     };
 }
 

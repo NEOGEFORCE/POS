@@ -177,3 +177,208 @@ func TestDetectPackMultiplier_ToleraEspacioNoRompible(t *testing.T) {
 		t.Fatalf("NBSP debe tratarse como espacio: got %d want 24", got)
 	}
 }
+
+// =============================================================================
+// Regresión: magnitudes físicas separadas por espacio del número.
+//
+// Antes del fix, `CREMA DENTAL ... X 58 ML` devolvía 58 como multiplicador
+// porque el detector sólo miraba letras PEGADAS al número y, al ver un
+// espacio tras el 58, caía al return permisivo. Con el fix, el detector
+// hace lookahead a la siguiente palabra y, si está en packRejectSuffixes
+// (unidades de medida/presentación: ml, l, g, gr, grs, kg, mg, …), descarta
+// el candidato — igual que si estuviera pegado.
+//
+// Estos tests son la red crítica: documentan los ejemplos exactos del
+// usuario y variantes de mayúsculas/espaciado para evitar que gramajes y
+// volúmenes se interpreten como cientos de unidades.
+// =============================================================================
+
+func TestDetectPackMultiplier_GramajeVolumenConEspacio(t *testing.T) {
+	t.Parallel()
+	// Todos estos nombres deben devolver 0: el número tras la 'X' es una
+	// presentación física (ml, g, gr, grs, kg, mg, cc, oz, l), no un
+	// multiplicador de empaque.
+	cases := []struct {
+		name string
+		in   string
+	}{
+		// Ejemplos textuales reportados por el usuario.
+		{"crema dental X 58 ML", "CREMA DENTAL COLGATE X 58 ML"},
+		{"detergente X 450 GRS", "DETERGENTE BLANCOX X 450 GRS"},
+
+		// Volumen (ml, L, cl, cc, oz).
+		{"X 500 ML", "AGUA X 500 ML"},
+		{"X 350 ML (bebida)", "BEBIDA ENERGIZANTE X 350 ML"},
+		{"X 1000 ML aceite", "ACEITE X 1000 ML"},
+		{"X 350 CC", "BEBIDA X 350 CC"},
+		{"X 500 cl minúscula", "jugo X 500 cl"},
+		{"X 12 OZ", "COCA COLA X 12 OZ"},
+
+		// Peso (g, gr, grs, mg, kg).
+		{"X 500 G", "JABON X 500 G"},
+		{"X 500 GR", "ARROZ X 500 GR"},
+		{"X 100 GR galleta", "GALLETAS X 100 GR"},
+		{"X 125 G yogurt", "YOGURT X 125 G"},
+		{"X 1 KG arroz", "ARROZ X 1 KG"},
+		{"X 500 MG pastilla", "PASTILLA X 500 MG"},
+		{"X 50 GRAMOS", "SNACK X 50 GRAMOS"},
+		{"X 2 KILOS", "DETERGENTE X 2 KILOS"},
+
+		// Longitud lineal (cm, mm, m, pulg).
+		{"X 50 CM", "CINTA X 50 CM"},
+		{"X 10 MM", "CORDEL X 10 MM"},
+		{"X 5 M", "MANGUERA X 5 M"},
+
+		// Mayúsculas/minúsculas y espacios múltiples.
+		{"X 58 ml minúsculas", "crema x 58 ml"},
+		{"X  58  ML doble espacio", "CREMA X  58  ML"},
+		{"X\t58\tML tab", "CREMA X\t58\tML"},
+		{"X 58 ML. con punto final", "CREMA X 58 ML."},
+		{"X 450 Grs mixto", "DETERGENTE X 450 Grs"},
+
+		// Marcador '*' con gramaje separado por espacio (poco común, pero
+		// el fix lo cubre también).
+		{"CAP* 58 ML", "CAP* 58 ML"},
+		{"CAP * 450 GRS", "CAP * 450 GRS"},
+		{"DP× 500 ML", "DP× 500 ML"},
+
+		// NBSP entre número y unidad: debe tratarse como espacio normal.
+		{"X 58\u00A0ML con NBSP", "CREMA X 58\u00A0ML"},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := DetectPackMultiplier(c.in)
+			if got != 0 {
+				t.Fatalf("DetectPackMultiplier(%q) = %d, se esperaba 0 (gramaje/volumen)", c.in, got)
+			}
+		})
+	}
+}
+
+// Regresión: empaques REALES con unidad pack separada por espacio tras el
+// número. El lookahead debe CONFIRMAR estos casos (equivalente al sufijo
+// pegado CAP*24UN) devolviendo el multiplicador. Antes del fix funcionaba
+// por el camino "palabra desconocida → return n permisivo", y debe seguir
+// funcionando ahora por el camino explícito "palabra en packUnitSuffixes".
+func TestDetectPackMultiplier_PackUnidadSeparadaConservada(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"CAP X 24 UN", "CAP X 24 UN", 24},
+		{"CAP x 24 UND", "CAP x 24 UND", 24},
+		{"CAP X 12 UNDS", "CAP X 12 UNDS", 12},
+		{"CAP X 24 UNID", "CAP X 24 UNID", 24},
+		{"CAP X 24 UNIDS", "CAP X 24 UNIDS", 24},
+		{"CAP X 24 U", "CAP X 24 U", 24},
+		{"PACK X 6", "PACK X 6", 6},
+		{"PACK X 6 UN", "PACK X 6 UN", 6},
+		{"con asterisco separado", "DP * 18 UN", 18},
+		{"con equis Unicode separada", "DP × 24 UND", 24},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := DetectPackMultiplier(c.in)
+			if got != c.want {
+				t.Fatalf("DetectPackMultiplier(%q) = %d, want %d", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// Regresión: palabra tras el número que NO es ni unidad pack ni magnitud
+// física. El detector mantiene el comportamiento permisivo histórico y
+// devuelve el número — romperlo rompería empaques descritos con el nombre
+// del contenido ("CAP X 24 CAJAS", "CAP X 24 BOTELLAS") que funcionaban
+// antes del fix.
+func TestDetectPackMultiplier_PalabraDesconocidaSeMantienePermisiva(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		{"CAP X 24 CAJAS", "CAP X 24 CAJAS", 24},
+		{"PAQUETE X 24 BOTELLAS", "COCA COLA PAQUETE X 24 BOTELLAS", 24},
+		{"CAP X 6 LATAS", "CAP X 6 LATAS", 6},
+		{"CAP X 12 BOLSAS", "CAP X 12 BOLSAS", 12},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := DetectPackMultiplier(c.in)
+			if got != c.want {
+				t.Fatalf("DetectPackMultiplier(%q) = %d, want %d (palabra desconocida: comportamiento permisivo)", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// Regresión: números fuera del rango seguro con gramaje. Se verifica que
+// el filtro de rango sigue cortando ANTES del lookahead y que para
+// mayor-que-999 el detector devuelve 0 sin ambigüedad (aunque el lookahead
+// también lo haría por su cuenta, defensa en profundidad).
+func TestDetectPackMultiplier_GramajeFueraDeRangoSigueSiendo0(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"COCA COLA X 1 L",   // 1 < 2 (bajo rango)
+		"ACEITE X 1000 ML",  // 1000 > 999 (sobre rango)
+		"ACEITE X 1500 GR",  // 1500 > 999
+		"ACEITE X 2000 ML",  // 2000 > 999
+		"PASTILLA X 500 MG", // dentro de rango pero MG → rechazo
+		"ARROZ X 999 GR",    // borde superior pero GR → rechazo
+	}
+	for _, in := range cases {
+		in := in
+		t.Run(in, func(t *testing.T) {
+			t.Parallel()
+			if got := DetectPackMultiplier(in); got != 0 {
+				t.Fatalf("DetectPackMultiplier(%q) = %d, se esperaba 0", in, got)
+			}
+		})
+	}
+}
+
+// Regresión conservadora: ante ambigüedad, prevalece el falso negativo.
+// Un nombre que mezcla gramaje y potencial pack ("X 58 ML X 24 UN") debería
+// quedar en 0 porque el PRIMER marcador 'X' encuentra "58 ML" y lo descarta
+// correctamente. El segundo marcador 'X 24 UN' SÍ cuenta como pack real.
+func TestDetectPackMultiplier_PrioridadFalsoNegativoSobreFalsoPositivo(t *testing.T) {
+	t.Parallel()
+	// Si tras rechazar el primer candidato (gramaje) aparece un pack
+	// legítimo más adelante en el nombre, el detector lo encuentra porque
+	// el `continue` sigue iterando sobre los runes buscando el siguiente
+	// marcador del mismo tipo. Esto está bien: priorizamos NO perder packs
+	// reales explícitos, siempre que el candidato previo sea gramaje
+	// INEQUÍVOCO.
+	cases := []struct {
+		name string
+		in   string
+		want int
+	}{
+		// Gramaje primero, pack real después: debe encontrar el pack real.
+		{"gramaje + pack real", "CREMA X 58 ML X 24 UN", 24},
+		{"volumen + pack real", "GASEOSA X 350 ML X 6 UND", 6},
+
+		// Sólo gramaje: 0 (sin falso positivo).
+		{"sólo gramaje", "CREMA X 58 ML", 0},
+		{"sólo gramaje con punto", "CREMA X 58 ML.", 0},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := DetectPackMultiplier(c.in)
+			if got != c.want {
+				t.Fatalf("DetectPackMultiplier(%q) = %d, want %d", c.in, got, c.want)
+			}
+		})
+	}
+}

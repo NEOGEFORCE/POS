@@ -100,17 +100,29 @@ func (LabelPrintJob) TableName() string { return "label_print_jobs" }
 // venta salvo admin" vive codificada tanto en la BD (CHECK constraints)
 // como en el handler Go. Esta tabla es la fuente única para investigar
 // aperturas inusuales.
+//
+// Migración 025 (en catálogo, aplicación en ventana aprobada): añade
+// `otp_challenge_id` para auditar aperturas disparadas por la tecla
+// Home de /sales/new mediante challenge OTP. La biyección exacta
+// reason='otp_manual' ↔ otp_challenge_id IS NOT NULL vive en el CHECK
+// `ck_cash_drawer_opens_otp_reason_coherent` y la coherencia la impone
+// el repositorio en una sola transacción.
 type CashDrawerOpen struct {
-	ID                uint      `gorm:"primaryKey;autoIncrement" json:"id"`
-	OpenedAt          time.Time `gorm:"column:opened_at;not null;default:now()" json:"openedAt"`
-	ActorDNI          string    `gorm:"column:actor_dni;type:varchar(32);not null" json:"actorDni"`
-	Reason            string    `gorm:"column:reason;type:varchar(16);not null" json:"reason"` // sale|return|admin_override|other
-	SaleID            *uint     `gorm:"column:sale_id" json:"saleId,omitempty"`
-	ReturnID          *uint     `gorm:"column:return_id" json:"returnId,omitempty"`
-	OverrideAdmin     bool      `gorm:"column:override_admin;not null;default:false" json:"overrideAdmin"`
-	AuthorizedByDNI   string    `gorm:"column:authorized_by_dni;type:varchar(32)" json:"authorizedByDni,omitempty"`
-	Note              string    `gorm:"column:note;type:text" json:"note,omitempty"`
-	PrinterProfileID  *uint     `gorm:"column:printer_profile_id" json:"printerProfileId,omitempty"`
+	ID               uint      `gorm:"primaryKey;autoIncrement" json:"id"`
+	OpenedAt         time.Time `gorm:"column:opened_at;not null;default:now()" json:"openedAt"`
+	ActorDNI         string    `gorm:"column:actor_dni;type:varchar(32);not null" json:"actorDni"`
+	Reason           string    `gorm:"column:reason;type:varchar(16);not null" json:"reason"` // sale|return|admin_override|other|otp_manual
+	SaleID           *uint     `gorm:"column:sale_id" json:"saleId,omitempty"`
+	ReturnID         *uint     `gorm:"column:return_id" json:"returnId,omitempty"`
+	OverrideAdmin    bool      `gorm:"column:override_admin;not null;default:false" json:"overrideAdmin"`
+	AuthorizedByDNI  string    `gorm:"column:authorized_by_dni;type:varchar(32)" json:"authorizedByDni,omitempty"`
+	Note             string    `gorm:"column:note;type:text" json:"note,omitempty"`
+	PrinterProfileID *uint     `gorm:"column:printer_profile_id" json:"printerProfileId,omitempty"`
+	// OtpChallengeID se puebla sólo cuando reason='otp_manual' (migración
+	// 025). El repo escribe este valor en la MISMA transacción que marca
+	// el challenge como CONSUMED. Nullable porque las aperturas
+	// sale/return/admin_override no llevan challenge.
+	OtpChallengeID *uint64 `gorm:"column:otp_challenge_id" json:"otpChallengeId,omitempty"`
 }
 
 func (CashDrawerOpen) TableName() string { return "cash_drawer_opens" }
@@ -121,6 +133,11 @@ const (
 	CashDrawerReasonReturn        = "return"
 	CashDrawerReasonAdminOverride = "admin_override"
 	CashDrawerReasonOther         = "other"
+	// CashDrawerReasonOtpManual se usa cuando un empleado abre el cajón
+	// mediante challenge OTP validado (tecla Home de /sales/new,
+	// migración 025). Requiere OtpChallengeID poblado — biyección
+	// exacta impuesta por `ck_cash_drawer_opens_otp_reason_coherent`.
+	CashDrawerReasonOtpManual = "otp_manual"
 )
 
 // Estados de un trabajo de impresión.

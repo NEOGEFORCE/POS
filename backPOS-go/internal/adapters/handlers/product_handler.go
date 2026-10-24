@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/aliasnorm"
 	"backPOS-go/internal/core/domain/models"
 	"backPOS-go/internal/core/ports"
@@ -27,6 +28,14 @@ type ProductHandler struct {
 	inventoryService *services.InventoryService
 	auditService     *services.AuditService
 	authService      *services.AuthService
+	// internalBarcodeRepo gestiona la reserva + consumo atómico del
+	// namespace POSINT-. Se usa SOLO cuando product.Barcode cae en ese
+	// namespace; el resto del catálogo pasa por el flujo tradicional.
+	//
+	// La inyección es opcional (puntero nil tolerado) para no romper los
+	// tests que construyen el handler sin este colaborador: en ese caso
+	// cualquier barcode POSINT recibe 503 claro en lugar de 500 opaco.
+	internalBarcodeRepo *repositories.InternalBarcodeRepository
 }
 
 func NewProductHandler(s *services.ProductService, is *services.InventoryService, as *services.AuditService, authSvc *services.AuthService) *ProductHandler {
@@ -36,6 +45,15 @@ func NewProductHandler(s *services.ProductService, is *services.InventoryService
 		auditService:     as,
 		authService:      authSvc,
 	}
+}
+
+// WithInternalBarcodeRepo configura el repositorio de códigos internos.
+// Es setter opcional (en vez de parámetro del constructor) para que los
+// tests existentes del handler sigan compilando sin cambios: sólo el
+// main.go que arma el wiring real lo usa.
+func (h *ProductHandler) WithInternalBarcodeRepo(repo *repositories.InternalBarcodeRepository) *ProductHandler {
+	h.internalBarcodeRepo = repo
+	return h
 }
 
 func parseValidationErrors(err error) map[string]string {
@@ -111,6 +129,86 @@ func (h *ProductHandler) Create(c *gin.Context) {
 
 	if product.BaseProductBarcode != nil && strings.TrimSpace(*product.BaseProductBarcode) == "" {
 		product.BaseProductBarcode = nil
+	}
+
+	// --- Namespace interno POSINT- ---
+	//
+	// Un producto cuyo barcode cae en el namespace POSINT- SÓLO puede
+	// crearse consumiendo una reserva previa (ver migración 024). El flujo
+	// atómico vive en InternalBarcodeRepository: SELECT FOR UPDATE sobre la
+	// reserva, INSERT en products y UPDATE a CONSUMED en la MISMA
+	// transacción. Si cualquier paso falla, el ROLLBACK deja la reserva
+	// intacta y el código sigue vivo para reintentar.
+	//
+	// Reactivación: si el barcode POSINT- ya existe como fila (soft
+	// delete), el flujo de "duplicado inactivo" más arriba se activa ANTES
+	// de llegar aquí (ver bloque 1), así que caer en esta rama implica
+	// alta nueva y SIEMPRE requiere reserva válida.
+	if models.IsInternalBarcode(product.Barcode) {
+		if !models.IsValidInternalBarcode(product.Barcode) {
+			SendError(c, http.StatusBadRequest, ErrBadRequest,
+				"Código interno con formato inválido (esperado POSINT-<hex 8..24>)", nil)
+			return
+		}
+		if h.internalBarcodeRepo == nil {
+			// Degradación segura: si el wiring olvidó inyectar el repo
+			// (regresión), rechazamos antes de llamar a nil.
+			SendError(c, http.StatusServiceUnavailable, ErrInternalServer,
+				"El módulo de códigos internos no está disponible", nil)
+			return
+		}
+		dniStr, nameStr := GetContextUser(c)
+		product.CreatedByDNI = dniStr
+		product.UpdatedByDNI = dniStr
+		product.IsActive = true
+
+		err := h.internalBarcodeRepo.CreateProductConsumingReservation(c.Request.Context(), &product, dniStr)
+		if err != nil {
+			switch {
+			case errors.Is(err, repositories.ErrInternalBarcodeFormat):
+				SendError(c, http.StatusBadRequest, ErrBadRequest,
+					"Código interno con formato inválido", nil)
+			case errors.Is(err, repositories.ErrInternalBarcodeReservationNotFound):
+				c.JSON(http.StatusConflict, gin.H{
+					"success": false,
+					"error": gin.H{
+						"code":    models.ErrCodeInternalReservationNotFound,
+						"message": "El código interno no está reservado. Pida uno nuevo desde el modal.",
+					},
+				})
+			case errors.Is(err, repositories.ErrInternalBarcodeReservationExpired):
+				c.JSON(http.StatusConflict, gin.H{
+					"success": false,
+					"error": gin.H{
+						"code":    models.ErrCodeInternalReservationExpired,
+						"message": "La reserva del código interno expiró. Pida uno nuevo.",
+					},
+				})
+			case errors.Is(err, repositories.ErrInternalBarcodeReservationAlreadyUsed):
+				c.JSON(http.StatusConflict, gin.H{
+					"success": false,
+					"error": gin.H{
+						"code":    models.ErrCodeInternalReservationAlreadyUsed,
+						"message": "La reserva del código ya se consumió para otro producto. Pida uno nuevo.",
+					},
+				})
+			case errors.Is(err, repositories.ErrInternalProductBarcodeInUse):
+				SendError(c, http.StatusConflict, ErrDuplicateEntry,
+					"El código del producto ya está registrado", nil)
+			default:
+				SendError(c, http.StatusInternalServerError, ErrInternalServer,
+					"No se pudo crear el producto con código interno", err)
+			}
+			return
+		}
+
+		c.JSON(http.StatusCreated, product)
+		go sse.GetSSEService().BroadcastProductUpdate(product)
+		h.auditService.Log(dniStr, nameStr, "CREATE_PRODUCT", "INVENTORY",
+			fmt.Sprintf("Creado producto (código interno): %s (%s)", product.ProductName, product.Barcode),
+			fmt.Sprintf("Se registró un nuevo producto con código interno POSINT: %s (%s)", product.ProductName, product.Barcode),
+			"", c.ClientIP(), c.Request.UserAgent(), false)
+		return
 	}
 
 	// 1. Verificar Duplicados (Barcode)

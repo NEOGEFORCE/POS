@@ -100,3 +100,10 @@ scratch_*.txt
 
 # Internal sprint handoff notes (may describe intentionally incomplete work)
 FrontPOS-main/docs/SPRINT_*_PENDIENTES.md
+
+
+# Salidas sueltas de test/lint capturadas a mano y capturas de pagos
+**/*-out.txt
+**/full-test.txt
+__*_out.txt
+pago QR.jpeg

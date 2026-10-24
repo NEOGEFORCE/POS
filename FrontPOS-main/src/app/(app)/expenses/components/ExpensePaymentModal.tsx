@@ -1,6 +1,6 @@
 ﻿import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Modal, ModalContent, Button, Avatar } from '@heroui/react';
-import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins, HandCoins } from 'lucide-react';
+import { Banknote, Users, X, ArrowRight, Zap, Check, ShieldCheck, TrendingUp, Landmark, Coins, HandCoins, QrCode } from 'lucide-react';
 
 /**
  * Préstamo registrado disponible para pagar un egreso.
@@ -23,6 +23,22 @@ export interface ExpensePaymentModalPayload {
   daviplata: number;
   fondo: number;
   coins: number;
+  /**
+   * Monto pagado con el canal Bold QR / Bre-B.
+   *
+   * Contrato con el backend (ver informe research, sección 3 y 5):
+   *   - El frontend envía `boldQr` dentro del payload del modal y el
+   *     padre lo propaga como `boldQrAmount` al POST /expenses.
+   *   - Mientras no exista la columna física `bold_qr_amount` en
+   *     `expenses` (requiere migración 028, hoy fuera de alcance), el
+   *     backend se apoya en `paymentSource='BOLD_QR'` (texto libre)
+   *     para contarlo en la bolsa `BOLD_QR` del dashboard.
+   *   - **EXCLUSIVO**: Bold QR funciona como un préstamo — no se mezcla
+   *     con otros canales. Cuando se usa, los otros montos quedan en 0
+   *     y `paymentSourceString === 'BOLD_QR'`. El backend no puede
+   *     desglosarlo en mixto (sin columna), así que el UI lo bloquea.
+   */
+  boldQr: number;
   paymentSourceString: string;
   taxAmount: number;
   /**
@@ -44,6 +60,7 @@ interface ExpensePaymentModalProps {
   initialDaviplata?: number;
   initialFondo?: number;
   initialCoins?: number;
+  initialBoldQr?: number;
   initialPaymentSource?: string;
   loanOption?: LoanOption;
   onPay: (data: ExpensePaymentModalPayload) => Promise<void>;
@@ -60,6 +77,7 @@ export function ExpensePaymentModal({
   initialDaviplata,
   initialFondo,
   initialCoins,
+  initialBoldQr,
   initialPaymentSource,
   loanOption,
   onPay,
@@ -70,7 +88,7 @@ export function ExpensePaymentModal({
     () => (loanTabEnabled && Array.isArray(loanOption?.loans) ? loanOption!.loans : []),
     [loanTabEnabled, loanOption],
   );
-  const [activePaymentTab, setActivePaymentTab] = useState<'cash'|'NEQUI'|'DAVIPLATA'|'fondo'|'coins'|'loan'>('cash');
+  const [activePaymentTab, setActivePaymentTab] = useState<'cash'|'NEQUI'|'DAVIPLATA'|'fondo'|'coins'|'BOLD_QR'|'loan'>('cash');
   const [dialogAmount, setDialogAmount] = useState<string>('');
   const [selectedLoanId, setSelectedLoanId] = useState<string | number | null>(null);
   
@@ -79,6 +97,10 @@ export function ExpensePaymentModal({
   const [daviplataPaid, setDaviplataPaid] = useState<number>(0);
   const [fondoPaid, setFondoPaid] = useState<number>(0);
   const [coinsPaid, setCoinsPaid] = useState<number>(0);
+  // Monto pagado desde Bold QR / Bre-B. Se separa del resto para que el
+  // backend pueda descontarlo del saldo del canal "BOLD_QR" en el
+  // dashboard (ver informe research, sección 5).
+  const [boldQrPaid, setBoldQrPaid] = useState<number>(0);
 
   const [showSuccessScreen, setShowSuccessScreen] = useState(false);
   const [submittingPayment, setSubmittingPayment] = useState(false);
@@ -94,7 +116,7 @@ export function ExpensePaymentModal({
       isProcessingRef.current = false;
       setSelectedLoanId(null);
 
-      const hasExplicit = (initialCash || 0) > 0 || (initialNequi || 0) > 0 || (initialDaviplata || 0) > 0 || (initialFondo || 0) > 0 || (initialCoins || 0) > 0;
+      const hasExplicit = (initialCash || 0) > 0 || (initialNequi || 0) > 0 || (initialDaviplata || 0) > 0 || (initialFondo || 0) > 0 || (initialCoins || 0) > 0 || (initialBoldQr || 0) > 0;
 
       if (hasExplicit) {
         setCashPaid(initialCash || 0);
@@ -102,11 +124,13 @@ export function ExpensePaymentModal({
         setDaviplataPaid(initialDaviplata || 0);
         setFondoPaid(initialFondo || 0);
         setCoinsPaid(initialCoins || 0);
+        setBoldQrPaid(initialBoldQr || 0);
 
         if ((initialNequi || 0) > 0) setActivePaymentTab('NEQUI');
         else if ((initialDaviplata || 0) > 0) setActivePaymentTab('DAVIPLATA');
         else if ((initialFondo || 0) > 0) setActivePaymentTab('fondo');
         else if ((initialCoins || 0) > 0) setActivePaymentTab('coins');
+        else if ((initialBoldQr || 0) > 0) setActivePaymentTab('BOLD_QR');
         else setActivePaymentTab('cash');
       } else {
         setCashPaid(0);
@@ -114,21 +138,23 @@ export function ExpensePaymentModal({
         setDaviplataPaid(0);
         setFondoPaid(0);
         setCoinsPaid(0);
+        setBoldQrPaid(0);
         if (initialPaymentSource) {
           const src = initialPaymentSource.toUpperCase();
           if (src.includes('NEQUI')) setActivePaymentTab('NEQUI');
           else if (src.includes('DAVIPLATA')) setActivePaymentTab('DAVIPLATA');
           else if (src.includes('FONDO') || src.includes('BOVEDA') || src.includes('BÓVEDA')) setActivePaymentTab('fondo');
           else if (src.includes('MONEDA') || src.includes('ALCANCIA') || src.includes('ALCANCÍA')) setActivePaymentTab('coins');
+          else if (src.includes('BOLD') || src.includes('BRE-B') || src.includes('QR')) setActivePaymentTab('BOLD_QR');
           else setActivePaymentTab('cash');
         } else {
           setActivePaymentTab('cash');
         }
       }
     }
-  }, [isOpen, initialCash, initialNequi, initialDaviplata, initialFondo, initialCoins, initialPaymentSource, totalToPay]);
+  }, [isOpen, initialCash, initialNequi, initialDaviplata, initialFondo, initialCoins, initialBoldQr, initialPaymentSource, totalToPay]);
 
-  const totalAlreadyPaid = cashPaid + nequiPaid + daviplataPaid + fondoPaid + coinsPaid;
+  const totalAlreadyPaid = cashPaid + nequiPaid + daviplataPaid + fondoPaid + coinsPaid + boldQrPaid;
   const remainingDebt = Math.max(0, totalToPay - totalAlreadyPaid);
   const isReady = totalAlreadyPaid >= totalToPay || (Number(dialogAmount) > 0 && totalAlreadyPaid + Number(dialogAmount) >= totalToPay);
   
@@ -157,6 +183,13 @@ export function ExpensePaymentModal({
       } else if (activePaymentTab === 'coins') {
         setCoinsPaid(prev => prev + Math.min(val, remainingDebt));
         setActivePaymentTab('cash');
+      } else if (activePaymentTab === 'BOLD_QR') {
+        // Bold QR es EXCLUSIVO: no se mezcla con otros canales. El '+'
+        // dentro de la pestaña acumula sobre el mismo canal pero no
+        // cambia de pestaña (el flujo normal cae a `cash`, aquí no).
+        // Al llegar a `processPayment` se envía como pago único con
+        // paymentSourceString='BOLD_QR'.
+        setBoldQrPaid(prev => prev + Math.min(val, remainingDebt));
       } else {
         setCashPaid(prev => prev + Math.min(val, remainingDebt));
       }
@@ -187,9 +220,53 @@ export function ExpensePaymentModal({
           daviplata: 0,
           fondo: 0,
           coins: 0,
+          boldQr: 0,
           paymentSourceString: 'PRESTAMO',
           taxAmount: 0,
           loanId: chosen.id,
+        });
+        setShowSuccessScreen(true);
+      } catch (err) {
+        console.error(err);
+      } finally {
+        isProcessingRef.current = false;
+        setSubmittingPayment(false);
+      }
+      return;
+    }
+
+    // --- Rama Bold QR: canal EXCLUSIVO como préstamo ---
+    // El backend no puede desglosar un egreso Bold QR mixto (no hay
+    // columna `bold_qr_amount` todavía). Para evitar perder plata en
+    // auditoría, el frontend obliga a que Bold QR se pague completo.
+    // Si el cajero escribió un monto parcial en el input, lo tomamos
+    // y lo mandamos como ese valor; de lo contrario, se cobra el
+    // total pendiente. Siempre con `paymentSourceString === 'BOLD_QR'`.
+    if (activePaymentTab === 'BOLD_QR') {
+      if (totalToPay <= 0) return;
+      let finalBoldQr = boldQrPaid;
+      if (currentDialogVal > 0) {
+        finalBoldQr += Math.min(currentDialogVal, remainingDebt);
+      }
+      // Si el usuario no acumuló lo suficiente, cubrimos el resto con
+      // el mismo canal (pago exclusivo). El backend sólo verá un valor
+      // BOLD_QR y los otros canales en 0.
+      const leftover = Math.max(0, totalToPay - finalBoldQr);
+      finalBoldQr += leftover;
+      if (finalBoldQr <= 0) return;
+
+      isProcessingRef.current = true;
+      setSubmittingPayment(true);
+      try {
+        await onPay({
+          cash: 0,
+          nequi: 0,
+          daviplata: 0,
+          fondo: 0,
+          coins: 0,
+          boldQr: finalBoldQr,
+          paymentSourceString: 'BOLD_QR',
+          taxAmount: 0,
         });
         setShowSuccessScreen(true);
       } catch (err) {
@@ -209,6 +286,11 @@ export function ExpensePaymentModal({
     let finalDaviplata = daviplataPaid;
     let finalFondo = fondoPaid;
     let finalCoins = coinsPaid;
+    // En la rama mixta Bold QR siempre viaja en 0: los demás canales
+    // nunca lo acumulan y la rama exclusiva de arriba se encarga del
+    // caso Bold QR puro. Mantener esta variable sólo para no romper el
+    // payload del contrato con el padre.
+    const finalBoldQr = 0;
 
     // 1. Aplicar el monto digitado en el input si el usuario no presiono '+' previamente
     if (currentDialogVal > 0) {
@@ -240,6 +322,8 @@ export function ExpensePaymentModal({
     }
 
     // Build the string: NEQUI: $1000 / CAJA: $1000 / ALCANCIA: $500
+    // NO incluimos el token "BOLD_QR: $N" porque Bold QR es EXCLUSIVO
+    // y vive sólo en la rama de arriba (paymentSourceString='BOLD_QR').
     const parts: string[] = [];
     if (finalNequi > 0) parts.push(`NEQUI: $${finalNequi}`);
     if (finalDaviplata > 0) parts.push(`DAVIPLATA: $${finalDaviplata}`);
@@ -265,6 +349,7 @@ export function ExpensePaymentModal({
         daviplata: finalDaviplata,
         fondo: finalFondo,
         coins: finalCoins,
+        boldQr: finalBoldQr,
         paymentSourceString: finalPaymentSource,
         taxAmount: finalTax
       });
@@ -275,7 +360,7 @@ export function ExpensePaymentModal({
       isProcessingRef.current = false;
       setSubmittingPayment(false);
     }
-  }, [cashPaid, nequiPaid, daviplataPaid, fondoPaid, coinsPaid, currentDialogVal, activePaymentTab, remainingDebt, actualPayment, onPay, submittingPayment, availableLoans, selectedLoanId, totalToPay]);
+  }, [cashPaid, nequiPaid, daviplataPaid, fondoPaid, coinsPaid, boldQrPaid, currentDialogVal, activePaymentTab, remainingDebt, actualPayment, onPay, submittingPayment, availableLoans, selectedLoanId, totalToPay]);
 
   // Teclado fisico
   useEffect(() => {
@@ -392,6 +477,11 @@ export function ExpensePaymentModal({
                   { id: 'coins', label: 'Alcancía', icon: <Coins size={14} className="md:w-5 md:h-5" /> },
                   { id: 'NEQUI', label: 'Nequi', logo: '/logos/nequi.png' },
                   { id: 'DAVIPLATA', label: 'Daviplata', logo: '/logos/daviplata.png' },
+                  // Bold QR / Bre-B — el cajero necesita poder registrar
+                  // egresos pagados desde el saldo de Bold para que se
+                  // descuente del canal correcto en el dashboard, igual
+                  // que con Nequi o Daviplata.
+                  { id: 'BOLD_QR' as const, label: 'Bold QR', icon: <QrCode size={14} className="md:w-5 md:h-5" /> },
                   // La pestaña "Préstamo" sólo aparece cuando el padre entrega
                   // `loanOption?.enabled = true`. Es la última de la lista para
                   // dejar claro que es un canal especial — no sale de la caja.
@@ -406,18 +496,33 @@ export function ExpensePaymentModal({
                       setDialogAmount('');
                       if (tab.id === 'loan') {
                         // El pago con préstamo es EXCLUSIVO: no se mezcla con
-                        // los otros cinco canales. Limpiamos cualquier monto
+                        // los otros canales. Limpiamos cualquier monto
                         // acumulado para que el AUTORIZAR quede claro.
                         setCashPaid(0);
                         setNequiPaid(0);
                         setDaviplataPaid(0);
                         setFondoPaid(0);
                         setCoinsPaid(0);
-                      } else {
-                        // Al abandonar la pestaña préstamo, descartamos la
-                        // selección de préstamo para evitar enviar loanId por
-                        // error en un pago de caja normal.
+                        setBoldQrPaid(0);
+                      } else if (tab.id === 'BOLD_QR') {
+                        // Bold QR también es EXCLUSIVO: el backend no puede
+                        // desglosar un egreso Bold QR mixto (sin columna
+                        // `bold_qr_amount` todavía). Si el cajero cambia a
+                        // Bold QR con montos acumulados en otros canales,
+                        // los limpiamos — el total se va 100% al QR.
+                        setCashPaid(0);
+                        setNequiPaid(0);
+                        setDaviplataPaid(0);
+                        setFondoPaid(0);
+                        setCoinsPaid(0);
                         setSelectedLoanId(null);
+                      } else {
+                        // Al abandonar la pestaña préstamo o Bold QR,
+                        // descartamos la selección de préstamo y el
+                        // acumulado de Bold QR para evitar enviar un
+                        // mixto que el backend no sabe desglosar.
+                        setSelectedLoanId(null);
+                        setBoldQrPaid(0);
                       }
                     }}
                     className={`h-14 md:h-14 px-3 md:px-5 rounded-2xl flex items-center justify-center md:justify-start gap-2.5 md:gap-4 border-2 transition-all group ${
@@ -503,6 +608,13 @@ export function ExpensePaymentModal({
                            <button type="button" onClick={() => setCoinsPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Alcancía"><X size={12} /></button>
                         </div>
                       )}
+                      {boldQrPaid > 0 && (
+                        <div className="px-2.5 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
+                           <QrCode size={14} className="text-cyan-500" />
+                           <span className="text-[10px] font-medium text-cyan-600 dark:text-cyan-400 uppercase tracking-widest">${formatCurrency(boldQrPaid)}</span>
+                           <button type="button" onClick={() => setBoldQrPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Bold QR"><X size={12} /></button>
+                        </div>
+                      )}
                       {cashPaid > 0 && (
                         <div className="px-2.5 py-1.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
                            <Banknote size={14} className="text-emerald-500" />
@@ -513,7 +625,7 @@ export function ExpensePaymentModal({
                       {totalAlreadyPaid > 0 && (
                         <button
                           type="button"
-                          onClick={() => { setCashPaid(0); setNequiPaid(0); setDaviplataPaid(0); setFondoPaid(0); setCoinsPaid(0); }}
+                          onClick={() => { setCashPaid(0); setNequiPaid(0); setDaviplataPaid(0); setFondoPaid(0); setCoinsPaid(0); setBoldQrPaid(0); }}
                           className="text-[9px] font-bold text-rose-500 hover:text-rose-600 uppercase tracking-wider px-2 py-1 bg-rose-50 dark:bg-rose-500/10 rounded-xl border border-rose-200 dark:border-rose-500/20"
                         >
                           Limpiar
@@ -552,6 +664,15 @@ export function ExpensePaymentModal({
                         {isNequi && visualTax > 0 && (
                           <p className="text-[10px] md:text-[11px] font-medium text-rose-500 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1">
                             + ${formatCurrency(visualTax)} <span className="opacity-70">GMF 4X1000</span>
+                          </p>
+                        )}
+                        {activePaymentTab === 'BOLD_QR' && (
+                          <p
+                            role="note"
+                            className="text-[10px] md:text-[11px] font-bold text-cyan-600 dark:text-cyan-400 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1 flex items-center justify-center gap-1.5"
+                          >
+                            <QrCode size={12} aria-hidden="true" />
+                            Bold QR se paga completo, no se combina
                           </p>
                         )}
                       </div>

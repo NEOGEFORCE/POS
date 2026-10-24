@@ -10,6 +10,7 @@ import SyncBackground from '@/components/shared/SyncBackground';
 import SessionGuardian from '@/components/SessionGuardian';
 import { LogoutCurtain } from '@/components/layout/LogoutCurtain';
 import { RouteCurtain } from '@/components/layout/RouteCurtain';
+import EnterFocusGuard from '@/components/shared/EnterFocusGuard';
 
 export default function AppLayout({
     children,
@@ -120,6 +121,7 @@ export default function AppLayout({
                         <AppHeader />
                         <SessionGuardian />
                         <SyncBackground />
+                        <EnterFocusGuard />
 
                         <main className="flex-1 h-full min-h-0 md:h-full overflow-y-auto custom-scrollbar flex flex-col relative z-10 p-0">
                             <RouteCurtain>{children}</RouteCurtain>

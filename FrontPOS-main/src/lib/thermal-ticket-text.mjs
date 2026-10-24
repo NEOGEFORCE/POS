@@ -85,13 +85,43 @@ export function wrap(text, width) {
     return lines.length ? lines : [""];
 }
 
-/** Fecha legible en estilo `dd/MM/yyyy hh:mm AM`. */
+/**
+ * Literal estable que `formatDateTime` emite cuando la entrada no se
+ * puede interpretar como un `Date` válido. Es un contrato público:
+ * consumidores que necesiten detectar "fecha ausente" pueden comparar
+ * contra este símbolo en lugar de parsear la salida.
+ */
+export const INVALID_DATE_LABEL = "FECHA NO DISPONIBLE";
+
+/**
+ * Fecha legible en estilo `dd/MM/yyyy hh:mm AM`.
+ *
+ * Defensa pura contra fechas inválidas: cualquier entrada que no
+ * resulte en un `Date` válido (undefined, null, string indescifrable,
+ * `Invalid Date`, `NaN` numérico, objeto arbitrario...) devuelve el
+ * literal estable {@link INVALID_DATE_LABEL}. Antes la función hacía
+ * `d.getHours()` directo y acababa imprimiendo `NaN/NaN/NaN NaN:NaN NaN`
+ * en una tirilla térmica real cuando `useNewSale.ts` guardaba
+ * `new Date().toLocaleString()` (dependiente del locale del SO) y
+ * `saleToTicket` lo reparseaba con `new Date(string)`.
+ *
+ * Acepta `Date`, string parseable (preferentemente ISO 8601) o un
+ * número (epoch ms). El resto cae al literal — nunca se imprime `NaN`.
+ */
 export function formatDateTime(d) {
+    const parsed = d instanceof Date
+        ? d
+        : (typeof d === "string" || typeof d === "number")
+            ? new Date(d)
+            : null;
+    if (!(parsed instanceof Date) || Number.isNaN(parsed.getTime())) {
+        return INVALID_DATE_LABEL;
+    }
     const p = (n) => String(n).padStart(2, "0");
-    let h = d.getHours();
+    let h = parsed.getHours();
     const ampm = h >= 12 ? "PM" : "AM";
     h = h % 12 || 12;
-    return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(h)}:${p(d.getMinutes())} ${ampm}`;
+    return `${p(parsed.getDate())}/${p(parsed.getMonth() + 1)}/${parsed.getFullYear()} ${p(h)}:${p(parsed.getMinutes())} ${ampm}`;
 }
 
 /**
@@ -166,9 +196,17 @@ export function buildTicketText(data, width = "58mm", options) {
     out.push(sep);
 
     // --- Detalle de productos ---
-    // Columnas: V.UNIT (9) + TOTAL (10) alineados a la derecha.
-    const priceCols = 9;
-    const totalCols = 10;
+    // Columnas monetarias V.UNIT y TOTAL. Se recortan 1 columna cada una
+    // cuando el ancho total `W` cae a 30 o menos: el TSPL 58 mm (48 mm
+    // imprimibles) queda saneado a 26 columnas (punto medio font8 14x25
+    // scaleY1) y los dos campos monetarios dejan al menos 9 chars al
+    // nombre del producto. Para W >= 31 (defaults 32 y 48 — rollo 58/80
+    // mm ESC/POS, 80/76 TSPL, 82/76 JAL_838L) se preservan BYTE A BYTE
+    // los anchos históricos 9/10, que es lo que fija el contrato BC de
+    // `buildTicketText(data, width)` sin options.
+    const narrow = W <= 30;
+    const priceCols = narrow ? 8 : 9;
+    const totalCols = narrow ? 9 : 10;
     const nameCols = W - priceCols - totalCols;
 
     out.push(pad("CANT/PRODUCTO", nameCols) + padLeft("V.UNIT", priceCols) + padLeft("TOTAL", totalCols));

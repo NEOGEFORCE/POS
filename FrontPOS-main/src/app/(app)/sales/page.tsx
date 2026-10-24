@@ -15,7 +15,11 @@ import { useApiWithPagination, useApi } from '@/hooks/use-api';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { useAuth } from '@/lib/auth';
 import { getPaymentDescription } from '@/lib/payment-helpers';
-import { printThermalTicket, saleToTicket } from '@/lib/thermal-ticket';
+import {
+    DIRECT_PRINT_UNAVAILABLE,
+    printThermalTicketAuto,
+    saleToTicket,
+} from '@/lib/thermal-ticket';
 
 // COMPONENTES MODULARIADOS
 import { saveCartsToIndexedDB, loadCartsFromIndexedDB } from '@/lib/cartStorage';
@@ -103,18 +107,38 @@ export default function SalesHistoryPage() {
     // que descargaba el DOM completo del POS a la impresora y salía
     // descuadrado; se eliminó porque el modal ya no lo necesita.
     //
-    // ACTUALIZACIÓN: ahora cada fila expone un botón "Reimprimir factura"
-    // explícito. Esta función es el handler único que dispara la misma
-    // plantilla térmica desde el botón de fila, para que el cajero no tenga
-    // que abrir el modal cuando sólo quiere reimprimir.
-    const handleReprint = useCallback((sale: Sale) => {
+    // ACTUALIZACIÓN 2026-10: la fila expone un botón "Reimprimir factura"
+    // explícito. El handler delega en `printThermalTicketAuto`, que lee la
+    // config persistida y decide:
+    //   - `deliveryMode: "bridge"` → `printThermalTicketDirect` (sin diálogo).
+    //   - `deliveryMode: "browser"` → `printThermalTicket` (diálogo navegador).
+    //
+    // Si el admin eligió `bridge` pero el bridge no está disponible,
+    // `printThermalTicketAuto` LANZA con el sentinel `DIRECT_PRINT_UNAVAILABLE`
+    // y mostramos un toast accionable que invita al cajero a usar el detalle
+    // (ojo → "REIMPRIMIR (NAVEGADOR / PDF)") en lugar de abrir el diálogo
+    // de forma automática. Esto honra el contrato: nunca fingimos impresión
+    // directa cuando no hay hardware.
+    const handleReprint = useCallback(async (sale: Sale) => {
         try {
-            printThermalTicket(saleToTicket(sale, getPaymentDescription(sale)));
+            await printThermalTicketAuto(saleToTicket(sale, getPaymentDescription(sale)));
         } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err ?? "");
+            if (msg.startsWith(DIRECT_PRINT_UNAVAILABLE)) {
+                toast({
+                    variant: "destructive",
+                    title: "BRIDGE NO DISPONIBLE",
+                    description:
+                        'El admin configuró "Impresión por bridge" pero el bridge local no respondió. ' +
+                        'Abre el detalle (ojo) y usa "REIMPRIMIR (NAVEGADOR / PDF)".',
+                    duration: 10000,
+                });
+                return;
+            }
             toast({
                 variant: "destructive",
                 title: "NO SE PUDO REIMPRIMIR",
-                description: err instanceof Error ? err.message : "Error desconocido al reimprimir el ticket.",
+                description: msg || "Error desconocido al reimprimir el ticket.",
             });
         }
     }, [toast]);

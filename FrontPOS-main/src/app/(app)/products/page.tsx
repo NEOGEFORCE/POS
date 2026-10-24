@@ -34,7 +34,17 @@ const HistoricalMarkerMergeDialog = nextDynamic(
 );
 const ScannerOverlay = nextDynamic(() => import('@/components/ScannerOverlay').then(m => m.ScannerOverlay), { ssr: false });
 const ConfirmDialog = nextDynamic(() => import('@/components/ConfirmDialog').then(m => m.ConfirmDialog), { ssr: false });
+// LabelPrintSheet se reusa aquí para ofrecer impresión inmediata DESPUÉS
+// de que el POST /products/create-products haya devuelto 201 con un
+// producto cuyo código es POSINT-*. NUNCA se abre antes del éxito (ver
+// `handleAddProduct` abajo).
+const LabelPrintSheet = nextDynamic(
+    () => import('../inventory/receive/components/LabelPrintSheet'),
+    { ssr: false },
+);
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { isInternalBarcode } from '@/lib/internal-barcode.mjs';
+import type { InternalBarcodeReservation } from '@/lib/internal-barcode.d.mts';
 
 const formatCOP = (val: number | string): string => {
     if (val === undefined || val === null || val === '') return '0';
@@ -111,6 +121,19 @@ export default function ProductsPage() {
     const [originalBarcode, setOriginalBarcode] = useState<string | null>(null);
     const [deletingBarcode, setDeletingBarcode] = useState<string | null>(null);
     const [apiFieldErrors, setApiFieldErrors] = useState<Record<string, string>>({});
+
+    // --- IMPRESIÓN POST-CREATE DE CÓDIGOS INTERNOS ---
+    // El contrato con el pipeline exige que la impresión de etiqueta sólo
+    // ocurra DESPUÉS de que el backend responda 201 al create. Guardamos
+    // aquí la reserva vigente (fijada desde ProductFormModal cuando el
+    // usuario pulsa "Generar código interno") para poder decidir, tras
+    // ese 201, si abrimos el LabelPrintSheet.
+    const [pendingInternalReservation, setPendingInternalReservation] = useState<InternalBarcodeReservation | null>(null);
+    const [internalLabelSheet, setInternalLabelSheet] = useState<{
+        open: boolean;
+        barcode: string;
+        productName: string;
+    }>({ open: false, barcode: '', productName: '' });
 
     // --- ESTADO FUSION MARCADOR HISTORICO ---
     // Cuando el backend responde 409 con code HISTORICAL_MARKER_RESERVED al
@@ -190,6 +213,12 @@ export default function ProductsPage() {
                 barcode: normalizeText(newProduct.barcode),
             };
             const data = sanitizeProductPayload(rawData);
+            // Snapshot del barcode/nombre que acabamos de enviar: necesarios
+            // para abrir el LabelPrintSheet tras el 201 sin acceder al estado
+            // que el reset de abajo deja vacío.
+            const sentBarcode = String(data.barcode || '').trim().toUpperCase();
+            const sentProductName = String(data.productName || newProduct.productName || '').trim();
+            const wasInternal = isInternalBarcode(sentBarcode);
 
             await apiFetch('/products/create-products', {
                 method: 'POST', body: JSON.stringify(data), fallbackError: 'FALLO AL CREAR PRODUCTO'
@@ -202,6 +231,21 @@ export default function ProductsPage() {
             mutateAllProducts();
             mutateStats();
             broadcastRevalidate('PRODUCT_UPDATE');
+            // GATING: sólo tras el POST exitoso, si el producto creado tiene
+            // un código del namespace POSINT-, abrimos el LabelPrintSheet
+            // para ofrecer impresión inmediata reutilizando el flujo
+            // /labels/codes + /labels/print-jobs. Nunca antes del éxito.
+            if (wasInternal) {
+                setInternalLabelSheet({
+                    open: true,
+                    barcode: sentBarcode,
+                    productName: sentProductName || sentBarcode,
+                });
+            }
+            // La reserva ya se consumió del lado del backend. Limpiamos la
+            // referencia local; conservamos `reservedAt` sólo si se necesita
+            // para el receptionRef del LabelPrintSheet (ver abajo).
+            if (!wasInternal) setPendingInternalReservation(null);
         } catch (err: any) {
             if (err instanceof ApiError && err.status === 409) {
                 toast({ variant: 'destructive', title: 'PRODUCTO DUPLICADO', description: 'El codigo ya pertenece a un producto activo.' });
@@ -726,8 +770,34 @@ export default function ProductsPage() {
                     onScanAlternate={() => { setScanMode('alternate'); setIsScannerOpen(true); }}
                     onScanBase={() => { setScanMode('baseProduct'); setIsScannerOpen(true); }}
                     apiFieldErrors={apiFieldErrors}
+                    internalBarcodeSource="product_form"
+                    onInternalBarcodeReserved={setPendingInternalReservation}
                 />
             </ErrorBoundary>
+
+            {/* LabelPrintSheet post-create: SOLO se abre después del 201 de
+                /products/create-products cuando el barcode cae en el
+                namespace POSINT-. Reusa /labels/codes (idempotente) y
+                /labels/print-jobs (auditado). Nunca se abre antes del
+                éxito. Si el usuario cancela, el producto queda creado y la
+                etiqueta puede imprimirse después desde /labels. */}
+            {internalLabelSheet.open && (
+                <LabelPrintSheet
+                    isOpen={internalLabelSheet.open}
+                    onClose={() => {
+                        setInternalLabelSheet({ open: false, barcode: '', productName: '' });
+                        setPendingInternalReservation(null);
+                    }}
+                    productBarcode={internalLabelSheet.barcode}
+                    productName={internalLabelSheet.productName}
+                    defaultCount={1}
+                    receptionRef={
+                        pendingInternalReservation?.reservedAt
+                            ? `internal-create-${internalLabelSheet.barcode}-${pendingInternalReservation.reservedAt}`
+                            : `internal-create-${internalLabelSheet.barcode}`
+                    }
+                />
+            )}
 
             <DeleteProtocolModal isOpen={deleteDialogOpen} onOpenChange={setDeleteDialogOpen} deletingBarcode={deletingBarcode} onDelete={handleDelete} />
             <HistoricalMarkerMergeDialog

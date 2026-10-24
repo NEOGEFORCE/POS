@@ -13,9 +13,9 @@ import { fileURLToPath } from "node:url";
 // del alto y el boton PROCESAR fuera de pantalla. Este guardian impide que
 // vuelvan los antipatrones responsables:
 //
-//  (1) `size="full"` sin forzar `w-screen max-w-[100vw]` deja el flex-row
-//      interno (sidebar 220 + main + pad desktop 320) empujar la base fuera
-//      del viewport en 360-640 px.
+//  (1) El modal usa `size="5xl"` para que HeroUI no inyecte
+//      `min-h-[100dvh]`; las clases propias `w-screen max-w-[100vw]
+//      h-[100dvh]` mantienen el comportamiento full-screen sólo en móvil.
 //  (2) Las denominaciones usaban `aspect-[2.2/1]` + <img object-cover>
 //      incluso en movil, pintando una galeria de ~462 px de alto.
 //  (3) El pad desktop sin `shrink-0` depende de que ningun child de la
@@ -41,8 +41,8 @@ test("UniversalPaymentModal fija ancho real al viewport en movil (w-screen + max
     "classNames.base perdio w-screen + max-w-[100vw]; el modal volvera a cortarse en movil.",
   );
   assert.ok(
-    /base:\s*"[^"]*\bmd:max-w-\[1300px\]/.test(src),
-    "classNames.base perdio md:max-w-[1300px]; escritorio queda limitado al ancho movil.",
+    /base:\s*"[^"]*\bmd:max-w-\[1050px\]/.test(src),
+    "classNames.base perdio md:max-w-[1050px]; escritorio queda limitado al ancho movil.",
   );
 });
 
@@ -59,19 +59,19 @@ test("UniversalPaymentModal contiene min-h-0 min-w-0 en el flex row interno", as
 
 test("UniversalPaymentModal: pad desktop lleva shrink-0 (no empuja el flex row)", async () => {
   const src = await readSource(modalPath);
-  // Localizar el pad desktop: `hidden md:flex w-[320px]`
+  // Localizar el pad desktop: `hidden md:flex w-[280px]`
   assert.ok(
-    /hidden\s+md:flex\s+w-\[320px\][^"]*\bshrink-0\b/.test(src),
-    "el pad desktop w-[320px] perdio shrink-0; en escritorio volvera a comprimirse o empujar la base.",
+    /hidden\s+md:flex\s+w-\[280px\][^"]*\bshrink-0\b/.test(src),
+    "el pad desktop w-[280px] perdio shrink-0; en escritorio volvera a comprimirse o empujar la base.",
   );
 });
 
 test("UniversalPaymentModal: sidebar movil no fuerza ancho mas alla del viewport", async () => {
   const src = await readSource(modalPath);
-  // La sidebar w-full md:w-[220px] debe tener min-w-0 o md:shrink-0 para no
+  // La sidebar w-full md:w-[190px] debe tener min-w-0 o md:shrink-0 para no
   // empujar la base en movil.
   assert.ok(
-    /w-full\s+md:w-\[220px\][^"]*\b(min-w-0|md:shrink-0)\b/.test(src),
+    /w-full\s+md:w-\[190px\][^"]*\b(min-w-0|md:shrink-0)\b/.test(src),
     "el sidebar perdio min-w-0 / md:shrink-0; podria arrastrar el ancho del main en movil.",
   );
 });
@@ -110,7 +110,7 @@ test("UniversalPaymentModal: existe sticky bottom action con safe-area para movi
 
 test("UniversalPaymentModal: SummaryTile tolera cifras grandes (min-w-0 + truncate)", async () => {
   const src = await readSource(modalPath);
-  // El SummaryTile es la unidad visual con los 3 KPIs; en 320 px una cifra
+  // El SummaryTile es la unidad visual con los 3 KPIs; en 280 px una cifra
   // de $1.234.567 empujaba el grid sin truncate. Nos aseguramos que el
   // contenedor tenga min-w-0 y el <p> con truncate.
   const summaryTileMatch = src.match(/function SummaryTile[\s\S]*?return \([\s\S]*?\);\s*\}/);

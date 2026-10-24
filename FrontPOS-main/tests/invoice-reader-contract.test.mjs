@@ -8,8 +8,12 @@ import {
   INVOICE_FILE_MAX_BYTES,
   PACK_MIN_UNITS,
   PACK_MAX_UNITS,
+  PACK_MODE_EMPAQUE,
+  PACK_MODE_PRESENTACION,
   anyItemRequiresPackConfirmation,
+  classifyPackMode,
   clampPercentage,
+  convertItemAsPresentation,
   convertItemToIndividualUnits,
   entryTypeFromLineType,
   fillInvoiceItemDefaults,
@@ -884,4 +888,246 @@ test('UnmatchedItemsReviewer: UnmatchedItem tipa la trazabilidad del empaque', a
       `UnmatchedItem debe declarar ${field} para heredar la trazabilidad`,
     );
   }
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────
+// HELPERS PUROS: classifyPackMode y convertItemAsPresentation
+// ─────────────────────────────────────────────────────────────────────────
+
+test('PACK_MODE constantes expuestas', () => {
+  assert.equal(PACK_MODE_EMPAQUE, 'EMPAQUE');
+  assert.equal(PACK_MODE_PRESENTACION, 'PRESENTACION');
+});
+
+test('classifyPackMode: nombres con magnitud (ml/g/gr/grs/kg/mg/l) → PRESENTACION', () => {
+  const magnitudes = [
+    'CREMA DENTAL COLGATE X 58 ML',
+    'DETERGENTE BLANCOX X 450 GRS',
+    'AGUA CRISTAL X 500 ML',
+    'ARROZ DIANA X 500 GR',
+    'JABON X 500 G',
+    'CARNE X 1 KG',
+    'CALCIO X 500 MG',
+    'ACEITE X 1 L',
+    'GASEOSA X 1.5 LT',
+    'LECHE EN POLVO X 400 GRAMOS',
+  ];
+  for (const name of magnitudes) {
+    assert.equal(
+      classifyPackMode({ invoiceName: name }),
+      PACK_MODE_PRESENTACION,
+      `${name} debe clasificarse como PRESENTACION`,
+    );
+  }
+});
+
+test('classifyPackMode: nombres con marcador explícito de empaque → EMPAQUE', () => {
+  const packs = [
+    'CAP X 24 UND',
+    'GASEOSA X 24 UNID',
+    'COCA PAQUETE X 24',
+    'YOGURT X 6 UNIDADES',
+    'LECHE CAJA X 12',
+    'CHOCOLATINA X 24 BOTELLAS',
+    'ATUN X 6 LATAS',
+  ];
+  for (const name of packs) {
+    assert.equal(
+      classifyPackMode({ invoiceName: name }),
+      PACK_MODE_EMPAQUE,
+      `${name} debe clasificarse como EMPAQUE`,
+    );
+  }
+});
+
+test('classifyPackMode: marcador explícito gana sobre magnitud', () => {
+  // Si "UND" aparece, es EMPAQUE sin importar que también mencione ML/G.
+  const out = classifyPackMode({ invoiceName: 'GASEOSA 500ML X 24 UND' });
+  assert.equal(out, PACK_MODE_EMPAQUE);
+});
+
+test('classifyPackMode: default conservador EMPAQUE si no reconoce nada', () => {
+  assert.equal(classifyPackMode({ invoiceName: 'ALGO X 24' }), PACK_MODE_EMPAQUE);
+  assert.equal(classifyPackMode({ invoiceName: 'CAP X 20' }), PACK_MODE_EMPAQUE);
+  assert.equal(classifyPackMode({ invoiceName: '' }), PACK_MODE_EMPAQUE);
+  assert.equal(classifyPackMode(null), PACK_MODE_EMPAQUE);
+  assert.equal(classifyPackMode(undefined), PACK_MODE_EMPAQUE);
+  assert.equal(classifyPackMode({}), PACK_MODE_EMPAQUE);
+});
+
+test('classifyPackMode: usa productName o name si invoiceName no viene', () => {
+  assert.equal(
+    classifyPackMode({ productName: 'CREMA X 58 ML' }),
+    PACK_MODE_PRESENTACION,
+  );
+  assert.equal(
+    classifyPackMode({ name: 'YOGURT X 6 UND' }),
+    PACK_MODE_EMPAQUE,
+  );
+});
+
+test('convertItemAsPresentation: preserva quantity, unitPrice, costUnit, pvpSugerido, bonus_quantity', () => {
+  const item = {
+    isMatched: true,
+    invoiceName: 'CREMA DENTAL X 58 ML',
+    quantity: 3,
+    unitPrice: 4800,
+    costUnit: 4800,
+    costoReal: 4800,
+    pvpSugerido: 6200,
+    pvpActual: 6200,
+    bonus_quantity: 1,
+    totalPrice: 14400,
+    marginUsed: 30,
+    currentStock: 20,
+    currentWac: 4700,
+  };
+  const out = convertItemAsPresentation(item);
+  assert.notStrictEqual(out, item, 'debe retornar copia, no mutar');
+  assert.equal(out.quantity, 3);
+  assert.equal(out.unitPrice, 4800);
+  assert.equal(out.costUnit, 4800);
+  assert.equal(out.costoReal, 4800);
+  assert.equal(out.pvpSugerido, 6200);
+  assert.equal(out.pvpActual, 6200);
+  assert.equal(out.bonus_quantity, 1);
+  assert.equal(out.totalPrice, 14400);
+  assert.equal(out.marginUsed, 30);
+  assert.equal(out.currentStock, 20);
+  assert.equal(out.currentWac, 4700);
+});
+
+test('convertItemAsPresentation: setea confirmedUnitsPerPack=1, packConversionApplied y packMode', () => {
+  const out = convertItemAsPresentation({
+    invoiceName: 'CREMA X 58 ML',
+    quantity: 2,
+    unitPrice: 5000,
+  });
+  assert.equal(out.confirmedUnitsPerPack, 1);
+  assert.equal(out.packConversionApplied, true);
+  assert.equal(out.packMode, PACK_MODE_PRESENTACION);
+});
+
+test('convertItemAsPresentation: LIMPIA requiresPackConfirmation y packHintUnits (snake y camel)', () => {
+  const out = convertItemAsPresentation({
+    invoiceName: 'CREMA X 58 ML',
+    quantity: 2,
+    unitPrice: 5000,
+    requiresPackConfirmation: true,
+    requires_pack_confirmation: true,
+    packHintUnits: 58,
+    pack_hint_units: 58,
+  });
+  // Downstream nunca debe volver a abrir el flujo de confirmación.
+  assert.equal(out.requiresPackConfirmation, false);
+  assert.equal(out.requires_pack_confirmation, false);
+  assert.equal(out.packHintUnits, 0);
+  assert.equal(out.pack_hint_units, 0);
+  // Y los helpers deben coincidir con eso.
+  assert.equal(itemRequiresPackConfirmation(out), false);
+  assert.equal(getPackHintUnits(out), 0);
+});
+
+test('convertItemAsPresentation: tolera input vacío sin lanzar', () => {
+  assert.equal(convertItemAsPresentation(null), null);
+  assert.equal(convertItemAsPresentation(undefined), undefined);
+  const out = convertItemAsPresentation({});
+  assert.equal(out.confirmedUnitsPerPack, 1);
+  assert.equal(out.packConversionApplied, true);
+  assert.equal(out.packMode, PACK_MODE_PRESENTACION);
+});
+
+test('convertItemToIndividualUnits: marca packMode=EMPAQUE para trazabilidad simétrica', () => {
+  const out = convertItemToIndividualUnits(
+    { isMatched: false, invoiceName: 'CAP X 24', quantity: 1, unitPrice: 48000 },
+    24,
+  );
+  assert.equal(out.packMode, PACK_MODE_EMPAQUE);
+  assert.equal(out.packConversionApplied, true);
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// GUARDIANES ESTATICOS adicionales: toggle PRESENTACION / EMPAQUE
+// ─────────────────────────────────────────────────────────────────────────
+
+test('InvoiceReaderModal importa helpers de modo de carga desde el helper puro', async () => {
+  const src = await readSource(invoiceReaderModal);
+  for (const sym of [
+    'convertItemAsPresentation',
+    'classifyPackMode',
+    'PACK_MODE_EMPAQUE',
+    'PACK_MODE_PRESENTACION',
+  ]) {
+    assert.ok(new RegExp(`\\b${sym}\\b`).test(src), `debe importar/usar ${sym}`);
+  }
+});
+
+test('InvoiceReaderModal: PackReviewRow lleva un campo mode y setRowMode existe', async () => {
+  const src = await readSource(invoiceReaderModal);
+  assert.ok(
+    /mode:\s*PackMode;?/.test(src),
+    'PackReviewRow debe declarar un campo mode: PackMode',
+  );
+  assert.ok(
+    /const\s+setRowMode\s*=/.test(src),
+    'debe existir setRowMode para cambiar entre PRESENTACION y EMPAQUE',
+  );
+});
+
+test('InvoiceReaderModal: allRowsValid acepta PRESENTACION aunque unitsInput esté vacío', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // La validación global debe reconocer que las filas en PRESENTACION son
+  // válidas por sí mismas: no requieren un input numérico.
+  assert.ok(
+    /allRowsValid[\s\S]{0,200}PACK_MODE_PRESENTACION[\s\S]{0,120}isValidUnitsPerPack/.test(src),
+    'allRowsValid debe contemplar la rama PRESENTACION antes de llamar a isValidUnitsPerPack',
+  );
+});
+
+test('InvoiceReaderModal: handleConfirmPacks enruta a convertItemAsPresentation o convertItemToIndividualUnits', async () => {
+  const src = await readSource(invoiceReaderModal);
+  assert.ok(
+    /convertItemAsPresentation\s*\(it\)/.test(src),
+    'debe aplicar convertItemAsPresentation a los items en PRESENTACION',
+  );
+  assert.ok(
+    /convertItemToIndividualUnits\s*\(it,\s*decision\.units!/.test(src),
+    'debe aplicar convertItemToIndividualUnits con el N para los items en EMPAQUE',
+  );
+});
+
+test('InvoiceReaderModal: CTA genérico "Confirmar y Continuar"', async () => {
+  const src = await readSource(invoiceReaderModal);
+  assert.ok(
+    /Confirmar y Continuar/i.test(src),
+    'el botón principal de la etapa packReview debe llamarse "Confirmar y Continuar"',
+  );
+});
+
+test('InvoiceReaderModal: toggle de modo expone role="radiogroup" y role="radio" con aria-checked', async () => {
+  const src = await readSource(invoiceReaderModal);
+  assert.ok(
+    /role="radiogroup"/.test(src),
+    'el toggle PRESENTACION/EMPAQUE debe exponer role="radiogroup"',
+  );
+  assert.ok(
+    /role="radio"/.test(src),
+    'cada botón del toggle debe exponer role="radio"',
+  );
+  assert.ok(
+    /aria-checked=\{row\.mode\s*===\s*PACK_MODE_(PRESENTACION|EMPAQUE)\}/.test(src),
+    'cada botón del toggle debe exponer aria-checked segun row.mode',
+  );
+});
+
+test('InvoiceReaderModal: input de unidades por paquete solo se renderiza en modo EMPAQUE', async () => {
+  const src = await readSource(invoiceReaderModal);
+  // El input numérico debe estar dentro de una rama condicional que verifica
+  // el modo EMPAQUE antes de pintarlo (evita confusión y asegura el gate de
+  // habilitación por fila).
+  assert.ok(
+    /row\.mode\s*===\s*PACK_MODE_EMPAQUE\s*\?[\s\S]{0,2000}inputMode="numeric"/.test(src),
+    'el input numérico debe pintarse SOLO cuando row.mode === EMPAQUE',
+  );
 });

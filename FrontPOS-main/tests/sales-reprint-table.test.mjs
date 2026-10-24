@@ -62,19 +62,44 @@ test("SalesTable: SaleRow memo recibe la prop onReprint con la firma correcta", 
     "El memo SaleRow debe declarar onReprint en su tipo de props.");
 });
 
-test("sales/page.tsx: wire handleReprint que usa printThermalTicket + saleToTicket + getPaymentDescription", async () => {
+test("sales/page.tsx: wire handleReprint que usa printThermalTicketAuto + saleToTicket + getPaymentDescription", async () => {
   const src = await read(salesPage);
   assert.match(src, /from\s+['"]@\/lib\/thermal-ticket['"]/,
     "sales/page debe importar del helper térmico canónico.");
-  assert.match(src, /printThermalTicket/, "sales/page debe usar printThermalTicket.");
+  assert.match(src, /printThermalTicketAuto/,
+    "sales/page debe usar printThermalTicketAuto para honrar deliveryMode (bridge / browser).");
   assert.match(src, /saleToTicket/, "sales/page debe usar saleToTicket.");
   assert.match(src, /getPaymentDescription/,
     "sales/page debe usar getPaymentDescription para componer la descripción fiel del método de pago.");
-  // El handler debe invocarse con `handleReprint(sale)` o similar y pasar al SalesTable
-  assert.match(src, /const handleReprint\s*=\s*useCallback\(\s*\(sale:\s*Sale\)/,
-    "sales/page debe definir handleReprint como useCallback((sale: Sale) => ...).");
+  // El handler ahora es async: espera al bridge para poder reaccionar.
+  assert.match(src, /const handleReprint\s*=\s*useCallback\(\s*async\s*\(sale:\s*Sale\)/,
+    "sales/page debe definir handleReprint como useCallback(async (sale: Sale) => ...).");
+  // Debe usar await sobre printThermalTicketAuto, no la variante sync.
+  assert.match(src, /await\s+printThermalTicketAuto\(/,
+    "sales/page debe hacer await printThermalTicketAuto(...) para esperar al bridge.");
   assert.match(src, /onOpenReprint=\{handleReprint\}/,
     "sales/page debe cablear onOpenReprint={handleReprint} al SalesTable.");
+});
+
+test("sales/page.tsx: handleReprint distingue DIRECT_PRINT_UNAVAILABLE para toast accionable", async () => {
+  const src = await read(salesPage);
+  // Debe importar y usar el sentinel para diferenciar "bridge ausente" del
+  // resto de errores. NO cae al diálogo del navegador automáticamente.
+  assert.match(src, /DIRECT_PRINT_UNAVAILABLE/,
+    "sales/page debe importar e inspeccionar el sentinel DIRECT_PRINT_UNAVAILABLE.");
+  const handlerStart = src.indexOf("const handleReprint");
+  const handlerEnd = src.indexOf("}, [toast]);", handlerStart);
+  assert.ok(handlerStart > 0 && handlerEnd > handlerStart,
+    "No se pudo delimitar el cuerpo de handleReprint.");
+  const body = src.slice(handlerStart, handlerEnd);
+  assert.match(body, /DIRECT_PRINT_UNAVAILABLE/,
+    "El handler debe inspeccionar el sentinel al atrapar el error.");
+  assert.match(body, /BRIDGE NO DISPONIBLE/,
+    "Debe mostrar un toast accionable titulado 'BRIDGE NO DISPONIBLE'.");
+  // NO debe caer silenciosamente al helper sync como fallback: eso rompería
+  // el contrato "bridge = sin diálogo".
+  assert.ok(!/printThermalTicket\s*\(/.test(body) || /printThermalTicketAuto\s*\(/.test(body),
+    "El handler NO debe llamar a printThermalTicket (sync) como fallback automático.");
 });
 
 test("sales/page.tsx: la reimpresión NO abre window.print() ni usa el DOM entero del POS", async () => {

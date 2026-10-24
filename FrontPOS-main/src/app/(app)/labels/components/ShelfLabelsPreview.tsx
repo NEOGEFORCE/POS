@@ -12,9 +12,25 @@
 // La impresión real NUNCA pasa por este componente: el iframe aislado usa
 // `buildShelfLabelsPrintHtml` directamente para no heredar nada del DOM.
 //
-// El formato (Carta / Oficio) se recibe como prop; si viene vacío, cae al
-// default (`LETTER`). `resolveGondolaLayout` entrega toda la geometría
-// (dimensiones de hoja, grid, padding, cantidad de slots por página).
+// Formatos soportados:
+//   - LETTER / LEGAL  → hoja landscape con grid NxM. Padding + bordes dashed.
+//   - THERMAL_80      → rollo continuo. Pinta UNA sola etiqueta por slot
+//     con el DISEÑO NUEVO (2026-10, referencia visual aprobada):
+//         ┌────────────────────────────┐
+//         │  NOMBRE PRODUCTO (máx 2L)  │   ← font bold, truncado por chars
+//         ├────────────────────────────┤   ← separador fino
+//         │                            │
+//         │       $ XX.XXX             │   ← precio GRANDE centrado
+//         │        PRECIO UND          │   ← literal corto (showUnitLabel)
+//         │                            │
+//         ├────────────────────────────┤   ← separador fino
+//         │ |||||||||       PLU 12345  │   ← CODE128 izq + PLU derecha
+//         └────────────────────────────┘
+//     Honra los toggles `showBarcode`, `showUnitLabel`, `showCode`,
+//     `showDate` de la rama `gondola.thermal`.
+//
+// `resolveGondolaLayout` entrega toda la geometría (dimensiones, grid,
+// padding, cantidad de slots por página). Si viene vacío, cae a `LETTER`.
 // =============================================================================
 
 import { useMemo } from "react";
@@ -28,7 +44,11 @@ import {
     truncate,
 } from "@/lib/shelf-labels.mjs";
 import type { ShelfLabelItem, ShelfLabelSlot } from "@/lib/shelf-labels.d.mts";
-import type { GondolaFormat } from "@/lib/printing-config.d.mts";
+import type {
+    GondolaFormat,
+    GondolaThermalConfig,
+} from "@/lib/printing-config.d.mts";
+import { DEFAULT_GONDOLA_THERMAL_CONFIG } from "@/lib/printing-config.mjs";
 
 interface ShelfLabelsPreviewProps {
     items: ReadonlyArray<Partial<ShelfLabelItem>>;
@@ -40,6 +60,13 @@ interface ShelfLabelsPreviewProps {
     className?: string;
     /** Formato de hoja activo. Default `LETTER` cuando no se provee. */
     format?: GondolaFormat;
+    /**
+     * Configuración térmica. Sólo se consume cuando `format === "THERMAL_80"`.
+     * Si viene undefined se usa `DEFAULT_GONDOLA_THERMAL_CONFIG` para que el
+     * preview siga pintando algo sensato (p.ej. desde el workspace, que no
+     * necesita exponer todos los flags del admin).
+     */
+    thermal?: GondolaThermalConfig;
 }
 
 /**
@@ -58,10 +85,14 @@ export function ShelfLabelsPreview({
     now,
     className,
     format,
+    thermal,
 }: ShelfLabelsPreviewProps) {
     const safeScale = Number.isFinite(scale) && scale > 0 ? scale : 0.5;
 
     const layout = useMemo(() => resolveGondolaLayout(format), [format]);
+    // Thermal effectivo. Caer al default en vez de "undefined-safe property
+    // access" por todo el render; mantiene el preview determinista.
+    const effectiveThermal = thermal ?? DEFAULT_GONDOLA_THERMAL_CONFIG;
 
     const pages = useMemo(() => {
         const slots = expandItemsToSlots(items);
@@ -81,6 +112,56 @@ export function ShelfLabelsPreview({
                 <p className="text-[10px] uppercase tracking-widest text-zinc-500">
                     Agrega productos para ver la vista previa de la hoja.
                 </p>
+            </div>
+        );
+    }
+
+    // THERMAL_80: una sola etiqueta 80×40 por slot. Sin hoja, sin grid, sin
+    // padding físico. El preview es una lista vertical de cards: cada card
+    // representa una etiqueta que viajaría al rollo. Mantener la métrica
+    // mm × scale para que el admin pueda estimar el tamaño impreso.
+    if (layout.format === "THERMAL_80") {
+        const slots = pages.flat();
+        // Para el preview respetamos las medidas CONFIGURADAS por el admin
+        // (`thermal.widthMm`, `thermal.heightMm`), no las nominales 80×40
+        // del formato — si el admin cambió el tamaño del rollo el preview
+        // debe reflejarlo.
+        const widthMm = effectiveThermal.widthMm;
+        const heightMm = effectiveThermal.heightMm;
+        return (
+            <div
+                className={className}
+                role="group"
+                aria-label={`Vista previa de ${slots.length} etiqueta(s) térmicas de góndola ${widthMm} × ${heightMm} mm. Rollo continuo.`}
+                data-gondola-format={layout.format}
+                data-gondola-layout={layout.layoutMetaId}
+                data-testid="labels-shelf-preview-thermal"
+            >
+                <ul
+                    className="flex flex-col gap-2"
+                    style={{ listStyle: "none", padding: 0, margin: 0 }}
+                >
+                    {slots.map((slot, idx) => (
+                        <li
+                            key={idx}
+                            className="mx-auto shadow-md ring-1 ring-zinc-200 dark:ring-white/10 bg-white"
+                            style={{
+                                boxSizing: "border-box",
+                                borderRadius: 2,
+                            }}
+                            aria-label={`Etiqueta ${idx + 1} de ${slots.length}`}
+                        >
+                            <ThermalShelfSlotPreview
+                                slot={slot}
+                                dateLabel={dateLabel}
+                                scale={safeScale}
+                                thermal={effectiveThermal}
+                                widthMm={widthMm}
+                                heightMm={heightMm}
+                            />
+                        </li>
+                    ))}
+                </ul>
             </div>
         );
     }
@@ -131,6 +212,253 @@ interface SlotPreviewProps {
     scale: number;
     labelWidthMm: number;
     labelHeightMm: number;
+}
+
+// -----------------------------------------------------------------------------
+// Preview específico para THERMAL_80 — refleja el nuevo diseño 2026-10.
+//
+// Honra los toggles de la rama `gondola.thermal`:
+//   - `showBarcode`     → simula CODE128 abajo a la izquierda.
+//   - `showUnitLabel`   → literal corto bajo el precio.
+//   - `unitLabel`       → texto del literal (ej. "PRECIO UND", "x LT").
+//   - `showCode`        → PLU abajo a la derecha.
+//   - `showDate`        → fecha de impresión alineada con PLU.
+//   - `nameMaxChars`    → trunca el nombre antes del display.
+//   - `barcodeHeightMm` → alto del barcode simulado en mm (escalado).
+// -----------------------------------------------------------------------------
+interface ThermalShelfSlotPreviewProps {
+    slot: ShelfLabelSlot | null;
+    dateLabel: string;
+    scale: number;
+    thermal: GondolaThermalConfig;
+    widthMm: number;
+    heightMm: number;
+}
+
+function ThermalShelfSlotPreview({
+    slot,
+    dateLabel,
+    scale,
+    thermal,
+    widthMm,
+    heightMm,
+}: ThermalShelfSlotPreviewProps) {
+    const width = `${(widthMm * scale).toFixed(3)}mm`;
+    const height = `${(heightMm * scale).toFixed(3)}mm`;
+    const paddingH = `${(thermal.marginLeftMm * scale).toFixed(3)}mm`;
+    const paddingV = `${(thermal.marginTopMm * scale).toFixed(3)}mm`;
+    const paddingBottom = `${(thermal.marginBottomMm * scale).toFixed(3)}mm`;
+    const barcodeHeight = `${(thermal.barcodeHeightMm * scale).toFixed(3)}mm`;
+
+    const containerStyle: React.CSSProperties = {
+        width,
+        height,
+        paddingTop: paddingV,
+        paddingBottom,
+        paddingLeft: paddingH,
+        paddingRight: paddingH,
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-start",
+        overflow: "hidden",
+        color: "#000",
+        boxSizing: "border-box",
+        fontFamily: "'Helvetica Neue', Arial, Helvetica, sans-serif",
+    };
+
+    if (!slot) {
+        return <div style={containerStyle} aria-hidden="true" />;
+    }
+
+    // Preview truncado por `nameMaxChars` del admin — refleja el truncado
+    // que hace el renderer TSPL antes de medir glifos.
+    const nameText = truncate(slot.productName, Math.max(1, thermal.nameMaxChars));
+    const price = formatCOP(slot.salePrice);
+    const unitLabel = (thermal.unitLabel || "PRECIO UND").toUpperCase();
+    const code = slot.code || "";
+    const dateVisible = thermal.showDate && dateLabel.length > 0;
+
+    // Escalas tipográficas en pt. La relación es coherente con la referencia
+    // visual: nombre 10pt, precio 24pt (dominante), unit 7pt, PLU 7.5pt.
+    const nameFontSize = `${(10 * scale).toFixed(2)}pt`;
+    const priceFontSize = `${(24 * scale).toFixed(2)}pt`;
+    const unitFontSize = `${(7 * scale).toFixed(2)}pt`;
+    const pluFontSize = `${(7.5 * scale).toFixed(2)}pt`;
+
+    return (
+        <div
+            style={containerStyle}
+            data-testid="labels-shelf-preview-thermal-slot"
+            data-shelf-show-barcode={thermal.showBarcode ? "true" : "false"}
+            data-shelf-show-unit={thermal.showUnitLabel ? "true" : "false"}
+            data-shelf-show-code={thermal.showCode ? "true" : "false"}
+            data-shelf-show-date={thermal.showDate ? "true" : "false"}
+        >
+            {/* NOMBRE (máx 2 líneas) */}
+            <div
+                style={{
+                    fontSize: nameFontSize,
+                    fontWeight: 700,
+                    lineHeight: 1.1,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                    wordBreak: "break-word",
+                    maxHeight: "2.4em",
+                    textAlign: "center",
+                    textTransform: "uppercase",
+                }}
+            >
+                {nameText}
+            </div>
+
+            {/* SEPARADOR fino */}
+            <div
+                aria-hidden="true"
+                style={{
+                    marginTop: `${(0.8 * scale).toFixed(3)}mm`,
+                    marginBottom: `${(0.8 * scale).toFixed(3)}mm`,
+                    height: Math.max(1, Math.round(0.4 * scale * 10) / 10),
+                    background: "#000",
+                    opacity: 0.6,
+                }}
+            />
+
+            {/* PRECIO GRANDE centrado */}
+            <div
+                style={{
+                    flex: 1,
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    alignItems: "center",
+                    gap: `${(0.4 * scale).toFixed(3)}mm`,
+                }}
+            >
+                <div
+                    style={{
+                        fontSize: priceFontSize,
+                        fontWeight: 900,
+                        letterSpacing: "-0.5px",
+                        lineHeight: 1,
+                        textAlign: "center",
+                    }}
+                >
+                    {price}
+                </div>
+                {thermal.showUnitLabel && unitLabel.length > 0 && (
+                    <div
+                        style={{
+                            fontSize: unitFontSize,
+                            fontWeight: 700,
+                            letterSpacing: "0.15em",
+                            textTransform: "uppercase",
+                            opacity: 0.75,
+                        }}
+                    >
+                        {truncate(unitLabel, 24)}
+                    </div>
+                )}
+            </div>
+
+            {/* PIE: barcode izq. + PLU/fecha der. */}
+            {(thermal.showBarcode || thermal.showCode || dateVisible) && (
+                <div
+                    aria-hidden="true"
+                    style={{
+                        marginTop: `${(0.5 * scale).toFixed(3)}mm`,
+                        marginBottom: `${(0.4 * scale).toFixed(3)}mm`,
+                        height: Math.max(1, Math.round(0.3 * scale * 10) / 10),
+                        background: "#000",
+                        opacity: 0.4,
+                    }}
+                />
+            )}
+            {(thermal.showBarcode || thermal.showCode || dateVisible) && (
+                <div
+                    style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "flex-end",
+                        gap: `${(1.5 * scale).toFixed(3)}mm`,
+                        minWidth: 0,
+                    }}
+                >
+                    {thermal.showBarcode && code ? (
+                        <BarcodeStripe height={barcodeHeight} />
+                    ) : (
+                        <span style={{ width: 0 }} />
+                    )}
+                    <div
+                        style={{
+                            fontSize: pluFontSize,
+                            fontWeight: 700,
+                            textAlign: "right",
+                            lineHeight: 1.1,
+                            fontFamily: "'Courier New', Consolas, monospace",
+                            minWidth: 0,
+                        }}
+                    >
+                        {thermal.showCode && code && (
+                            <div
+                                style={{
+                                    overflow: "hidden",
+                                    whiteSpace: "nowrap",
+                                    textOverflow: "ellipsis",
+                                    maxWidth: `${(widthMm * 0.5 * scale).toFixed(3)}mm`,
+                                }}
+                            >
+                                {truncate(code, 18)}
+                            </div>
+                        )}
+                        {dateVisible && (
+                            <div
+                                style={{
+                                    opacity: 0.65,
+                                    fontSize: `${(6.5 * scale).toFixed(2)}pt`,
+                                }}
+                            >
+                                {dateLabel}
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/**
+ * Franja de barras simuladas (no un barcode real). Es puramente visual:
+ * la impresión real emite `BARCODE "128",...` desde el bridge, con el
+ * código ASCII seguro ya validado. Acá sólo transmitimos la IDEA de
+ * "aquí va un CODE128 abajo a la izquierda".
+ */
+function BarcodeStripe({ height }: { height: string }) {
+    const bars = [1, 2, 1, 1, 2, 1, 3, 1, 2, 1, 1, 2, 1, 3, 1, 1, 2, 1, 2, 1];
+    return (
+        <div
+            style={{
+                display: "flex",
+                alignItems: "stretch",
+                gap: 0,
+                height,
+                minWidth: 0,
+            }}
+            aria-label="Representación visual del barcode CODE128"
+        >
+            {bars.map((w, i) => (
+                <span
+                    key={i}
+                    style={{
+                        width: `${w}px`,
+                        background: i % 2 === 0 ? "#000" : "transparent",
+                    }}
+                />
+            ))}
+        </div>
+    );
 }
 
 function SlotPreview({

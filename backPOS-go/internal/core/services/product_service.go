@@ -37,6 +37,14 @@ func applyRounding(val float64) float64 {
 }
 
 func (s *ProductService) CreateProduct(product *models.Product) error {
+	// Guardarraíl del namespace interno: product_handler.Create debe
+	// enrutar los barcode POSINT- a InternalBarcodeRepository.
+	// CreateProductConsumingReservation en lugar de a este método. Si una
+	// llamada legacy cae aquí con un barcode POSINT, rechazamos antes de
+	// insertar para no evadir la validación de la reserva.
+	if product != nil && models.IsInternalBarcode(product.Barcode) {
+		return fmt.Errorf("código POSINT- requiere reservar vía /api/labels/internal-codes/reserve antes de crear el producto")
+	}
 	// Aplicar redondeo si ya viene con precio
 	if product.SalePrice > 0 {
 		product.SalePrice = normalizeManualSalePrice(product.SalePrice)
@@ -124,6 +132,32 @@ func (s *ProductService) GetOrphanedProducts() ([]models.Product, error) {
 func (s *ProductService) UpdateProduct(barcode string, updatedProduct *models.Product) error {
 	if updatedProduct == nil {
 		return fmt.Errorf("producto requerido")
+	}
+	// Guardarraíl del namespace interno: una actualización puede intentar
+	// renombrar un producto hacia un barcode POSINT-, pero ese namespace
+	// SÓLO se asigna al crear vía reserva atómica (migración 024). Un
+	// rename arbitrario esquivaría la reserva. Si el barcode destino es
+	// POSINT- y es distinto del original, rechazamos.
+	//
+	// Nota: si el barcode destino coincide con el original (no hay rename),
+	// se permite — es un UPDATE normal sobre un producto POSINT ya
+	// consumido.
+	currentBarcodeGuard := strings.TrimSpace(barcode)
+	targetBarcodeGuard := strings.TrimSpace(updatedProduct.Barcode)
+	if targetBarcodeGuard == "" {
+		targetBarcodeGuard = currentBarcodeGuard
+	}
+	if models.IsInternalBarcode(targetBarcodeGuard) && targetBarcodeGuard != currentBarcodeGuard {
+		return fmt.Errorf("el namespace POSINT- se asigna sólo al crear producto con reserva; no se permite renombrar hacia POSINT-")
+	}
+	// Idéntico guardarraíl para el campo alternate_codes: ninguna
+	// actualización puede meter un token POSINT- en los alternos. La BD
+	// también lo bloquea vía CHECK ck_products_alternate_codes_no_internal_namespace,
+	// pero el servicio aborta antes para dar un error legible.
+	for _, token := range strings.Split(updatedProduct.AlternateCodes, ",") {
+		if models.IsInternalBarcode(token) {
+			return fmt.Errorf("un código alterno no puede usar el namespace POSINT- (reservado para products.barcode)")
+		}
 	}
 	rawDB, ok := s.repo.GetDB().(*gorm.DB)
 	if !ok || rawDB == nil {
@@ -612,6 +646,14 @@ func (s *ProductService) OpenBulk(barcode string, employeeDNI string, employeeNa
 	return nil
 }
 func (s *ProductService) UpsertProduct(product *models.Product) error {
+	// CSV import: la carga masiva NO puede introducir productos con el
+	// namespace POSINT-. El namespace se emite sólo desde el modal con
+	// reserva atómica; un CSV externo podría tener valores inventados que
+	// colisionen con reservas vivas o inexistentes. Rechazamos antes de
+	// delegar.
+	if product != nil && models.IsInternalBarcode(product.Barcode) {
+		return fmt.Errorf("CSV import no admite códigos POSINT-: ese namespace se emite sólo desde el modal con reserva atómica")
+	}
 	existing, err := s.repo.GetByBarcode(product.Barcode)
 	if err != nil || existing == nil {
 		// Crear nuevo

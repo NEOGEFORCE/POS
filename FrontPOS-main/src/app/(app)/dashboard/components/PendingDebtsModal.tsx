@@ -7,7 +7,7 @@ import {
 } from "@heroui/react";
 import {
   HandCoins, Activity, Banknote, Wallet, Building2,
-  CreditCard as CardIcon, ChevronRight, Info, X
+  CreditCard as CardIcon, ChevronRight, Info, X, QrCode
 } from 'lucide-react';
 import { Expense } from '@/lib/definitions';
 import { liveDebtTotal, sumPayables } from '@/lib/payables.mjs';
@@ -159,12 +159,17 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                                     )}
                                   </div>
                                   <p className="text-[9px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-widest text-center mb-4">¿Con que canal deseas saldar esta deuda?</p>
-                                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
                                     {[
                                       { id: 'EFECTIVO', label: 'Caja', icon: <Banknote size={16} />, color: 'emerald' },
                                       { id: 'NEQUI', label: 'Nequi', icon: <Wallet size={16} />, color: 'pink' },
                                       { id: 'DAVIPLATA', label: 'Davi', icon: <Building2 size={16} />, color: 'rose' },
-                                      { id: 'FONDO', label: 'Fondo', icon: <Building2 size={16} />, color: 'blue' }
+                                      { id: 'FONDO', label: 'Fondo', icon: <Building2 size={16} />, color: 'blue' },
+                                      // Bold QR / Bre-B — permite saldar la
+                                      // deuda cobrando desde el saldo del
+                                      // canal Bold. El backend ya acepta
+                                      // `paymentSource` libre en /expenses/settle.
+                                      { id: 'BOLD_QR', label: 'Bold QR', icon: <QrCode size={16} />, color: 'cyan' }
                                     ].map((source) => (
                                       <Button
                                         key={source.id}

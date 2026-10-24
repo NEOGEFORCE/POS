@@ -43,19 +43,40 @@ async function readWithoutComments(path) {
 }
 
 // -------------------------------------------------------------------------
-// (1) El boton '+' debe estar visible en el numpad MOVIL y en el DESKTOP.
+// (1) El boton '+' debe estar accesible en el numpad MOVIL y en el DESKTOP.
 // -------------------------------------------------------------------------
 
 test("UniversalPaymentModal tiene el boton '+' en al menos DOS numpads (movil + desktop)", async () => {
   const source = await readFile(modalPath, "utf8");
-  // Patron del array del numpad. Buscamos cualquier declaracion que incluya
-  // literal '+' entre comillas simples o dobles como entrada de un array
-  // [..., '+', 'CE'].
-  const numpadsWithPlus = source.match(/\[\s*1\s*,\s*2\s*,\s*3[\s\S]{0,120}['"]\+['"][\s\S]{0,30}['"]CE['"]/g) || [];
+  // Tras el sprint 2026-10 (teclado unificado) el numpad vive en un sub-
+  // componente <PaymentKeypad> con el array canónico [1-9, 0, '+', 'CE']
+  // dentro. Debe renderizarse al MENOS dos veces: una para móvil
+  // (md:hidden) y otra para el pad fijo de escritorio (hidden md:flex).
+  // El '+' puede llegar también por una tercera forma legacy (array
+  // literal `[1, 2, 3, ... '+', 'CE']` inline), así que el guardián
+  // acepta ambos. El criterio dominante es: el '+' debe estar accesible
+  // en 2 viewports distintos.
+  const keypadComponentRenders = (source.match(/<PaymentKeypad\b/g) || []).length;
+  const inlineArrayLiteralRenders = (
+    source.match(/\[\s*1\s*,\s*2\s*,\s*3[\s\S]{0,120}['"]\+['"][\s\S]{0,30}['"]CE['"]/g) || []
+  ).length;
+  const totalRenders = keypadComponentRenders + inlineArrayLiteralRenders;
   assert.ok(
-    numpadsWithPlus.length >= 2,
-    `UniversalPaymentModal.tsx debe tener '+' en MINIMO 2 numpads (movil + desktop). Encontre ${numpadsWithPlus.length}.`,
+    totalRenders >= 2,
+    `UniversalPaymentModal.tsx debe exponer el '+' en MINIMO 2 numpads (movil + desktop). ` +
+      `Encontré ${keypadComponentRenders} <PaymentKeypad> + ${inlineArrayLiteralRenders} inline literales.`,
   );
+  // Si usa el sub-componente, el array canónico debe estar presente
+  // UNA sola vez (fuente única). Si no usa sub-componente, debe haber
+  // 2+ literales inline. En ningún caso puede haber 0 literales con 0
+  // sub-componentes (ya cubierto arriba) ni combinaciones degeneradas.
+  if (keypadComponentRenders > 0) {
+    assert.ok(
+      inlineArrayLiteralRenders <= 1,
+      `Si se usa el sub-componente <PaymentKeypad>, el array canónico debe aparecer ` +
+        `una sola vez (fuente única). Se encontraron ${inlineArrayLiteralRenders} literales inline.`,
+    );
+  }
 });
 
 test("UniversalPaymentModal expone un boton accesible '+ AGREGAR CANAL' para movil", async () => {

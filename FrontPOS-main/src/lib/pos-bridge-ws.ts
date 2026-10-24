@@ -198,6 +198,18 @@ export class PosBridgeWsClient implements PosBridge {
         return this.sendRequest("kickDrawer", payload);
     }
 
+    /**
+     * Enumera las colas de impresión del equipo donde corre el bridge.
+     * Delegación tipada de la acción `listPrinters` del contrato WS; el
+     * `payload.refresh=true` indica al bridge que ignore cualquier cache
+     * interna. El valor devuelto es el `result` crudo del bridge; el
+     * consumidor lo pasa por `parseDetectedPrintersResult` para obtener
+     * un shape tipado.
+     */
+    listPrinters(payload?: unknown): Promise<unknown> {
+        return this.sendRequest("listPrinters", payload ?? {});
+    }
+
     // -------------------------------------------------------------------
     // Introspección (sólo lectura)
     // -------------------------------------------------------------------

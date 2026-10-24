@@ -72,12 +72,14 @@ import {
     buildBridgeConfigPayload,
     loadPrintingConfig,
 } from "@/lib/printing-config.mjs";
-import type { GondolaFormat } from "@/lib/printing-config.d.mts";
+import type { GondolaFormat, GondolaThermalConfig } from "@/lib/printing-config.d.mts";
 import {
     buildAuditMeta,
+    buildShelfLabelsBridgePayload,
     buildShelfLabelsPrintHtml,
     resolveGondolaLayout,
     summarizeShelfLabels,
+    summarizeShelfLabelsThermal,
 } from "@/lib/shelf-labels.mjs";
 import { ShelfLabelsPreview } from "@/app/(app)/labels/components/ShelfLabelsPreview";
 
@@ -212,14 +214,23 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     // workspace NUNCA llama al bridge para góndola: el formato sólo altera
     // la geometría del documento aislado que va al diálogo del navegador.
     const [gondolaFormat, setGondolaFormat] = useState<GondolaFormat>("LETTER");
+    // Config térmica hidratada en paralelo. El preview THERMAL_80 la lee
+    // para honrar `showBarcode`, `showUnitLabel`, `showCode`, `showDate` y
+    // la geometría personalizada del admin. Si la config no existe, el
+    // preview cae a `DEFAULT_GONDOLA_THERMAL_CONFIG`.
+    const [gondolaThermal, setGondolaThermal] = useState<GondolaThermalConfig | undefined>(
+        undefined,
+    );
     useEffect(() => {
         if (typeof window === "undefined") return;
         const hydrate = () => {
             try {
                 const cfg = loadPrintingConfig();
                 setGondolaFormat(cfg.gondola?.format ?? "LETTER");
+                setGondolaThermal(cfg.gondola?.thermal);
             } catch {
                 setGondolaFormat("LETTER");
+                setGondolaThermal(undefined);
             }
         };
         hydrate();
@@ -694,7 +705,10 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     //      + la config completa derivada de printing-config (connection,
     //      labels, drawer, activeMode) para que el bridge no tenga que leer
     //      LocalStorage.
-    //   3. Fallback window.print() si no hay bridge disponible.
+    //   3. SIN fallback automático: si el bridge no está o rechaza, el
+    //      toast guía al usuario a la acción manual "Imprimir con
+    //      navegador (PDF)" — un botón SEPARADO en la toolbar. Nunca
+    //      abrimos el diálogo del navegador en silencio.
     // -------------------------------------------------------------------------
     const handlePrint = useCallback(async () => {
         if (queue.length === 0) return;
@@ -764,40 +778,49 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                 bridgeConfig,
                 labelItems,
             };
-            // 2. ENVÍO: bridge si está disponible, si no fallback a
-            //    window.print(). printInvoked=true requiere que al menos
-            //    una de las dos vías haya corrido sin lanzar.
-            const w = window as any;
+            // 2. ENVÍO: SOLO vía bridge. SIN fallback automático a
+            //    window dot print cuando el bridge no esté o cuando falle:
+            //    el modo "bridge" imprime silencioso o avisa accionable,
+            //    nunca abre el diálogo del navegador sin que el admin lo
+            //    pida con el botón "Imprimir con navegador (PDF)".
+            const w = window as unknown as { posBridge?: { print?: (p: unknown) => Promise<unknown> } };
             let printInvoked = false;
-            if (w.posBridge?.print) {
+            let bridgeFailureMessage: string | null = null;
+            let bridgeFailureCode: string | null = null;
+            if (typeof w.posBridge?.print === "function") {
                 try {
                     await w.posBridge.print(bridgePayload);
                     printInvoked = true;
-                } catch {
-                    try {
-                        window.print();
-                        printInvoked = true;
-                    } catch {
-                        printInvoked = false;
+                } catch (err) {
+                    // Guardamos el mensaje para el toast accionable pero
+                    // NO caemos al diálogo del navegador. El flag
+                    // `printInvoked` queda en false y el flujo salta al
+                    // bloque de aviso.
+                    const raw = err instanceof Error ? err.message : String(err || "");
+                    bridgeFailureMessage = raw || "El bridge local no respondió.";
+                    const colon = bridgeFailureMessage.indexOf(":");
+                    if (colon > 0 && colon < 40) {
+                        bridgeFailureCode = bridgeFailureMessage.slice(0, colon);
                     }
                 }
             } else {
-                try {
-                    window.print();
-                    printInvoked = true;
-                } catch {
-                    printInvoked = false;
-                }
+                bridgeFailureMessage = "No hay bridge local disponible.";
+                bridgeFailureCode = "BRIDGE_NOT_INSTALLED";
             }
-            // Si NO se logró invocar el envío físico (bridge rechazó y
-            // window.print lanzó), NO limpiamos la cola, NO borramos
-            // persistentes y NO mostramos éxito. El usuario reintenta.
+            // Si NO se logró invocar el envío físico, NO limpiamos la
+            // cola, NO borramos persistentes y NO mostramos éxito. El
+            // usuario puede pulsar el botón manual "Imprimir con
+            // navegador (PDF)" como ruta separada.
             if (!printInvoked) {
                 toast({
                     variant: "destructive",
-                    title: "No se pudo imprimir",
+                    title: bridgeFailureCode
+                        ? `IMPRESIÓN FALLÓ: ${bridgeFailureCode}`
+                        : "IMPRESIÓN FALLÓ",
                     description:
-                        "El bridge local y el diálogo del navegador fallaron. La cola se conserva para reintento.",
+                        `${bridgeFailureMessage || "No se pudo invocar el bridge local."} ` +
+                        `El lote quedó auditado; usa "Imprimir con navegador (PDF)" si necesitas una copia manual.`,
+                    duration: 10000,
                 });
                 return;
             }
@@ -865,6 +888,73 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     }, [queue, defaultPrinter, defaultSize, user, totalLabels, toast]);
 
     // -------------------------------------------------------------------------
+    // Acción manual separada: "Imprimir con navegador (PDF)".
+    //
+    // Vive aparte de `handlePrint`. Audita el lote con el mismo contrato y
+    // abre el diálogo del navegador vía `window.print()`. Nunca se dispara
+    // desde `handlePrint`; el admin lo invoca de forma consciente cuando
+    // sabe que el bridge no está disponible o cuando quiere una copia PDF.
+    // -------------------------------------------------------------------------
+    const handleManualBrowserPrint = useCallback(async () => {
+        if (queue.length === 0 || isBusy) return;
+        if (queue.some((q) => q.resolveError)) {
+            toast({
+                variant: "destructive",
+                title: "Resuelve los errores antes de imprimir",
+                description:
+                    "Hay entradas pendientes en la cola con error. Pulsa Reintentar en cada una o descártala.",
+            });
+            return;
+        }
+        setIsBusy(true);
+        try {
+            const triggerSource = labelBatchTriggerSource(queue.map((q) => q.created));
+            const payload = {
+                printerProfileId: defaultPrinter?.id ?? null,
+                sizeTemplateId: defaultSize?.id ?? null,
+                triggerSource,
+                items: queue.map((q) => ({ code: q.code.code, quantity: q.quantity })),
+                meta: {
+                    printedBy: user?.name || user?.dni || "",
+                    printerName: defaultPrinter?.name || "navegador",
+                    sizeName: defaultSize?.name || "default",
+                    manualBrowserPrint: true,
+                },
+            };
+            await apiFetch("/labels/print-jobs", {
+                method: "POST",
+                body: JSON.stringify(payload),
+            });
+            try {
+                window.print();
+            } catch (err) {
+                toast({
+                    variant: "destructive",
+                    title: "DIÁLOGO BLOQUEADO",
+                    description:
+                        (err instanceof Error && err.message)
+                            ? err.message
+                            : "El navegador no abrió el diálogo. Reintenta desde /labels.",
+                });
+                return;
+            }
+            toast({
+                variant: "default",
+                title: "DIÁLOGO DEL NAVEGADOR ABIERTO",
+                description: `${totalLabels} etiqueta(s) · acción manual separada.`,
+            });
+        } catch (e: any) {
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: e?.message || "No se pudo imprimir con el navegador.",
+            });
+        } finally {
+            setIsBusy(false);
+        }
+    }, [queue, defaultPrinter, defaultSize, user, totalLabels, toast, isBusy]);
+
+    // -------------------------------------------------------------------------
     // Impresión hoja de góndola — modo "shelf".
     //
     // El formato activo (LETTER u OFICIO/LEGAL) se resuelve en runtime
@@ -911,7 +1001,14 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
         [queue, gondolaFormat, shelfPriceOf],
     );
 
-    const handlePrintShelfSheet = useCallback(async () => {
+    // -------------------------------------------------------------------------
+    // handlePrintShelfSheetSheet — ruta LETTER/LEGAL.
+    //
+    // Flujo histórico: AUDIT-FIRST + iframe aislado + diálogo del navegador.
+    // NUNCA llama al bridge térmico ni abre el cajón. Sólo se dispara
+    // cuando `gondolaFormat === "LETTER" || "LEGAL"`.
+    // -------------------------------------------------------------------------
+    const handlePrintShelfSheetSheet = useCallback(async () => {
         if (queue.length === 0) return;
         // AUDIT-FIRST: si alguna entrada persistente no se pudo resolver
         // en /labels/codes, se queda en pantalla con badge rojo y no se
@@ -1117,6 +1214,190 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     ]);
 
     // -------------------------------------------------------------------------
+    // handlePrintShelfSheetThermal — ruta THERMAL_80.
+    //
+    // Igual que `/labels` térmico: AUDIT-FIRST + bridge directo. NUNCA
+    // abre iframe ni cae en silencio al diálogo del navegador. Si el
+    // bridge no está disponible o rechaza, el toast es accionable y la
+    // cola se conserva íntegra para reintento.
+    //
+    // Garantías duras:
+    //   - El payload incluye `openDrawerOnSale: false` SIEMPRE.
+    //   - `drawer.openDrawerOnSale` se fuerza a `false` dentro del helper.
+    //   - El payload NUNCA emite `kickDrawer` (el bridge rechaza
+    //     drawer bytes para este `type`).
+    // -------------------------------------------------------------------------
+    const handlePrintShelfSheetThermal = useCallback(async () => {
+        if (queue.length === 0) return;
+        if (queue.some((q) => q.resolveError)) {
+            toast({
+                variant: "destructive",
+                title: "Resuelve los errores antes de imprimir",
+                description:
+                    "Hay entradas pendientes en la cola con error. Pulsa Reintentar en cada una o descártala.",
+            });
+            return;
+        }
+        setIsBusy(true);
+        try {
+            const triggerSource = labelBatchTriggerSource(queue.map((q) => q.created));
+            const items = queue.map((q) => ({
+                code: q.code.code,
+                productName:
+                    q.product?.productName || q.code.productName || "ETIQUETA",
+                salePrice: shelfPriceOf(q),
+                quantity: q.quantity,
+            }));
+            const thermalSummary = summarizeShelfLabelsThermal(items);
+            // 1. AUDIT-FIRST. Mismo contrato que el térmico de recibos y
+            //    el shelf-sheet, pero `meta.layout = "gondola-shelf-thermal-80x40"`
+            //    con `labelsPerPage: 1` (vía buildAuditMeta("THERMAL_80")).
+            const auditPayload = {
+                printerProfileId: defaultPrinter?.id ?? null,
+                sizeTemplateId: null,
+                triggerSource,
+                items: queue.map((q) => ({ code: q.code.code, quantity: q.quantity })),
+                meta: buildAuditMeta(
+                    {
+                        printedBy: user?.name || user?.dni || "",
+                        printerName: defaultPrinter?.name || "navegador",
+                        totalLabels: thermalSummary.totalLabels,
+                        totalPages: thermalSummary.totalPages,
+                    },
+                    "THERMAL_80",
+                ),
+            };
+            await apiFetch("/labels/print-jobs", {
+                method: "POST",
+                body: JSON.stringify(auditPayload),
+            });
+
+            // 2. Si no hay bridge → toast accionable, NO limpiamos cola,
+            //    NO caemos a iframe. La hoja térmica no se puede emular con
+            //    `window.print()` sin producir un ticket incorrecto.
+            const w = window as unknown as {
+                posBridge?: { print?: (p: unknown) => Promise<unknown> };
+            };
+            if (typeof w.posBridge?.print !== "function") {
+                toast({
+                    variant: "destructive",
+                    title: "SIN BRIDGE LOCAL",
+                    description:
+                        "La impresión en rollo térmico 80 mm requiere el scale-bridge. " +
+                        "El lote quedó auditado; la cola se conserva para reintento.",
+                    duration: 10000,
+                });
+                return;
+            }
+
+            // 3. Construimos el payload wire con el helper puro — garantiza
+            //    `openDrawerOnSale: false`, `drawer.openDrawerOnSale: false`,
+            //    `type: "shelf-labels"` y `activeMode: "LABEL"`.
+            const printingConfig = loadPrintingConfig();
+            const bridgePayload = buildShelfLabelsBridgePayload({
+                items,
+                config: printingConfig,
+                printerProfileId: defaultPrinter?.id ?? null,
+                printedBy: user?.name || user?.dni || "",
+                printerName: defaultPrinter?.name || "navegador",
+                triggerSource,
+                now: new Date(),
+            });
+
+            // 4. ENVÍO. Si rechaza → toast accionable, SIN limpiar cola.
+            try {
+                await w.posBridge.print(bridgePayload);
+            } catch (err) {
+                const raw = err instanceof Error ? err.message : String(err || "");
+                const colon = raw.indexOf(":");
+                const code = colon > 0 && colon < 40 ? raw.slice(0, colon) : null;
+                toast({
+                    variant: "destructive",
+                    title: code ? `IMPRESIÓN FALLÓ: ${code}` : "IMPRESIÓN FALLÓ",
+                    description:
+                        `${raw || "El bridge local rechazó la impresión."} ` +
+                        `El lote quedó auditado; la cola se conserva.`,
+                    duration: 10000,
+                });
+                return;
+            }
+
+            // 5. ÉXITO: eliminamos entradas persistentes del storage y
+            //    preservamos las porciones manuales (igual que el térmico
+            //    de /labels). Esto mantiene el contrato de "no perder la
+            //    porción manual al descartar la persistente".
+            const persistentIdsPrinted = queue
+                .filter((q) => q.source === "persistent" && q.persistentId)
+                .map((q) => q.persistentId as string);
+            if (typeof window !== "undefined") {
+                for (const pid of persistentIdsPrinted) {
+                    removePersistentEntry(window.localStorage, pid);
+                }
+            }
+            if (clearQueueOnPrintClose) {
+                setQueue([]);
+            } else {
+                setQueue((prev) =>
+                    prev
+                        .map((q) => {
+                            if (
+                                q.source === "persistent"
+                                && q.persistentId
+                                && persistentIdsPrinted.includes(q.persistentId)
+                            ) {
+                                const manual = q.manualQuantity;
+                                return {
+                                    ...q,
+                                    source: "manual" as const,
+                                    persistentId: undefined,
+                                    persistentQuantity: 0,
+                                    reason: undefined,
+                                    oldSalePrice: undefined,
+                                    persistentSalePrice: undefined,
+                                    receptionRef: undefined,
+                                    resolveError: undefined,
+                                    manualQuantity: manual,
+                                    quantity: manual,
+                                };
+                            }
+                            return q;
+                        })
+                        .filter((q) => q.quantity > 0),
+                );
+            }
+            toast({
+                variant: "default",
+                title: "HOJA TÉRMICA ENVIADA",
+                description: `${thermalSummary.totalLabels} etiqueta(s) · rollo 80 mm`,
+            });
+        } catch (e: any) {
+            toast({
+                variant: "destructive",
+                title: "Error",
+                description: e?.message || "No se pudo imprimir la hoja térmica",
+            });
+        } finally {
+            setIsBusy(false);
+        }
+    }, [
+        queue,
+        defaultPrinter,
+        user,
+        clearQueueOnPrintClose,
+        toast,
+        shelfPriceOf,
+    ]);
+
+    // Dispatcher: elige la ruta según el formato de góndola activo.
+    const handlePrintShelfSheet = useCallback(() => {
+        if (gondolaFormat === "THERMAL_80") {
+            void handlePrintShelfSheetThermal();
+        } else {
+            void handlePrintShelfSheetSheet();
+        }
+    }, [gondolaFormat, handlePrintShelfSheetThermal, handlePrintShelfSheetSheet]);
+
+    // -------------------------------------------------------------------------
     // Renderizado
     // -------------------------------------------------------------------------
 
@@ -1124,7 +1405,9 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
     const headerSubtitle =
         mode === "thermal"
             ? `Generador térmico · ${products.length} productos cargados`
-            : `Hoja ${gondolaLayout.label} landscape · grid ${gondolaLayout.columns}×${gondolaLayout.rows} · ${products.length} productos cargados`;
+            : gondolaFormat === "THERMAL_80"
+                ? `Rollo térmico 80 mm · bridge TSPL (sin diálogo) · ${products.length} productos cargados`
+                : `Hoja ${gondolaLayout.label} landscape · grid ${gondolaLayout.columns}×${gondolaLayout.rows} · ${products.length} productos cargados`;
 
     return (
         <div
@@ -1171,35 +1454,65 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                         </Button>
                     )}
                     {mode === "thermal" && (
-                        <Button
-                            size="sm"
-                            color="success"
-                            isDisabled={queue.length === 0 || isBusy}
-                            onPress={handlePrint}
-                            startContent={<Printer size={14} />}
-                            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
-                            data-testid="labels-thermal-print-btn"
-                            aria-label="Imprimir etiquetas térmicas"
-                        >
-                            Térmica ({totalLabels})
-                        </Button>
+                        <>
+                            <Button
+                                size="sm"
+                                color="success"
+                                isDisabled={queue.length === 0 || isBusy}
+                                onPress={handlePrint}
+                                startContent={<Printer size={14} />}
+                                className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+                                data-testid="labels-thermal-print-btn"
+                                aria-label="Imprimir etiquetas térmicas (bridge local)"
+                            >
+                                Térmica ({totalLabels})
+                            </Button>
+                            <Button
+                                size="sm"
+                                variant="flat"
+                                isDisabled={queue.length === 0 || isBusy}
+                                onPress={handleManualBrowserPrint}
+                                startContent={<FileText size={14} />}
+                                className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+                                data-testid="labels-thermal-manual-browser-print-btn"
+                                aria-label="Acción manual separada: imprimir con el diálogo del navegador en formato PDF"
+                            >
+                                Navegador (PDF)
+                            </Button>
+                        </>
                     )}
-                    {mode === "shelf" && (
-                        <Button
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            isDisabled={queue.length === 0 || isBusy}
-                            onPress={handlePrintShelfSheet}
-                            startContent={<FileText size={14} />}
-                            className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
-                            data-testid="labels-shelf-print-btn"
-                            aria-label={`Imprimir hoja de góndola en papel ${gondolaLayout.label} (impresora normal, diálogo del navegador)`}
-                            data-gondola-format={gondolaFormat}
-                        >
-                            Hoja góndola ({shelfSummary.totalPages})
-                        </Button>
-                    )}
+                    {mode === "shelf" && (() => {
+                        const isThermal = gondolaFormat === "THERMAL_80";
+                        // Botón etiquetado dinámicamente: la ruta térmica
+                        // es visualmente distinta de la de hoja Carta/Oficio.
+                        const label = isThermal
+                            ? "Térmica 80 mm"
+                            : "Hoja góndola (Carta/Oficio)";
+                        const Icon = isThermal ? Printer : FileText;
+                        return (
+                            <Button
+                                size="sm"
+                                color="primary"
+                                variant="flat"
+                                isDisabled={queue.length === 0 || isBusy}
+                                onPress={handlePrintShelfSheet}
+                                startContent={<Icon size={14} />}
+                                className="rounded-2xl text-[10px] uppercase tracking-widest font-bold"
+                                data-testid="labels-shelf-print-btn"
+                                data-shelf-route={isThermal ? "thermal" : "sheet"}
+                                aria-label={
+                                    isThermal
+                                        ? "Imprimir en rollo térmico 80 mm (bridge directo, sin diálogo)"
+                                        : `Imprimir hoja de góndola en papel ${gondolaLayout.label} (impresora normal, diálogo del navegador)`
+                                }
+                                data-gondola-format={gondolaFormat}
+                            >
+                                {isThermal
+                                    ? `${label} (${shelfSummary.totalLabels})`
+                                    : `${label} (${shelfSummary.totalPages})`}
+                            </Button>
+                        );
+                    })()}
                 </div>
             </header>
 
@@ -1277,8 +1590,12 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                         </p>
                         <ul className="list-disc pl-4 space-y-1 text-zinc-700 dark:text-zinc-300">
                             <li>El navegador NO controla directamente impresoras USB.</li>
-                            <li>Con bridge local (scale-bridge o similar) se envía el pulso ESC/POS real.</li>
-                            <li>Sin bridge, Imprimir usa el diálogo del navegador.</li>
+                            <li>Con bridge local (scale-bridge o similar) se envía el pulso ESC/POS / TSPL real.</li>
+                            <li>
+                                Sin bridge o si la impresión directa falla, el POS muestra un
+                                aviso accionable y NO abre el diálogo del navegador en silencio:
+                                usa el botón <strong>Navegador (PDF)</strong> cuando lo necesites.
+                            </li>
                             {!defaultPrinter && (
                                 <li className="font-bold text-amber-700 dark:text-amber-400">
                                     No hay impresora configurada. Admin → &quot;Configurar&quot;.
@@ -1505,13 +1822,15 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                     )}
 
                     {/* Resumen contable + checkbox — SOLO modo shelf.
-                        Formato exigido por el contrato de góndola:
-                          "X etiquetas en cola (Y páginas completas + Z sobrantes)"
-                        + total de páginas. */}
+                        Formato dinámico:
+                          - LETTER/LEGAL: "X etiquetas en cola (Y páginas completas + Z sobrantes)"
+                          - THERMAL_80:   "X etiquetas (una por producto)" (rollo continuo).
+                        + total de páginas en Chip (idéntico para ambas). */}
                     {mode === "shelf" && queue.length > 0 && (
                         <div
                             className="mt-4 pt-4 border-t border-zinc-200 dark:border-white/5 flex flex-col gap-3"
                             data-testid="labels-shelf-summary"
+                            data-gondola-format={gondolaFormat}
                         >
                             <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p
@@ -1519,10 +1838,14 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                                     data-testid="labels-shelf-counter"
                                     aria-live="polite"
                                 >
-                                    {`${shelfSummary.totalLabels} etiquetas en cola (${shelfSummary.fullPages} páginas completas + ${shelfSummary.remainder} sobrantes)`}
+                                    {gondolaFormat === "THERMAL_80"
+                                        ? `${shelfSummary.totalLabels} etiquetas (una por producto)`
+                                        : `${shelfSummary.totalLabels} etiquetas en cola (${shelfSummary.fullPages} páginas completas + ${shelfSummary.remainder} sobrantes)`}
                                 </p>
                                 <Chip size="sm" variant="flat" className="rounded-xl">
-                                    {shelfSummary.totalPages} página(s)
+                                    {gondolaFormat === "THERMAL_80"
+                                        ? `${shelfSummary.totalPages} etiqueta(s)`
+                                        : `${shelfSummary.totalPages} página(s)`}
                                 </Chip>
                             </div>
                             <label
@@ -1557,7 +1880,9 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                                     className="text-[9px] uppercase tracking-widest text-zinc-500"
                                     data-testid="labels-shelf-format-caption"
                                 >
-                                    {`${gondolaLayout.label} landscape · 80mm × 40mm · grid ${gondolaLayout.columns}×${gondolaLayout.rows} · ${gondolaLayout.labelsPerPage} por hoja`}
+                                    {gondolaFormat === "THERMAL_80"
+                                        ? `Térmica 80 mm · rollo continuo · 1 etiqueta por página · bridge TSPL`
+                                        : `${gondolaLayout.label} landscape · 80mm × 40mm · grid ${gondolaLayout.columns}×${gondolaLayout.rows} · ${gondolaLayout.labelsPerPage} por hoja`}
                                 </span>
                             </div>
                             {showShelfPreview && (
@@ -1582,6 +1907,7 @@ export function LabelsWorkspace({ mode }: LabelsWorkspaceProps) {
                                         }))}
                                         scale={0.4}
                                         format={gondolaFormat}
+                                        thermal={gondolaThermal}
                                     />
                                 </div>
                             )}

@@ -30,6 +30,16 @@ type Expense struct {
 	FondoAmount     float64 `gorm:"type:decimal(10,2);default:0;column:fondo_amount" json:"fondoAmount"`
 	CoinsAmount     float64 `gorm:"type:decimal(10,2);default:0;column:coins_amount" json:"coinsAmount"`
 
+	// BoldQrAmount es un canal CALCULADO EN RUNTIME, no persistido en BD
+	// (ver payment_source_boldqr.go). No existe columna física para
+	// Bold QR porque el dueño pidió evitar migraciones en este sprint; el
+	// canal se identifica por `paymentSource='BOLD_QR'` y las columnas
+	// desglosadas quedan en cero. Esta propiedad `gorm:"-"` se puebla
+	// desde parseExpenseChannelsFull para que el PDF del cierre y el
+	// modal de auditoría puedan pintarlo como fila propia sin reconsultar
+	// el PaymentSource.
+	BoldQrAmount float64 `gorm:"-" json:"boldQrAmount"`
+
 	IsRestocked bool `gorm:"default:false;column:is_restocked" json:"isRestocked"`
 
 	CreatedByDNI    string         `gorm:"not null;index;column:createdByDni" json:"createdByDni"`
