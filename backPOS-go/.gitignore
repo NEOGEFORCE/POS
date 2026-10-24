@@ -17,11 +17,22 @@ go.work.sum
 
 # env file
 .env
+.env.*
+!.env.example
 tmp/
 
 out/
 reportsd/
+backups/
+logs/
+*.log
 *.pdf
 *.go_tmp
 *.bak
 scratch/
+.deploy/
+.tmp/
+.rollback/
+*.sql
+!migrations/sql/
+!migrations/sql/*.sql

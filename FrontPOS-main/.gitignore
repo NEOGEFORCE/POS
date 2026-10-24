@@ -40,6 +40,12 @@ next-env.d.ts
 .genkit/*
 .env*
 
+# salidas locales de test/lint/build
+*.log
+*-out.txt
+full-test.txt
+scratch/
+
 # firebase
 firebase-debug.log
 firestore-debug.log
