@@ -473,3 +473,13 @@ test("Ningún archivo tocado por este sprint referencia migración de esquema", 
         );
     }
 });
+
+
+test("R10 'Venta Real del Cierre' muestra Bold QR del turno", () => {
+    const src = readFileSync(
+        new URL("../src/app/(app)/dashboard/components/DashboardKPIs.tsx", import.meta.url),
+        "utf8",
+    );
+    assert.match(src, /shiftSalesByMethod\?\.BOLD_QR/,
+        "la tarjeta Venta Real del Cierre debe leer shiftSalesByMethod.BOLD_QR");
+});
