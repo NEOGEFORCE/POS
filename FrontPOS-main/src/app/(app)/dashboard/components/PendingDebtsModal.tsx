@@ -57,10 +57,12 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
       placement="center"
       hideCloseButton
       classNames={{
-        base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-100 dark:border-white/5 translate-y-4",
+        // Full-screen en móvil para que el listado y el formulario de abono
+        // se vean sin recortes; a partir de sm vuelve al modal centrado.
+        base: "bg-white dark:bg-zinc-950 rounded-none sm:rounded-[2.5rem] border-0 sm:border border-gray-100 dark:border-white/5 translate-y-0 sm:translate-y-4 w-screen sm:w-auto h-[100dvh] sm:h-auto max-w-[100vw] sm:max-w-2xl m-0",
         header: "border-b border-gray-50 dark:border-white/5 p-4 px-6",
         footer: "border-t border-gray-50 dark:border-white/5 p-4 bg-gray-50/50 dark:bg-[#18181b]/30",
-        body: "px-6 py-3"
+        body: "px-4 sm:px-6 py-3"
       }}
     >
       <ModalContent>

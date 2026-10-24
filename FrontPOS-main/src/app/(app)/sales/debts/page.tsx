@@ -133,10 +133,10 @@ export default function DebtsControlPage() {
 
       {/* TABLE SECTION */}
       <Card className="flex flex-col flex-1 min-h-0 card-base border-none dark:bg-zinc-950/60 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-hidden">
-        <CardBody className="p-0 overflow-y-auto custom-scrollbar flex-1 min-h-0">
+        <CardBody className="p-0 overflow-auto overscroll-contain custom-scrollbar flex-1 min-h-0">
           <Table
             aria-label="Debts table"
-            className="p-8"
+            className="p-4 md:p-8 min-w-[640px]"
             classNames={{
               th: "bg-gray-50/50 dark:bg-[#18181b]/50 h-16 font-medium text-[11px] uppercase tracking-widest tracking-tight border-b border-gray-100 dark:border-white/5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400",
               td: "py-7 font-bold text-sm",

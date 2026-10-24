@@ -67,7 +67,7 @@ const SaleRow = React.memo(({
 }) => {
     return (
         <div
-            className="absolute top-0 left-0 w-full flex items-center px-4 border-b border-gray-100 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:active:bg-white/10 group cursor-default"
+            className="absolute top-0 left-0 w-full flex items-center px-4 border-b border-gray-100 dark:border-white/5 hover:bg-zinc-50 dark:hover:bg-white/5 bg-white dark:bg-transparent border border-zinc-200 dark:border-white/5 transition-colors border-l-4 border-transparent hover:border-emerald-500 active:bg-black/5 dark:active:bg-white/10 group cursor-default min-w-[760px]"
             style={style}
         >
             <div className="flex-1 min-h-0 h-full w-[180px]">
@@ -200,8 +200,10 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
 
     return (
         <div className="flex-1 min-h-0 h-full w-full flex-1 flex flex-col overflow-hidden bg-white dark:bg-zinc-950 border border-gray-200 dark:border-white/5 rounded-2xl shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-colors">
-            {/* Cabecera Fija */}
-            <div className="flex items-center bg-gray-50/80 dark:bg-zinc-950/80 h-10 border-b border-gray-200 dark:border-white/5 px-4 text-center">
+            {/* Cabecera Fija — mantiene el ancho mínimo para que las columnas
+                fijas no se superpongan en móvil. El contenedor padre scrollea
+                horizontalmente cuando el viewport es más estrecho. */}
+            <div className="flex items-center bg-gray-50/80 dark:bg-zinc-950/80 h-10 border-b border-gray-200 dark:border-white/5 px-4 text-center min-w-[760px]">
                 <div className="w-[180px] font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 text-left">Fecha / Hora</div>
                 <div className="w-[230px] font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400 text-left">Cliente / DNI</div>
                 <div className="w-[110px] font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400">Metodo</div>
@@ -209,16 +211,19 @@ export default function SalesTable({ sales, onOpenPreview, onOpenEdit, onOpenAdd
                 <div className="w-[170px] text-center font-medium uppercase text-[9px] tracking-widest text-gray-500 dark:text-zinc-500 dark:text-zinc-400">Acciones</div>
             </div>
 
-            {/* Contenedor Virtual */}
+            {/* Contenedor Virtual — overflow-auto permite scroll vertical y
+                horizontal; min-w-[760px] en el inner block fuerza al padre a
+                desplazarse en pantallas estrechas (<760 px) sin recortar. */}
             <div 
                 ref={parentRef}
-                className="overflow-auto custom-scrollbar min-h-[400px] flex-1 min-h-0 h-full [scrollbar-gutter:stable]"
+                className="overflow-auto overscroll-contain custom-scrollbar min-h-[400px] flex-1 min-h-0 h-full [scrollbar-gutter:stable]"
             >
                 <div
                     style={{
                         height: `${rowVirtualizer.getTotalSize()}px`,
                         width: '100%',
                         position: 'relative',
+                        minWidth: '760px',
                     }}
                 >
                     {rowVirtualizer.getVirtualItems().map((virtualRow) => {

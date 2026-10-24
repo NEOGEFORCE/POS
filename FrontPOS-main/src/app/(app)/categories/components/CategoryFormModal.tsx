@@ -68,7 +68,7 @@ const CategoryFormModal = memo(({
       backdrop="blur" 
       size="2xl" 
       classNames={{ 
-        base: "bg-white/95 dark:bg-zinc-950/95 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0",
+        base: "bg-white/95 dark:bg-zinc-950/95 rounded-2xl sm:rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0 max-w-[calc(100vw-1rem)] sm:max-w-2xl",
         wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
         closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
       }}

@@ -385,6 +385,11 @@ func (r *PostgresExpenseRepository) Update(id uint, expense *models.Expense) err
 		"daviplata_amount": expense.DaviplataAmount,
 		"fondo_amount":     expense.FondoAmount,
 		"coins_amount":     expense.CoinsAmount,
+		// Migración 028: Bold QR es un bolsillo físico. Si Update no
+		// escribiera esta columna, un egreso editado perdería la parte
+		// Bold y los agregadores lo contarían bajo EFECTIVO por el
+		// fallback.
+		"bold_qr_amount":   expense.BoldQrAmount,
 		"paid_amount":      expense.PaidAmount,
 		"remaining_amount": expense.RemainingAmount,
 	}
@@ -489,16 +494,16 @@ func (r *PostgresExpenseRepository) addCoinsResidual(results map[string]float64,
 			(amount + COALESCE(tax_amount, 0))
 			- (COALESCE(cash_amount,0) + COALESCE(nequi_amount,0)
 			   + COALESCE(daviplata_amount,0) + COALESCE(fondo_amount,0)
-			   + COALESCE(coins_amount,0))
+			   + COALESCE(coins_amount,0) + COALESCE(bold_qr_amount,0))
 		), 0)`).
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
-		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0)").
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0 OR bold_qr_amount > 0)").
 		Where(`(amount + COALESCE(tax_amount,0)) >
 			(COALESCE(cash_amount,0) + COALESCE(nequi_amount,0)
 			 + COALESCE(daviplata_amount,0) + COALESCE(fondo_amount,0)
-			 + COALESCE(coins_amount,0))`).
+			 + COALESCE(coins_amount,0) + COALESCE(bold_qr_amount,0))`).
 		Where(`(UPPER(COALESCE("paymentSource", '')) LIKE '%ALCANCIA%'
 			OR UPPER(COALESCE("paymentSource", '')) LIKE '%ALCANCÍA%'
 			OR UPPER(COALESCE("paymentSource", '')) LIKE '%MONEDA%')`)
@@ -519,13 +524,20 @@ func (r *PostgresExpenseRepository) addCoinsResidual(results map[string]float64,
 func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]float64, error) {
 	results := make(map[string]float64)
 
-	// Primero: Egresos que tienen columnas desglosadas (cash_amount, nequi_amount, etc.)
+	// Primero: Egresos que tienen columnas desglosadas (cash_amount, nequi_amount, bold_qr_amount, etc.)
+	//
+	// Migración 028 agregó `bold_qr_amount` como sexto bolsillo físico.
+	// Se incluye en la rama de columnas y en el filtro de "tiene algún
+	// desglose"; de lo contrario, un egreso MIXTO con BOLD_QR (p. ej.
+	// `NEQUI $20.000 + BOLD_QR $10.000`) caería en la rama legacy y se
+	// contaría una segunda vez bajo `UPPER(paymentSource)`.
 	type MethodTotal struct {
 		TotalCash      float64
 		TotalNequi     float64
 		TotalDaviplata float64
 		TotalFondo     float64
 		TotalCoins     float64
+		TotalBold      float64
 	}
 	var mt MethodTotal
 	err := r.db.Table("expenses").
@@ -534,12 +546,13 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 			COALESCE(SUM(nequi_amount), 0) as total_nequi,
 			COALESCE(SUM(daviplata_amount), 0) as total_daviplata,
 			COALESCE(SUM(fondo_amount), 0) as total_fondo,
-			COALESCE(SUM(coins_amount), 0) as total_coins
+			COALESCE(SUM(coins_amount), 0) as total_coins,
+			COALESCE(SUM(bold_qr_amount), 0) as total_bold
 		`).
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
-		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0)").
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0 OR bold_qr_amount > 0)").
 		Scan(&mt).Error
 	if err != nil {
 		log.Printf("❌ [GetGlobalPaidExpensesByMethod] Error columnas desglosadas: %v", err)
@@ -549,15 +562,19 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethod() (map[string]
 		results["DAVIPLATA"] += mt.TotalDaviplata
 		results["FONDO"] += mt.TotalFondo
 		results["MONEDAS"] += mt.TotalCoins
+		results["BOLD_QR"] += mt.TotalBold
 	}
 
-	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string)
+	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string).
+	// Mantiene BOLD_QR en la rama por texto para filas pre-028 que todavía
+	// no hayan sido backfilleadas o actualizadas (el filtro
+	// `bold_qr_amount = 0` evita doble conteo con el bloque de arriba).
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
-		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0 AND coins_amount = 0").
+		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0 AND coins_amount = 0 AND bold_qr_amount = 0").
 		Group("\"paymentSource\"").
 		Rows()
 	if err != nil {
@@ -630,13 +647,16 @@ func (r *PostgresExpenseRepository) GetTotalAmountByDateRange(from, to time.Time
 func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, to time.Time) (map[string]float64, error) {
 	results := make(map[string]float64)
 
-	// Primero: Egresos con columnas desglosadas (cash_amount, nequi_amount, daviplata_amount, fondo_amount, coins_amount)
+	// Primero: Egresos con columnas desglosadas (cash_amount, nequi_amount,
+	// daviplata_amount, fondo_amount, coins_amount, bold_qr_amount — este
+	// último agregado por la migración 028).
 	type MethodTotal struct {
 		TotalCash      float64
 		TotalNequi     float64
 		TotalDaviplata float64
 		TotalFondo     float64
 		TotalCoins     float64
+		TotalBold      float64
 	}
 	var mt MethodTotal
 	err := r.db.Table("expenses").
@@ -645,13 +665,14 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, t
 			COALESCE(SUM(nequi_amount), 0) as total_nequi,
 			COALESCE(SUM(daviplata_amount), 0) as total_daviplata,
 			COALESCE(SUM(fondo_amount), 0) as total_fondo,
-			COALESCE(SUM(coins_amount), 0) as total_coins
+			COALESCE(SUM(coins_amount), 0) as total_coins,
+			COALESCE(SUM(bold_qr_amount), 0) as total_bold
 		`).
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
 		Where("date >= ? AND date <= ?", from, to).
-		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0)").
+		Where("(cash_amount > 0 OR nequi_amount > 0 OR daviplata_amount > 0 OR fondo_amount > 0 OR coins_amount > 0 OR bold_qr_amount > 0)").
 		Scan(&mt).Error
 	if err == nil {
 		results["EFECTIVO"] += mt.TotalCash
@@ -659,16 +680,19 @@ func (r *PostgresExpenseRepository) GetGlobalPaidExpensesByMethodInRange(from, t
 		results["DAVIPLATA"] += mt.TotalDaviplata
 		results["FONDO"] += mt.TotalFondo
 		results["MONEDAS"] += mt.TotalCoins
+		results["BOLD_QR"] += mt.TotalBold
 	}
 
-	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string)
+	// Segundo: Egresos legacy que NO tienen columnas desglosadas (usan paymentSource string).
+	// Mantiene la rama por texto para filas pre-028; `bold_qr_amount = 0`
+	// evita doble conteo con el bloque anterior.
 	rows, err := r.db.Table("expenses").
 		Select("COALESCE(\"paymentSource\", 'EFECTIVO'), COALESCE(SUM(amount + tax_amount), 0) as total").
 		Where("deleted_at IS NULL").
 		Where("UPPER(status) = 'PAID'").
 		Where("UPPER(COALESCE(\"paymentSource\", '')) NOT IN ('PRESTAMO', 'PREST.')").
 		Where("date >= ? AND date <= ?", from, to).
-		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0 AND coins_amount = 0").
+		Where("cash_amount = 0 AND nequi_amount = 0 AND daviplata_amount = 0 AND fondo_amount = 0 AND coins_amount = 0 AND bold_qr_amount = 0").
 		Group("\"paymentSource\"").
 		Rows()
 	if err == nil {

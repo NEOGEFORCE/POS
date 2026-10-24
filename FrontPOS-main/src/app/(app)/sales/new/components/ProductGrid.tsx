@@ -20,7 +20,7 @@ const ProductItem = memo(({ product, onAdd }: { product: Product, onAdd: (p: Pro
     return (
         <motion.button
             whileTap={{ scale: 0.97 }}
-            className="group flex flex-col bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/[0.06] rounded-xl p-3 text-left h-[90px] shadow-sm hover:shadow-md hover:bg-gray-50 dark:hover:bg-zinc-800 hover:border-emerald-500/30 dark:hover:border-white/[0.12] transition-all duration-150 overflow-hidden cursor-pointer"
+            className="group flex flex-col bg-white dark:bg-zinc-900 border border-gray-200 dark:border-white/[0.06] rounded-xl p-3 text-left h-[100px] sm:h-[90px] min-h-[90px] shadow-sm hover:shadow-md hover:bg-gray-50 dark:hover:bg-zinc-800 hover:border-emerald-500/30 dark:hover:border-white/[0.12] transition-all duration-150 overflow-hidden cursor-pointer"
             onClick={(e) => {
                 e.currentTarget.blur();
                 onAdd(product);
@@ -31,7 +31,7 @@ const ProductItem = memo(({ product, onAdd }: { product: Product, onAdd: (p: Pro
                     {isProductWeighted(product) ? <Scale className="h-3 w-3" /> : <Package className="h-3 w-3" />}
                 </div>
                 <div className="flex flex-col items-end leading-none">
-                    <span className={`text-[10px] font-medium rounded px-1.5 py-0.5 ${
+                    <span className={`text-[10px] sm:text-[10px] font-medium rounded px-1.5 py-0.5 ${
                         calculateStockHealth(product.quantity, product.minStock || 0) === 'CRITICAL' ? 'text-red-500/80 bg-red-500/10' :
                         calculateStockHealth(product.quantity, product.minStock || 0) === 'WARNING' ? 'text-amber-500/80 bg-amber-500/10' :
                         'text-gray-500 dark:text-zinc-500 bg-zinc-100 dark:bg-zinc-800'
@@ -41,7 +41,7 @@ const ProductItem = memo(({ product, onAdd }: { product: Product, onAdd: (p: Pro
                 </div>
             </div>
             <div className="flex-1 w-full mt-1.5 overflow-hidden flex items-start">
-                <span className="text-[10px] uppercase font-bold text-zinc-800 dark:text-zinc-300 leading-tight line-clamp-2 break-words w-full" title={product.productName}>
+                <span className="text-[11px] sm:text-[10px] uppercase font-bold text-zinc-800 dark:text-zinc-300 leading-tight line-clamp-2 break-words w-full" title={product.productName}>
                     {product.productName}
                 </span>
             </div>
@@ -68,13 +68,44 @@ ProductItem.displayName = 'ProductItem';
 
 function ProductGridBase({ products, addToCart }: ProductGridProps) {
     const parentRef = useRef<HTMLDivElement>(null);
-    const columns = 10;
+    // Columnas responsive — en móvil pequeño mostramos 2, en móvil grande 3,
+    // en tablet 6, laptop 8 y desktop 10. El virtualizer necesita saber
+    // cuántas filas tenemos; usamos el breakpoint actual en estado reactivo.
+    const [columns, setColumns] = React.useState<number>(() => {
+        if (typeof window === 'undefined') return 10;
+        const w = window.innerWidth;
+        if (w < 420) return 2;
+        if (w < 640) return 3;
+        if (w < 1024) return 6;
+        if (w < 1280) return 8;
+        return 10;
+    });
+
+    React.useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const resize = () => {
+            const w = window.innerWidth;
+            let next: number;
+            if (w < 420) next = 2;
+            else if (w < 640) next = 3;
+            else if (w < 1024) next = 6;
+            else if (w < 1280) next = 8;
+            else next = 10;
+            setColumns((prev) => (prev === next ? prev : next));
+        };
+        resize();
+        window.addEventListener('resize', resize);
+        return () => window.removeEventListener('resize', resize);
+    }, []);
+
     const rowCount = Math.ceil((products?.length || 0) / columns);
 
     const rowVirtualizer = useVirtualizer({
         count: rowCount,
         getScrollElement: () => parentRef.current,
-        estimateSize: () => 90,
+        // En móvil las tarjetas miden 100px (vs 90 en escritorio) para
+        // mejorar legibilidad del nombre y objetivo táctil.
+        estimateSize: () => (columns <= 3 ? 108 : 96),
         overscan: 5,
     });
 
@@ -97,7 +128,8 @@ function ProductGridBase({ products, addToCart }: ProductGridProps) {
                     return (
                         <div
                             key={virtualRow.key}
-                            className="absolute top-0 left-0 w-full grid grid-cols-4 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-1.5"
+                            data-testid="sales-product-grid-row"
+                            className="absolute top-0 left-0 w-full grid grid-cols-2 min-[420px]:grid-cols-3 sm:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-1.5"
                             style={{
                                 height: `${virtualRow.size}px`,
                                 transform: `translateY(${virtualRow.start}px)`,

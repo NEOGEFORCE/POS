@@ -8,7 +8,8 @@ import {
 
 import {
     Plus, Trash2, User, Grid, Camera, Search, Scale, Barcode,
-    Wifi, WifiOff, Edit2, Package, Zap, AlertTriangle
+    Wifi, WifiOff, Edit2, Package, Zap, AlertTriangle, Keyboard,
+    MoreHorizontal
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'framer-motion';
@@ -23,6 +24,7 @@ import { useAuth } from '@/lib/auth';
 import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api-error';
 import { canCaptureHomeKey } from '@/lib/drawer-otp.mjs';
+import { describeScaleIndicator } from '@/lib/bridge-connection.mjs';
 import { buildEncolarPayload, buildIniciarPayload, generateQrClientTxId, BOLD_QR_ALREADY_PAID_SENTINEL, isAlreadyPaidError, isAlreadyPaidResponse } from '@/lib/bold-qr-helpers.mjs';
 import { countCartUnits, splitCartTabs } from '@/lib/cart-tabs.mjs';
 import {
@@ -86,6 +88,8 @@ export default function NewSalePage() {
         showSuccessScreen, setShowSuccessScreen,
         lastChange, lastReceipt, hiddenScannerRef, returnFocusToScanner,
         scaleWeight, isScaleOnline, isScaleReloading, isOffline, syncQueueCount, syncOfflineQueue,
+        // Estado detallado del bridge para el indicador del toolbar.
+        isScaleConnected, scaleBridgeMode, scaleBridgeCajaId, scaleBridgeError,
         scannerBuffer, setScannerBuffer, playBeep, feedbackCode, isFeedbackError,
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart, confirmDeleteCart,
         isDeleteCartConfirmOpen, setIsDeleteCartConfirmOpen,
@@ -124,6 +128,38 @@ export default function NewSalePage() {
 
     const { user } = useAuth();
     const { toast } = useToast();
+
+    // =============================================================
+    // Toggle del teclado numérico (responsive móvil).
+    //
+    // En móvil (<768px) el teclado numérico + fila "ESPERANDO ESCÁNER"
+    // + botón COBRAR consumen media pantalla y apiñan el carrito.
+    // Por defecto queda OCULTO en móvil y VISIBLE en escritorio. La
+    // preferencia se guarda en localStorage para preservar la decisión
+    // del cajero entre sesiones (clave `pos_keypad_visible_mobile`).
+    // Cuando está oculto, se muestra una barra inferior sticky con
+    // total + COBRAR + botón de teclado (ver render abajo).
+    // =============================================================
+    const KEYPAD_PREFERENCE_KEY = 'pos_keypad_visible_mobile';
+    const [isKeypadVisible, setIsKeypadVisible] = useState<boolean>(() => {
+        if (typeof window === 'undefined') return true;
+        const stored = window.localStorage.getItem(KEYPAD_PREFERENCE_KEY);
+        if (stored === 'true') return true;
+        if (stored === 'false') return false;
+        // Default según viewport: móvil oculto, escritorio visible.
+        return window.innerWidth >= 1024;
+    });
+    const toggleKeypadVisibility = useCallback(() => {
+        setIsKeypadVisible((prev) => {
+            const next = !prev;
+            try {
+                window.localStorage.setItem(KEYPAD_PREFERENCE_KEY, next ? 'true' : 'false');
+            } catch {
+                /* localStorage puede fallar en modo privado — no es crítico */
+            }
+            return next;
+        });
+    }, []);
 
     // =============================================================
     // Flujo asíncrono QR Bold / Bre-B (migración 027)
@@ -1085,28 +1121,116 @@ export default function NewSalePage() {
                                     </div>
                                 </div>
 
-                                <div onClick={handleScaleSync} className={`flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-1 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all cursor-pointer active:scale-95 ${isScaleReloading ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20 text-amber-600 animate-pulse' : isScaleOnline ? 'bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5 dark:bg-white/5 border-emerald-200 dark:border-emerald-500/20 text-zinc-900 dark:text-zinc-100 dark:text-zinc-100 hover:bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-white/5' : 'bg-gray-100 dark:bg-zinc-800 border-gray-200 dark:border-white/10 text-zinc-500 dark:text-zinc-400 opacity-50'}`}>
-                                    <Scale className={`h-3 w-3 ${isScaleOnline && !isScaleReloading ? 'animate-pulse' : ''}`} />
-                                    <div className="flex flex-col leading-none text-right">
-                                        <span className="hidden sm:block text-[7px] font-bold uppercase tracking-widest leading-none">{isScaleReloading ? 'Esperando...' : isScaleOnline ? 'Sincronizar' : 'Offline'}</span>
-                                        <span className="text-[9px] sm:text-[10px] font-medium tabular-nums">{isScaleReloading ? '---' : isScaleOnline ? `${scaleWeight.toFixed(3)} kg` : '---'}</span>
-                                    </div>
-                                </div>
-                                <Button size="sm" variant="flat" aria-label="Seleccionar cliente (Re Pág)" title="Cliente (Re Pág)" onPress={() => setIsClientDialogOpen(true)} className="h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 border border-sky-200 dark:border-sky-500/20">
+                                {(() => {
+                                    // El indicador del toolbar comparte la MISMA conexión que
+                                    // useScale (singleton ScaleBridge). `describeScaleIndicator`
+                                    // es puro — convierte el estado del hook a {tone,label,reason}
+                                    // en español y permite mostrar el motivo cuando la conexión
+                                    // falla ("Caja 1 sin conexión", "Sin permiso", "Servidor
+                                    // sin relay").
+                                    const scaleStatus = describeScaleIndicator({
+                                        isConnected: isScaleConnected,
+                                        isScaleOnline,
+                                        isReloading: isScaleReloading,
+                                        mode: scaleBridgeMode,
+                                        cajaId: scaleBridgeCajaId,
+                                        error: scaleBridgeError,
+                                    });
+                                    const toneClass =
+                                        scaleStatus.tone === 'ok'
+                                            ? 'bg-zinc-100 dark:bg-zinc-800 border-emerald-200 dark:border-emerald-500/20 text-zinc-900 dark:text-zinc-100'
+                                            : scaleStatus.tone === 'warn'
+                                                ? 'bg-amber-50 dark:bg-amber-500/10 border-amber-200 dark:border-amber-500/20 text-amber-600 dark:text-amber-400 animate-pulse'
+                                                : 'bg-rose-50 dark:bg-rose-500/10 border-rose-200 dark:border-rose-500/20 text-rose-600 dark:text-rose-400';
+                                    const valueText = isScaleReloading
+                                        ? '---'
+                                        : isScaleOnline
+                                            ? `${scaleWeight.toFixed(3)} kg`
+                                            : scaleStatus.label;
+                                    const titleAttr = scaleStatus.reason
+                                        ? `${scaleStatus.label} — ${scaleStatus.reason}`
+                                        : scaleStatus.label;
+                                    const srReason = scaleStatus.reason
+                                        ? `${scaleStatus.label}. ${scaleStatus.reason}`
+                                        : scaleStatus.label;
+                                    return (
+                                        <div
+                                            role="status"
+                                            aria-live="polite"
+                                            aria-label={`Estado de la balanza: ${srReason}`}
+                                            title={titleAttr}
+                                            data-testid="sales-toolbar-scale-indicator"
+                                            data-tone={scaleStatus.tone}
+                                            onClick={handleScaleSync}
+                                            className={`flex items-center gap-1.5 sm:gap-2 px-1.5 sm:px-2 py-1 rounded-2xl border shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all cursor-pointer active:scale-95 ${toneClass}`}
+                                        >
+                                            <Scale className={`h-3 w-3 ${scaleStatus.tone === 'ok' ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                                            <div className="flex flex-col leading-none text-right min-w-0">
+                                                <span className="hidden sm:block text-[7px] font-bold uppercase tracking-widest leading-none truncate max-w-[140px]">
+                                                    {scaleStatus.label}
+                                                </span>
+                                                <span className="text-[9px] sm:text-[10px] font-medium tabular-nums truncate max-w-[160px]">
+                                                    {valueText}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+                                <Button size="sm" variant="flat" aria-label="Seleccionar cliente (Re Pág)" title="Cliente (Re Pág)" onPress={() => setIsClientDialogOpen(true)} className="hidden sm:inline-flex h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-500 hover:bg-sky-100 border border-sky-200 dark:border-sky-500/20">
                                     <User size={18} strokeWidth={2.5} className="xl:mr-1" />
                                     <span className="hidden xl:inline tracking-tight">Cliente</span>
                                     <span className="hidden 2xl:inline ml-1 opacity-70">(Re Pág)</span>
                                 </Button>
-                                <Button size="sm" variant="flat" aria-label="Dividir factura (Av Pág)" title="Dividir (Av Pág)" onPress={() => setIsSplitDialogOpen(true)} isDisabled={currentCart.length === 0} className="h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 hover:bg-amber-100 border border-amber-200 dark:border-amber-500/20">
+                                <Button size="sm" variant="flat" aria-label="Dividir factura (Av Pág)" title="Dividir (Av Pág)" onPress={() => setIsSplitDialogOpen(true)} isDisabled={currentCart.length === 0} className="hidden sm:inline-flex h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-amber-50 dark:bg-amber-500/10 text-amber-600 dark:text-amber-500 hover:bg-amber-100 border border-amber-200 dark:border-amber-500/20">
                                     <Grid size={18} strokeWidth={2.5} className="xl:mr-1" />
                                     <span className="hidden xl:inline">Dividir</span>
                                     <span className="hidden 2xl:inline ml-1 opacity-70">(Av Pág)</span>
                                 </Button>
-                                <Button size="sm" variant="flat" aria-label="Buscar producto (Insert)" title="Buscar producto (Insert)" onPress={() => setIsProductSearchOpen(true)} className="h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-500 hover:bg-purple-100 border border-purple-200 dark:border-purple-500/20">
+                                <Button size="sm" variant="flat" aria-label="Buscar producto (Insert)" title="Buscar producto (Insert)" onPress={() => setIsProductSearchOpen(true)} className="hidden sm:inline-flex h-8 min-w-8 px-2 xl:px-3 rounded-2xl font-bold text-[10px] uppercase bg-purple-50 dark:bg-purple-500/10 text-purple-600 dark:text-purple-500 hover:bg-purple-100 border border-purple-200 dark:border-purple-500/20">
                                     <Search size={18} strokeWidth={2.5} className="xl:mr-1" />
                                     <span className="hidden xl:inline">Buscar</span>
                                     <span className="hidden 2xl:inline ml-1 opacity-70">(Insert)</span>
                                 </Button>
+
+                                {/* En móvil (<sm) las tres acciones secundarias
+                                    (Cliente / Dividir / Buscar) se colapsan en un
+                                    menú "⋯" para que la barra superior no se
+                                    desborde en pantallas de 360-430 px. */}
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <button
+                                            type="button"
+                                            aria-label="Más acciones de venta"
+                                            data-testid="sales-toolbar-more-menu"
+                                            className="sm:hidden h-8 w-8 min-w-8 shrink-0 flex items-center justify-center rounded-2xl border border-gray-200 dark:border-white/10 bg-white dark:bg-zinc-800 text-gray-600 dark:text-zinc-300 hover:bg-gray-50 dark:hover:bg-zinc-700"
+                                        >
+                                            <MoreHorizontal size={18} strokeWidth={2.5} />
+                                        </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-56">
+                                        <DropdownMenuLabel className="text-[10px] uppercase tracking-widest">Acciones</DropdownMenuLabel>
+                                        <DropdownMenuSeparator />
+                                        <DropdownMenuItem onSelect={() => setIsClientDialogOpen(true)} className="cursor-pointer min-h-11">
+                                            <User className="h-4 w-4 mr-2 text-sky-500" />
+                                            <span className="text-xs font-bold uppercase">Cliente</span>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                            onSelect={() => {
+                                                if (currentCart.length === 0) return;
+                                                setIsSplitDialogOpen(true);
+                                            }}
+                                            disabled={currentCart.length === 0}
+                                            className="cursor-pointer min-h-11"
+                                        >
+                                            <Grid className="h-4 w-4 mr-2 text-amber-500" />
+                                            <span className="text-xs font-bold uppercase">Dividir factura</span>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem onSelect={() => setIsProductSearchOpen(true)} className="cursor-pointer min-h-11">
+                                            <Search className="h-4 w-4 mr-2 text-purple-500" />
+                                            <span className="text-xs font-bold uppercase">Buscar producto</span>
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
                         </div>
 
@@ -1233,8 +1357,14 @@ export default function NewSalePage() {
                         </div>
                     </div>
 
-                    {/* PANEL DERECHO: TECLADO Y ESCÁNER */}
-                    <aside className="w-full lg:w-[280px] xl:w-[300px] flex flex-col shrink-0 min-h-[360px] lg:min-h-0">
+                    {/* PANEL DERECHO: TECLADO Y ESCÁNER
+                        En móvil se oculta cuando `isKeypadVisible` es false.
+                        En escritorio (lg:*) siempre está visible. */}
+                    <aside
+                        data-testid="sales-keypad-aside"
+                        data-visible={isKeypadVisible ? 'true' : 'false'}
+                        className={`w-full lg:w-[280px] xl:w-[300px] flex-col shrink-0 min-h-[360px] lg:min-h-0 lg:flex ${isKeypadVisible ? 'flex' : 'hidden'}`}
+                    >
                         <div className="flex-1 card-base rounded-2xl p-2.5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] flex flex-col gap-2 border border-gray-200 dark:border-white/5 overflow-hidden min-h-0">
                             <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-zinc-950 border border-gray-200 dark:border-white/5 px-2 py-1 rounded-xl shadow-inner h-11 shrink-0">
                                 <Barcode className="h-4 w-4 text-zinc-900 dark:text-zinc-100 shrink-0" />
@@ -1306,13 +1436,22 @@ export default function NewSalePage() {
                 </div>
 
                 {/* SECCIÃƒâ€œN INFERIOR: CATEGORÃƒÂ AS Y PRODUCTOS Ã¢â‚¬â€  flex-1 con altura mÃƒÂ­nima para no colapsar */}
-                <div className="flex-1 w-full shrink-0 flex gap-1 card-base rounded-2xl p-1 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-t border-white/10" style={{ minHeight: '320px' }}>
-                    <aside className="w-28 shrink-0 flex flex-col gap-1 overflow-y-auto custom-scrollbar pr-1">
-                        <Button size="md" className={`justify-start h-10 min-h-[40px] rounded-2xl font-bold text-[11px] px-3 ${selectedCategory === 'all' ? 'bg-emerald-500 text-white shadow-md' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory('all'); returnFocusToScanner(); }}>TODOS</Button>
+                <div className="flex-1 w-full shrink-0 flex flex-col lg:flex-row gap-1 card-base rounded-2xl p-1 border border-gray-200 dark:border-white/5 shadow-[0_8px_30px_rgb(0,0,0,0.12)] border-t border-white/10 pb-[calc(5.5rem+env(safe-area-inset-bottom))] lg:pb-1" style={{ minHeight: '320px' }}>
+                    {/* En móvil (<lg) los chips de categoría viven en un carrusel
+                        horizontal arriba del grid de productos. En escritorio
+                        (lg:*) vuelven a su columna lateral de 112px. Esto evita
+                        que nombres como "ABARROTES" o "LACTEOS Y HUEVOS" queden
+                        cortados y libera ancho útil para las tarjetas. */}
+                    <nav
+                        data-testid="sales-category-nav"
+                        aria-label="Categorías de productos"
+                        className="w-full lg:w-28 shrink-0 flex lg:flex-col gap-1 overflow-x-auto overflow-y-visible lg:overflow-y-auto lg:overflow-x-visible custom-scrollbar pr-1 pb-1 lg:pb-0"
+                    >
+                        <Button size="md" className={`justify-start h-10 min-h-[40px] rounded-2xl font-bold text-[11px] px-3 shrink-0 ${selectedCategory === 'all' ? 'bg-emerald-500 text-white shadow-md' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory('all'); returnFocusToScanner(); }}>TODOS</Button>
                         {categories.map(cat => (
-                            <Button key={cat.id} size="md" className={`justify-start h-10 min-h-[40px] rounded-2xl font-bold text-[11px] uppercase truncate px-3 ${selectedCategory === String(cat.id) ? 'bg-emerald-500 text-white shadow-md' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory(String(cat.id)); returnFocusToScanner(); }}>{cat.name}</Button>
+                            <Button key={cat.id} size="md" className={`justify-start h-10 min-h-[40px] rounded-2xl font-bold text-[11px] uppercase truncate px-3 shrink-0 ${selectedCategory === String(cat.id) ? 'bg-emerald-500 text-white shadow-md' : 'bg-gray-100 dark:bg-zinc-800 text-gray-600 dark:text-zinc-400 hover:bg-gray-200'}`} onPress={() => { setSelectedCategory(String(cat.id)); returnFocusToScanner(); }}>{cat.name}</Button>
                         ))}
-                    </aside>
+                    </nav>
 
                     <section className="flex-1 flex flex-col overflow-hidden min-h-0 bg-gray-50 dark:bg-zinc-950 rounded-2xl border border-gray-200 dark:border-white/5">
                         <ProductGrid
@@ -1322,6 +1461,48 @@ export default function NewSalePage() {
                     </section>
                 </div>
             </div>
+
+            {/* BARRA INFERIOR STICKY (sólo móvil, cuando el teclado está oculto).
+                Contiene el total actual, el botón grande COBRAR y el botón que
+                reabre el teclado. Nunca aparece en escritorio (lg: hidden). */}
+            {!isKeypadVisible && (
+                <div
+                    data-testid="sales-mobile-action-bar"
+                    role="toolbar"
+                    aria-label="Barra de acciones de venta"
+                    className="lg:hidden fixed inset-x-0 bottom-0 z-40 bg-white/95 dark:bg-zinc-950/95 border-t border-gray-200 dark:border-white/10 shadow-[0_-8px_24px_rgb(0,0,0,0.25)] px-3 py-2 pb-[max(env(safe-area-inset-bottom),0.5rem)] flex items-center gap-2 backdrop-blur-sm"
+                >
+                    <button
+                        type="button"
+                        onClick={toggleKeypadVisibility}
+                        aria-label="Mostrar teclado numérico"
+                        aria-expanded={isKeypadVisible}
+                        aria-controls="sales-keypad-aside"
+                        data-testid="sales-mobile-keypad-toggle"
+                        className="h-12 w-12 min-w-12 shrink-0 flex items-center justify-center rounded-xl bg-gray-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border border-gray-200 dark:border-white/10 active:scale-95 transition-transform"
+                    >
+                        <Keyboard className="h-5 w-5" aria-hidden="true" />
+                    </button>
+                    <div className="flex-1 min-w-0 flex flex-col leading-tight">
+                        <span className="text-[9px] font-bold uppercase tracking-widest text-gray-500 dark:text-zinc-400 leading-none">TOTAL</span>
+                        <span className="text-xl font-bold text-zinc-900 dark:text-zinc-50 tabular-nums tracking-tight truncate">
+                            ${formatCurrency(total)}
+                        </span>
+                    </div>
+                    <Button
+                        aria-label="Abrir cobro de la venta"
+                        data-testid="sales-mobile-pay-button"
+                        onPress={() => {
+                            if (currentCart.length > 0) tryOpenPaymentDialog();
+                            returnFocusToScanner();
+                        }}
+                        isDisabled={currentCart.length === 0}
+                        className="h-12 min-h-12 px-5 rounded-xl font-bold text-sm tracking-wide text-white bg-emerald-600 hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400 shadow-[0_8px_24px_rgb(16,185,129,0.22)] active:scale-[0.98]"
+                    >
+                        COBRAR
+                    </Button>
+                </div>
+            )}
 
             {/* MODALES DINÁMICOS */}
 

@@ -1881,7 +1881,10 @@ func normalizeClosureExpenses(expenses []models.Expense) error {
 		if strings.EqualFold(expense.Status, "PENDING") {
 			continue
 		}
-		if expense.CashAmount+expense.NequiAmount+expense.DaviplataAmount+expense.FondoAmount+expense.CoinsAmount != 0 {
+		// Migración 028: BoldQrAmount es la sexta columna de bolsillos; si
+		// cualquiera trae un valor explícito respetamos el desglose (igual
+		// que para los otros cinco canales).
+		if expense.CashAmount+expense.NequiAmount+expense.DaviplataAmount+expense.FondoAmount+expense.CoinsAmount+expense.BoldQrAmount != 0 {
 			continue
 		}
 		total := expense.Amount + expense.TaxAmount
@@ -1911,12 +1914,11 @@ func assignExpenseChannel(expense *models.Expense, source string, value float64)
 	switch {
 	// Bold QR se evalúa primero: comparte el token genérico "QR" con
 	// cualquier otra descripción pero IsBoldQRPaymentSource exige la marca
-	// "BOLD" para distinguirlo. Como no hay columna física, el egreso queda
-	// con todas las columnas desglosadas en 0 y PaymentSource='BOLD_QR'; los
-	// agregadores lo levantan por la rama legacy (misma estrategia que
-	// usaba la alcancía antes de tener columna propia).
+	// "BOLD" para distinguirlo. Antes de la migración 028 este caso era
+	// un `return` (no había columna física); ahora BoldQrAmount es un
+	// bolsillo real y recibe la plata igual que los otros canales.
 	case models.IsBoldQRPaymentSource(source):
-		return
+		expense.BoldQrAmount += value
 	// DAVIPLATA se evalúa primero: contiene "DAVI" y también es un canal digital.
 	case strings.Contains(source, "DAVIPLATA"), strings.Contains(source, "DAVI"):
 		expense.DaviplataAmount += value

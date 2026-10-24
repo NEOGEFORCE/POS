@@ -3,6 +3,7 @@ package migrations
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -13,8 +14,8 @@ func TestCatalogIsCompleteOrderedAndChecksummed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Catalog() error = %v", err)
 	}
-	if len(catalog) != 27 {
-		t.Fatalf("len(Catalog()) = %d, want 27", len(catalog))
+	if len(catalog) != 28 {
+		t.Fatalf("len(Catalog()) = %d, want 28", len(catalog))
 	}
 	for i, migration := range catalog {
 		wantVersion := int64(i + 1)
@@ -2160,6 +2161,188 @@ func TestMigration027PosQrAsyncCheckoutIsTransactionalDDL(t *testing.T) {
 	} {
 		if strings.Contains(migration.Source, forbiddenAlter) {
 			t.Errorf("migration 027 debe limitarse a pos_qr_payment_intents, encontró %q", forbiddenAlter)
+		}
+	}
+}
+
+func TestMigration028ExpensesBoldQrAmountIsTransactionalWithScopedBackfill(t *testing.T) {
+	catalog, err := Catalog()
+	if err != nil {
+		t.Fatalf("Catalog() error = %v", err)
+	}
+	var migration *Migration
+	for i := range catalog {
+		if catalog[i].Version == 28 {
+			migration = &catalog[i]
+			break
+		}
+	}
+	if migration == nil {
+		t.Fatal("migration 028 no está en el catálogo")
+	}
+	if !migration.Transactional {
+		t.Fatal("migration 028 debe ser transaccional: ADD COLUMN + UPDATE acotado, sin CREATE INDEX CONCURRENTLY")
+	}
+
+	// La 028 extiende expenses y nada más. Si alguien agrega CREATE
+	// TABLE o toca otra entidad, debe ser una migración 029+ con su
+	// propia justificación.
+	if strings.Contains(migration.Source, "CREATE TABLE") {
+		t.Error("migration 028 no debe crear tablas nuevas (sólo extiende expenses con un bolsillo)")
+	}
+
+	// Columna nueva con tipo exacto. Si alguien cambia DECIMAL(10,2) por
+	// otro tipo (NUMERIC(14,2), DOUBLE PRECISION, FLOAT), rompe la
+	// familia de bolsillos: cash_amount, nequi_amount, daviplata_amount,
+	// fondo_amount y coins_amount son todos DECIMAL(10,2) DEFAULT 0.
+	if !strings.Contains(migration.Source, "ADD COLUMN IF NOT EXISTS bold_qr_amount DECIMAL(10,2) NOT NULL DEFAULT 0") {
+		t.Error("migration 028 debe declarar `ADD COLUMN IF NOT EXISTS bold_qr_amount DECIMAL(10,2) NOT NULL DEFAULT 0` (misma forma que los otros cinco bolsillos)")
+	}
+
+	// Blindaje tipo-de-dinero: ningún FLOAT ni DOUBLE PRECISION ni REAL
+	// en la columna nueva. Mismo guardián que las 019/021/023.
+	for _, forbidden := range []string{
+		"bold_qr_amount FLOAT",
+		"bold_qr_amount DOUBLE PRECISION",
+		"bold_qr_amount REAL",
+		"bold_qr_amount NUMERIC(14,2)",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 028 debe usar DECIMAL(10,2) como el resto de bolsillos de expenses, encontró %q", forbidden)
+		}
+	}
+
+	// La 028 limita su alcance a la tabla expenses. Si alguien agrega
+	// ALTER TABLE sobre otras tablas, debe ser una migración 029+ con
+	// su propia justificación.
+	for _, forbiddenAlter := range []string{
+		"ALTER TABLE sales",
+		"ALTER TABLE cashier_closures",
+		"ALTER TABLE audit_logs",
+		"ALTER TABLE pos_qr_payment_intents",
+		"ALTER TABLE pos_qr_webhook_events",
+		"ALTER TABLE loans",
+		"ALTER TABLE loan_installments",
+		"ALTER TABLE loan_expenses",
+		"ALTER TABLE products",
+	} {
+		if strings.Contains(migration.Source, forbiddenAlter) {
+			t.Errorf("migration 028 debe limitarse a expenses, encontró %q", forbiddenAlter)
+		}
+	}
+
+	// Al ser transaccional NO puede usar CREATE INDEX CONCURRENTLY.
+	// Postgres prohíbe CONCURRENTLY dentro de una transacción. El regex
+	// del runner matchea sólo sentencias ejecutables, no la palabra en
+	// comentarios "--".
+	if concurrentIndexPattern.MatchString(migration.Source) {
+		t.Error("migration 028 es transaccional: contiene una sentencia CREATE INDEX CONCURRENTLY ejecutable")
+	}
+
+	// COMMENT ON COLUMN obligatorio: pg_dump --schema-only debe llevar
+	// la justificación con la BD. Blindaje operativo contra
+	// documentación perdida.
+	if !strings.Contains(migration.Source, "COMMENT ON COLUMN expenses.bold_qr_amount") {
+		t.Error("migration 028 debe declarar COMMENT ON COLUMN expenses.bold_qr_amount")
+	}
+
+	// Backfill acotado: UPPER(status)='PAID', deleted_at IS NULL,
+	// paymentSource canónico 'BOLD_QR' y los cinco bolsillos físicos en
+	// cero. Si alguien afloja estas guardas (p.ej. incluye SETTLED),
+	// está moviendo dinero del padre al bolsillo cuando en realidad
+	// vive en los hijos abonos; o peor, cuenta dos veces el mismo
+	// dinero.
+	for _, backfillBit := range []string{
+		"UPDATE expenses",
+		"SET bold_qr_amount = amount",
+		"UPPER(status) = 'PAID'",
+		"deleted_at IS NULL",
+		`UPPER(COALESCE("paymentSource", '')) = 'BOLD_QR'`,
+		"COALESCE(cash_amount, 0)      = 0",
+		"COALESCE(nequi_amount, 0)     = 0",
+		"COALESCE(daviplata_amount, 0) = 0",
+		"COALESCE(fondo_amount, 0)     = 0",
+		"COALESCE(coins_amount, 0)     = 0",
+		"bold_qr_amount                = 0",
+		"amount                        > 0",
+	} {
+		if !strings.Contains(migration.Source, backfillBit) {
+			t.Errorf("migration 028 debe tener el backfill acotado con %q", backfillBit)
+		}
+	}
+
+	// El backfill NO debe incluir SETTLED: ver la nota larga en el
+	// archivo SQL y en expense_service.go#SettleExpense. SETTLED es el
+	// padre de una cadena de abonos (hijos PAID) y marcarlo con
+	// bold_qr_amount = amount duplicaría el dinero. Barremos los
+	// comentarios -- antes de buscar para no gritar cuando la
+	// documentación menciona SETTLED explicando por qué NO se incluye.
+	lineCommentRe := regexp.MustCompile(`(?m)--[^\n]*`)
+	blockCommentRe := regexp.MustCompile(`(?s)/\*.*?\*/`)
+	executable := blockCommentRe.ReplaceAllString(migration.Source, "")
+	executable = lineCommentRe.ReplaceAllString(executable, "")
+	for _, forbiddenScope := range []string{
+		"'SETTLED'",
+		"IN ('PAID', 'SETTLED')",
+		"IN ('SETTLED', 'PAID')",
+		"IN ('PAID','SETTLED')",
+	} {
+		if strings.Contains(executable, forbiddenScope) {
+			t.Errorf("migration 028 no debe backfillear status SETTLED en una sentencia ejecutable (dinero vive en los abonos hijos PAID, no en el padre): encontró %q", forbiddenScope)
+		}
+	}
+	// Tampoco debe mutar otras tablas o campos. Explícitamente
+	// prohibido UPDATE sobre tablas distintas a expenses, DELETE o
+	// INSERT. Dentro de expenses, el único SET admitido es
+	// bold_qr_amount; si alguien introduce `SET status = ...` o
+	// `SET paymentSource = ...` cambia la semántica del migración.
+	for _, forbidden := range []string{
+		"UPDATE sales",
+		"UPDATE cashier_closures",
+		"UPDATE audit_logs",
+		"UPDATE pos_qr_payment_intents",
+		"UPDATE pos_qr_webhook_events",
+		"UPDATE products",
+		"UPDATE loans",
+		"UPDATE loan_installments",
+		"UPDATE loan_expenses",
+		"DELETE FROM ",
+		"INSERT INTO ",
+		"SET status =",
+		`SET "paymentSource"`,
+		"SET amount =",
+		"SET tax_amount =",
+		"SET paid_amount =",
+		"SET remaining_amount =",
+	} {
+		if strings.Contains(migration.Source, forbidden) {
+			t.Errorf("migration 028 sólo debe hacer SET bold_qr_amount = amount sobre expenses: encontró %q", forbidden)
+		}
+	}
+
+	// Documentación obligatoria. El archivo debe explicar POR QUÉ
+	// se agrega la columna ahora, POR QUÉ el backfill no incluye
+	// SETTLED, POR QUÉ no se agrega CHECK >= 0 (consistencia con los
+	// otros bolsillos), POR QUÉ la vista mv_dashboard_stats_monthly no
+	// necesita refresh (suma amount, no bolsillos) y la relación con
+	// payment_source_boldqr.go y expense_bold_qr_normalize.go.
+	for _, mustExplain := range []string{
+		"BOLD_QR",
+		"Bre-B",
+		"bolsillo",
+		"SETTLED",
+		"abono",
+		"SettleExpense",
+		"payment_source_boldqr",
+		"expense_bold_qr_normalize",
+		"DECIMAL(10,2)",
+		"mv_dashboard_stats_monthly",
+		"metadata-only",
+		"idempotente",
+		"PostgreSQL 11+",
+	} {
+		if !strings.Contains(migration.Source, mustExplain) {
+			t.Errorf("migration 028 debe documentar %q en comentarios", mustExplain)
 		}
 	}
 }

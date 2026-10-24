@@ -314,6 +314,124 @@ export function extractRelayErrorCode(message) {
 }
 
 // -----------------------------------------------------------------------------
+// Resumen para indicadores de UI (toolbar de /sales/new, chip de header)
+// -----------------------------------------------------------------------------
+
+/**
+ * Niveles del indicador. El consumidor los mapea a colores:
+ *   - `ok`    → verde (conexión OK y balanza online)
+ *   - `warn`  → ámbar (hay conexión pero algo no está listo)
+ *   - `error` → rojo (sin conexión al bridge/relay)
+ *   - `idle`  → gris (todavía negociando, no reportó error aún)
+ *
+ * @typedef {"ok" | "warn" | "error" | "idle"} ScaleIndicatorTone
+ */
+
+/**
+ * Resumen listo para el indicador compacto de la balanza. Toma el estado
+ * crudo del hook `useScale` y lo mapea a un trío {tone, label, reason}
+ * en español. Es una función pura — sin acceso al DOM — para que los
+ * tests puedan ejercitarla directamente.
+ *
+ * Reglas (deterministas):
+ *   - Si está conectado y la balanza reporta online → `{ tone:"ok", label:"Sincronizar" }`.
+ *   - Si está conectado pero la balanza no reporta online → `{ tone:"warn", label:"Balanza offline" }`
+ *     con pista "Vía servidor · <caja>" cuando el modo es relay.
+ *   - Si está reconectando/isReloading → `{ tone:"warn", label:"Esperando..." }`.
+ *   - Si no está conectado:
+ *       · `error` contiene prefijo `RELAY_AGENT_OFFLINE` o menciona
+ *         "cajas conectadas" → `label:"Caja <X> sin conexión"` o
+ *         `"Sin cajas conectadas"` si no hay cajaId guardado.
+ *       · `error` contiene `RELAY_FORBIDDEN` → `label:"Sin permiso"`.
+ *       · `error` menciona "ticket" o endpoint `/bridge/` → `label:"Servidor sin relay"`.
+ *       · fallback → `label:"Sin conexión"`.
+ *
+ * @param {{
+ *   isConnected?: boolean,
+ *   isScaleOnline?: boolean,
+ *   isReloading?: boolean,
+ *   mode?: "local" | "relay" | null,
+ *   cajaId?: string | null,
+ *   error?: string | null,
+ *   savedCajaId?: string | null,
+ * }} state
+ * @returns {{ tone: ScaleIndicatorTone, label: string, reason: string | null }}
+ */
+export function describeScaleIndicator(state) {
+    const s = state || {};
+    const isConnected = !!s.isConnected;
+    const isScaleOnline = !!s.isScaleOnline;
+    const isReloading = !!s.isReloading;
+    const mode = s.mode ?? null;
+    const cajaId = typeof s.cajaId === "string" && s.cajaId.trim()
+        ? s.cajaId.trim()
+        : null;
+    const savedCajaId = typeof s.savedCajaId === "string" && s.savedCajaId.trim()
+        ? s.savedCajaId.trim()
+        : null;
+    const error = typeof s.error === "string" ? s.error : null;
+
+    if (isReloading) {
+        return { tone: "warn", label: "Esperando...", reason: "Refrescando lectura de peso" };
+    }
+
+    if (isConnected) {
+        if (isScaleOnline) {
+            const reason = mode === "relay"
+                ? `Vía servidor · ${cajaId ?? "caja remota"}`
+                : "Bridge local";
+            return { tone: "ok", label: "Sincronizar", reason };
+        }
+        // Conectado al bridge/relay pero la balanza no reporta `status:connected`.
+        const reason = mode === "relay"
+            ? `Caja ${cajaId ?? "remota"} sin balanza enchufada`
+            : "Balanza no detectada en la caja";
+        return { tone: "warn", label: "Balanza offline", reason };
+    }
+
+    // Sin conexión. Mapeamos la causa a un texto corto en español.
+    const code = extractRelayErrorCode(error);
+    const errText = (error || "").toLowerCase();
+
+    if (code === RELAY_ERROR_CODES.FORBIDDEN || errText.includes("forbidden") || errText.includes("sin permiso")) {
+        return { tone: "error", label: "Sin permiso", reason: error || "Tu rol no permite operar el bridge." };
+    }
+
+    if (
+        code === RELAY_ERROR_CODES.AGENT_OFFLINE
+        || errText.includes("no hay cajas")
+        || errText.includes("desconectada")
+        || errText.includes("cajas conectadas")
+    ) {
+        const name = cajaId ?? savedCajaId;
+        return {
+            tone: "error",
+            label: name ? `Caja ${name} sin conexión` : "Sin cajas conectadas",
+            reason: error || "El agente de la caja no está conectado al servidor.",
+        };
+    }
+
+    if (
+        errText.includes("ticket")
+        || errText.includes("/bridge/")
+        || errText.includes("relay")
+        || errText.includes("servidor")
+    ) {
+        return {
+            tone: "error",
+            label: "Servidor sin relay",
+            reason: error || "El servidor no entregó un ticket relay válido.",
+        };
+    }
+
+    return {
+        tone: "error",
+        label: "Sin conexión",
+        reason: error || "No se pudo abrir el bridge local ni el relay.",
+    };
+}
+
+// -----------------------------------------------------------------------------
 // Orquestador: local → relay
 // -----------------------------------------------------------------------------
 

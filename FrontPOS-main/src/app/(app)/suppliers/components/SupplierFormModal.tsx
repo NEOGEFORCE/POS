@@ -283,7 +283,7 @@ const SupplierFormModal = React.memo(({ isOpen, onOpenChange, onSave, isEdit, su
       scrollBehavior="inside"
       backdrop="blur"
       classNames={{
-        base: "bg-white dark:bg-zinc-950 rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0 translate-y-2 md:translate-y-4",
+        base: "bg-white dark:bg-zinc-950 rounded-2xl sm:rounded-[2.5rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0 translate-y-2 md:translate-y-4 max-w-[calc(100vw-1rem)] sm:max-w-2xl",
         wrapper: "items-center justify-center p-8 md:p-12",
         backdrop: "bg-black/50 backdrop-blur-sm",
         closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",

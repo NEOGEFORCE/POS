@@ -335,7 +335,7 @@ export default function DashboardPage() {
                     )}
                     {isLoading ? (
                         <div className="flex flex-col gap-6 w-full animate-pulse">
-                            <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+                            <div className="grid gap-4 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
                                 {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-[160px] w-full rounded-[2rem]" />)}
                             </div>
                             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">

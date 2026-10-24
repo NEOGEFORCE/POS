@@ -30,15 +30,20 @@ type Expense struct {
 	FondoAmount     float64 `gorm:"type:decimal(10,2);default:0;column:fondo_amount" json:"fondoAmount"`
 	CoinsAmount     float64 `gorm:"type:decimal(10,2);default:0;column:coins_amount" json:"coinsAmount"`
 
-	// BoldQrAmount es un canal CALCULADO EN RUNTIME, no persistido en BD
-	// (ver payment_source_boldqr.go). No existe columna física para
-	// Bold QR porque el dueño pidió evitar migraciones en este sprint; el
-	// canal se identifica por `paymentSource='BOLD_QR'` y las columnas
-	// desglosadas quedan en cero. Esta propiedad `gorm:"-"` se puebla
-	// desde parseExpenseChannelsFull para que el PDF del cierre y el
-	// modal de auditoría puedan pintarlo como fila propia sin reconsultar
-	// el PaymentSource.
-	BoldQrAmount float64 `gorm:"-" json:"boldQrAmount"`
+	// BoldQrAmount es la parte del egreso pagada por el canal Bold QR /
+	// Bre-B. Antes de la migración 028 era un valor CALCULADO EN RUNTIME
+	// (gorm:"-") porque no existía columna física; ahora es la sexta
+	// columna del "bolsillo" al mismo nivel que cash_amount, nequi_amount,
+	// daviplata_amount, fondo_amount y coins_amount. La migración 028
+	// agregó la columna con `DECIMAL(10,2) NOT NULL DEFAULT 0` y
+	// backfilleó los egresos BOLD_QR puros `status='PAID'` existentes.
+	//
+	// Esto permite EGRESOS MIXTOS (p. ej. $200.000 BOLD_QR + $100.000
+	// CAJA en el mismo pago) con cada parte descontándose del canal
+	// correcto. parseExpenseChannelsFull sigue siendo la fuente única de
+	// decisión canal↔monto; esta columna le ahorra el fallback por texto
+	// cuando el frontend ya envía el desglose explícito.
+	BoldQrAmount float64 `gorm:"type:decimal(10,2);default:0;column:bold_qr_amount" json:"boldQrAmount"`
 
 	IsRestocked bool `gorm:"default:false;column:is_restocked" json:"isRestocked"`
 

@@ -78,6 +78,14 @@ func (s *ExpenseService) CreateExpense(expense *models.Expense) error {
 
 	parsePaymentSourceAmounts(expense)
 
+	// Tras poblar los seis bolsillos (incluyendo bold_qr_amount agregada
+	// por la migración 028), la suma de canales no puede superar el
+	// monto del egreso. Garantiza coherencia aun con payloads mixtos
+	// malformados o con el frontend enviando columnas explícitas.
+	if err := validateExpenseChannelSum(expense); err != nil {
+		return err
+	}
+
 	err := s.repo.Save(expense)
 	if err == nil {
 		// Aprendizaje de días desactivado en el flujo transaccional.
@@ -108,10 +116,18 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 		expense.DaviplataAmount = 0
 		expense.FondoAmount = 0
 		expense.CoinsAmount = 0
+		expense.BoldQrAmount = 0
 		return
 	}
 
-	if expense.CashAmount > 0 || expense.NequiAmount > 0 || expense.DaviplataAmount > 0 || expense.FondoAmount > 0 || expense.CoinsAmount > 0 {
+	// Si cualquier bolsillo ya trae un valor explícito, respetamos el
+	// desglose entregado por el llamador (frontend o abono). Antes de la
+	// migración 028 BoldQrAmount era `gorm:"-"` y no se incluía aquí;
+	// ahora es columna física y se trata igual que los otros cinco
+	// bolsillos.
+	if expense.CashAmount > 0 || expense.NequiAmount > 0 ||
+		expense.DaviplataAmount > 0 || expense.FondoAmount > 0 ||
+		expense.CoinsAmount > 0 || expense.BoldQrAmount > 0 {
 		return
 	}
 
@@ -121,23 +137,12 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 		return
 	}
 
-	// Egreso pagado con el QR Bre-B de Bold (ver
-	// models.PaymentSourceBoldQR): como no hay columna física
-	// `bold_qr_amount` (requeriría migración), el egreso queda con las cinco
-	// columnas desglosadas en 0 y `paymentSource='BOLD_QR'`. Los
-	// agregadores SQL (postgres_expense_repository.go) lo levantan por la
-	// rama legacy UPPER(paymentSource) → results["BOLD_QR"], y el dashboard
-	// lo expone en `realCashFlow.boldQr` sin contaminar el efectivo de caja.
-	//
-	// Se evalúa ANTES del regex de mixtos porque el regex no reconoce
-	// "BOLD_QR:" como etiqueta (requeriría ampliarlo con una columna
-	// correspondiente; sin columna, el canal se preserva vía el texto
-	// completo del PaymentSource).
-	if models.IsBoldQRPaymentSource(src) {
-		return
-	}
-
-	re := regexp.MustCompile(`(NEQUI|DAVIPLATA|CAJA|CASH|EFECTIVO|FONDO|BOVEDA|BÓVEDA|MONEDAS|ALCANCIA|ALCANCÍA):\s*\$?([\d.,]+)`)
+	// Regex de pagos mixtos: ahora reconoce también BOLD/BOLD_QR/BOLDQR/
+	// BOLD QR/BOLD-QR. Mantiene las variantes previas (EFECTIVO/NEQUI/
+	// DAVIPLATA/FONDO/MONEDAS/ALCANCIA) y el detector es insensible a los
+	// separadores comunes porque el matcher consume `[A-Z_ -]+`-ish
+	// después del par método:monto.
+	re := regexp.MustCompile(`(NEQUI|DAVIPLATA|CAJA|CASH|EFECTIVO|FONDO|BOVEDA|BÓVEDA|MONEDAS|ALCANCIA|ALCANCÍA|BOLD[_\- ]?QR|BOLDQR|BOLD):\s*\$?([\d.,]+)`)
 	matches := re.FindAllStringSubmatch(src, -1)
 
 	if len(matches) > 0 {
@@ -148,6 +153,11 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 			val, _ := strconv.ParseFloat(valStr, 64)
 
 			switch {
+			// BOLD* se evalúa ANTES de NEQUI/DAVIPLATA porque la etiqueta
+			// no debe caer en el default y porque models.IsBoldQRPaymentSource
+			// ya es el único identificador autorizado del canal.
+			case strings.Contains(method, "BOLD"):
+				expense.BoldQrAmount += val
 			case strings.Contains(method, "NEQUI"):
 				expense.NequiAmount += val
 			case strings.Contains(method, "DAVIPLATA"):
@@ -165,9 +175,14 @@ func parsePaymentSourceAmounts(expense *models.Expense) {
 
 	switch {
 	case models.IsBoldQRPaymentSource(src):
-		// Bold QR: no toca ninguna columna desglosada; el canal se preserva
-		// vía PaymentSource='BOLD_QR'. Rama defensiva por si el short-circuit
-		// de arriba se pasa por alto en una edición futura.
+		// Bold QR puro: ahora SÍ se asigna al bolsillo físico correspondiente
+		// (columna agregada por la migración 028). Antes el fallback dejaba
+		// las seis columnas en 0 y los agregadores levantaban el monto por la
+		// rama legacy `UPPER(paymentSource)='BOLD_QR'`. Ahora populamos la
+		// columna para que SUM(bold_qr_amount) sea la fuente directa; la rama
+		// legacy sigue en los repos sólo para egresos pre-028 que no hayan
+		// pasado por este helper.
+		expense.BoldQrAmount = expense.Amount
 		return
 	case strings.Contains(src, "NEQUI") || strings.Contains(src, "BANCOLOMBIA") || strings.Contains(src, "TRANSFERENCIA") || strings.Contains(src, "BANCO") || strings.Contains(src, "DIGITAL"):
 		expense.NequiAmount = expense.Amount
@@ -245,6 +260,7 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 		expense.DaviplataAmount = 0
 		expense.FondoAmount = 0
 		expense.CoinsAmount = 0
+		expense.BoldQrAmount = 0
 	} else if expense.Status == "PAID" || expense.Status == "" {
 		expense.Status = "PAID"
 		expense.RemainingAmount = 0
@@ -256,6 +272,9 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 			return err
 		}
 		parsePaymentSourceAmounts(expense)
+		if err := validateExpenseChannelSum(expense); err != nil {
+			return err
+		}
 	} else if expense.Status == "PENDING" {
 		expense.RemainingAmount = expense.Amount
 		expense.PaidAmount = 0
@@ -264,6 +283,7 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 		expense.DaviplataAmount = 0
 		expense.FondoAmount = 0
 		expense.CoinsAmount = 0
+		expense.BoldQrAmount = 0
 	}
 
 	err := s.repo.Update(id, expense)
@@ -278,8 +298,14 @@ func (s *ExpenseService) UpdateExpense(id uint, expense *models.Expense) error {
 	return err
 }
 
-// SettleExpense registra un abono (parcial o total) a una deuda pendiente
-func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string, paymentAmount, cashAmount, nequiAmount, daviplataAmount, fondoAmount float64) (*models.Expense, error) {
+// SettleExpense registra un abono (parcial o total) a una deuda pendiente.
+//
+// La firma acepta `boldQrAmount` (migración 028) para que un abono pueda
+// descontarse del canal Bold QR igual que de los otros cinco bolsillos.
+// Si el canal Bold se mezcla con otro (p. ej. $50.000 BOLD_QR + $20.000
+// CAJA), ambas columnas viajan al abonoExpense y los agregadores los
+// imputan a su canal correspondiente sin duplicar.
+func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI string, paymentAmount, cashAmount, nequiAmount, daviplataAmount, fondoAmount, boldQrAmount float64) (*models.Expense, error) {
 	expense, err := s.repo.GetByID(id)
 	if err != nil {
 		return nil, errors.New("egreso no encontrado")
@@ -326,13 +352,18 @@ func (s *ExpenseService) SettleExpense(id uint, newPaymentSource, updaterDNI str
 		NequiAmount:     nequiAmount,
 		DaviplataAmount: daviplataAmount,
 		FondoAmount:     fondoAmount,
+		BoldQrAmount:    boldQrAmount,
 	}
 
-	// B4 (2026-10-23): si el abono se registra por Bold QR, no se puede
-	// combinar con otros canales porque no hay columna física para
-	// desglosarlo. Rechazamos antes de tocar BD para que el flujo no
-	// quede a medias (deuda descontada + abono inconsistente).
+	// B4 (2026-10-23): normalizar el PaymentSource si es Bold QR puro.
+	// Antes se rechazaban las mezclas; a partir de la migración 028 Bold
+	// convive con los otros canales en columnas físicas y las mezclas
+	// quedan representadas correctamente, así que sólo se valida que la
+	// suma de bolsillos no supere el monto del abono.
 	if err := validateAndNormalizeBoldQRExpense(abonoExpense); err != nil {
+		return nil, err
+	}
+	if err := validateExpenseChannelSum(abonoExpense); err != nil {
 		return nil, err
 	}
 

@@ -1,91 +1,108 @@
 package services
 
 import (
-	"errors"
+	"fmt"
 	"strings"
 
 	"backPOS-go/internal/core/domain/models"
 )
 
 // =============================================================================
-// Normalización y validación de egresos pagados con Bold QR (B4, 2026-10-23)
+// Normalización y validación de egresos pagados con Bold QR
+//
+// Historia:
+//
+//   - Antes de la migración 028 (2026-10-24) no existía columna física
+//     `expenses.bold_qr_amount`. El canal se identificaba sólo por el
+//     texto `paymentSource='BOLD_QR'` y las cinco columnas desglosadas
+//     quedaban en cero; cualquier intento de mezclar BOLD con otro canal
+//     se rechazaba porque no había donde desglosar el pedazo Bold.
+//
+//   - Con la migración 028 BOLD_QR es un bolsillo físico al mismo nivel
+//     que cash_amount, nequi_amount, daviplata_amount, fondo_amount y
+//     coins_amount. Un egreso ya puede combinar BOLD + otro canal
+//     (p. ej. $200.000 BOLD_QR + $100.000 CAJA) con cada parte
+//     descontándose correctamente del bolsillo correspondiente.
+//
+// Esta función conserva DOS responsabilidades mínimas, puras:
+//
+//  1. NORMALIZACIÓN del canal Bold "puro": si `paymentSource` identifica
+//     BOLD QR por texto SIN separadores de pago mixto ("/"), reescribe
+//     el valor a la constante canónica `models.PaymentSourceBoldQR`
+//     ("BOLD_QR"). Esto permite que los agregadores SQL agrupen todas
+//     las variantes (bold-qr, BOLDQR, bold qr, "BOLD_QR_BRE_B", etc.)
+//     bajo la misma clave.
+//
+//  2. VALIDACIÓN de SUMA: luego de que `parsePaymentSourceAmounts`
+//     reparte los seis bolsillos, la suma total debe ser menor o igual al
+//     `amount + tax_amount` del egreso más una tolerancia pequeña por
+//     redondeos COP (±5). Un payload malicioso o malformado que diga
+//     "amount=30000, nequi=20000, bold_qr=20000" exige rechazo antes de
+//     tocar la base. Nota: la validación de suma vive en
+//     `validateExpenseChannelSum` para no acoplar la normalización con
+//     el chequeo numérico, y así poder reutilizarla desde `SettleExpense`
+//     y futuros flujos.
 // =============================================================================
-//
-// REGLA
-//
-// Bold QR / Bre-B es un canal digital con una particularidad: NO EXISTE una
-// columna física para desglosarlo en la tabla `expenses` (`bold_qr_amount`
-// requeriría migración de esquema). Para que los agregadores SQL legacy
-// (postgres_expense_repository.go, que agrupa por UPPER(paymentSource))
-// puedan presentar la plata bajo la clave "BOLD_QR", el canal se identifica
-// por texto en el campo `paymentSource` y las cinco columnas desglosadas
-// (cash/nequi/davi/fondo/coins) quedan en cero.
-//
-// Por eso un egreso Bold QR MIXTO con otro canal es imposible desde el
-// esquema actual: si llegara un payload con, p.ej., `paymentSource="BOLD_QR"`
-// y `cashAmount=50000`, el agregador agruparía los 50 mil bajo EFECTIVO (por
-// las columnas) y además bajo BOLD_QR (por el texto): doble conteo.
-//
-// Esta función pura centraliza la regla:
-//
-//   1. Si el PaymentSource NO menciona BOLD, no toca nada.
-//   2. Si el PaymentSource es Bold QR puro (variantes "BOLD_QR", "BOLDQR",
-//      "BOLD-QR", "BOLD QR", "bold_qr", etc.), lo normaliza a la constante
-//      canónica `models.PaymentSourceBoldQR` para que el agregador SQL
-//      agrupe todo bajo la misma clave sin importar casing/espacios.
-//   3. Si el PaymentSource combina BOLD con otros canales (string
-//      concatenado con '/' o cualquier columna desglosada > 0), RECHAZA
-//      con un error en español legible por humano.
-//
-// AMBITO
-//
-// La función se llama ANTES de parsePaymentSourceAmounts tanto en el alta
-// como en la edición de egresos y en el abono (SettleExpense). Un
-// PaymentSource puede combinarse con otros canales legalmente para
-// EFECTIVO/NEQUI/DAVIPLATA/FONDO/MONEDAS (regex "CAJA: $X / NEQUI: $Y"),
-// pero NUNCA con BOLD mientras no exista la columna física.
 
-// errBoldQrNoCombinable es el mensaje normalizado que lanza la validación.
-// Variable exportada por si otro módulo necesita comparar con errors.Is
-// (hoy el único consumidor es ExpenseService).
-var errBoldQrNoCombinable = errors.New("Bold QR no se puede combinar con otros medios de pago")
-
-// validateAndNormalizeBoldQRExpense aplica la regla descrita arriba sobre
-// `expense` IN-PLACE. Devuelve `nil` cuando no se detecta un canal BOLD o
-// cuando el egreso ya cumple la regla; devuelve `errBoldQrNoCombinable`
-// cuando el egreso es mixto con BOLD. Nunca aborta un flujo que no tenga
-// marca de BOLD.
+// validateAndNormalizeBoldQRExpense normaliza `paymentSource` cuando el
+// egreso identifica al canal Bold QR "puro" (sin tokens "CAJA: $X").
+// Nunca aborta un flujo que no mencione BOLD. Deja de rechazar
+// combinaciones: el desglose se guarda en los bolsillos físicos y la
+// validación numérica corre después en `validateExpenseChannelSum`.
 func validateAndNormalizeBoldQRExpense(expense *models.Expense) error {
 	if expense == nil {
 		return nil
 	}
 	src := expense.PaymentSource
 	if !models.IsBoldQRPaymentSource(src) {
-		// No hay marca de Bold QR en el PaymentSource: no es asunto
-		// de esta función (p.ej. "CAJA", "NEQUI: $X / CAJA: $Y").
 		return nil
 	}
-
-	// Combinado por texto: "BOLD_QR / CAJA: $X" o similares. La
-	// presencia de un '/' en un source que contiene BOLD basta como
-	// señal de mezcla.
+	// Si el texto es un `paymentSource` mixto ("CAJA: $X / BOLD_QR: $Y"
+	// o cualquier combinación con '/'), se conserva tal cual: el regex
+	// de `parsePaymentSourceAmounts` lo interpreta y pobla cada bolsillo
+	// por su cuenta.
 	if strings.Contains(src, "/") {
-		return errBoldQrNoCombinable
+		return nil
 	}
-
-	// Combinado por columnas desglosadas: si llegó algún otro bolsillo
-	// > 0 junto a la marca BOLD, es mezcla. Como no hay columna física
-	// para BOLD_QR, aquí NO verificamos BoldQrAmount (es `gorm:"-"` y
-	// se puebla en runtime, no se persiste).
-	if expense.CashAmount > 0 || expense.NequiAmount > 0 ||
-		expense.DaviplataAmount > 0 || expense.FondoAmount > 0 ||
-		expense.CoinsAmount > 0 {
-		return errBoldQrNoCombinable
-	}
-
-	// Bold QR puro: normalizamos el PaymentSource a la constante
-	// canónica para que el agregador SQL agrupe todas las variantes
-	// bajo la misma clave UPPER(paymentSource)="BOLD_QR".
+	// Bold puro: normalizamos a la constante canónica para que el
+	// agregador SQL agrupe todas las variantes bajo la misma clave
+	// `UPPER(paymentSource)='BOLD_QR'`.
 	expense.PaymentSource = models.PaymentSourceBoldQR
+	return nil
+}
+
+// validateExpenseChannelSum garantiza que la suma de los seis bolsillos
+// no exceda `amount + tax_amount` del egreso más una pequeña tolerancia
+// COP. Se llama DESPUÉS de `parsePaymentSourceAmounts` para que el
+// desglose por tokens ("NEQUI: $20000 / BOLD_QR: $10000") ya esté
+// poblado en las columnas.
+//
+// Devuelve nil cuando los seis bolsillos están en cero (el egreso vive
+// sólo por su texto, p. ej. legacy pre-028) o cuando la suma cuadra.
+// Rechaza cuando la suma excede el monto total: eso significa que el
+// cliente envió columnas inconsistentes y guardarlas rompería la
+// invariante del arqueo.
+func validateExpenseChannelSum(expense *models.Expense) error {
+	if expense == nil {
+		return nil
+	}
+	// PENDING / PRESTAMO: la plata no salió todavía y los bolsillos no
+	// deben haber sido tocados por parsePaymentSourceAmounts. No
+	// validamos para no rechazar deudas que esperan abono.
+	if strings.EqualFold(expense.Status, "PENDING") || models.IsLoanFundedExpense(expense) {
+		return nil
+	}
+	sum := expense.CashAmount + expense.NequiAmount + expense.DaviplataAmount +
+		expense.FondoAmount + expense.CoinsAmount + expense.BoldQrAmount
+	if sum == 0 {
+		return nil
+	}
+	total := expense.Amount + expense.TaxAmount
+	// Tolerancia alineada con la validación de pagos mixtos en
+	// `postgres_product_inventory.BulkReceive` (±5 COP por redondeos).
+	const toleranceCOP = 5.0
+	if sum-total > toleranceCOP {
+		return fmt.Errorf("la suma de canales ($%.0f) excede el monto del egreso ($%.0f)", sum, total)
+	}
 	return nil
 }

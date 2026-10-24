@@ -18,24 +18,30 @@ import "strings"
 // agregadores por canal, el modal del cierre y el PDF compartan la misma
 // definición. Mismo patrón que `expense_loan_funded.go`.
 //
-// POR QUÉ TEXTO Y NO COLUMNA
+// POR QUÉ VIVE EN TEXTO Y EN COLUMNA
 // ----------------------------------------------------------------------------
-// Agregar una columna `expenses.bold_qr_amount` sería ideal para egresos
-// mixtos (BOLD_QR + CAJA en el mismo pago), pero exige una migración de
-// esquema y el dueño pidió evitarla en este sprint. Por eso se trata como
-// texto en `paymentSource`:
-//   - Egresos puros BOLD_QR  → cash_amount=0, nequi=0, davi=0, fondo=0,
-//                              coins=0, paymentSource='BOLD_QR'. Los
-//                              agregadores legacy (GetGlobalPaidExpensesByMethod*)
-//                              lo levantan por la rama que agrupa por
-//                              UPPER(paymentSource) y lo exponen bajo la
-//                              clave "BOLD_QR".
-//   - Egresos mixtos         → se admite el prefijo "BOLD_QR: $N" en la
-//                              cadena concatenada "CAJA: $X / BOLD_QR: $N"
-//                              para el reporte, pero el componente sin
-//                              columna propia no se puede agregar en SQL.
-//                              Un futuro sprint puede añadir la columna
-//                              con una migración 028 aditiva.
+// La migración 028 (2026-10-24) agregó `expenses.bold_qr_amount DECIMAL(10,2)
+// NOT NULL DEFAULT 0`. Antes de esa fecha el canal se identificaba sólo por
+// texto en `paymentSource` y los egresos mixtos BOLD + otro canal no se
+// podían desglosar. Ahora el canal convive como texto (para preservar la
+// identificación del medio de pago y los agregadores legacy sobre
+// `paymentSource`) y como columna física al mismo nivel que
+// `cash_amount`, `nequi_amount`, `daviplata_amount`, `fondo_amount` y
+// `coins_amount`:
+//
+//   - Egresos puros BOLD_QR  → `bold_qr_amount = amount`, demás bolsillos
+//                              en cero, `paymentSource='BOLD_QR'`. Los
+//                              agregadores suman `SUM(bold_qr_amount)` a
+//                              la clave "BOLD_QR"; la rama legacy por
+//                              texto queda únicamente para filas pre-028
+//                              que todavía no hayan sido tocadas por el
+//                              backfill o por un UPDATE.
+//   - Egresos mixtos         → cada bolsillo guarda su parte y
+//                              `paymentSource` lleva el string
+//                              concatenado "CAJA: $X / BOLD_QR: $Y" para
+//                              trazabilidad y para que `parseExpenseChannelsFull`
+//                              siga reconstruyendo el reparto cuando se
+//                              consulta un egreso heredado.
 
 // PaymentSourceBoldQR es el valor canónico que viaja en
 // `sales.transferSource` y `expenses.paymentSource` cuando el canal es Bold

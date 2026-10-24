@@ -177,7 +177,16 @@ export function useNewSale() {
     const [syncQueueCount, setSyncQueueCount] = useState(0);
     const [workerFilteredProducts, setWorkerFilteredProducts] = useState<Product[]>([]);
 
-    const { weight: scaleWeight, isScaleOnline, isReloading: isScaleReloading, reload: reloadScale } = useScale();
+    const {
+        weight: scaleWeight,
+        isScaleOnline,
+        isConnected: isScaleConnected,
+        isReloading: isScaleReloading,
+        reload: reloadScale,
+        mode: scaleBridgeMode,
+        cajaId: scaleBridgeCajaId,
+        error: scaleBridgeError,
+    } = useScale();
     const submittingRef = useRef(false);
     const hiddenScannerRef = useRef<HTMLInputElement>(null);
 
@@ -1726,6 +1735,14 @@ export function useNewSale() {
         playBeep,
         hiddenScannerRef, returnFocusToScanner,
         scaleWeight, isScaleOnline, isScaleReloading, reloadScale,
+        // Estado detallado del bridge/relay para el indicador del toolbar.
+        // El consumidor usa `describeScaleIndicator` sobre estos campos para
+        // mostrar el motivo cuando la balanza no está conectada (p.ej.
+        // "Caja 1 sin conexión", "Sin permiso", "Servidor sin relay").
+        isScaleConnected,
+        scaleBridgeMode,
+        scaleBridgeCajaId,
+        scaleBridgeError,
         
         // Handlers
         handleCartSwitch, handleClientSelect, addNewCart, deleteCart, confirmDeleteCart,

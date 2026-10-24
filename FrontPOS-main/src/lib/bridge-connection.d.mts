@@ -83,6 +83,26 @@ export function writeSavedCajaId(
 export function describeRelayError(code: string | null | undefined): string;
 export function extractRelayErrorCode(message: unknown): RelayErrorCode | null;
 
+export type ScaleIndicatorTone = "ok" | "warn" | "error" | "idle";
+
+export interface ScaleIndicatorInput {
+    readonly isConnected?: boolean;
+    readonly isScaleOnline?: boolean;
+    readonly isReloading?: boolean;
+    readonly mode?: BridgeConnectionMode | null;
+    readonly cajaId?: string | null;
+    readonly error?: string | null;
+    readonly savedCajaId?: string | null;
+}
+
+export interface ScaleIndicatorStatus {
+    readonly tone: ScaleIndicatorTone;
+    readonly label: string;
+    readonly reason: string | null;
+}
+
+export function describeScaleIndicator(state: ScaleIndicatorInput): ScaleIndicatorStatus;
+
 export interface BridgeAgentsResponseLike {
     agents?: unknown[];
 }

@@ -289,29 +289,42 @@ func TestParsePaymentSourceAmounts_BoldQrVariantes(t *testing.T) {
 	}
 }
 
-func TestAssignExpenseChannel_BoldQrNoTocaColumnas(t *testing.T) {
-	// assignExpenseChannel es parte de normalizeClosureExpenses (al guardar
-	// un cierre). Para BOLD_QR debe comportarse como no-op sobre las
-	// columnas desglosadas, igual que PRESTAMO.
+func TestAssignExpenseChannel_BoldQrPueblaColumna(t *testing.T) {
+	// B2 (2026-10-24): assignExpenseChannel para BOLD_QR ya NO es noop
+	// — la migración 028 agregó la columna física `bold_qr_amount`, así
+	// que el monto se asigna al bolsillo correspondiente igual que los
+	// otros cinco canales. Las columnas Cash/Nequi/Davi/Fondo/Coins
+	// permanecen intactas: Bold vive en su propia columna.
 	expense := &models.Expense{}
-	assignExpenseChannel(expense, "BOLD_QR", 50000)
+	assignExpenseChannel(expense, "BOLD_QR", 50_000)
+	if expense.BoldQrAmount != 50_000 {
+		t.Fatalf("BoldQrAmount = %v; want 50000", expense.BoldQrAmount)
+	}
 	if expense.CashAmount != 0 || expense.NequiAmount != 0 || expense.DaviplataAmount != 0 || expense.FondoAmount != 0 || expense.CoinsAmount != 0 {
-		t.Fatalf("BOLD_QR contaminó alguna columna: %+v", expense)
+		t.Fatalf("BOLD_QR contaminó otra columna: %+v", expense)
 	}
 }
 
-func TestNormalizeClosureExpenses_PreservaBoldQrSinColumnas(t *testing.T) {
+func TestNormalizeClosureExpenses_PueblaBoldQrAmountDesdePaymentSource(t *testing.T) {
+	// B2 (2026-10-24): un cierre guardado sin desglose explícito pero con
+	// `paymentSource='BOLD_QR'` DEBE quedar con `bold_qr_amount = Amount`
+	// tras normalizar. Antes de la 028 la columna no existía y el canal
+	// se levantaba por la rama legacy en texto; ahora los agregadores
+	// prefieren la columna física.
 	expenses := []models.Expense{{
 		Status:        "PAID",
-		Amount:        30000,
+		Amount:        30_000,
 		PaymentSource: "BOLD_QR",
 	}}
 	if err := normalizeClosureExpenses(expenses); err != nil {
 		t.Fatalf("normalizeClosureExpenses devolvió error: %v", err)
 	}
 	got := expenses[0]
+	if got.BoldQrAmount != 30_000 {
+		t.Fatalf("BoldQrAmount = %v; want 30000", got.BoldQrAmount)
+	}
 	if got.CashAmount != 0 || got.NequiAmount != 0 || got.DaviplataAmount != 0 || got.FondoAmount != 0 || got.CoinsAmount != 0 {
-		t.Fatalf("se asignó un canal desglosado para BOLD_QR: %+v", got)
+		t.Fatalf("se contaminó otro canal: %+v", got)
 	}
 }
 
@@ -348,10 +361,10 @@ func TestEgresoBoldQrNoContaminaElArqueo(t *testing.T) {
 // de caja.
 func TestCierreCompletoConBoldQR(t *testing.T) {
 	c := models.CashierClosure{
-		OpeningCash:   100000,
-		PhysicalCash:  150000,
-		TotalCash:     150000,  // efectivo de ventas del turno
-		TotalNequi:    100000,  // ventas Nequi
+		OpeningCash:    100000,
+		PhysicalCash:   150000,
+		TotalCash:      150000, // efectivo de ventas del turno
+		TotalNequi:     100000, // ventas Nequi
 		TotalDaviplata: 50000,  // ventas Daviplata
 		Expenses: []models.Expense{
 			{Status: "PAID", Amount: 25000, PaymentSource: "BOLD_QR", Category: "Servicios"},

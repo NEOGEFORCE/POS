@@ -452,3 +452,48 @@ test("negotiateBridgeConnection: valida que las dependencias sean funciones", as
         /requestTicket es obligatorio/,
     );
 });
+
+// -----------------------------------------------------------------------------
+// Escenario móvil: el navegador vive en el servidor (192.168.1.6:3000),
+// el firewall bloquea el puerto 9876 del bridge local → la URL del relay
+// se arma con `window.location.host`, no con `localhost`.
+// -----------------------------------------------------------------------------
+
+test("negotiateBridgeConnection (móvil): probe local falla + API_URL vacío → relay via window.location.host", async () => {
+    const result = await negotiateBridgeConnection({
+        env: {}, // Sin NEXT_PUBLIC_API_URL explícito.
+        location: {
+            hostname: "192.168.1.6",
+            host: "192.168.1.6:3000",
+            protocol: "http:",
+        },
+        // Simula el firewall que silencia el puerto 9876: la sonda
+        // local devuelve null tras timeout.
+        probeLocal: async () => null,
+        fetchAgents: async () => ({
+            agents: [{ cajaId: "CAJA-01", connected: true }],
+        }),
+        requestTicket: async (cajaId) => {
+            assert.equal(cajaId, "CAJA-01");
+            return { ticket: "MOBILE_TICKET" };
+        },
+    });
+    assert.equal(result.mode, "relay");
+    assert.equal(result.cajaId, "CAJA-01");
+    // La URL del relay se arma con el host del documento (NO localhost),
+    // porque desde el celular `localhost` apuntaría al propio celular.
+    assert.equal(result.url, "ws://192.168.1.6:3000/api/bridge/relay?ticket=MOBILE_TICKET");
+});
+
+test("resolveLocalBridgeUrl (móvil): usa location.hostname, nunca localhost cuando el navegador no está en el PC de caja", () => {
+    // El celular accede a http://192.168.1.6:3000 y nuestra heurística
+    // de bridge local prueba `ws://192.168.1.6:9876` (no `ws://localhost:9876`).
+    // Si localhost se usara aquí, el celular intentaría abrir un socket
+    // contra sí mismo y nunca llegaría al bridge real.
+    const url = resolveLocalBridgeUrl({
+        env: {},
+        location: { hostname: "192.168.1.6" },
+    });
+    assert.equal(url, "ws://192.168.1.6:9876");
+    assert.ok(!url.includes("localhost"), "La URL local NO debe caer a localhost cuando hay location.hostname.");
+});

@@ -33,7 +33,12 @@ import (
 // BridgeRelayHandler agrupa las rutas del relay. Guarda el Hub, el
 // mapa de tokens configurados y la referencia al servicio de
 // auditoría. La validación de orígenes WS se delega a la misma
-// política CORS que ya usa el server (originAllowed).
+// política CORS que ya usa el server (originAllowed) MÁS una regla
+// defensiva "same-host": si el Origin apunta al mismo host que la
+// petición (p. ej. el celular que abre `http://192.168.1.6:3000`
+// y el servidor es `192.168.1.6:3000`, o un dispositivo que entra por
+// Tailscale a `desktop-vk2u90s.tail6c4b2d.ts.net`), se acepta aunque
+// no esté explícitamente en la lista CORS.
 type BridgeRelayHandler struct {
 	hub            *bridgerelay.Hub
 	tokens         bridgerelay.TokenMap
@@ -66,6 +71,51 @@ func NewBridgeRelayHandler(
 	}
 }
 
+// originHostMatchesRequest acepta `origin` si su host coincide con el
+// host de la petición HTTP (`r.Host`). Es la regla que soporta celulares
+// y clientes Tailscale apuntando al mismo servidor sin obligar al
+// operador a listar cada hostname en la lista CORS estática.
+//
+// `origin` ya pasó por una verificación estructural (scheme http/https)
+// vía `IsPrivateOrigin`/`originAllowed`; aquí sólo normalizamos el host
+// (incluye puerto si lo hay) y comparamos sin distinguir mayúsculas.
+// Si el `Origin` es malformado o el `Host` está vacío, no coincide.
+func originHostMatchesRequest(origin, requestHost string) bool {
+	if origin == "" || requestHost == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" {
+		return false
+	}
+	// `url.URL.Host` incluye puerto, igual que `r.Host`. La comparación
+	// debe ser case-insensitive porque Host puede llegar en mixed-case.
+	return strings.EqualFold(u.Host, requestHost)
+}
+
+// resolveOrigin aplica la política combinada:
+//
+//  1. Si `origin` está vacío, es petición same-origin (no hay header):
+//     se acepta.
+//  2. Si el host del `origin` coincide con el host de la petición,
+//     se acepta (soporta LAN y Tailscale sin lista estática).
+//  3. Si `originAllowed(origin)` acepta, se acepta.
+//
+// Devuelve también el motivo del rechazo (string vacío si ok) para que
+// los logs del handler puedan registrar por qué.
+func (h *BridgeRelayHandler) resolveOrigin(origin, requestHost string) (allowed bool, reason string) {
+	if origin == "" {
+		return true, ""
+	}
+	if originHostMatchesRequest(origin, requestHost) {
+		return true, ""
+	}
+	if h.originAllowed(origin) {
+		return true, ""
+	}
+	return false, "origin no autorizado"
+}
+
 // ===========================================================================
 // Upgraders
 // ===========================================================================
@@ -78,9 +128,12 @@ var agentUpgrader = websocket.Upgrader{
 	WriteBufferSize: 4096,
 	CheckOrigin: func(r *http.Request) bool {
 		// El agente puede no mandar Origin (cliente nativo Node); si lo
-		// manda, exigimos que sea privado/local.
+		// manda, exigimos que sea privado/local o same-host.
 		origin := strings.TrimSpace(r.Header.Get("Origin"))
 		if origin == "" {
+			return true
+		}
+		if originHostMatchesRequest(origin, r.Host) {
 			return true
 		}
 		return middlewares.IsPrivateOrigin(origin)
@@ -96,13 +149,8 @@ func (h *BridgeRelayHandler) buildClientUpgrader() *websocket.Upgrader {
 		WriteBufferSize: 4096,
 		CheckOrigin: func(r *http.Request) bool {
 			origin := strings.TrimSpace(r.Header.Get("Origin"))
-			if origin == "" {
-				// Sin Origin: aceptamos sólo si el ticket es válido;
-				// esta función no puede re-verificar el ticket aquí,
-				// pero la ruta pide el ticket antes del Upgrade.
-				return true
-			}
-			return h.originAllowed(origin)
+			allowed, _ := h.resolveOrigin(origin, r.Host)
+			return allowed
 		},
 	}
 }
@@ -167,7 +215,11 @@ func (h *BridgeRelayHandler) AgentWS(c *gin.Context) {
 		// Hub en shutdown: adapter ya fue cerrado.
 		return
 	}
-	log.Printf("[bridgerelay] agente conectado caja=%s desde %s", cajaID, c.ClientIP())
+	// Log de diagnóstico B4: incluye origin además de IP para distinguir
+	// un agente que llega desde el bridge local (origin vacío) de uno
+	// que llega vía túnel (p. ej. Tailscale con Origin propio).
+	originHeader := strings.TrimSpace(c.Request.Header.Get("Origin"))
+	log.Printf("[bridgerelay] agente conectado caja=%s desde %s origin=%q", cajaID, c.ClientIP(), originHeader)
 	// Run bloquea hasta que la conexión caiga. Como estamos dentro del
 	// handler Gin, consumimos la goroutine actual: nada escribe al
 	// ResponseWriter después del Upgrade.
@@ -232,6 +284,7 @@ func (h *BridgeRelayHandler) IssueTicket(c *gin.Context) {
 
 	token, err := h.hub.Tickets().Issue(ident)
 	if err != nil {
+		log.Printf("[bridgerelay] /ticket error emitiendo caja=%q dni=%q desde %s: %v", cajaID, ident.DNI, c.ClientIP(), err)
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
 				"code":    "RELAY_INTERNAL",
@@ -240,6 +293,11 @@ func (h *BridgeRelayHandler) IssueTicket(c *gin.Context) {
 		})
 		return
 	}
+	// Log de diagnóstico B4: deja rastro de QUIÉN pidió un ticket y para
+	// qué caja. Nunca registra el token (son 32 bytes aleatorios con TTL
+	// de 30 s, pero por consistencia con el resto del handler lo tratamos
+	// como material sensible).
+	log.Printf("[bridgerelay] /ticket emitido caja=%q dni=%q role=%q desde %s", cajaID, ident.DNI, ident.Role, c.ClientIP())
 	c.JSON(http.StatusOK, ticketResponse{
 		Ticket:           token,
 		ExpiresInSeconds: int(bridgerelay.TicketTTL / time.Second),
@@ -254,12 +312,19 @@ func (h *BridgeRelayHandler) IssueTicket(c *gin.Context) {
 // ticket, valida el Origin del WebSocket y hace Upgrade. A partir de
 // ahí, el cliente envía/recibe el mismo protocolo del bridge local.
 func (h *BridgeRelayHandler) RelayWS(c *gin.Context) {
-	// Validación de Origin antes del Upgrade: nunca aceptar un origen
-	// no permitido, incluso con ticket válido. El Upgrader también lo
-	// valida pero devuelve 403 opaco; aquí damos un error JSON claro.
+	// Validación de Origin antes del Upgrade. La política combina lista
+	// CORS + regla same-host, para que un celular en la LAN (p. ej.
+	// http://192.168.1.6:3000) y un cliente Tailscale (p. ej.
+	// http://desktop-vk2u90s.tail6c4b2d.ts.net:3000) que apuntan al
+	// mismo backend se conecten sin tener que listar cada hostname en
+	// `allowedOrigins`.
 	origin := strings.TrimSpace(c.Request.Header.Get("Origin"))
-	if origin != "" && !h.originAllowed(origin) {
-		log.Printf("[bridgerelay] /relay rechazado por origin %q desde %s", origin, c.ClientIP())
+	allowed, reason := h.resolveOrigin(origin, c.Request.Host)
+	if !allowed {
+		// Log con motivo: ayuda a entender por qué un celular en LAN
+		// no logra conectar sin exponer ticket ni credenciales.
+		log.Printf("[bridgerelay] /relay rechazado origin=%q host=%q desde %s motivo=%q",
+			origin, c.Request.Host, c.ClientIP(), reason)
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
 			"error": gin.H{
 				"code":    "RELAY_ORIGIN_FORBIDDEN",
@@ -271,6 +336,7 @@ func (h *BridgeRelayHandler) RelayWS(c *gin.Context) {
 
 	token := strings.TrimSpace(c.Query("ticket"))
 	if token == "" {
+		log.Printf("[bridgerelay] /relay rechazado origin=%q desde %s motivo=\"ticket vacío\"", origin, c.ClientIP())
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
 				"code":    "RELAY_BAD_REQUEST",
@@ -283,13 +349,17 @@ func (h *BridgeRelayHandler) RelayWS(c *gin.Context) {
 	ident, err := h.hub.Tickets().Consume(token)
 	if err != nil {
 		code := "RELAY_TICKET_INVALID"
+		msgReason := "ticket inválido"
 		status := http.StatusUnauthorized
 		switch {
 		case errors.Is(err, bridgerelay.ErrTicketExpired):
 			code = "RELAY_TICKET_EXPIRED"
+			msgReason = "ticket expirado"
 		case errors.Is(err, bridgerelay.ErrTicketReused):
 			code = "RELAY_TICKET_REUSED"
+			msgReason = "ticket ya consumido"
 		}
+		log.Printf("[bridgerelay] /relay rechazado origin=%q desde %s motivo=%q", origin, c.ClientIP(), msgReason)
 		c.AbortWithStatusJSON(status, gin.H{
 			"error": gin.H{
 				"code":    code,
@@ -310,6 +380,13 @@ func (h *BridgeRelayHandler) RelayWS(c *gin.Context) {
 	if cli == nil {
 		return
 	}
+	// Log de aceptación: incluye caja y dni para forense. Si el agente
+	// de esa caja NO está conectado, el Hub ya le envió al cliente un
+	// mensaje `status connected:false`; dejamos esa nota en el log para
+	// explicar fácilmente los reportes "no sale conectada" del celular.
+	agentConnected := h.hub.AgentFor(ident.CajaID) != nil
+	log.Printf("[bridgerelay] /relay aceptado caja=%q dni=%q origin=%q desde %s agenteConectado=%t",
+		ident.CajaID, ident.DNI, origin, c.ClientIP(), agentConnected)
 	cli.Run()
 }
 
@@ -485,7 +562,3 @@ func MakeAuditSink(audit *services.AuditService) bridgerelay.AuditSink {
 		)
 	}
 }
-
-// Guard para que `url.URL` no quede sin usar en algunas builds; el
-// paquete lo necesita el día que agreguemos más validadores.
-var _ = url.URL{}

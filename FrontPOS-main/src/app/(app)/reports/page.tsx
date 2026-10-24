@@ -225,7 +225,7 @@ export default function ReportsPage() {
       <div className="bg-gray-100/50 dark:bg-zinc-950/20 p-4">
         <div className="flex flex-col gap-6 max-w-full">
           
-          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
             <MetricCard 
               label="Ventas Hoy" 
               value={data ? formatCurrency(data.todaySalesAmount || 0) : "---"} 

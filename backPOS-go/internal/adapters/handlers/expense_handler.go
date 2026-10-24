@@ -69,7 +69,7 @@ func (h *ExpenseHandler) Create(c *gin.Context) {
 func normalizeExpensesForFrontend(expenses []models.Expense) {
 	for i := range expenses {
 		e := &expenses[i]
-		if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 || e.CoinsAmount > 0 {
+		if e.CashAmount > 0 || e.NequiAmount > 0 || e.DaviplataAmount > 0 || e.FondoAmount > 0 || e.CoinsAmount > 0 || e.BoldQrAmount > 0 {
 			var parts []string
 			if e.CashAmount > 0 {
 				parts = append(parts, "CAJA")
@@ -85,6 +85,11 @@ func normalizeExpensesForFrontend(expenses []models.Expense) {
 			}
 			if e.CoinsAmount > 0 {
 				parts = append(parts, "ALCANCIA")
+			}
+			// Migración 028: Bold QR es un bolsillo físico; se muestra en
+			// el chip del método igual que los otros.
+			if e.BoldQrAmount > 0 {
+				parts = append(parts, "BOLD_QR")
 			}
 			if len(parts) > 1 {
 				e.PaymentSource = strings.Join(parts, " + ")
@@ -296,6 +301,11 @@ func (h *ExpenseHandler) Settle(c *gin.Context) {
 		NequiAmount     float64 `json:"nequiAmount"`
 		DaviplataAmount float64 `json:"daviplataAmount"`
 		FondoAmount     float64 `json:"fondoAmount"`
+		// Migración 028: Bold QR es un bolsillo físico más. Si el abono
+		// vino total o parcialmente por el QR Bre-B de Bold, el frontend
+		// manda el monto aquí y el agregador por canal lo imputa a
+		// `BOLD_QR` sin que la rama legacy por texto se dispare.
+		BoldQrAmount float64 `json:"boldQrAmount"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -306,7 +316,7 @@ func (h *ExpenseHandler) Settle(c *gin.Context) {
 	val, _ := c.Get("dni")
 	updaterDNI := fmt.Sprintf("%v", val)
 
-	expense, err := h.service.SettleExpense(uint(id), req.PaymentSource, updaterDNI, req.Amount, req.CashAmount, req.NequiAmount, req.DaviplataAmount, req.FondoAmount)
+	expense, err := h.service.SettleExpense(uint(id), req.PaymentSource, updaterDNI, req.Amount, req.CashAmount, req.NequiAmount, req.DaviplataAmount, req.FondoAmount, req.BoldQrAmount)
 	if err != nil {
 		SendError(c, http.StatusBadRequest, ErrBadRequest, err.Error(), err)
 		return

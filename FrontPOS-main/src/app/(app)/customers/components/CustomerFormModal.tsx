@@ -67,8 +67,10 @@ export default function CustomerFormModal({
       size="2xl"
       scrollBehavior="inside"
       classNames={{ 
-        base: "bg-white dark:bg-zinc-950 rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0",
-        wrapper: "items-start sm:items-center mt-12 sm:mt-0 justify-center",
+        // En móvil arranca pegado al borde superior y usa casi todo el ancho
+        // sin recortar inputs. En >= sm vuelve al modal centrado con márgenes.
+        base: "bg-white dark:bg-zinc-950 rounded-2xl sm:rounded-[2rem] border border-gray-200 dark:border-white/10 shadow-[0_8px_30px_rgb(0,0,0,0.12)] overflow-visible mx-2 md:mx-0 max-w-[calc(100vw-1rem)] sm:max-w-2xl",
+        wrapper: "items-start sm:items-center mt-4 sm:mt-0 justify-center",
         closeButton: "absolute right-5 top-5 text-gray-500 dark:text-zinc-500 dark:text-zinc-400 hover:text-rose-500 transition-colors z-[100] rounded-2xl",
         backdrop: "bg-black/50 backdrop-blur-sm"
       }}

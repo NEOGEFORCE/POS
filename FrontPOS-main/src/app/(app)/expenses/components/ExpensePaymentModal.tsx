@@ -26,17 +26,19 @@ export interface ExpensePaymentModalPayload {
   /**
    * Monto pagado con el canal Bold QR / Bre-B.
    *
-   * Contrato con el backend (ver informe research, sección 3 y 5):
+   * Contrato con el backend (ver informe research + migración 028):
    *   - El frontend envía `boldQr` dentro del payload del modal y el
    *     padre lo propaga como `boldQrAmount` al POST /expenses.
-   *   - Mientras no exista la columna física `bold_qr_amount` en
-   *     `expenses` (requiere migración 028, hoy fuera de alcance), el
-   *     backend se apoya en `paymentSource='BOLD_QR'` (texto libre)
-   *     para contarlo en la bolsa `BOLD_QR` del dashboard.
-   *   - **EXCLUSIVO**: Bold QR funciona como un préstamo — no se mezcla
-   *     con otros canales. Cuando se usa, los otros montos quedan en 0
-   *     y `paymentSourceString === 'BOLD_QR'`. El backend no puede
-   *     desglosarlo en mixto (sin columna), así que el UI lo bloquea.
+   *   - La migración 028 agrega la columna física `expenses.bold_qr_amount`
+   *     para que el backend pueda cuadrar al centavo cada canal cuando
+   *     el usuario mezcla Bold con Caja/Nequi/Daviplata/Bóveda/Alcancía.
+   *   - **COMBINABLE**: Bold QR funciona igual que Nequi o Caja. Puede
+   *     sumarse a cualquiera de los otros canales y cada parte se
+   *     descuenta de su propia bolsa en el dashboard. Cuando Bold es
+   *     el ÚNICO canal con monto, `paymentSourceString === 'BOLD_QR'`
+   *     para que el agregador legacy lo cuente correctamente; cuando
+   *     es parte de un mixto, el string compuesto incluye el token
+   *     `BOLD_QR: $N` entre los demás.
    */
   boldQr: number;
   paymentSourceString: string;
@@ -184,12 +186,11 @@ export function ExpensePaymentModal({
         setCoinsPaid(prev => prev + Math.min(val, remainingDebt));
         setActivePaymentTab('cash');
       } else if (activePaymentTab === 'BOLD_QR') {
-        // Bold QR es EXCLUSIVO: no se mezcla con otros canales. El '+'
-        // dentro de la pestaña acumula sobre el mismo canal pero no
-        // cambia de pestaña (el flujo normal cae a `cash`, aquí no).
-        // Al llegar a `processPayment` se envía como pago único con
-        // paymentSourceString='BOLD_QR'.
+        // Bold QR ahora es COMBINABLE: tras acumular el monto el flujo
+        // vuelve a 'cash' igual que Nequi/Daviplata, para que el cajero
+        // pueda seguir sumando otros canales si el pago es mixto.
         setBoldQrPaid(prev => prev + Math.min(val, remainingDebt));
+        setActivePaymentTab('cash');
       } else {
         setCashPaid(prev => prev + Math.min(val, remainingDebt));
       }
@@ -235,48 +236,12 @@ export function ExpensePaymentModal({
       return;
     }
 
-    // --- Rama Bold QR: canal EXCLUSIVO como préstamo ---
-    // El backend no puede desglosar un egreso Bold QR mixto (no hay
-    // columna `bold_qr_amount` todavía). Para evitar perder plata en
-    // auditoría, el frontend obliga a que Bold QR se pague completo.
-    // Si el cajero escribió un monto parcial en el input, lo tomamos
-    // y lo mandamos como ese valor; de lo contrario, se cobra el
-    // total pendiente. Siempre con `paymentSourceString === 'BOLD_QR'`.
-    if (activePaymentTab === 'BOLD_QR') {
-      if (totalToPay <= 0) return;
-      let finalBoldQr = boldQrPaid;
-      if (currentDialogVal > 0) {
-        finalBoldQr += Math.min(currentDialogVal, remainingDebt);
-      }
-      // Si el usuario no acumuló lo suficiente, cubrimos el resto con
-      // el mismo canal (pago exclusivo). El backend sólo verá un valor
-      // BOLD_QR y los otros canales en 0.
-      const leftover = Math.max(0, totalToPay - finalBoldQr);
-      finalBoldQr += leftover;
-      if (finalBoldQr <= 0) return;
-
-      isProcessingRef.current = true;
-      setSubmittingPayment(true);
-      try {
-        await onPay({
-          cash: 0,
-          nequi: 0,
-          daviplata: 0,
-          fondo: 0,
-          coins: 0,
-          boldQr: finalBoldQr,
-          paymentSourceString: 'BOLD_QR',
-          taxAmount: 0,
-        });
-        setShowSuccessScreen(true);
-      } catch (err) {
-        console.error(err);
-      } finally {
-        isProcessingRef.current = false;
-        setSubmittingPayment(false);
-      }
-      return;
-    }
+    // --- Rama Bold QR combinada con otros canales ---
+    // Tras la migración 028 el backend persiste `expenses.bold_qr_amount`,
+    // así que Bold QR se maneja igual que Nequi o Caja: puede sumarse al
+    // resto y cada parte se descuenta de su bolsa en el dashboard. No
+    // existe una rama exclusiva — el flujo normal mixto abajo se encarga
+    // de incorporarlo con el token `BOLD_QR: $N` en el paymentSourceString.
 
     isProcessingRef.current = true;
     setSubmittingPayment(true);
@@ -286,11 +251,10 @@ export function ExpensePaymentModal({
     let finalDaviplata = daviplataPaid;
     let finalFondo = fondoPaid;
     let finalCoins = coinsPaid;
-    // En la rama mixta Bold QR siempre viaja en 0: los demás canales
-    // nunca lo acumulan y la rama exclusiva de arriba se encarga del
-    // caso Bold QR puro. Mantener esta variable sólo para no romper el
-    // payload del contrato con el padre.
-    const finalBoldQr = 0;
+    // Bold QR como canal propio dentro del mixto. Lo trato igual que a
+    // los demás: aplicamos lo acumulado y, si la pestaña activa es
+    // BOLD_QR, suma el monto digitado y el remanente.
+    let finalBoldQr = boldQrPaid;
 
     // 1. Aplicar el monto digitado en el input si el usuario no presiono '+' previamente
     if (currentDialogVal > 0) {
@@ -300,10 +264,11 @@ export function ExpensePaymentModal({
       else if (activePaymentTab === 'DAVIPLATA') finalDaviplata += actualPay;
       else if (activePaymentTab === 'fondo') finalFondo += actualPay;
       else if (activePaymentTab === 'coins') finalCoins += actualPay;
+      else if (activePaymentTab === 'BOLD_QR') finalBoldQr += actualPay;
     }
 
     // 2. Calcular el remanente real que falta por cubrir para completar el 100% del egreso
-    const totalAllocated = finalCash + finalNequi + finalDaviplata + finalFondo + finalCoins;
+    const totalAllocated = finalCash + finalNequi + finalDaviplata + finalFondo + finalCoins + finalBoldQr;
     const leftover = Math.max(0, totalToPay - totalAllocated);
 
     // 3. Si queda un remanente por pagar, asignarlo al método de pago que esté SELECCIONADO actualmente
@@ -318,22 +283,39 @@ export function ExpensePaymentModal({
         finalFondo += leftover;
       } else if (activePaymentTab === 'coins') {
         finalCoins += leftover;
+      } else if (activePaymentTab === 'BOLD_QR') {
+        finalBoldQr += leftover;
       }
     }
 
-    // Build the string: NEQUI: $1000 / CAJA: $1000 / ALCANCIA: $500
-    // NO incluimos el token "BOLD_QR: $N" porque Bold QR es EXCLUSIVO
-    // y vive sólo en la rama de arriba (paymentSourceString='BOLD_QR').
+    // Build the string compuesto: NEQUI: $1000 / BOLD_QR: $500 / CAJA: $200
+    // Bold QR va como un canal propio dentro del mixto. El backend lee
+    // el campo `boldQrAmount` del payload para asignarlo a la columna
+    // `expenses.bold_qr_amount` (migración 028); el token en el string
+    // mantiene legible la auditoría y el agregador legacy del dashboard.
     const parts: string[] = [];
     if (finalNequi > 0) parts.push(`NEQUI: $${finalNequi}`);
     if (finalDaviplata > 0) parts.push(`DAVIPLATA: $${finalDaviplata}`);
+    if (finalBoldQr > 0) parts.push(`BOLD_QR: $${finalBoldQr}`);
     if (finalCash > 0) parts.push(`CAJA: $${finalCash}`);
     if (finalFondo > 0) parts.push(`FONDO: $${finalFondo}`);
     if (finalCoins > 0) parts.push(`ALCANCIA: $${finalCoins}`);
     
-    let finalPaymentSource = parts.join(' / ');
+    // Si sólo hay un canal con monto, enviamos el canónico sin tokens
+    // para que el agregador legacy del dashboard pueda contarlo sin
+    // tener que parsear un string compuesto de una sola entrada.
+    const nonZeroCount =
+      (finalNequi > 0 ? 1 : 0) +
+      (finalDaviplata > 0 ? 1 : 0) +
+      (finalBoldQr > 0 ? 1 : 0) +
+      (finalCash > 0 ? 1 : 0) +
+      (finalFondo > 0 ? 1 : 0) +
+      (finalCoins > 0 ? 1 : 0);
+
+    let finalPaymentSource = nonZeroCount > 1 ? parts.join(' / ') : '';
     if (!finalPaymentSource) {
-      if (finalNequi > 0) finalPaymentSource = 'NEQUI';
+      if (finalBoldQr > 0) finalPaymentSource = 'BOLD_QR';
+      else if (finalNequi > 0) finalPaymentSource = 'NEQUI';
       else if (finalDaviplata > 0) finalPaymentSource = 'DAVIPLATA';
       else if (finalFondo > 0) finalPaymentSource = 'FONDO';
       else if (finalCoins > 0) finalPaymentSource = 'ALCANCIA';
@@ -504,25 +486,13 @@ export function ExpensePaymentModal({
                         setFondoPaid(0);
                         setCoinsPaid(0);
                         setBoldQrPaid(0);
-                      } else if (tab.id === 'BOLD_QR') {
-                        // Bold QR también es EXCLUSIVO: el backend no puede
-                        // desglosar un egreso Bold QR mixto (sin columna
-                        // `bold_qr_amount` todavía). Si el cajero cambia a
-                        // Bold QR con montos acumulados en otros canales,
-                        // los limpiamos — el total se va 100% al QR.
-                        setCashPaid(0);
-                        setNequiPaid(0);
-                        setDaviplataPaid(0);
-                        setFondoPaid(0);
-                        setCoinsPaid(0);
-                        setSelectedLoanId(null);
                       } else {
-                        // Al abandonar la pestaña préstamo o Bold QR,
-                        // descartamos la selección de préstamo y el
-                        // acumulado de Bold QR para evitar enviar un
-                        // mixto que el backend no sabe desglosar.
+                        // Bold QR ya es COMBINABLE con el resto de canales
+                        // (migración 028 agrega la columna física). Sólo
+                        // descartamos la selección de préstamo cuando se
+                        // vuelve a los canales normales — los montos
+                        // acumulados en cualquier canal se preservan.
                         setSelectedLoanId(null);
-                        setBoldQrPaid(0);
                       }
                     }}
                     className={`h-14 md:h-14 px-3 md:px-5 rounded-2xl flex items-center justify-center md:justify-start gap-2.5 md:gap-4 border-2 transition-all group ${
@@ -664,15 +634,6 @@ export function ExpensePaymentModal({
                         {isNequi && visualTax > 0 && (
                           <p className="text-[10px] md:text-[11px] font-medium text-rose-500 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1">
                             + ${formatCurrency(visualTax)} <span className="opacity-70">GMF 4X1000</span>
-                          </p>
-                        )}
-                        {activePaymentTab === 'BOLD_QR' && (
-                          <p
-                            role="note"
-                            className="text-[10px] md:text-[11px] font-bold text-cyan-600 dark:text-cyan-400 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1 flex items-center justify-center gap-1.5"
-                          >
-                            <img src="/logos/bold.png" className="h-3 w-3 object-contain rounded-full" alt="" aria-hidden="true" />
-                            Bold se paga completo, no se combina
                           </p>
                         )}
                       </div>

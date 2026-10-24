@@ -5,7 +5,7 @@
 // frontend POS. Son lecturas de fuente (`node --test`) sin montar React,
 // coherentes con el patrón de los demás tests Bold QR del repo.
 //
-// Reglas duras (ver informe research y POS_MEMORY.md):
+// Reglas duras (ver informe research, migración 028 y POS_MEMORY.md):
 //
 //   R1. Dashboard — `DashboardData.realCashFlow` admite el campo opcional
 //       `boldQr?: number`. El contrato empata con el saldo propuesto por
@@ -27,17 +27,16 @@
 //
 //   R5. `ExpensePaymentModal` expone un sexto canal `BOLD_QR` entre los
 //       métodos de pago, su payload incluye `boldQr: number` y el
-//       `paymentSourceString` se etiqueta como `BOLD_QR` SIEMPRE que se
-//       cobra Bold QR. El canal es EXCLUSIVO (ver R5b): el backend no
-//       puede desglosar un egreso Bold QR mixto porque no existe la
-//       columna física, así que el frontend obliga al pago completo
-//       (como la pestaña Préstamo). No hay token mixto `BOLD_QR: $N`.
+//       `paymentSourceString` admite el token mixto `BOLD_QR: $N`. El
+//       canal es COMBINABLE (ver R5b): tras la migración 028 el backend
+//       persiste `expenses.bold_qr_amount` y puede desglosarlo igual que
+//       Nequi, Caja, Bóveda, Alcancía o Daviplata.
 //
-//   R5b. Al seleccionar la pestaña Bold QR, los demás canales
-//       (cash/nequi/daviplata/fondo/coins) quedan en 0. Al abandonar la
-//       pestaña Bold QR, `boldQrPaid` también se limpia. El aviso
-//       "Bold QR se paga completo, no se combina" se muestra en el
-//       panel de monto mientras Bold QR está activo.
+//   R5b. Al seleccionar la pestaña Bold QR, los demás canales se
+//       preservan — se puede combinar. Al abandonar la pestaña Bold QR,
+//       `boldQrPaid` NO se limpia: el cajero puede saltar entre pestañas
+//       sin perder el monto Bold. Y NO existe el aviso "Bold se paga
+//       completo, no se combina".
 //
 //   R6. `ExpenseFormModal` propaga `data.boldQr` del modal como campo
 //       top-level `boldQrAmount` al handler de guardado.
@@ -48,9 +47,6 @@
 //   R8. `PendingDebtsModal` expone Bold QR como opción de abono (botón
 //       con id `BOLD_QR`) para que las deudas se puedan saldar contra
 //       el saldo del canal.
-//
-//   R9. Ninguno de los nuevos puntos crea una columna física nueva ni
-//       referencia una migración (restricción del sprint: no migrar).
 //
 // La política UX la define el padre; estos tests sólo blindan los
 // identificadores exactos del contrato.
@@ -141,9 +137,9 @@ function read(path) {
 }
 
 /**
- * Elimina comentarios de bloque /* ... *\/ y de línea // ... antes de
- * buscar identificadores runtime. Protege contra falsos positivos cuando
- * el contrato se documenta como ejemplo en el docstring.
+ * Elimina comentarios de bloque y de línea antes de buscar identificadores
+ * runtime. Protege contra falsos positivos cuando el contrato se documenta
+ * como ejemplo en el docstring.
  */
 function stripComments(src) {
     return src
@@ -157,9 +153,6 @@ function stripComments(src) {
 
 test("DashboardData.realCashFlow admite el campo opcional `boldQr?: number`", () => {
     const src = read(DASHBOARD_PAGE);
-    // El campo vive dentro del bloque `realCashFlow: { ... }`. Buscamos
-    // la aparición exacta del nombre con el tipo opcional para no caer en
-    // falsos positivos con `realCashFlow?.boldQr` leído en los componentes.
     assert.match(
         src,
         /boldQr\?:\s*number/,
@@ -179,7 +172,6 @@ test("CashFlowWidget incluye BOLD_QR como canal propio en `methods`", () => {
         /\bQrCode\b/,
         "CashFlowWidget debe importar QrCode de lucide-react para el canal Bold QR.",
     );
-    // Buscamos la tupla exacta key: 'BOLD_QR' + label: 'Bold QR' en un mismo bloque.
     assert.match(
         runtime,
         /key:\s*['"]BOLD_QR['"][\s\S]{0,80}label:\s*['"]Bold QR['"]/,
@@ -203,7 +195,6 @@ test("DashboardData declara `todayCashFlowDetail?: {income, expense, balance}`",
 
 test("DashboardData.todayCashFlow refleja el shape real {cash, nequi, daviplata, boldQr}", () => {
     const src = read(DASHBOARD_PAGE);
-    // Buscamos el bloque `todayCashFlow?: { ... }` y verificamos las 4 claves.
     const match = src.match(/todayCashFlow\?:\s*\{([\s\S]{0,400}?)\};/);
     assert.ok(match, "El shape de `todayCashFlow` debe estar declarado.");
     const body = match[1];
@@ -242,7 +233,6 @@ test("DashboardKPIs importa QrCode y lee data.realCashFlow?.boldQr", () => {
         /data\.realCashFlow\?\.boldQr/,
         "La pastilla Bold QR debe leer data.realCashFlow?.boldQr (contrato realCashFlow).",
     );
-    // La etiqueta visible en la pastilla.
     assert.ok(
         src.includes("BOLD QR"),
         "DashboardKPIs debe mostrar el texto 'BOLD QR' en la pastilla del canal.",
@@ -251,16 +241,13 @@ test("DashboardKPIs importa QrCode y lee data.realCashFlow?.boldQr", () => {
 
 test("DashboardKPIs: fallback de TOTAL GENERAL incluye `realCashFlow?.boldQr`", () => {
     const src = read(DASHBOARD_KPIS);
-    // El cálculo del fallback cuando el backend no entrega `totalLiquidity`
-    // debe sumar los tres canales digitales: nequi, daviplata Y boldQr.
-    // Buscamos la expresión completa dentro del bloque TOTAL GENERAL.
     const match = src.match(/data\.totalLiquidity\s*\|\|\s*\(([\s\S]{0,400}?)\)\)/);
     assert.ok(match, "Debe existir el fallback `data.totalLiquidity || (...)` en DashboardKPIs.");
     const expr = match[1];
     assert.match(
         expr,
         /realCashFlow\?\.boldQr/,
-        "El fallback de TOTAL GENERAL debe sumar `realCashFlow?.boldQr` (Bold QR también es liquidez digital).",
+        "El fallback de TOTAL GENERAL debe sumar `realCashFlow?.boldQr`.",
     );
 });
 
@@ -271,9 +258,6 @@ test("DashboardKPIs: fallback de TOTAL GENERAL incluye `realCashFlow?.boldQr`", 
 test("DashboardCharts.PAYMENT_COLORS mapea 'BOLD_QR' a un color hex", () => {
     const src = read(DASHBOARD_CHARTS);
     const runtime = stripComments(src);
-    // La clave debe aparecer dentro del objeto PAYMENT_COLORS con un
-    // literal hex (#rrggbb). Toleramos cualquier color, pero exigimos la
-    // sintaxis del map.
     assert.match(
         runtime,
         /['"]BOLD_QR['"]\s*:\s*['"]#[0-9a-fA-F]{3,8}['"]/,
@@ -282,7 +266,7 @@ test("DashboardCharts.PAYMENT_COLORS mapea 'BOLD_QR' a un color hex", () => {
 });
 
 // ---------------------------------------------------------------------------
-// R5. ExpensePaymentModal: canal BOLD_QR + payload.boldQr
+// R5. ExpensePaymentModal: canal BOLD_QR + payload.boldQr (COMBINABLE)
 // ---------------------------------------------------------------------------
 
 test("ExpensePaymentModalPayload declara `boldQr: number`", () => {
@@ -297,7 +281,6 @@ test("ExpensePaymentModalPayload declara `boldQr: number`", () => {
 test("ExpensePaymentModal mantiene estado dedicado `boldQrPaid` y pestaña `BOLD_QR`", () => {
     const src = read(EXPENSE_PAYMENT_MODAL);
     const runtime = stripComments(src);
-    // Estado del canal.
     assert.match(
         runtime,
         /\bsetBoldQrPaid\b/,
@@ -308,7 +291,6 @@ test("ExpensePaymentModal mantiene estado dedicado `boldQrPaid` y pestaña `BOLD
         /\bboldQrPaid\b/,
         "El modal debe mantener la variable `boldQrPaid` como monto acumulado del canal.",
     );
-    // Pestaña del rail con id BOLD_QR, label 'Bold' y el logo oficial de Bold.
     assert.match(
         runtime,
         /id:\s*['"]BOLD_QR['"][\s\S]{0,160}label:\s*['"]Bold['"][\s\S]{0,60}logo:\s*['"]\/logos\/bold\.png['"]/,
@@ -328,8 +310,6 @@ test("ExpensePaymentModal totalAlreadyPaid incluye `boldQrPaid` para que el rest
 
 test("ExpensePaymentModal.processPayment envía `boldQr` en el objeto a onPay (ambas ramas)", () => {
     const src = read(EXPENSE_PAYMENT_MODAL);
-    // La función se llama en dos puntos (préstamo y pago normal). Ambos
-    // deben incluir el campo `boldQr`.
     const onPayCalls = [...src.matchAll(/onPay\(\s*\{[\s\S]*?\}\s*\)/g)];
     assert.ok(onPayCalls.length >= 2, "Deben existir al menos 2 llamadas a onPay (préstamo + pago normal).");
     for (const call of onPayCalls) {
@@ -341,60 +321,100 @@ test("ExpensePaymentModal.processPayment envía `boldQr` en el objeto a onPay (a
     }
 });
 
-test("ExpensePaymentModal.processPayment NO compone token mixto `BOLD_QR: $N`", () => {
+test("ExpensePaymentModal.processPayment compone el token mixto `BOLD_QR: $N` cuando hay Bold combinado", () => {
     const src = read(EXPENSE_PAYMENT_MODAL);
     const runtime = stripComments(src);
-    // Guardian de exclusividad: nunca debe haber `parts.push(\`BOLD_QR: $...\`)`
-    // en el string compuesto, porque el backend no desglosa Bold QR en
-    // egresos mixtos (sin columna `bold_qr_amount`). Bold QR siempre
-    // viaja solo en `paymentSourceString === 'BOLD_QR'`.
-    assert.doesNotMatch(
+    // Al ser combinable, el string compuesto debe incluir el token
+    // `BOLD_QR: $...` entre los demás (`NEQUI: $...`, `CAJA: $...`, etc.).
+    assert.match(
         runtime,
-        /parts\.push\(`BOLD_QR:/,
-        "El string del paymentSource NO debe incluir el token mixto `BOLD_QR: $...`.",
+        /parts\.push\(`BOLD_QR:\s*\$\$\{finalBoldQr\}`\)/,
+        "El string del paymentSource DEBE incluir el token mixto `BOLD_QR: $...` cuando hay monto Bold.",
     );
-    // Cuando el canal es exclusivo, `paymentSourceString` debe ser EXACTAMENTE 'BOLD_QR'
-    // para que el parser del backend lo reconozca sin partir el string.
+    // El fallback cuando sólo Bold QR tiene monto sigue siendo el canónico
+    // 'BOLD_QR' sin tokens, para que el agregador legacy lo cuente limpio.
     assert.match(
-        src,
-        /paymentSourceString:\s*['"]BOLD_QR['"]/,
-        "La rama Bold QR debe enviar `paymentSourceString: 'BOLD_QR'` canónico.",
+        runtime,
+        /finalPaymentSource\s*=\s*['"]BOLD_QR['"]/,
+        "Cuando BOLD_QR es el único canal con monto, paymentSourceString debe ser 'BOLD_QR' canónico.",
     );
 });
 
-test("ExpensePaymentModal: al seleccionar Bold QR se limpian los demás canales", () => {
+test("ExpensePaymentModal.processPayment suma `boldQrPaid` al cálculo del mixto", () => {
     const src = read(EXPENSE_PAYMENT_MODAL);
-    // La rama `tab.id === 'BOLD_QR'` del onClick debe limpiar cash,
-    // nequi, daviplata, fondo y coins. Buscamos la secuencia completa
-    // dentro de un bloque flexible para no romper si cambia el orden.
-    const match = src.match(/tab\.id\s*===\s*['"]BOLD_QR['"][\s\S]{0,800}?\}/);
-    assert.ok(match, "Debe existir una rama `tab.id === 'BOLD_QR'` en el onClick de pestaña.");
-    const block = match[0];
-    for (const setter of ["setCashPaid(0)", "setNequiPaid(0)", "setDaviplataPaid(0)", "setFondoPaid(0)", "setCoinsPaid(0)"]) {
-        assert.ok(
-            block.includes(setter),
-            `La rama Bold QR debe llamar ${setter} (exclusividad del canal).`,
-        );
-    }
-});
-
-test("ExpensePaymentModal: al abandonar Bold QR se limpia `boldQrPaid`", () => {
-    const src = read(EXPENSE_PAYMENT_MODAL);
-    // La rama `else` del onClick (ni loan ni BOLD_QR) debe limpiar
-    // `boldQrPaid` para evitar enviar un mixto que el backend no sabe
-    // desglosar.
+    const runtime = stripComments(src);
+    // La variable finalBoldQr debe inicializarse con lo acumulado (no en 0)
+    // para que combine con los demás canales.
     assert.match(
-        src,
-        /else\s*\{[\s\S]{0,400}setBoldQrPaid\(0\)/,
-        "La rama por defecto del onClick debe llamar `setBoldQrPaid(0)` cuando se abandona Bold QR.",
+        runtime,
+        /let\s+finalBoldQr\s*=\s*boldQrPaid/,
+        "finalBoldQr debe inicializarse con el acumulado `boldQrPaid` (combinable).",
+    );
+    // La asignación del input digitado y del leftover debe contemplar la
+    // pestaña BOLD_QR, igual que el resto de canales.
+    assert.match(
+        runtime,
+        /activePaymentTab\s*===\s*['"]BOLD_QR['"][\s\S]{0,80}finalBoldQr\s*\+=\s*actualPay/,
+        "Si la pestaña activa es BOLD_QR y el usuario digitó un monto, debe sumarse a finalBoldQr.",
+    );
+    assert.match(
+        runtime,
+        /activePaymentTab\s*===\s*['"]BOLD_QR['"][\s\S]{0,120}finalBoldQr\s*\+=\s*leftover/,
+        "Si queda remanente con la pestaña BOLD_QR activa, debe asignarse a finalBoldQr.",
+    );
+    // El total allocated debe incluir boldQr.
+    assert.match(
+        runtime,
+        /totalAllocated\s*=\s*finalCash\s*\+\s*finalNequi\s*\+\s*finalDaviplata\s*\+\s*finalFondo\s*\+\s*finalCoins\s*\+\s*finalBoldQr/,
+        "totalAllocated debe sumar finalBoldQr al resto (combinable).",
     );
 });
 
-test("ExpensePaymentModal: muestra el aviso 'Bold se paga completo, no se combina'", () => {
+test("ExpensePaymentModal: al seleccionar Bold QR NO limpia los demás canales (combinable)", () => {
+    const src = read(EXPENSE_PAYMENT_MODAL);
+    // La rama del onClick de pestaña con tab.id === 'BOLD_QR' NO debe
+    // existir como bloque que limpia los otros canales. Buscamos el
+    // antipatrón específico que había antes: cuando entrabas a Bold QR
+    // se limpiaban todos los demás setters.
+    assert.doesNotMatch(
+        src,
+        /tab\.id\s*===\s*['"]BOLD_QR['"][\s\S]{0,400}setCashPaid\(0\)[\s\S]{0,200}setNequiPaid\(0\)/,
+        "La rama Bold QR NO debe limpiar los demás canales — Bold QR es combinable.",
+    );
+});
+
+test("ExpensePaymentModal: al abandonar Bold QR NO limpia `boldQrPaid` (combinable)", () => {
+    const src = read(EXPENSE_PAYMENT_MODAL);
+    // El antipatrón previo era: la rama por defecto del onClick llamaba
+    // `setBoldQrPaid(0)` justo después de `setSelectedLoanId(null)`
+    // cuando se abandonaba la pestaña Bold QR. Ahora Bold QR es
+    // combinable; el monto se preserva al cambiar de pestaña. El
+    // `setBoldQrPaid(0)` sigue existiendo en la inicialización del
+    // modal (`useEffect` al abrir sin montos iniciales), eso es sano.
+    assert.doesNotMatch(
+        src,
+        /setSelectedLoanId\(null\);\s*setBoldQrPaid\(0\)/,
+        "La rama por defecto del onClick NO debe llamar `setBoldQrPaid(0)` tras `setSelectedLoanId(null)` — se preserva el combinado.",
+    );
+});
+
+test("ExpensePaymentModal: NO muestra el aviso 'Bold se paga completo, no se combina'", () => {
     const src = read(EXPENSE_PAYMENT_MODAL);
     assert.ok(
-        src.includes("Bold se paga completo, no se combina"),
-        "El modal debe mostrar el aviso corto cuando la pestaña Bold está activa.",
+        !src.includes("Bold se paga completo, no se combina"),
+        "El aviso de exclusividad debe haberse eliminado — Bold ya es combinable.",
+    );
+});
+
+test("ExpensePaymentModal: el chip de Bold en el resumen sigue mostrando el logo /logos/bold.png", () => {
+    const src = read(EXPENSE_PAYMENT_MODAL);
+    // El chip del resumen cuando boldQrPaid > 0 muestra `<img src="/logos/bold.png"/>`
+    // dentro de un bloque condicional. Verificamos que el patrón sobreviva
+    // al refactor combinable.
+    assert.match(
+        src,
+        /boldQrPaid\s*>\s*0[\s\S]{0,400}\/logos\/bold\.png/,
+        "El chip de Bold en el resumen debe seguir usando el logo /logos/bold.png.",
     );
 });
 
@@ -405,13 +425,11 @@ test("ExpensePaymentModal: muestra el aviso 'Bold se paga completo, no se combin
 test("ExpenseFormModal propaga `data.boldQr` como `boldQrAmount` en el payload de onSave", () => {
     const src = read(EXPENSE_FORM_MODAL);
     const runtime = stripComments(src);
-    // La prop del modal multi-pago recibe el initial.
     assert.match(
         runtime,
         /initialBoldQr=\{Number\(localExpense\.boldQrAmount\)\s*\|\|\s*0\}/,
         "ExpenseFormModal debe inicializar `initialBoldQr` desde `localExpense.boldQrAmount`.",
     );
-    // El payload que viaja a onSave incluye `boldQrAmount: data.boldQr`.
     assert.match(
         runtime,
         /boldQrAmount:\s*data\.boldQr/,
@@ -447,33 +465,6 @@ test("PendingDebtsModal expone Bold QR como opción de abono", () => {
         "El array de métodos de abono debe exponer `{ id: 'BOLD_QR', label: 'Bold', ... }`.",
     );
 });
-
-// ---------------------------------------------------------------------------
-// R9. Sin referencias a migración desde el frontend
-// ---------------------------------------------------------------------------
-
-test("Ningún archivo tocado por este sprint referencia migración de esquema", () => {
-    // El sprint corre con la restricción explícita del dueño:
-    // "no aplicar migraciones". Los tests estáticos deben defender esa
-    // promesa: no debe aparecer la palabra `MIGRATION` o `migration`
-    // asociada a BOLD_QR en el bundle (los helpers de migraciones viven
-    // en el backend). Si alguien introduce lógica basada en el flag de
-    // una migración, este guardian salta y pide revisión.
-    for (const path of [
-        CASHFLOW_WIDGET,
-        DASHBOARD_KPIS,
-        DASHBOARD_CHARTS,
-        EXPENSE_PAYMENT_MODAL,
-        EXPENSE_FORM_MODAL,
-    ]) {
-        const runtime = stripComments(read(path));
-        assert.ok(
-            !/MIGRATION_|migrate\(\)|runMigration\(/.test(runtime),
-            `El archivo ${path} no debe depender de migraciones de esquema para exponer Bold QR.`,
-        );
-    }
-});
-
 
 test("R10 'Venta Real del Cierre' muestra Bold QR del turno", () => {
     const src = readFileSync(

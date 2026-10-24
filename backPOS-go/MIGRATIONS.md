@@ -122,3 +122,31 @@ Esta migración se aplica después de la 026 en la misma ventana operativa:
 5. Iniciar el servicio y verificar `/api/health`; probar `POST /api/pos/pagos-qr/iniciar` con sesión autenticada y validar que el snapshot queda persistido (consulta ad-hoc en la fila nueva).
 
 No se debe editar la 027 después de aplicada: cualquier corrección posterior debe ser una migración 028 consecutiva.
+
+
+## Bolsillo Bold QR en egresos (versión 028)
+
+`migrations/sql/028_expenses_bold_qr_amount.sql` agrega la columna física `expenses.bold_qr_amount DECIMAL(10,2) NOT NULL DEFAULT 0` para permitir egresos **mixtos** que combinan Bold QR / Bre-B con otros canales (p. ej. $200 000 BOLD_QR + $100 000 CAJA en el mismo pago), con cada parte descontándose de su propio bolsillo. Es **transaccional** y **puramente aditiva**: un `ALTER TABLE ADD COLUMN IF NOT EXISTS` metadata-only (DEFAULT constante en PostgreSQL 11+) y un `UPDATE` acotado por `UPPER(status)='PAID'` para trasladar los egresos BOLD_QR puros existentes a la columna nueva sin cambiar `amount`.
+
+Qué cambia:
+
+- Antes de la 028, el canal Bold QR vivía sólo en el texto `paymentSource` (ver `internal/core/domain/models/payment_source_boldqr.go`) y `validateAndNormalizeBoldQRExpense` rechazaba cualquier egreso que mezclara BOLD con otro bolsillo porque no existía dónde desglosarlo.
+- A partir de la 028 el canal se trata al mismo nivel que `cash_amount`, `nequi_amount`, `daviplata_amount`, `fondo_amount` y `coins_amount`. El handler y el agregador SQL pueden sumar `bold_qr_amount` directamente.
+- La vista materializada `mv_dashboard_stats_monthly` (migración 020) suma `amount + tax_amount`, no bolsillos individuales, así que su `total_expenses` NO cambia con esta migración. **No requiere `REFRESH MATERIALIZED VIEW`.**
+
+Reglas que la BD codifica:
+
+1. `bold_qr_amount` es `NOT NULL DEFAULT 0`: toda fila existente queda con el bolsillo en cero y el `ADD COLUMN` es metadata-only.
+2. El `UPDATE` sólo traslada dinero donde la fila cumple TODAS estas condiciones: `UPPER(status)='PAID'`, `deleted_at IS NULL`, `UPPER(COALESCE("paymentSource",''))='BOLD_QR'`, los cinco bolsillos físicos en cero (`COALESCE(..., 0) = 0`), `bold_qr_amount = 0` (idempotencia) y `amount > 0`.
+3. **`SETTLED` NO se backfillea.** `SETTLED` es el status del PADRE de una cadena de abonos (hijos `status='PAID'`). `expense_service.SettleExpense` escribe los bolsillos físicos en el HIJO abono, no en el padre; marcar `bold_qr_amount = amount` sobre padres duplicaría el dinero. Lo mismo aplica a `PENDING`: aún no hay movimiento que trasladar.
+4. **No se agrega `CHECK bold_qr_amount >= 0`.** Los otros cinco bolsillos no tienen `CHECK` a nivel BD (sólo `DEFAULT 0` desde AutoMigrate en la 002). Añadir una restricción asimétrica para una sola columna rompería la familia; si se decide blindar signos, debe ser una migración consecutiva que cubra los seis bolsillos a la vez.
+
+Esta migración se aplica en una ventana operativa como cualquier otra, respetando el flujo canónico:
+
+1. Respaldo verificable (`respaldar_base_datos.ps1`) con el API detenido.
+2. `migrate status` para confirmar que la 027 ya está `APLICADA` y la 028 figura `PENDIENTE`.
+3. `migrate up --confirm` dentro de `migrar_base_datos.ps1` con `-ConfirmMigrate` y `-ExpectedTarget` validados.
+4. `migrate status` final; la 028 debe pasar a `APLICADA`.
+5. Iniciar el servicio y verificar `/api/health`; probar `POST /api/expenses` con un pago mixto (`BOLD_QR + CAJA`) y confirmar que `cash_amount` y `bold_qr_amount` reciben las partes correctas, y que `GetGlobalPaidExpensesByMethod` reporta ambos canales por separado.
+
+No se debe editar la 028 después de aplicada: cualquier corrección posterior debe ser una migración 029 consecutiva.
