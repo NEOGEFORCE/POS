@@ -1,0 +1,7 @@
+# Archivos que se ejecutan o leen dentro de contenedores Linux: siempre LF.
+Dockerfile text eol=lf
+*.dockerfile text eol=lf
+.dockerignore text eol=lf
+docker-compose*.yml text eol=lf
+*.sh text eol=lf
+.env.example text eol=lf

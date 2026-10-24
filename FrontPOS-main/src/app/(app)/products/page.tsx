@@ -490,7 +490,7 @@ export default function ProductsPage() {
     const handleExportCSV = async () => {
         const token = Cookies.get('org-pos-token');
         try {
-            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL || '/api')}/products/export-csv`, {
+            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/products/export-csv`, {
                 headers: { 'Authorization': `Bearer ${token}` }
             });
             if (!response.ok) throw new Error("Fallo la exportacion");
@@ -515,7 +515,7 @@ export default function ProductsPage() {
         formData.append('file', file);
 
         try {
-            const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/products/import-csv`, {
+            const response = await fetch(`${(process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api')}/products/import-csv`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData

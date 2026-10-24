@@ -107,3 +107,8 @@ FrontPOS-main/docs/SPRINT_*_PENDIENTES.md
 **/full-test.txt
 __*_out.txt
 pago QR.jpeg
+
+
+# Plantillas de configuración sin secretos (sí se versionan)
+!.env.example
+!**/.env.example

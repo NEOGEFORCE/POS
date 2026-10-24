@@ -118,7 +118,7 @@ export default function ProfitabilityReportView({ initialFrom, initialTo }: Prof
 
     try {
       const response = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080/api/v1'}/dashboard/reports/export?type=profitability&format=PDF&from=${dateBounds.from}&to=${dateBounds.to}`,
+        `${process.env.NEXT_PUBLIC_API_URL && process.env.NEXT_PUBLIC_API_URL !== 'undefined' ? process.env.NEXT_PUBLIC_API_URL : '/api'}/dashboard/reports/export?type=profitability&format=PDF&from=${dateBounds.from}&to=${dateBounds.to}`,
         {
           headers: { Authorization: `Bearer ${token}` }
         }

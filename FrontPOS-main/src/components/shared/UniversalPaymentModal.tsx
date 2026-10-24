@@ -639,7 +639,17 @@ export default function UniversalPaymentModal({
 
       const totalPaid = finalCash + finalNequi + finalDaviplata + finalCredit;
       const effectiveCash = finalTendered > 0 ? finalTendered : finalCash;
-      const extraCashChange = Math.max(0, effectiveCash - finalCash);
+      // Vueltas: lo entregado en efectivo menos lo que el efectivo debía
+      // cubrir (total − digital − fiado). Antes se calculaba como
+      // `effectiveCash − finalCash`, pero al digitar el billete en el
+      // teclado (`currentDialogVal`) ambos valían lo mismo y el cambio
+      // salía siempre $0 en la pantalla de éxito y en la factura, aunque
+      // la tarjeta "Cambio (vueltas)" lo mostraba bien. En abonos se
+      // conserva la fórmula anterior.
+      const cashNeeded = Math.max(0, effectiveTotal - finalNequi - finalDaviplata - finalCredit);
+      const extraCashChange = isAbono
+        ? Math.max(0, effectiveCash - finalCash)
+        : Math.max(0, Math.max(effectiveCash, finalCash) - cashNeeded);
       const change = baseReturnRefund + extraCashChange;
 
     let mainTransferSource = "MIXTO";

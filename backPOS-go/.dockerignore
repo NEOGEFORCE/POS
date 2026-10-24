@@ -1,0 +1,92 @@
+# ============================================================================
+# .dockerignore — contexto mínimo para la imagen pos-backend
+# ============================================================================
+# Mantener fuera del contexto cualquier cosa que:
+#   1) contenga secretos o datos reales (archivos .env de cualquier shape),
+#   2) sea un artefacto binario local (no reproducible dentro de la imagen),
+#   3) sean reportes o respaldos ya generados en disco,
+#   4) sea basura temporal/scratch de desarrollo o despliegues previos.
+# Los tests Go NO se excluyen: la compilación de ./cmd/api y ./cmd/migrate
+# los ignora automáticamente, y mantenerlos permite correr `docker build` con
+# `go test` como paso previo si se desea.
+# ============================================================================
+
+# --- Secretos y configuración local ---
+.env
+.env.*
+*.env
+secrets/
+*.key
+*.pem
+
+# --- Binarios locales (producimos los nuestros en el builder) ---
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+server
+migrate
+
+# --- Export estático del frontend (lo sirve otro contenedor) ---
+out/
+
+# --- Artefactos de ejecución ---
+reportsd/
+backups/
+logs/
+*.log
+*.pdf
+
+# --- Despliegue y respaldo locales ---
+.deploy/
+.rollback/
+.predeploy-backups/
+.deploy-staging/
+.tmp/
+scratch/
+
+# --- Git y editor ---
+.git/
+.gitignore
+.gitattributes
+.vscode/
+.idea/
+*.swp
+*.bak
+*.orig
+
+# --- Node / frontend / docs no requeridos para construir el backend ---
+node_modules/
+dist/
+build/
+.cache/
+
+# --- Docker artefactos ---
+Dockerfile
+.dockerignore
+docker-compose*.yml
+docker-compose*.yaml
+
+# --- Pruebas manuales en raíz del repo ---
+*.go_tmp
+test_*.log
+test_*.txt
+*.html
+_frontend_stub/
+docker-compose.validate.yml
+
+# --- Marcadores legacy en la raíz de migrations/ (NO ejecutables) ---
+# El runner embebe exclusivamente migrations/sql/*.sql (//go:embed).
+# Los archivos "0NN_nombre.sql" en migrations/ raíz son marcadores
+# históricos; además, varios son OneDrive placeholders en entornos
+# con sincronización activa y rompen `docker build`.
+migrations/0*.sql
+migrations/*.sql
+!migrations/sql/
+!migrations/sql/*.sql
+
+# --- Script SQL legacy ---
+scripts/cleanup_data.sql

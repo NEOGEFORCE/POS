@@ -1571,6 +1571,9 @@ export function useNewSale() {
                 transferAmount: saleData.transferAmount,
                 creditAmount: saleData.creditAmount,
                 change: change,
+                // Cajero que registró la venta: sale en la factura en vez
+                // del genérico "OPERADOR".
+                employeeName: user?.name || user?.Name || user?.dni || undefined,
                 // `saleId` entero positivo cuando viene del 201 real del
                 // backend. En offline o edición queda `undefined`; nunca
                 // fabricamos uno. El consumidor (UniversalPaymentModal)

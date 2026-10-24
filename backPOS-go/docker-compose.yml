@@ -1,0 +1,177 @@
+# ============================================================================
+# POS Surtifamiliar — docker-compose
+# ----------------------------------------------------------------------------
+# Este compose vive en el repo pos-backend (contenido de backPOS-go/). En el
+# servidor se espera encontrar el frontend clonado como repo hermano:
+#
+#   /opt/pos/
+#     ├── pos-backend/     (contenido de backPOS-go/, este repo)
+#     │   ├── Dockerfile
+#     │   └── docker-compose.yml   <-- este archivo
+#     └── pos-frontend/    (contenido de FrontPOS-main/)
+#         └── Dockerfile
+#
+# Si se quiere apuntar el frontend a otra ruta, sobrescribir con la variable
+# FRONTEND_CONTEXT en el .env.
+#
+# El backend NO publica puertos al host (sólo red interna). El frontend
+# publica un único puerto HTTP (${HTTP_PORT:-80}) y hace reverse-proxy al
+# backend por `backend:3000` dentro de la red interna. La base PostgreSQL
+# NUNCA se publica.
+# ============================================================================
+
+name: pos
+
+services:
+  # --------------------------------------------------------------------------
+  # Base PostgreSQL
+  # --------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    container_name: pos-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD es obligatoria}
+      POSTGRES_DB: ${POSTGRES_DB:-sistemapos}
+      TZ: America/Bogota
+      PGTZ: America/Bogota
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - pos-net
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "${POSTGRES_USER:-pos}" -d "${POSTGRES_DB:-sistemapos}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    # No publicar 5432 al host en producción. Para operar la base, usar
+    # `docker compose exec db psql ...` o un túnel SSH temporal.
+    # ports:
+    #   - "127.0.0.1:5432:5432"
+
+  # --------------------------------------------------------------------------
+  # Backend Go (API)
+  # --------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pos-backend:latest
+    container_name: pos-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Overrides deterministas: dentro de la red interna el host de la BD
+      # es siempre el nombre del servicio. Las credenciales siguen viniendo
+      # del .env (DB_USER/DB_PASSWORD/DB_NAME), alineadas con POSTGRES_*.
+      DB_HOST: db
+      DB_PORT: "5432"
+      TZ: America/Bogota
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - backend-reportsd:/app/reportsd
+      - backend-backups:/app/backups
+      - backend-logs:/app/logs
+    networks:
+      - pos-net
+    # Sin ports: el frontend reenvía /api a backend:3000 por la red interna.
+    # Para pruebas o acceso directo desde el host, descomentar:
+    # ports:
+    #   - "127.0.0.1:3000:3000"
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - -fsS
+        - --max-time
+        - "4"
+        - http://127.0.0.1:3000/api/health
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # --------------------------------------------------------------------------
+  # Frontend Next.js (export estático + nginx)
+  # --------------------------------------------------------------------------
+  # El contexto apunta al repo hermano pos-frontend por defecto. El
+  # frontend expone nginx en el puerto 80 del contenedor y hace proxy_pass
+  # de /api/ hacia http://backend:3000/api/ dentro de la red interna.
+  frontend:
+    build:
+      context: ${FRONTEND_CONTEXT:-../pos-frontend}
+      dockerfile: Dockerfile
+    image: pos-frontend:latest
+    container_name: pos-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${HTTP_PORT:-80}:80"
+    networks:
+      - pos-net
+
+  # --------------------------------------------------------------------------
+  # Migrador (perfil "tools": NUNCA arranca con `docker compose up`)
+  # --------------------------------------------------------------------------
+  # Comparte imagen y variables con el backend. El comando por defecto es
+  # `migrate status` (sólo lectura). Para aplicar migraciones:
+  #
+  #   docker compose run --rm migrate /app/migrate up --confirm
+  #
+  # Flags reales de cmd/migrate (verificados):
+  #   - status                 → lista versiones del catálogo (lectura).
+  #   - up --confirm           → aplica pendientes; obligatorio --confirm.
+  #     up --confirm --timeout=30m   → sobrescribe el timeout por defecto.
+  #
+  # Siempre con respaldo verificado previo y el backend DETENIDO
+  # (`docker compose stop backend`) para evitar escrituras concurrentes.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pos-backend:latest
+    container_name: pos-migrate
+    profiles:
+      - tools
+    env_file:
+      - .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      TZ: America/Bogota
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - pos-net
+    command: ["/app/migrate", "status"]
+
+# ============================================================================
+# Volúmenes nombrados
+# ============================================================================
+volumes:
+  pgdata:
+    name: pos_pgdata
+  backend-reportsd:
+    name: pos_backend_reportsd
+  backend-backups:
+    name: pos_backend_backups
+  backend-logs:
+    name: pos_backend_logs
+
+# ============================================================================
+# Red interna
+# ============================================================================
+networks:
+  pos-net:
+    name: pos-net
+    driver: bridge
