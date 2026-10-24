@@ -1,22 +1,32 @@
 // =============================================================================
 // scale-bridge/index.js
 //
-// Puente WebSocket ↔ balanza serial + impresión térmica (ESC/POS / TSPL).
+// Puente WebSocket ↔ balanza serial + impresión térmica (ESC/POS / TSPL),
+// con MODO AGENTE opcional (relay-agent.js) para operar desde fuera del PC
+// de caja a través del servidor backend.
 //
 // Compatibilidad total con la versión anterior:
-//   - Mismo WS en localhost:9876, mismo auto-escaneo de puertos serie,
-//     mismos mensajes `type:'status'`, `type:'weight'`, `type:'pong'`.
+//   - Mismo WS local (default: puerto 9876), mismo auto-escaneo de puertos
+//     serie, mismos mensajes `type:'status'`, `type:'weight'`, `type:'pong'`.
 //   - Comandos entrantes `type:'ping'` y `type:'command'` con value
 //     `'read'|'refresh'` responden exactamente igual.
-//
-// Qué se agrega:
-//   - Validación de origen (localhost / IP privada) en handshake WS.
 //   - Mensajes `type:'printer.request'` con las acciones
-//     `print|printTestPage|kickDrawer`, respuesta `type:'printer.response'`
-//     con `requestId`, `ok`, `result?`, `error?`.
-//   - Transporte TCP RAW (node:net) y SYSTEM Windows (PowerShell versionado).
-//   - Ninguna dependencia nueva. Toda la lógica testeable vive en
-//     `printer-bridge.js`; los side-effects, en `print-transports.js`.
+//     `print|printTestPage|kickDrawer|listPrinters`, respuesta
+//     `type:'printer.response'` con `requestId`, `ok`, `result?`, `error?`.
+//
+// Qué cambia:
+//   - `SCALE_WS_HOST` (default `127.0.0.1`): el WS local ya NO abre todas
+//     las interfaces por defecto. Desde fuera se entra por el servidor
+//     backend vía el relay. Para volver al comportamiento anterior:
+//     `SCALE_WS_HOST=0.0.0.0`.
+//   - El handler de mensajes vive en una función pura (`handleIncomingMessage`)
+//     que recibe un `responder` abstracto (`{send(obj)}`). Un cliente local
+//     usa un responder que escribe en su WS; el relay-agent usa uno que
+//     envuelve la respuesta con `{relayId, payload}`.
+//   - Si están definidas las tres variables de entorno POS_SERVER_URL,
+//     POS_AGENT_TOKEN y POS_CAJA_ID, se crea un relay-agent saliente que
+//     reenvía al servidor backend los broadcasts (status/weight) y procesa
+//     requests enrutados `{relayId, payload}`.
 // =============================================================================
 
 const { SerialPort } = require('serialport');
@@ -29,35 +39,44 @@ const {
     handlePrinterRequest,
 } = require('./printer-bridge');
 const { sendTcp, sendSystemWindows, listSystemPrintersWindows } = require('./print-transports');
+const { createRelayAgent, readConfigFromEnv } = require('./relay-agent');
 
 // Configuración
 const PREFERRED_PORT = process.env.SCALE_PORT || 'COM1';
 const BAUD_RATE      = parseInt(process.env.SCALE_BAUD || '4800', 10);
 const WS_PORT        = parseInt(process.env.SCALE_WS_PORT || '9876', 10);
+// SCALE_WS_HOST: hostname en el que el WS local escucha. Por defecto el
+// bridge se restringe a `127.0.0.1` porque desde fuera se entra por el
+// servidor backend (relay). Para abrirlo a toda la LAN, exportar
+// `SCALE_WS_HOST=0.0.0.0`. Ver README-RELAY.md.
+const WS_HOST        = process.env.SCALE_WS_HOST || '127.0.0.1';
 const RECONNECT_MS   = 2000;
 const WEIGHT_DIFF_THRESHOLD = 0.003; // kg
 
 console.log('====================================================');
-console.log('⚖️  SCALE BRIDGE v2.1 (balanza + impresión térmica)');
+console.log('⚖️  SCALE BRIDGE v2.2 (balanza + impresión + relay)');
 console.log('====================================================');
-console.log(`Puerto preferido: ${PREFERRED_PORT} | Baud: ${BAUD_RATE} | WS: ${WS_PORT}`);
+console.log(`Puerto preferido: ${PREFERRED_PORT} | Baud: ${BAUD_RATE} | WS: ${WS_HOST}:${WS_PORT}`);
 console.log(`Printer bridge: TCP (9100 default) + Windows RAW spool (print-raw.ps1)`);
 console.log(`Printer discovery: listPrinters WS action (list-printers.ps1)`);
 
 // ---------------------------------------------------------------------------
-// Servidor WebSocket
+// Servidor WebSocket local
 // ---------------------------------------------------------------------------
 //
-// - `maxPayload` fuerza el límite duro del mensaje JSON entrante. Pasado
-//   ese tamaño, ws cierra la conexión con 1009; el frontend reintenta.
-// - `verifyClient` sincronico corta orígenes no locales. Mantener permisivo
-//   para apps embebidas (sin Origin) y LAN privada.
+// - `host` se restringe por defecto a loopback: cambios desde fuera entran
+//   por el servidor backend (modo relay). SCALE_WS_HOST=0.0.0.0 restaura
+//   el comportamiento anterior.
+// - `maxPayload` fuerza el límite duro del mensaje JSON entrante.
+// - `verifyClient` sincronico corta orígenes no locales si alguien decide
+//   abrir el WS a la LAN. Permisivo con apps embebidas (sin Origin).
 // ---------------------------------------------------------------------------
 let wss;
 try {
     wss = new WebSocket.Server(
         {
             port: WS_PORT,
+            host: WS_HOST,
             maxPayload: LIMITS.maxMessageBytes,
             verifyClient: (info) => {
                 const origin = info.origin || info.req.headers?.origin || '';
@@ -69,12 +88,15 @@ try {
             },
         },
         () => {
-            console.log(`✓ Servidor WebSocket escuchando en ws://localhost:${WS_PORT}`);
+            console.log(`✓ Servidor WebSocket escuchando en ws://${WS_HOST}:${WS_PORT}`);
             // Invariante singleton: sólo la instancia que logró reservar
             // WS_PORT puede abrir la báscula. Antes scanAndConnect() corría
             // al final del módulo incluso si otro bridge ya tenía 9876;
             // ese duplicado quedaba invisible pero retenía COM1.
             scanAndConnect();
+            // Modo agente: se arranca después de escuchar local, para que
+            // snapshot() devuelva estado coherente desde el primer mensaje.
+            startRelayAgentIfConfigured();
         },
     );
 } catch (e) {
@@ -86,15 +108,23 @@ let currentWeight = 0;
 let isConnected = false;
 let reconnectTimer = null;
 let isScanning = false;
+let relayAgent = null;
 
 function broadcast(data) {
-    if (!wss) return;
     const msg = JSON.stringify(data);
-    wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            try { client.send(msg); } catch (e) { /* cliente roto */ }
-        }
-    });
+    if (wss) {
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                try { client.send(msg); } catch (e) { /* cliente roto */ }
+            }
+        });
+    }
+    // Relay: todo lo que se hace broadcast local se publica al servidor,
+    // envuelto en {payload} para que éste lo reparta a los clientes de la
+    // caja. Si el agente no está conectado, es un no-op silencioso.
+    if (relayAgent) {
+        try { relayAgent.broadcast(data); } catch (_) { /* no romper el loop local */ }
+    }
 }
 
 /**
@@ -122,13 +152,17 @@ function makeResponseMessage(requestId, result) {
     return base;
 }
 
-async function processPrinterMessage(ws, raw) {
+/**
+ * Procesa un `printer.request` ya parseado, respondiendo por el `responder`
+ * abstracto (puede ser el WS local o el canal relay con envoltorio).
+ */
+async function processPrinterMessage(responder, raw) {
     const validation = validatePrinterRequest(raw);
     if (!validation.ok) {
         const requestId = typeof raw?.requestId === 'string' || typeof raw?.requestId === 'number'
             ? String(raw.requestId).slice(0, 80)
             : '';
-        safeSend(ws, {
+        responder.send({
             type: 'printer.response',
             requestId,
             ok: false,
@@ -144,7 +178,7 @@ async function processPrinterMessage(ws, raw) {
             sendSystem: sendSystemWindows,
             listSystemPrinters: listSystemPrintersWindows,
         });
-        safeSend(ws, makeResponseMessage(requestId, result));
+        responder.send(makeResponseMessage(requestId, result));
         const kind = result?.result?.kind || action;
         if (result?.ok) {
             console.log(`✓ printer.${action} [${requestId}] via ${result.result?.transport || '?'} (${result.result?.bytes ?? '?'} B) ${kind}`);
@@ -153,7 +187,7 @@ async function processPrinterMessage(ws, raw) {
         }
     } catch (err) {
         console.error(`✗ printer.${action} [${requestId}] excepción:`, err?.stack || err);
-        safeSend(ws, {
+        responder.send({
             type: 'printer.response',
             requestId,
             ok: false,
@@ -161,6 +195,44 @@ async function processPrinterMessage(ws, raw) {
             errorCode: 'INVALID_REQUEST',
         });
     }
+}
+
+/**
+ * Despacha un mensaje ya parseado del protocolo local del bridge.
+ * El `responder` abstrae de dónde viene el mensaje: cliente local o relay.
+ * - Local: `send(obj)` escribe en el WS del cliente.
+ * - Relay: `send(obj)` envía `{relayId, payload: obj}` al servidor backend,
+ *   que a su vez lo entrega al cliente correcto.
+ *
+ * El protocolo visto desde el payload es IDÉNTICO en ambos casos: esto es
+ * lo que hace que el frontend reutilice su cliente sin cambios.
+ */
+function handleIncomingMessage(data, responder) {
+    if (!data || typeof data !== 'object') return;
+
+    // === Protocolo balanza =====================================
+    if (data.type === 'ping') {
+        responder.send({ type: 'pong' });
+        return;
+    }
+    if (data.type === 'command' && (data.value === 'read' || data.value === 'refresh')) {
+        responder.send({
+            type: 'weight',
+            value: currentWeight,
+            display: currentWeight.toFixed(3),
+        });
+        return;
+    }
+
+    // === Protocolo impresión ===================================
+    if (data.type === 'printer.request') {
+        // Fire-and-forget: la promesa interna responde al cliente.
+        processPrinterMessage(responder, data).catch((err) => {
+            console.error('✗ printer.request error no capturado:', err);
+        });
+        return;
+    }
+    // Mensajes desconocidos → ignorar (compat con clientes viejos).
 }
 
 function safeSend(ws, obj) {
@@ -184,6 +256,8 @@ if (wss) {
             display: currentWeight.toFixed(3),
         }));
 
+        const localResponder = { send: (obj) => safeSend(ws, obj) };
+
         ws.on('message', (message) => {
             // Guardia extra: ws ya recorta por maxPayload, pero esto evita
             // JSON.parse sobre buffers enormes si cambiara la config.
@@ -204,30 +278,7 @@ if (wss) {
                 // Mensaje no-JSON: lo ignoramos silenciosamente igual que antes.
                 return;
             }
-
-            // === Protocolo existente — balanza =====================================
-            if (data.type === 'ping') {
-                safeSend(ws, { type: 'pong' });
-                return;
-            }
-            if (data.type === 'command' && (data.value === 'read' || data.value === 'refresh')) {
-                safeSend(ws, {
-                    type: 'weight',
-                    value: currentWeight,
-                    display: currentWeight.toFixed(3),
-                });
-                return;
-            }
-
-            // === Protocolo nuevo — impresión =======================================
-            if (data.type === 'printer.request') {
-                // Fire-and-forget: la promesa interna responde al cliente.
-                processPrinterMessage(ws, data).catch((err) => {
-                    console.error('✗ printer.request error no capturado:', err);
-                });
-                return;
-            }
-            // Mensajes desconocidos → ignorar (compat con clientes viejos).
+            handleIncomingMessage(data, localResponder);
         });
 
         ws.on('close', () => {
@@ -249,6 +300,47 @@ if (wss) {
             process.exit(1);
         }
     });
+}
+
+// ---------------------------------------------------------------------------
+// Modo AGENTE (relay saliente). Opcional: sólo si están las 3 env vars.
+// ---------------------------------------------------------------------------
+
+function buildSnapshot() {
+    return [
+        {
+            type: 'status',
+            connected: isConnected,
+            port: activePort ? activePort.path : '',
+        },
+        {
+            type: 'weight',
+            value: currentWeight,
+            display: currentWeight.toFixed(3),
+        },
+    ];
+}
+
+function startRelayAgentIfConfigured() {
+    const cfg = readConfigFromEnv();
+    if (!cfg) {
+        console.log('↷ Modo agente desactivado (faltan POS_SERVER_URL / POS_AGENT_TOKEN / POS_CAJA_ID)');
+        return;
+    }
+    try {
+        relayAgent = createRelayAgent({
+            serverUrl: cfg.serverUrl,
+            token: cfg.token,
+            cajaId: cfg.cajaId,
+            handleMessage: handleIncomingMessage,
+            snapshot: buildSnapshot,
+        });
+        relayAgent.start();
+        console.log(`↗ Modo agente activo → ${cfg.serverUrl} (caja_id=${cfg.cajaId})`);
+    } catch (err) {
+        console.error('❌ Error iniciando relay-agent:', err?.message || err);
+        relayAgent = null;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -418,12 +510,14 @@ setInterval(() => {
 }, 2000);
 
 process.on('SIGINT', () => {
+    if (relayAgent) { try { relayAgent.stop(); } catch (_) {} }
     if (activePort && activePort.isOpen) activePort.close();
     if (wss) wss.close();
     process.exit(0);
 });
 
 process.on('SIGTERM', () => {
+    if (relayAgent) { try { relayAgent.stop(); } catch (_) {} }
     if (activePort && activePort.isOpen) activePort.close();
     if (wss) wss.close();
     process.exit(0);

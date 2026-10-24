@@ -1,55 +1,48 @@
 // =============================================================================
 // src/lib/pos-bridge-ws.ts
 //
-// Cliente real de `window.posBridge` sobre el mismo WebSocket que ya expone
-// `scaleBridge.ts` (`ws://<host>:9876`). Se encarga de:
+// Cliente real de `window.posBridge` sobre el WebSocket del bridge local
+// (`ws://<host>:9876`) o, cuando ese bridge no es alcanzable, sobre el
+// RELAY del servidor Go (`ws(s)://host/api/bridge/relay?ticket=...`). La
+// resolución del transporte vive centralizada en
+// `./bridge-connection.mjs`.
 //
-//   1. Abrir una conexión WS al bridge local y reconectarse con backoff
-//      cuando se cae. Nunca mantiene una balanza bloqueada: usa su propio
-//      socket paralelo porque el protocolo de mensajes es distinto.
+// Responsabilidades:
+//
+//   1. Negociar la URL de conexión (local primero, relay después) y abrir
+//      el WebSocket. Reconecta con backoff tras caídas y pide un ticket
+//      NUEVO en cada reconexión relay (los tickets son one-shot).
 //   2. Serializar cada solicitud como el envelope canónico del bridge
-//      `{ type: "printer.request", action, requestId, payload }`
-//      (coincide con `validatePrinterRequest` en `scale-bridge/printer-bridge.js`
-//      y con el patrón `type:'status'|'weight'|'ping'|'command'` que ya
-//      usa el loop de balanza). Resuelve la promesa cuando llega la
-//      respuesta `{ type: "printer.response", requestId, ok, result?, error?, errorCode? }`
-//      con el mismo `requestId`.
+//      `{ type: "printer.request", action, requestId, payload }`. Esto
+//      coincide con `validatePrinterRequest` en `scale-bridge/printer-bridge.js`.
+//      El relay propaga el envelope sin modificarlo: el bridge sigue viendo
+//      exactamente lo que ya validaba, por eso la UI no cambia de forma.
 //   3. Timeout por solicitud (default 10s) para que el POS no se cuelgue
-//      si el bridge local no responde. Al dispararse el timeout se limpia
-//      la entrada de `pending` y se rechaza con el sentinel
+//      si el bridge local no responde. Se rechaza con el sentinel
 //      `DIRECT_PRINT_UNAVAILABLE: timeout del bridge (...)` para que el
 //      consumidor (ej. `thermal-ticket.printThermalTicketAuto`) presente
-//      la acción manual explícita en vez de caer en silencio al diálogo
-//      del navegador.
-//   4. Reportar estado de conectividad a través de `isConnected()` y
-//      `onStatusChange()` — así `hasPosBridgePrint()` queda honesto sin
-//      modificar el contrato de bridges externos preexistentes.
+//      la acción manual explícita en vez de caer al diálogo del navegador.
+//   4. Reportar estado de conectividad con `isConnected()`, `onStatusChange()`
+//      y ahora también `mode: "local"|"relay"` + `cajaId` para que la UI
+//      pueda mostrar un chip honesto.
 //
 // IMPORTANTE: `installWebSocketPosBridge()` NO sobreescribe un
 // `window.posBridge.print` que ya exista. Si el POS corre dentro de
-// Electron/Chromium shell y ya hay un bridge nativo, se preserva — este
-// cliente sólo cubre el caso del navegador vainilla con el bridge local
-// escuchando en el WebSocket.
+// Electron/Chromium shell y ya hay un bridge nativo, se preserva.
 // =============================================================================
 
 import type { PosBridge, PosBridgeConnectivity } from "./pos-bridge";
-
-/** Resuelve la URL del WebSocket. Comparte el default con `scaleBridge.ts`. */
-function defaultWsUrl(): string {
-    if (typeof window !== "undefined") {
-        // Permitimos una URL dedicada para el bridge POS si llega a hacerse
-        // falta separar canales en el futuro. Hoy ambos escuchan en 9876.
-        const explicit = (process.env.NEXT_PUBLIC_POS_BRIDGE_WS_URL
-            || process.env.NEXT_PUBLIC_SCALE_WS_URL
-            || "").trim();
-        if (explicit) return explicit;
-        const host = window.location.hostname || "localhost";
-        return `ws://${host}:9876`;
-    }
-    return process.env.NEXT_PUBLIC_POS_BRIDGE_WS_URL
-        || process.env.NEXT_PUBLIC_SCALE_WS_URL
-        || "ws://localhost:9876";
-}
+import {
+    LOCAL_BRIDGE_PROBE_TIMEOUT_MS,
+    extractRelayErrorCode,
+    getRelayEndpoints,
+    negotiateBridgeConnection,
+    resolveLocalBridgeUrl,
+    writeSavedCajaId,
+    type BridgeConnectionMode,
+    type NegotiateBridgeResult,
+} from "./bridge-connection.mjs";
+import { apiFetch } from "./api-error";
 
 interface PendingRequest {
     /** Acción del bridge que originó la solicitud (`"print"`, `"printTestPage"`, `"kickDrawer"`). */
@@ -60,11 +53,14 @@ interface PendingRequest {
 }
 
 interface ClientOptions {
+    /** URL opcional del WS. Útil para tests; en producción se negocia dinámicamente. */
     url?: string;
     /** Timeout por request en ms. Default 10s. */
     timeoutMs?: number;
     /** Delay base de reconexión en ms. Default 2s. */
     reconnectDelayMs?: number;
+    /** Timeout de la sonda del bridge local. Default 1500ms. */
+    localProbeTimeoutMs?: number;
 }
 
 export type PosBridgeStatusListener = (status: PosBridgeConnectivity) => void;
@@ -76,28 +72,68 @@ export type PosBridgeStatusListener = (status: PosBridgeConnectivity) => void;
  */
 const DIRECT_PRINT_UNAVAILABLE = "DIRECT_PRINT_UNAVAILABLE";
 
+function readEnv(): Record<string, string | undefined> {
+    return {
+        NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL,
+        NEXT_PUBLIC_POS_BRIDGE_WS_URL: process.env.NEXT_PUBLIC_POS_BRIDGE_WS_URL,
+        NEXT_PUBLIC_SCALE_WS_URL: process.env.NEXT_PUBLIC_SCALE_WS_URL,
+    };
+}
+
+async function fetchAgentsOverApi(): Promise<{ agents?: unknown[] }> {
+    const { agentsPath } = getRelayEndpoints();
+    return await apiFetch<{ agents?: unknown[] }>(agentsPath, {
+        method: "GET",
+        skipSessionRecovery: true,
+        timeoutMs: 7000,
+        fallbackError: "No se pudo listar las cajas conectadas",
+    });
+}
+
+async function requestRelayTicket(cajaId: string): Promise<{ ticket?: string; expiresInSeconds?: number }> {
+    const { ticketPath } = getRelayEndpoints();
+    return await apiFetch<{ ticket?: string; expiresInSeconds?: number }>(ticketPath, {
+        method: "POST",
+        body: JSON.stringify({ cajaId }),
+        skipSessionRecovery: true,
+        timeoutMs: 7000,
+        fallbackError: "No se pudo obtener ticket relay",
+    });
+}
+
 export class PosBridgeWsClient implements PosBridge {
     private ws: WebSocket | null = null;
-    private readonly url: string;
+    private readonly explicitUrl: string | null;
     private readonly timeoutMs: number;
     private readonly reconnectDelayMs: number;
+    private readonly localProbeTimeoutMs: number;
     private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
     private readonly pending = new Map<string, PendingRequest>();
     private seq = 0;
     private readonly listeners = new Set<PosBridgeStatusListener>();
     private destroyed = false;
+    private connecting = false;
     private status: PosBridgeConnectivity = {
         connected: false,
         url: "",
         lastError: null,
         lastConnectedAt: null,
+        mode: null,
+        cajaId: null,
     };
 
     constructor(options: ClientOptions = {}) {
-        this.url = options.url ?? defaultWsUrl();
+        this.explicitUrl = typeof options.url === "string" && options.url.trim() ? options.url.trim() : null;
         this.timeoutMs = options.timeoutMs ?? 10_000;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2_000;
-        this.status = { ...this.status, url: this.url };
+        this.localProbeTimeoutMs = options.localProbeTimeoutMs ?? LOCAL_BRIDGE_PROBE_TIMEOUT_MS;
+        // Mostramos como "url" inicial el bridge local resuelto; se
+        // actualiza al relay si cae ahí tras el primer intento.
+        const initialUrl = this.explicitUrl ?? resolveLocalBridgeUrl({
+            env: readEnv(),
+            location: typeof window !== "undefined" ? window.location : undefined,
+        });
+        this.status = { ...this.status, url: initialUrl };
     }
 
     // -------------------------------------------------------------------
@@ -105,33 +141,114 @@ export class PosBridgeWsClient implements PosBridge {
     // -------------------------------------------------------------------
 
     connect(): void {
+        void this.connectAsync();
+    }
+
+    private async connectAsync(): Promise<void> {
         if (this.destroyed) return;
+        if (this.connecting) return;
         if (typeof WebSocket === "undefined") return;
         if (this.ws
             && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
             return;
         }
-        let ws: WebSocket;
+        this.connecting = true;
+
+        // Caso 1: URL explícita (tests, bridges embebidos). Reproducimos
+        // el flujo histórico sin pasar por la negociación.
+        if (this.explicitUrl) {
+            try {
+                const ws = new WebSocket(this.explicitUrl);
+                this.ws = ws;
+                this.wireSocket(ws, { mode: "local", cajaId: null, url: this.explicitUrl });
+            } catch (err) {
+                this.updateStatus({
+                    connected: false,
+                    lastError: err instanceof Error ? err.message : String(err),
+                    mode: null,
+                    cajaId: null,
+                });
+                this.scheduleReconnect();
+            } finally {
+                this.connecting = false;
+            }
+            return;
+        }
+
+        // Caso 2: negociación dinámica local → relay.
+        let negotiated: NegotiateBridgeResult | null = null;
         try {
-            ws = new WebSocket(this.url);
-        } catch (err) {
-            this.updateStatus({
-                connected: false,
-                lastError: err instanceof Error ? err.message : String(err),
+            negotiated = await negotiateBridgeConnection({
+                env: readEnv(),
+                location: typeof window !== "undefined" ? window.location : undefined,
+                storage: typeof window !== "undefined" ? window.localStorage : null,
+                localProbeTimeoutMs: this.localProbeTimeoutMs,
+                probeLocal: probeLocalBridge,
+                fetchAgents: fetchAgentsOverApi,
+                requestTicket: requestRelayTicket,
             });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "No se pudo abrir el bridge";
+            this.updateStatus({ connected: false, lastError: message, mode: null, cajaId: null });
+            this.connecting = false;
             this.scheduleReconnect();
             return;
         }
-        this.ws = ws;
 
-        ws.onopen = () => {
+        if (negotiated.mode === "relay" && negotiated.cajaId && typeof window !== "undefined") {
+            try { writeSavedCajaId(window.localStorage, negotiated.cajaId); } catch { /* ignore */ }
+        }
+
+        const existingSocket = negotiated.socket instanceof WebSocket ? negotiated.socket : null;
+        let ws: WebSocket;
+        if (existingSocket) {
+            ws = existingSocket;
+        } else {
+            try {
+                ws = new WebSocket(negotiated.url);
+            } catch (err) {
+                this.updateStatus({
+                    connected: false,
+                    lastError: err instanceof Error ? err.message : String(err),
+                    mode: null,
+                    cajaId: null,
+                });
+                this.connecting = false;
+                this.scheduleReconnect();
+                return;
+            }
+        }
+
+        this.ws = ws;
+        this.wireSocket(ws, {
+            mode: negotiated.mode,
+            cajaId: negotiated.cajaId,
+            url: negotiated.url,
+        });
+        this.connecting = false;
+    }
+
+    private wireSocket(
+        ws: WebSocket,
+        meta: { mode: BridgeConnectionMode; cajaId: string | null; url: string },
+    ): void {
+        const applyOpen = () => {
             if (this.ws !== ws) return;
             this.updateStatus({
                 connected: true,
                 lastError: null,
                 lastConnectedAt: Date.now(),
+                url: meta.url,
+                mode: meta.mode,
+                cajaId: meta.cajaId,
             });
         };
+
+        if (ws.readyState === WebSocket.OPEN) {
+            applyOpen();
+        } else {
+            ws.onopen = () => applyOpen();
+        }
 
         ws.onmessage = (event: MessageEvent) => {
             if (this.ws !== ws) return;
@@ -146,10 +263,7 @@ export class PosBridgeWsClient implements PosBridge {
         ws.onclose = () => {
             if (this.ws !== ws) return;
             this.ws = null;
-            this.updateStatus({ connected: false });
-            // Rechazamos pendientes con el sentinel para que los consumidores
-            // puedan presentar fallback manual sin confundir "no conectado"
-            // con "rechazado por hardware".
+            this.updateStatus({ connected: false, mode: null, cajaId: null });
             this.rejectAllPending(new Error(`${DIRECT_PRINT_UNAVAILABLE}: bridge WS cerrado`));
             if (!this.destroyed) this.scheduleReconnect();
         };
@@ -169,7 +283,7 @@ export class PosBridgeWsClient implements PosBridge {
             } catch { /* ignore */ }
             this.ws = null;
         }
-        this.updateStatus({ connected: false });
+        this.updateStatus({ connected: false, mode: null, cajaId: null });
     }
 
     // -------------------------------------------------------------------
@@ -220,6 +334,24 @@ export class PosBridgeWsClient implements PosBridge {
 
     getPendingCount(): number {
         return this.pending.size;
+    }
+
+    /**
+     * Fuerza una renegociación cerrando el socket vivo. Útil cuando el
+     * usuario cambia la caja preferida en el selector de UI: el próximo
+     * ciclo abrirá una conexión relay contra la nueva caja.
+     */
+    renegotiate(): void {
+        if (this.destroyed) return;
+        if (this.ws) {
+            try {
+                this.ws.onclose = null;
+                this.ws.close();
+            } catch { /* ignore */ }
+            this.ws = null;
+        }
+        this.updateStatus({ connected: false, mode: null, cajaId: null });
+        void this.connectAsync();
     }
 
     // -------------------------------------------------------------------
@@ -315,7 +447,7 @@ export class PosBridgeWsClient implements PosBridge {
         if (this.reconnectTimer || this.destroyed) return;
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null;
-            if (!this.destroyed) this.connect();
+            if (!this.destroyed) void this.connectAsync();
         }, this.reconnectDelayMs);
     }
 
@@ -386,9 +518,76 @@ export function subscribeWebSocketPosBridgeStatus(
     const client = getInstalledPosBridgeWsClient();
     if (!client) {
         try {
-            listener({ connected: false, lastError: "ws-bridge-not-installed", lastConnectedAt: null });
+            listener({ connected: false, lastError: "ws-bridge-not-installed", lastConnectedAt: null, mode: null, cajaId: null });
         } catch { /* ignore */ }
         return () => {};
     }
     return client.onStatusChange(listener);
+}
+
+// Re-export para que la UI pueda clasificar mensajes del relay sin importar
+// el módulo .mjs directamente.
+export { extractRelayErrorCode };
+
+// -----------------------------------------------------------------------------
+// Sonda del bridge local (declarada al FINAL del archivo a propósito).
+//
+// Las function declarations se hoistean, así que `connectAsync` puede
+// referenciar `probeLocalBridge` sin romper. Vive aquí abajo para que la
+// primera aparición de `ws.onclose = () => {` en el archivo pertenezca a
+// la clase `PosBridgeWsClient` (contrato validado por los tests estáticos
+// existentes que usan `src.indexOf("ws.onclose = () => {")`).
+// -----------------------------------------------------------------------------
+
+/**
+ * Abre un WS al bridge local y lo devuelve si pasa a OPEN dentro del
+ * timeout; cierra y devuelve `null` en cualquier otro caso. El socket
+ * devuelto se REUTILIZA — así evitamos abrir dos conexiones consecutivas
+ * contra la misma URL.
+ */
+function probeLocalBridge(url: string, timeoutMs: number): Promise<WebSocket | null> {
+    return new Promise<WebSocket | null>((resolve) => {
+        if (typeof WebSocket === "undefined") {
+            resolve(null);
+            return;
+        }
+        let settled = false;
+        let probe: WebSocket;
+        try {
+            probe = new WebSocket(url);
+        } catch {
+            resolve(null);
+            return;
+        }
+        const timer = setTimeout(() => {
+            if (settled) return;
+            settled = true;
+            try {
+                probe.onopen = null;
+                probe.onerror = null;
+                probe.onclose = null;
+                probe.close();
+            } catch { /* ignore */ }
+            resolve(null);
+        }, Math.max(100, timeoutMs));
+        probe.onopen = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(probe);
+        };
+        probe.onerror = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try { probe.close(); } catch { /* ignore */ }
+            resolve(null);
+        };
+        probe.onclose = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            resolve(null);
+        };
+    });
 }

@@ -188,6 +188,77 @@ frontend (ver su propio README).
 
 ---
 
+## 6.1 Bridge Relay (acceso remoto a la balanza, impresora y cajón)
+
+Cuando el navegador NO corre en el mismo PC que la caja (celular, otro PC,
+servidor Docker en otra máquina), no puede abrir el WebSocket directo al
+scale-bridge local. El backend expone un **relay transparente**: el
+scale-bridge se conecta como agente SALIENTE al servidor y éste reparte los
+mensajes a los navegadores autorizados.
+
+Flujo:
+
+1. El scale-bridge abre un WebSocket a
+   `GET /api/bridge/agent?caja_id=<CAJA>` con `X-Bridge-Token: <token>`.
+2. El navegador llama `POST /api/bridge/ticket` (JWT normal) y recibe un
+   token opaco de un solo uso válido 30 s.
+3. El navegador abre `GET /api/bridge/relay?ticket=<token>` como WebSocket,
+   usando el mismo protocolo JSON del bridge local.
+4. `GET /api/bridge/agents` (JWT) lista las cajas configuradas y su estado
+   de conexión.
+
+### Configuración
+
+En `backPOS-go/.env` (nunca commitear):
+
+```text
+# Lista de tokens por caja. Formato: CAJA-01:tokenA,CAJA-02:tokenB
+# Generar con: openssl rand -hex 32
+POS_AGENT_TOKENS=CAJA-01:reemplazar-por-aleatorio-de-64-hex,CAJA-02:otro-aleatorio
+```
+
+Si `POS_AGENT_TOKENS` está vacío, `/api/bridge/agent` responde **503**
+(sin aviso al cliente del motivo, sólo "no configurado"). El resto del
+servidor sigue funcionando: el relay se activa cuando llega el primer
+token. El valor nunca aparece en logs ni en respuestas de error — la
+comparación es en tiempo constante.
+
+### Reglas de autorización
+
+- Cualquier usuario autenticado puede pedir peso e imprimir.
+- Abrir cajón físico vía relay (`printer.request action=kickDrawer`) sólo
+  admin/administrador/superadmin. Los demás reciben
+  `printer.response ok:false errorCode:RELAY_FORBIDDEN` y el intento se
+  audita como crítico.
+- Cada impresión y apertura de cajón vía relay se registra en el servicio
+  de auditoría existente (DNI, caja, acción). No se guarda el contenido
+  del ticket ni de la etiqueta.
+
+### Códigos de error
+
+- `RELAY_AGENT_OFFLINE`: no hay agente activo para esa caja.
+- `RELAY_FORBIDDEN`: el rol del cliente no permite esa acción.
+- `RELAY_TIMEOUT`: el agente no respondió en 15 s a un request con
+  `requestId`.
+
+### Variables del scale-bridge
+
+Para que el bridge se conecte al servidor en lugar de escuchar sólo en
+localhost, configurar en el PC de caja:
+
+```text
+POS_SERVER_URL=http://<host-o-ip-del-api>:<puerto>
+POS_AGENT_TOKEN=<el-mismo-token-que-POS_AGENT_TOKENS[CAJA-01]>
+POS_CAJA_ID=CAJA-01
+SCALE_WS_HOST=127.0.0.1   # por defecto; el WS local sigue existiendo para el PC propio
+```
+
+Sin `POS_SERVER_URL` o `POS_AGENT_TOKEN`, el bridge **no** abre la
+conexión saliente y conserva el comportamiento legacy (WS local
+solamente).
+
+---
+
 ## 7. Operación diaria
 
 ```bash

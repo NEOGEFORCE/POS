@@ -19,6 +19,7 @@ import (
 	"backPOS-go/internal/adapters/middlewares"
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/services"
+	"backPOS-go/internal/infrastructure/bridgerelay"
 	"backPOS-go/internal/infrastructure/sse"
 	"backPOS-go/migrations"
 
@@ -201,6 +202,43 @@ func main() {
 	// por el singleton global, para no filtrar eventos entre cajas.
 	posQrHandler := handlers.NewPosQrHandler(posQrService, posQrRepo, posQrHub)
 
+	// ================================================================
+	// Bridge Relay (balanza + impresión + cajón desde celulares/otros PC)
+	// ================================================================
+	// Lista de orígenes CORS compartida: la usa tanto el middleware
+	// CORS global como la validación de Origin de `/api/bridge/relay`.
+	// Mantener aquí la fuente única evita que una ruta WebSocket acepte
+	// orígenes que CORS rechaza (o viceversa).
+	allowedOrigins := map[string]bool{
+		"http://localhost:3000":    true,
+		"http://localhost:9002":    true,
+		"http://127.0.0.1:3000":    true,
+		"http://127.0.0.1:9002":    true,
+		"http://192.168.1.6:3000":  true,
+		"http://192.168.1.6:9002":  true,
+		"https://192.168.1.6:9002": true,
+		"http://192.168.1.21:3000": true,
+		"http://192.168.1.21:9002": true,
+	}
+
+	// El scale-bridge del PC de caja se conecta como agente SALIENTE a
+	// `/api/bridge/agent` con `X-Bridge-Token`. Los navegadores piden
+	// `/api/bridge/ticket` (JWT) y abren `/api/bridge/relay?ticket=...`
+	// con el mismo protocolo del bridge local. Sin `POS_AGENT_TOKENS`,
+	// `/agent` responde 503 y el resto del servidor queda intacto.
+	bridgeTokens := bridgerelay.ParseTokens(os.Getenv("POS_AGENT_TOKENS"))
+	bridgeOriginAllowed := func(origin string) bool {
+		if origin == "" {
+			return true
+		}
+		if allowedOrigins[origin] {
+			return true
+		}
+		return middlewares.IsPrivateOrigin(origin)
+	}
+	bridgeHub := bridgerelay.NewHub(handlers.MakeAuditSink(auditService))
+	bridgeRelayHandler := handlers.NewBridgeRelayHandler(bridgeHub, bridgeTokens, auditService, bridgeOriginAllowed)
+
 	// Initialize and Start Cron Jobs (orquestador durable sobre PostgreSQL)
 	cronManager := jobs.NewCronManager(repositories.DB, telegramService, inventoryService, supplierService, orderService, expectedOrderService, restockService, restockNightlyService)
 	orchestratorCtx, cancelOrchestratorBoot := context.WithTimeout(context.Background(), 30*time.Second)
@@ -230,7 +268,8 @@ func main() {
 	// /api/pos/pagos-qr/stream (hub dedicado por venta_temp_id).
 	r.Use(func(c *gin.Context) {
 		p := c.Request.URL.Path
-		if p == "/api/sse" || p == "/api/pos/pagos-qr/stream" || p == "/api/pos/pagos-qr/caja-stream" {
+		if p == "/api/sse" || p == "/api/pos/pagos-qr/stream" || p == "/api/pos/pagos-qr/caja-stream" ||
+			p == "/api/bridge/agent" || p == "/api/bridge/relay" {
 			c.Next()
 			return
 		}
@@ -254,18 +293,9 @@ func main() {
 	log.Printf("-----------------------------------------")
 
 	// CORS Middleware - Strict Origin Policy
-	// Only allow specific origins for security
-	allowedOrigins := map[string]bool{
-		"http://localhost:3000":    true,
-		"http://localhost:9002":    true,
-		"http://127.0.0.1:3000":    true,
-		"http://127.0.0.1:9002":    true,
-		"http://192.168.1.6:3000":  true,
-		"http://192.168.1.6:9002":  true,
-		"https://192.168.1.6:9002": true,
-		"http://192.168.1.21:3000": true,
-		"http://192.168.1.21:9002": true,
-	}
+	// Only allow specific origins for security. La lista `allowedOrigins`
+	// está declarada arriba (compartida con el bridge relay para que el
+	// WebSocket y las rutas HTTP acepten exactamente los mismos orígenes).
 
 	r.Use(func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
@@ -400,11 +430,37 @@ func main() {
 			webhooks.POST("/bold-notificacion", posQrHandler.WebhookBridge)
 		}
 
+		// ================================================================
+		// BRIDGE RELAY - rutas PÚBLICAS
+		// ================================================================
+		// /agent: autenticado con X-Bridge-Token contra POS_AGENT_TOKENS.
+		//         Si no hay configuración responde 503.
+		// /relay: autenticado con ticket opaco de un solo uso emitido por
+		//         /api/bridge/ticket (JWT). El token nunca viaja en query.
+		//         El propio ticket conserva la identidad del usuario.
+		api.GET("/bridge/agent", bridgeRelayHandler.AgentWS)
+		api.GET("/bridge/relay", bridgeRelayHandler.RelayWS)
+
 		// Protected Routes
 		protected := api.Group("/")
 		protected.Use(middlewares.AuthMiddleware())
 		protected.Use(middlewares.RateLimitMiddleware(100, 10)) // 100 tokens max, 10 tokens/sec refill
 		{
+			// ================================================================
+			// BRIDGE RELAY - rutas autenticadas
+			// ================================================================
+			// Rate limiter dedicado al endpoint que entrega tickets: 30
+			// tokens de ráfaga y 10/min aproximado. El uso humano es
+			// esporádico (un ticket por sesión del navegador); un ratio
+			// más alto permitiría un abuso cómodo contra Issue, que
+			// cuesta un rand.Read.
+			bridgeTickets := protected.Group("/bridge")
+			bridgeTickets.Use(middlewares.RateLimitMiddleware(30, 10.0/60.0))
+			{
+				bridgeTickets.POST("/ticket", bridgeRelayHandler.IssueTicket)
+			}
+			protected.GET("/bridge/agents", bridgeRelayHandler.ListAgents)
+
 			// Products Management (Empleados y Admin)
 			// Sólo altas y consultas. Toda edición, ajuste o borrado vive en
 			// productAdmin: el dueño decidió que modificar o eliminar datos es
@@ -936,6 +992,9 @@ func main() {
 	}
 	if err := cronManager.Stop(shutdownContext); err != nil {
 		log.Printf("⚠️ Cierre de tareas programadas incompleto: %v", err)
+	}
+	if err := bridgeHub.Shutdown(shutdownContext); err != nil {
+		log.Printf("⚠️ Cierre del bridge relay incompleto: %v", err)
 	}
 	telegramService.Stop()
 	if sqlDB, err := repositories.DB.DB(); err == nil {

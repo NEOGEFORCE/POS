@@ -17,6 +17,7 @@ import { SoundToggle } from "@/components/sound-toggle"
 import { BackButton } from "@/components/back-button"
 import { NotificationDot } from "@/components/ui/notification-dot"
 import { SidebarTrigger } from "@/components/ui/sidebar"
+import { BridgeStatus } from "@/components/BridgeStatus"
 import { isAdminUser } from "@/lib/auth-helpers.mjs"
 
 // La bandeja global de QR vive sólo en pantallas que NO sean /sales/new
@@ -111,6 +112,8 @@ export function AppHeader() {
           enabled={isGlobalQrTrayEnabled}
           canConfirmManual={isGlobalQrTrayEnabled}
         />
+
+        <BridgeStatus className="hidden md:inline-flex" />
 
         <SoundToggle />
         <ThemeToggle />

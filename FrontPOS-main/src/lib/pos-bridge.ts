@@ -49,6 +49,20 @@ export interface PosBridgeConnectivity {
     readonly lastError?: string | null;
     /** Timestamp (ms epoch) del último `connected=true`. */
     readonly lastConnectedAt?: number | null;
+    /**
+     * Modo activo del transporte: `"local"` cuando el navegador alcanza el
+     * bridge directamente (ws://localhost:9876) y `"relay"` cuando el POS
+     * atraviesa el servidor Go (ws(s)://host/api/bridge/relay). Opcional
+     * por retrocompatibilidad: los bridges nativos (Electron, Chromium
+     * shell) pueden omitirlo y se asume local.
+     */
+    readonly mode?: "local" | "relay" | null;
+    /**
+     * Caja del PC de caja a la que apunta el relay. Sólo relevante cuando
+     * `mode === "relay"`; en modo local es `null` porque el bridge y el
+     * navegador comparten máquina.
+     */
+    readonly cajaId?: string | null;
 }
 
 /**
