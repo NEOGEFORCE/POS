@@ -265,32 +265,10 @@ func (s *SaleService) CreateSale(sale *models.Sale) (err error) {
 	}
 
 	if sale.PaymentMethod == "" || strings.ToUpper(sale.PaymentMethod) == "MIXTO" {
-		methods := []string{}
-		if sale.CashAmount > 0 {
-			methods = append(methods, "EFECTIVO")
-		}
-		if sale.TransferNequi > 0 {
-			methods = append(methods, "NEQUI")
-		}
-		if sale.TransferDaviplata > 0 {
-			methods = append(methods, "DAVIPLATA")
-		}
-		if sale.TransferAmount > 0 && sale.TransferNequi == 0 && sale.TransferDaviplata == 0 {
-			source := strings.ToUpper(sale.TransferSource)
-			if source == "" {
-				source = "TRANSFERENCIA"
-			}
-			methods = append(methods, source)
-		}
-		if sale.CreditAmount > 0 {
-			methods = append(methods, "FIADO")
-		}
-
-		if len(methods) > 0 {
-			sale.PaymentMethod = strings.Join(methods, " + ")
-		} else {
-			sale.PaymentMethod = "EFECTIVO"
-		}
+		// Misma representación que UpdateSale/CorrectPaymentChannel. Incluye
+		// la parte genérica (p.ej. BOLD_QR) aunque también haya Nequi o
+		// Daviplata: un pago mixto QR + Nequi ya no pierde el canal QR.
+		sale.PaymentMethod = deriveSalePaymentMethod(sale)
 	}
 
 	if sale.CreditAmount > 0 {

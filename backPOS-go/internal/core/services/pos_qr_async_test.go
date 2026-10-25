@@ -371,7 +371,7 @@ func TestBuildSaleFromSnapshots_RechazaCartVacio(t *testing.T) {
 		CartSnapshot:   "",
 		SaleClientTxID: strings.Repeat("a", 24),
 	}
-	if _, err := buildSaleFromSnapshots(intent); err == nil {
+	if _, _, err := buildSaleFromSnapshots(intent); err == nil {
 		t.Fatal("se esperaba error con cart vacío")
 	}
 }
@@ -384,7 +384,7 @@ func TestBuildSaleFromSnapshots_RechazaSaleClientTxIDVacio(t *testing.T) {
 		CartSnapshot:   `[{"barcode":"A","quantity":1,"unitPrice":1000,"subtotal":1000}]`,
 		SaleClientTxID: "",
 	}
-	if _, err := buildSaleFromSnapshots(intent); err == nil {
+	if _, _, err := buildSaleFromSnapshots(intent); err == nil {
 		t.Fatal("se esperaba error con clientTxId vacío")
 	}
 }
@@ -410,9 +410,12 @@ func TestBuildSaleFromSnapshots_HappyPath(t *testing.T) {
 		SaleClientTxID: "qr-tx-12345678",
 		CreatedByDNI:   "EMP-123",
 	}
-	sale, err := buildSaleFromSnapshots(intent)
+	sale, editSaleID, err := buildSaleFromSnapshots(intent)
 	if err != nil {
 		t.Fatalf("buildSaleFromSnapshots: %v", err)
+	}
+	if editSaleID != 0 {
+		t.Errorf("sin editSaleId en totals, editTargetSaleID debe ser 0, got %d", editSaleID)
 	}
 	if sale.ClientTxId != "qr-tx-12345678" {
 		t.Errorf("ClientTxId esperado=qr-tx-12345678, got %s", sale.ClientTxId)
@@ -445,9 +448,12 @@ func TestBuildSaleFromSnapshots_FallbackClienteYMetodo(t *testing.T) {
 		SaleClientTxID: "tx-fallback-123",
 		CreatedByDNI:   "EMP-9",
 	}
-	sale, err := buildSaleFromSnapshots(intent)
+	sale, editSaleID, err := buildSaleFromSnapshots(intent)
 	if err != nil {
 		t.Fatalf("buildSaleFromSnapshots: %v", err)
+	}
+	if editSaleID != 0 {
+		t.Errorf("fallback sin editSaleId, editTargetSaleID debe ser 0, got %d", editSaleID)
 	}
 	if sale.ClientDNI != "0000" {
 		t.Errorf("sin client_snapshot debe caer a 0000, got %s", sale.ClientDNI)

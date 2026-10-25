@@ -10,10 +10,13 @@
 //     por caja): lista los QR pendientes de TODAS las cajas.
 //   - Suscribe SSE /api/pos/pagos-qr/caja-stream?scope=all con el mismo
 //     contrato de frames (ver `classifyTrayEvent`).
-//   - NO maneja pagos sin asignar (esa bandeja vive en /sales/new para
-//     que el cajero resuelva). El admin global sólo ve pendientes +
-//     puede confirmar manualmente si llegó plata a la app Bold pero
-//     no se emparejó.
+//   - También consulta GET /api/pos/pagos-qr/pagos-sin-asignar?minutos=1440
+//     para que el admin vea pagos huérfanos del día desde cualquier
+//     pantalla y pueda enlazarlos a una intención pendiente de cualquier
+//     caja (migración 027c). La ventana por defecto es 24 h — alineada
+//     con la bandeja local del cajero y la constante backend.
+//   - Expone `assignPaymentToIntent` que reutiliza POST /pos/pagos-qr/asignar
+//     (ver `useBoldQrTray` — mismo endpoint, pero sin filtro de caja).
 //   - NO toca sessionStorage de "pagado": esa es una decisión por caja
 //     y no debe interferir con el estado de los cajeros.
 //   - NO emite callbacks de aprobación (sin sonido/voz). Al llegar un
@@ -36,7 +39,10 @@ import { computeSSERetryDelay, parseSSEBlock } from "@/lib/resilience-policy.mjs
 import {
     BOLD_QR_TRAY_EVENT,
     BOLD_QR_TRAY_KIND,
+    buildAsignarPayload,
     classifyTrayEvent,
+    classifyUnassignedPayment,
+    type BoldQrUnassignedPayment,
 } from "@/lib/bold-qr-helpers.mjs";
 
 export interface BoldQrGlobalPendingItem {
@@ -49,6 +55,8 @@ export interface BoldQrGlobalPendingItem {
     readonly expiresAt: string;
     readonly queuedAt?: string;
 }
+
+export type { BoldQrUnassignedPayment } from "@/lib/bold-qr-helpers.mjs";
 
 interface PendientesResponse {
     readonly ok?: boolean;
@@ -64,6 +72,17 @@ interface PendientesResponse {
     }>;
     readonly total?: number;
 }
+
+interface UnassignedResponse {
+    readonly ok?: boolean;
+    readonly items?: unknown[];
+    readonly total?: number;
+}
+
+// Ventana por defecto 24 h. Alineada con `useBoldQrTray` para que el
+// admin vea los mismos pagos que el cajero sin configuración adicional.
+const DEFAULT_UNASSIGNED_WINDOW_MINUTES = 1440;
+const DEFAULT_POLL_INTERVAL_MS = 20_000;
 
 function normalizePending(raw: PendientesResponse["items"]): BoldQrGlobalPendingItem[] {
     if (!Array.isArray(raw)) return [];
@@ -93,13 +112,32 @@ function normalizePending(raw: PendientesResponse["items"]): BoldQrGlobalPending
     return items;
 }
 
+function normalizeUnassigned(raw: UnassignedResponse["items"]): BoldQrUnassignedPayment[] {
+    if (!Array.isArray(raw)) return [];
+    const out: BoldQrUnassignedPayment[] = [];
+    for (const r of raw) {
+        const parsed = classifyUnassignedPayment(r);
+        if (parsed) out.push(parsed);
+    }
+    return out;
+}
+
 export interface BoldQrGlobalTrayState {
     readonly pendings: BoldQrGlobalPendingItem[];
+    readonly unassignedPayments: BoldQrUnassignedPayment[];
     readonly latestError: string | null;
+    readonly latestUnassignedError: string | null;
     readonly reconnect: () => Promise<void>;
+    readonly reloadUnassigned: () => Promise<void>;
     readonly dismissIntent: (ventaTempId: string) => void;
     /** Confirmación manual auditada (sólo admin, lo valida el backend). */
     readonly confirmManualIntent: (ventaTempId: string, nota: string) => Promise<void>;
+    /**
+     * Enlaza un pago huérfano a una intención pendiente existente usando
+     * POST /pos/pagos-qr/asignar. El backend valida monto exacto + rol.
+     * El llamador recibe el error (con `code` canónico) si rechaza.
+     */
+    readonly assignPaymentToIntent: (ventaTempId: string, eventId: number) => Promise<void>;
 }
 
 /**
@@ -112,7 +150,9 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
     const token = user?.token;
 
     const [pendings, setPendings] = useState<BoldQrGlobalPendingItem[]>([]);
+    const [unassignedPayments, setUnassignedPayments] = useState<BoldQrUnassignedPayment[]>([]);
     const [latestError, setLatestError] = useState<string | null>(null);
+    const [latestUnassignedError, setLatestUnassignedError] = useState<string | null>(null);
 
     const reload = useCallback(async () => {
         if (!enabled || !token) return;
@@ -130,6 +170,32 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
         } catch (err) {
             setLatestError(
                 err instanceof Error ? err.message : "No se pudo cargar la bandeja QR global",
+            );
+        }
+    }, [enabled, token]);
+
+    const reloadUnassigned = useCallback(async () => {
+        if (!enabled || !token) return;
+        try {
+            // `minutos=1440` + `max_minutos=1440` pide al backend la ventana
+            // extendida para administradores (migración 027c). Si el backend
+            // rechaza el max_minutos (empleado, no admin), responderá sólo
+            // los últimos 60 min; igual pintamos lo que llegue.
+            const res = await apiFetch<UnassignedResponse>(
+                `/pos/pagos-qr/pagos-sin-asignar?minutos=${encodeURIComponent(
+                    String(DEFAULT_UNASSIGNED_WINDOW_MINUTES),
+                )}&max_minutos=${encodeURIComponent(String(DEFAULT_UNASSIGNED_WINDOW_MINUTES))}`,
+                {
+                    method: "GET",
+                    fallbackError: "No se pudieron cargar los pagos por asignar",
+                    timeoutMs: 8000,
+                },
+            );
+            setUnassignedPayments(normalizeUnassigned(res?.items));
+            setLatestUnassignedError(null);
+        } catch (err) {
+            setLatestUnassignedError(
+                err instanceof Error ? err.message : "No se pudieron cargar los pagos por asignar",
             );
         }
     }, [enabled, token]);
@@ -158,10 +224,50 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
         [token, reload],
     );
 
+    const assignPaymentToIntent = useCallback(
+        async (ventaTempId: string, eventId: number) => {
+            if (!token) {
+                throw new Error("Sesión expirada");
+            }
+            const payload = buildAsignarPayload({
+                venta_temp_id: ventaTempId,
+                event_id: eventId,
+            });
+            if (!payload) {
+                throw new Error("Datos inválidos para asignar el pago");
+            }
+            await apiFetch("/pos/pagos-qr/asignar", {
+                method: "POST",
+                body: JSON.stringify(payload),
+                fallbackError: "No se pudo asignar el pago",
+                timeoutMs: 10000,
+            });
+            // Al éxito, refrescar ambas listas defensivamente para que
+            // la UI no espere al próximo frame SSE.
+            await Promise.all([reload(), reloadUnassigned()]);
+        },
+        [token, reload, reloadUnassigned],
+    );
+
     // Primera carga + reload al cambiar de token/estado.
     useEffect(() => {
         void reload();
     }, [reload]);
+
+    useEffect(() => {
+        void reloadUnassigned();
+    }, [reloadUnassigned]);
+
+    // Polling cada 20 s mientras existan pendings o pagos sin asignar.
+    const hasActivity = pendings.length > 0 || unassignedPayments.length > 0;
+    useEffect(() => {
+        if (!enabled || !token) return;
+        if (!hasActivity) return;
+        const id = window.setInterval(() => {
+            void reloadUnassigned();
+        }, DEFAULT_POLL_INTERVAL_MS);
+        return () => window.clearInterval(id);
+    }, [enabled, token, hasActivity, reloadUnassigned]);
 
     // SSE global.
     useEffect(() => {
@@ -206,6 +312,9 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
                 kind === BOLD_QR_TRAY_KIND.CANCELLED
             ) {
                 dismissIntent(ventaTempId);
+                // Al aprobar/expirar/cancelar, un pago huérfano puede
+                // haber quedado consumido en backend — refrescar lista.
+                void reloadUnassigned();
                 return;
             }
             if (
@@ -216,6 +325,7 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
                 // Refetchear estado desde la fuente de verdad para que el
                 // badge y la lista queden coherentes.
                 void reload();
+                void reloadUnassigned();
                 return;
             }
         };
@@ -265,6 +375,7 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
                 retryAttempt = 0;
                 // Al reconectar, repoblar desde la BD.
                 void reload();
+                void reloadUnassigned();
                 await consumeStream(response);
                 if (!cancelled) throw new Error("stream SSE cerrado");
             } catch (err) {
@@ -281,13 +392,17 @@ export function useBoldQrGlobalTray(enabled: boolean = true): BoldQrGlobalTraySt
             controller?.abort();
             if (retryTimer !== null) window.clearTimeout(retryTimer);
         };
-    }, [enabled, token, reload, dismissIntent]);
+    }, [enabled, token, reload, reloadUnassigned, dismissIntent]);
 
     return {
         pendings,
+        unassignedPayments,
         latestError,
+        latestUnassignedError,
         reconnect: reload,
+        reloadUnassigned,
         dismissIntent,
         confirmManualIntent,
+        assignPaymentToIntent,
     };
 }

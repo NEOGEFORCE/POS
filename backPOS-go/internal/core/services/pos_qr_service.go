@@ -1664,14 +1664,59 @@ func (s *QrPaymentService) ListUnassignedWebhookEvents(ctx context.Context, minu
 // Asignación manual evento → intención (/asignar)
 // =========================================================================
 
+// =========================================================================
+// QR en edición (A2): validación temprana de editSaleId
+// =========================================================================
+
+// ErrQREditUnavailable: el materializador no está cableado (tests o
+// arranque parcial); no se puede garantizar que la edición se aplique.
+var ErrQREditUnavailable = errors.New("la edición de ventas por QR no está disponible en este servidor")
+
+// ValidateQREditTarget comprueba, al crear la intención, que la venta
+// `editSaleID` exista, no esté anulada y que `actorDNI` (DNI del JWT, que
+// queda como created_by_dni) pueda editarla. El dispatcher revalida al
+// aprobarse. Devuelve errores en español listos para un 400.
+func (s *QrPaymentService) ValidateQREditTarget(editSaleID uint64, actorDNI string) error {
+	if editSaleID == 0 {
+		return nil
+	}
+	if s == nil || s.saleService == nil {
+		return ErrQREditUnavailable
+	}
+	_, err := s.saleService.CheckQREditTarget(uint(editSaleID), actorDNI)
+	return err
+}
+
 // AssignEventInput parametriza /asignar.
 type AssignEventInput struct {
 	VentaTempID string
 	EventID     uint64
 	ActorDNI    string
 	ActorName   string
-	IP          string
-	Device      string
+	// ActorIsAdmin extiende la ventana de asignación. Un cajero
+	// regular sólo puede asignar eventos recibidos en los últimos
+	// `QRAssignmentWindow` minutos (60 min por default). Un
+	// admin/administrador/superadmin accede a `QRAssignmentWindowAdmin`
+	// (24 h) para enlazar un pago huérfano del día — por ejemplo,
+	// cuando el dueño está corrigiendo una venta anterior y necesita
+	// asignarle un cobro que entró horas antes. El handler obtiene
+	// este flag con `actorIsAdmin(c)` (lee el rol del JWT, nunca del
+	// body).
+	ActorIsAdmin bool
+	IP           string
+	Device       string
+}
+
+// assignmentWindowFor devuelve la ventana de asignación aplicable al
+// actor. `QRAssignmentWindow` (60 min) para cajeros regulares y
+// `QRAssignmentWindowAdmin` (24 h) para admins. Centraliza la regla
+// para que el repo siga agnóstico del rol: la decisión se toma en el
+// servicio y viaja al repo como `MaxAge`.
+func assignmentWindowFor(actorIsAdmin bool) time.Duration {
+	if actorIsAdmin {
+		return models.QRAssignmentWindowAdmin
+	}
+	return models.QRAssignmentWindow
 }
 
 // AssignEventOutput es lo que el handler devuelve al modal/bandeja
@@ -1717,7 +1762,7 @@ func (s *QrPaymentService) AssignEventToIntent(ctx context.Context, in AssignEve
 		VentaTempID: in.VentaTempID,
 		EventID:     in.EventID,
 		ActorDNI:    in.ActorDNI,
-		MaxAge:      models.QRAssignmentWindow,
+		MaxAge:      assignmentWindowFor(in.ActorIsAdmin),
 		Now:         s.clock,
 	})
 	if err != nil {
@@ -1754,8 +1799,9 @@ func (s *QrPaymentService) AssignEventToIntent(ctx context.Context, in AssignEve
 	// Auditoría crítica con DNI del contexto. Mismo patrón que
 	// ConfirmManual: el DNI jamás llega del body.
 	if s.audit != nil {
-		details := fmt.Sprintf("venta=%s intentId=%d eventId=%d monto=%d",
-			intent.VentaTempID, intent.ID, event.ID, intent.AmountCOP)
+		windowSecs := int(assignmentWindowFor(in.ActorIsAdmin) / time.Second)
+		details := fmt.Sprintf("venta=%s intentId=%d eventId=%d monto=%d actorIsAdmin=%t windowSecs=%d",
+			intent.VentaTempID, intent.ID, event.ID, intent.AmountCOP, in.ActorIsAdmin, windowSecs)
 		human := fmt.Sprintf("Asignación manual de evento %d a cobro QR de $%d (venta temp %s).",
 			event.ID, intent.AmountCOP, intent.VentaTempID)
 		changes, _ := json.Marshal(map[string]interface{}{
@@ -1772,9 +1818,11 @@ func (s *QrPaymentService) AssignEventToIntent(ctx context.Context, in AssignEve
 				"assignedByDni":     in.ActorDNI,
 			},
 			"deltas": map[string]interface{}{
-				"intentId":  intent.ID,
-				"eventId":   event.ID,
-				"amountCop": intent.AmountCOP,
+				"intentId":     intent.ID,
+				"eventId":      event.ID,
+				"amountCop":    intent.AmountCOP,
+				"actorIsAdmin": in.ActorIsAdmin,
+				"windowSecs":   windowSecs,
 			},
 		})
 		s.audit.Log(in.ActorDNI, in.ActorName, "ASSIGN_EVENT", "POS_QR",

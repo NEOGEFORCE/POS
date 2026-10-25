@@ -161,10 +161,14 @@ test("useNewSale: la rama de /sales/register captura el response y pasa serverSa
     "La extracción del id debe pasar por el helper validado sobre el response capturado.");
   assert.match(afterReg, /finalizeLocalSale\(itemsToPay,\s*saleData,\s*change,\s*serverSaleId\)/,
     "finalizeLocalSale debe recibir serverSaleId como 4º argumento en la rama online.");
-  // Guard explícito contra la regresión: ni edit mode ni rutas diferentes
-  // deben caer en la extracción.
-  assert.match(afterReg, /!isEditMode\s*&&\s*endpointPath\s*===\s*'\/sales\/register'/,
-    "Sólo la ruta /sales/register fuera de edit mode puede propagar serverSaleId.");
+  // Guard explícito contra la regresión: el modo edición se resuelve en
+  // su propia rama (PUT /sales/update/:id) que hace `return` ANTES de
+  // llegar a /sales/register, así que nunca propaga serverSaleId.
+  const editIdx = src.indexOf("isEditModeLocal");
+  assert.ok(editIdx > 0 && editIdx < regIdx,
+    "La rama isEditModeLocal debe resolverse antes de /sales/register.");
+  assert.match(src.slice(editIdx, regIdx), /\/sales\/update\/\$\{saleId\}[\s\S]*?\breturn;/,
+    "La rama de edición debe usar PUT /sales/update/:id y retornar antes de /sales/register.");
 });
 
 test("useNewSale: la rama offline NO pasa saleId (nunca inventa un id)", async () => {

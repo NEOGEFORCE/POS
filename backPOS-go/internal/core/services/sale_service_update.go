@@ -64,9 +64,17 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 		applyAdjustments[targetBarcode] += effectiveQty
 	}
 
-	if (oldSale.CashAmount > 0 || oldSale.TransferAmount > 0) && newTotal < oldSale.TotalAmount {
-		return errors.New("no se puede disminuir el total de una venta cobrada en efectivo o transferencia; use una devolución")
-	}
+	// Nota: la restricción histórica que impedía reducir el total de una
+	// venta cobrada en efectivo o transferencia se eliminó al rediseñar
+	// el flujo de edición (/sales/new modo Factura EDIT-<id>). Hoy el
+	// cajero puede quitar un ítem que entró por error y re-cobrar el
+	// total nuevo con todos los métodos (incluido QR Bold). El flujo
+	// REEMPLAZA el desglose de pago enviado y sigue restringido a
+	// administradores (admin/administrador/superadmin). Las guardas de
+	// crédito ya aplicado y de cambio de cliente con abonos se
+	// mantienen más abajo.
+	_ = oldSale.CashAmount
+	_ = oldSale.TransferAmount
 
 	newSale.TotalAmount = newTotal
 	paidTotal := newSale.CashAmount + newSale.TransferAmount + newSale.CreditAmount
@@ -76,12 +84,15 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 	newSale.AmountPaid = paidTotal
 	newSale.PaymentMethod = deriveSalePaymentMethod(newSale)
 
+	// Fiado con abonos: el reemplazo revierte el saldo pendiente y lo
+	// reaplica; si ya hay abonos registrados, reconstruir el desglose
+	// desalinearía la cartera del cliente. Error claro y sin mutación.
 	alreadyPaidCredit := oldSale.CreditAmount - oldSale.DebtPending
 	if alreadyPaidCredit < 0 {
 		alreadyPaidCredit = 0
 	}
-	if newSale.CreditAmount+0.001 < alreadyPaidCredit {
-		return fmt.Errorf("el nuevo crédito %.2f no puede ser menor que los abonos ya registrados %.2f", newSale.CreditAmount, alreadyPaidCredit)
+	if alreadyPaidCredit > 0.001 {
+		return fmt.Errorf("la venta tiene abonos de fiado registrados por $%.0f; no se puede editar su pago, registre una devolución o ajuste la cartera", alreadyPaidCredit)
 	}
 	newSale.DebtPending = newSale.CreditAmount - alreadyPaidCredit
 	if newSale.DebtPending < 0.001 {
@@ -177,12 +188,19 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 			}
 		}
 
+		// Sólo se bloquean/actualizan los clientes cuyo fiado cambia: el
+		// de la venta original si tenía saldo pendiente (se revierte) y el
+		// nuevo si queda saldo (se reaplica). Una venta de contado (p.ej.
+		// cliente anónimo "0000" re-cobrada por QR) no toca clientes.
 		clientIDs := make([]string, 0, 2)
 		seen := map[string]bool{}
-		for _, dni := range []string{oldSale.ClientDNI, newSale.ClientDNI} {
-			if dni != "" && dni != "0" && !seen[dni] {
-				seen[dni] = true
-				clientIDs = append(clientIDs, dni)
+		for _, cand := range []struct {
+			dni  string
+			debt float64
+		}{{oldSale.ClientDNI, oldSale.DebtPending}, {newSale.ClientDNI, newSale.DebtPending}} {
+			if cand.debt > 0 && cand.dni != "" && cand.dni != "0" && !seen[cand.dni] {
+				seen[cand.dni] = true
+				clientIDs = append(clientIDs, cand.dni)
 			}
 		}
 		sort.Strings(clientIDs)
@@ -250,6 +268,127 @@ func (s *SaleService) UpdateSale(id uint, newSale *models.Sale, employeeDNI stri
 	return nil
 }
 
+// =============================================================================
+// UpdateSaleFromQR — camino de edición disparado por el dispatcher QR Bold
+// =============================================================================
+
+// UpdateSaleFromQR es el punto de entrada del materializador asíncrono para
+// el flujo "QR en edición". Recibe un `editSaleID` referenciado por el
+// snapshot del QR (totals.editSaleId), valida permisos y delega al mismo
+// UpdateSale canónico (A1). Devuelve errores en español listos para
+// surfacear a la bandeja.
+//
+// Reglas:
+//
+//  1. La venta #editSaleID debe existir en la BD (soft-deleted se trata
+//     como "anulada": no se puede editar).
+//  2. El autor de la intención (`createdByDNI`, poblado desde el JWT en
+//     /iniciar y /encolar) debe tener rol admin/administrador/superadmin,
+//     la misma regla de `PUT /sales/update/:id` (ver CheckQREditTarget).
+//  3. Delegamos a UpdateSale con isAdmin=true porque la autorización ya
+//     se chequeó aquí; UpdateSale sigue imponiendo la OCC guard, el
+//     cambio de cliente con abonos, los abonos ya pagados, etc.
+//
+// Idempotencia:
+//
+//   - El dispatcher gatea con ClaimForFinalization (NOT_STARTED/FAILED/
+//     IN_PROGRESS atascado → IN_PROGRESS). Dos entregas del webhook
+//     pelean por el claim: una gana y aplica UpdateSale, la otra sale
+//     silenciosamente con ErrQRFinalizationAlreadyClaimed.
+//   - UpdateSale usa un lock row-level (SELECT ... FOR UPDATE) con OCC
+//     por TotalAmount/CreditAmount/DebtPending. Si alguien editó la
+//     venta entre que la UI construyó el payload y el webhook aprobó,
+//     devolvemos "la venta cambió mientras se editaba" y el dispatcher
+//     marca FAILED para reintento con backoff.
+func (s *SaleService) UpdateSaleFromQR(editSaleID uint, newSale *models.Sale, actorDNI string) error {
+	if editSaleID == 0 {
+		return errors.New("venta a editar inválida")
+	}
+	if newSale == nil {
+		return errors.New("datos de venta vacíos")
+	}
+
+	actor, err := s.CheckQREditTarget(editSaleID, actorDNI)
+	if err != nil {
+		return err
+	}
+	// Delegación: isAdmin=true porque el permiso ya se validó. UpdateSale
+	// sigue imponiendo la OCC guard y las guardas de crédito/cliente.
+	return s.UpdateSale(editSaleID, newSale, actor, true)
+}
+
+// CheckQREditTarget valida que `editSaleID` sea editable por `actorDNI`
+// desde el flujo QR. Se usa en dos momentos:
+//
+//   - Al crear la intención (/iniciar, /encolar): falla temprano con 400
+//     para que el cajero no cobre un QR que luego no podrá aplicarse.
+//   - Al materializar (UpdateSaleFromQR): revalida porque entre ambos
+//     momentos la venta pudo anularse o el rol del actor cambiar.
+//
+// Reglas (mismas que PUT /sales/update/:id): la venta existe, no está
+// anulada y el actor tiene rol admin/administrador/superadmin. Devuelve el
+// DNI normalizado del actor.
+func (s *SaleService) CheckQREditTarget(editSaleID uint, actorDNI string) (string, error) {
+	if editSaleID == 0 {
+		return "", errors.New("venta a editar inválida")
+	}
+	actor := strings.TrimSpace(actorDNI)
+	if actor == "" {
+		return "", errors.New("se requiere DNI del autor de la intención para editar")
+	}
+	rawDB, ok := s.saleRepo.GetDB().(*gorm.DB)
+	if !ok {
+		return "", errors.New("error de sistema: base de datos inválida")
+	}
+
+	// Unscoped para distinguir "anulada" (soft delete) de "no existe".
+	var target models.Sale
+	if err := rawDB.Unscoped().Where("\"saleId\" = ?", editSaleID).First(&target).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return "", fmt.Errorf("la venta #%d a editar no existe", editSaleID)
+		}
+		return "", fmt.Errorf("error consultando venta a editar: %w", err)
+	}
+	if target.DeletedAt.Valid {
+		return "", fmt.Errorf("la venta #%d está anulada; no se puede re-cobrar", editSaleID)
+	}
+
+	canEdit, roleErr := actorCanEditSale(rawDB, actor)
+	if roleErr != nil {
+		return "", roleErr
+	}
+	if !canEdit {
+		return "", errors.New("sólo los administradores pueden editar ventas")
+	}
+	return actor, nil
+}
+
+// actorCanEditSale replica la regla de PUT /sales/update/:id: sólo
+// admin/administrador/superadmin editan ventas registradas. El rol se lee de
+// `employees` (fuente durable), nunca del snapshot del cliente.
+func actorCanEditSale(db *gorm.DB, actorDNI string) (bool, error) {
+	var role string
+	if err := db.Table("employees").
+		Where("dni = ? AND deleted_at IS NULL", actorDNI).
+		Select("role").
+		Scan(&role).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("error consultando rol del actor: %w", err)
+	}
+	return isAdminRole(role), nil
+}
+
+// isAdminRole normaliza los tres alias de administrador del POS.
+func isAdminRole(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "admin", "administrador", "superadmin":
+		return true
+	}
+	return false
+}
+
 // deriveSalePaymentMethod construye el string descriptivo que se persiste en
 // sales.paymentMethod. El orden recorrido garantiza una representacion
 // ESTABLE: EFECTIVO -> NEQUI -> DAVIPLATA -> otras transferencias -> FIADO.
@@ -273,11 +412,12 @@ func deriveSalePaymentMethod(sale *models.Sale) string {
 	if sale.TransferDaviplata > 0 {
 		methods = append(methods, "DAVIPLATA")
 	}
-	// "Otra transferencia" existe solo cuando TransferAmount cubre un monto
-	// que no esta explicado por Nequi+Daviplata. Preserva el canal declarado
-	// en TransferSource si viene (p.ej. "BANCOLOMBIA"); si no, cae a
-	// "TRANSFERENCIA" como etiqueta neutra.
-	if sale.TransferAmount > 0 && sale.TransferNequi == 0 && sale.TransferDaviplata == 0 {
+	// "Otra transferencia" existe cuando TransferAmount cubre un monto que
+	// no esta explicado por Nequi+Daviplata: transferencia pura (sin
+	// desglose) o la parte Bold QR de un pago mixto (QR + Nequi, etc.).
+	// Preserva el canal declarado en TransferSource si viene (p.ej.
+	// "BANCOLOMBIA", "BOLD_QR"); si no, cae a "TRANSFERENCIA" neutra.
+	if genericTransferPortion(sale) > 1.0 {
 		source := strings.ToUpper(strings.TrimSpace(sale.TransferSource))
 		if source == "" || source == "MIXTO" {
 			source = "TRANSFERENCIA"
@@ -294,4 +434,17 @@ func deriveSalePaymentMethod(sale *models.Sale) string {
 		return methods[0]
 	}
 	return strings.Join(methods, " + ")
+}
+
+// genericTransferPortion devuelve la parte de TransferAmount que no es
+// Nequi ni Daviplata (p.ej. Bold QR en un pago mixto). Nunca negativa.
+func genericTransferPortion(sale *models.Sale) float64 {
+	if sale == nil {
+		return 0
+	}
+	generic := sale.TransferAmount - sale.TransferNequi - sale.TransferDaviplata
+	if generic < 0 {
+		return 0
+	}
+	return generic
 }

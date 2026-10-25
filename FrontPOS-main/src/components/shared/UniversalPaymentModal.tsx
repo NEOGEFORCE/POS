@@ -18,7 +18,7 @@ import { API_URL } from "@/lib/constants";
 import { getSessionToken } from "@/lib/session";
 import { useAuth } from "@/lib/auth";
 import ModalPagoBoldQR from "@/components/shared/ModalPagoBoldQR";
-import { BOLD_QR_ALREADY_PAID_SENTINEL, BOLD_QR_METHOD_LABEL } from "@/lib/bold-qr-helpers.mjs";
+import { BOLD_QR_ALREADY_PAID_SENTINEL, BOLD_QR_METHOD_LABEL, describeMixedChannelsSummary } from "@/lib/bold-qr-helpers.mjs";
 import {
   type TicketData,
   DIRECT_PRINT_UNAVAILABLE,
@@ -124,7 +124,17 @@ interface UniversalPaymentModalProps {
    *     que luego se pasa a `onBoldQrEnqueueRequested`, para que el
    *     backend reutilice (reused=true) la intención pre-registrada.
    */
-  onBoldQrRequested?: (amount: number, ventaTempId: string) => void | Promise<void>;
+  onBoldQrRequested?: (
+    amount: number,
+    ventaTempId: string,
+    breakdown: {
+      cash: number;
+      nequi: number;
+      daviplata: number;
+      credit: number;
+      totalCart: number;
+    },
+  ) => void | Promise<void>;
   /**
    * Flujo asíncrono QR (migración 027). Si el padre lo provee, el modal
    * `ModalPagoBoldQR` muestra el botón primario "DEJAR EN ESPERA Y
@@ -218,6 +228,28 @@ interface UniversalPaymentModalProps {
     readonly approvedAt?: string;
     readonly approvedVia?: string;
   }) => void;
+  /**
+   * Pago previo de la factura cuando se abre el modal como "actualizar
+   * venta" (edición desde el historial). Se muestra como banner
+   * informativo arriba del flujo y NUNCA se suma a `totalAlreadyPaid`
+   * ni a `remainingDebt`: el modal arranca con todos los canales en 0,
+   * porque el PUT /sales/update/:id REEMPLAZA el desglose anterior.
+   *
+   * Shape (todos opcionales):
+   *   - method: etiqueta legible del pago original ("EFECTIVO", "NEQUI",
+   *     "EFECTIVO + NEQUI", "FIADO", etc.). Si falta, se omite.
+   *   - total: monto total pagado antes.
+   *   - cash / nequi / daviplata / credit: desglose, cualquiera que
+   *     tenga monto se pinta como pill.
+   */
+  referencePayments?: {
+    readonly method?: string;
+    readonly total?: number;
+    readonly cash?: number;
+    readonly nequi?: number;
+    readonly daviplata?: number;
+    readonly credit?: number;
+  } | null;
 }
 
 /* ---------------------------------------------------------------------------
@@ -433,6 +465,7 @@ export default function UniversalPaymentModal({
   boldQrReopenPayload,
   onBoldQrReopenConsumed,
   onBoldQrFinalized,
+  referencePayments,
 }: UniversalPaymentModalProps) {
 
   const netExchangeBalance = totalToPay - (pendingReturnAmount || 0);
@@ -470,6 +503,12 @@ export default function UniversalPaymentModal({
   // desde aquí, y cerrar devuelve al cajero a la venta que registraba.
   const [isBoldQrReopen, setIsBoldQrReopen] = useState(false);
   const [boldQrAmount, setBoldQrAmount] = useState(0);
+  // Resumen legible de los OTROS canales activos cuando el cajero pagó
+  // mixto (p.ej. "Efectivo $5.000 + QR $20.000"). Se muestra arriba del
+  // QR para que cajero y cliente vean que la cuenta cuadra. Se calcula
+  // en `handleOpenBoldQr` con el breakdown capturado al abrir y se
+  // limpia al cerrar/aprobar/cancelar.
+  const [boldQrMixedSummary, setBoldQrMixedSummary] = useState<string>("");
   const boldSessionIdRef = useRef<string>("");
   const boldApprovedPayloadRef = useRef<{ cash: number; transfer: number; transferSource: string; transferNequi: number; transferDaviplata: number; credit: number; totalPaid: number; change: number } | null>(null);
   const { user } = useAuth();
@@ -703,6 +742,7 @@ export default function UniversalPaymentModal({
     boldApprovedPayloadRef.current = null;
     boldSessionIdRef.current = "";
     setBoldQrAmount(0);
+    setBoldQrMixedSummary("");
     setIsBoldQrOpen(false);
     // Generamos el ventaTempId ANTES de pedir la preparación al padre:
     // ese mismo identificador quedará escrito en el backend durante
@@ -715,6 +755,21 @@ export default function UniversalPaymentModal({
       ? globalThis.crypto.randomUUID()
       : `bold-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const amount = Math.round(remainingDebt);
+
+    // Pago mixto QR (migración 027c): capturamos el breakdown de OTROS
+    // canales ya acumulados en el modal ANTES de generar el QR. El
+    // padre persiste este breakdown en el snapshot /iniciar, y al
+    // aprobar el QR el backend cierra la venta con el desglose
+    // completo (no sólo con la porción QR). Los canales son
+    // MAGNITUDES POSITIVAS; el total del carrito queda independiente
+    // del amount del QR (que es sólo el restante).
+    const breakdown = {
+      cash: Math.round(cashPaid),
+      nequi: Math.round(nequiPaid),
+      daviplata: Math.round(daviplataPaid),
+      credit: Math.round(creditPaid),
+      totalCart: Math.round(effectiveTotal),
+    };
 
     // Si el padre provee un callback, lo esperamos ANTES de abrir el
     // modal hijo. Esto permite al padre pre-registrar la intención en
@@ -730,7 +785,7 @@ export default function UniversalPaymentModal({
     // el padre ya cerró el UPM y mostró su propio UX informativo.
     if (typeof onBoldQrRequested === "function") {
       try {
-        await onBoldQrRequested(amount, uuid);
+        await onBoldQrRequested(amount, uuid, breakdown);
       } catch (err) {
         if (err instanceof Error && err.message === BOLD_QR_ALREADY_PAID_SENTINEL) {
           // Flujo "ya pagada" — abortar en silencio, el padre ya
@@ -754,8 +809,13 @@ export default function UniversalPaymentModal({
     boldSessionIdRef.current = uuid;
     setIsBoldQrReopen(false);
     setBoldQrAmount(amount);
+    // Resumen "Efectivo $X + QR $Y" sólo si hay canales previos (si
+    // el cajero sólo cobra por QR, string vacío → no se renderiza
+    // en la vista hija).
+    const hasOtherChannels = breakdown.cash > 0 || breakdown.nequi > 0 || breakdown.daviplata > 0 || breakdown.credit > 0;
+    setBoldQrMixedSummary(hasOtherChannels ? describeMixedChannelsSummary(breakdown, amount, formatCurrency) : "");
     setIsBoldQrOpen(true);
-  }, [canUseBoldQr, remainingDebt, onBoldQrRequested, toast]);
+  }, [canUseBoldQr, remainingDebt, cashPaid, nequiPaid, daviplataPaid, creditPaid, effectiveTotal, onBoldQrRequested, toast]);
 
   const handleBoldQrApproved = useCallback(async (info?: {
     reference: string;
@@ -833,6 +893,7 @@ export default function UniversalPaymentModal({
         boldSessionIdRef.current = "";
         boldApprovedPayloadRef.current = null;
         setIsBoldQrOpen(false);
+        setBoldQrMixedSummary("");
         isProcessingRef.current = false;
       }
       return;
@@ -858,6 +919,7 @@ export default function UniversalPaymentModal({
     boldSessionIdRef.current = "";
     boldApprovedPayloadRef.current = null;
     setBoldQrAmount(0);
+    setBoldQrMixedSummary("");
     setIsBoldQrOpen(false);
     if (isBoldQrReopen) {
       // Reapertura desde la bandeja: el UPM se abrió sólo para mostrar
@@ -932,6 +994,7 @@ export default function UniversalPaymentModal({
     setIsBoldQrOpen(false);
     setIsBoldQrReopen(false);
     setBoldQrAmount(0);
+    setBoldQrMixedSummary("");
   }, [isOpen]);
 
   const keyboardActionsRef = useRef({ processPayment, handleAddPayment, onOpenChange, onCloseComplete });
@@ -1545,6 +1608,7 @@ export default function UniversalPaymentModal({
             onEnqueueAndClose={isBoldQrReopen ? undefined : onBoldQrEnqueueRequested}
             onCancel={handleBoldQrCancel}
             reopened={isBoldQrReopen}
+            mixedChannelsSummary={boldQrMixedSummary || undefined}
           />
         ) : (
           <div className="flex flex-col md:flex-row h-full min-h-0 min-w-0 overflow-hidden relative">            {showSuccessScreen && (
@@ -1812,6 +1876,69 @@ export default function UniversalPaymentModal({
                   )}
                 </div>
               </header>
+
+              {/* Banner informativo del pago original (sólo modo
+                  edición). Se renderiza SIEMPRE que el padre pase
+                  `referencePayments`, NO afecta `totalAlreadyPaid` ni
+                  `remainingDebt`. El contenido se compone de la etiqueta
+                  del método ("EFECTIVO + NEQUI") y el total pagado antes,
+                  más pills por canal cuando hay desglose. */}
+              {referencePayments && (() => {
+                const refTotal = Math.round(referencePayments.total ?? 0);
+                const refCash = Math.round(referencePayments.cash ?? 0);
+                const refNequi = Math.round(referencePayments.nequi ?? 0);
+                const refDaviplata = Math.round(referencePayments.daviplata ?? 0);
+                const refCredit = Math.round(referencePayments.credit ?? 0);
+                const anyChannel = refCash > 0 || refNequi > 0 || refDaviplata > 0 || refCredit > 0 || refTotal > 0;
+                if (!anyChannel) return null;
+                return (
+                  <div
+                    className="p-3 bg-sky-500/10 border border-sky-500/30 rounded-2xl flex items-start gap-3 mb-3"
+                    data-testid="universal-payment-reference-banner"
+                    aria-label="Pago original (solo referencia)"
+                  >
+                    <ShieldCheck className="text-sky-500 shrink-0 mt-0.5" size={20} aria-hidden="true" />
+                    <div className="flex flex-col gap-1 min-w-0 flex-1">
+                      <span className="text-[11px] font-bold text-sky-600 dark:text-sky-300 uppercase tracking-wider leading-tight">
+                        Pagado antes (sólo referencia)
+                      </span>
+                      <span className="text-[13px] font-semibold text-sky-700 dark:text-sky-200 tabular-nums">
+                        ${formatCurrency(refTotal)}
+                        {referencePayments.method ? (
+                          <span className="ml-2 text-[11px] font-medium uppercase tracking-wider text-sky-500 dark:text-sky-400">
+                            · {referencePayments.method}
+                          </span>
+                        ) : null}
+                      </span>
+                      <div className="flex flex-wrap gap-1.5 mt-1">
+                        {refCash > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-[10px] font-semibold text-sky-700 dark:text-sky-300 uppercase tracking-wider tabular-nums">
+                            Efectivo ${formatCurrency(refCash)}
+                          </span>
+                        )}
+                        {refNequi > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-[10px] font-semibold text-sky-700 dark:text-sky-300 uppercase tracking-wider tabular-nums">
+                            Nequi ${formatCurrency(refNequi)}
+                          </span>
+                        )}
+                        {refDaviplata > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-[10px] font-semibold text-sky-700 dark:text-sky-300 uppercase tracking-wider tabular-nums">
+                            Daviplata ${formatCurrency(refDaviplata)}
+                          </span>
+                        )}
+                        {refCredit > 0 && (
+                          <span className="px-2 py-0.5 rounded-full bg-sky-500/15 text-[10px] font-semibold text-sky-700 dark:text-sky-300 uppercase tracking-wider tabular-nums">
+                            Fiado ${formatCurrency(refCredit)}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-[10px] font-medium text-sky-500 dark:text-sky-400 leading-tight mt-0.5">
+                        El pago nuevo REEMPLAZA este desglose en la factura.
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {isBlockedTransferRefund && (
                 <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-start gap-3 mb-3">

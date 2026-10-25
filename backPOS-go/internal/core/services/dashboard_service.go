@@ -1614,7 +1614,7 @@ func (s *DashboardService) GetCashierClosure() (*CashierClosure, error) {
 				// informativo) para no perder la plata al mapear al
 				// modelo persistente models.CashierClosure, que NO tiene
 				// la columna TotalBoldQr.
-				classifyTransferToClosure(sale.TransferSource, sale.TransferAmount, &closure)
+				classifySaleTransferToClosure(sale, &closure)
 			}
 		}
 	}

@@ -77,3 +77,35 @@ func classifyTransferToClosure(transferSource string, amount float64, closure *C
 		}
 	}
 }
+
+// classifySaleTransferToClosure clasifica la transferencia de una VENTA.
+//
+// Para ventas Bold QR con pago mixto (QR + Nequi y/o Daviplata), el
+// TransferAmount agrupa los tres canales; clasificarlo entero por
+// TransferSource contaría el Nequi/Daviplata como Bold. Aquí se separa:
+// Nequi → TotalNequi, Daviplata → TotalDaviplata, y sólo la porción
+// genérica (la parte QR) va a OtherTransfer + TotalBoldQr.
+//
+// Para cualquier otra fuente se conserva exactamente el comportamiento
+// histórico (todo el TransferAmount por TransferSource), para no alterar
+// cierres de ventas legacy MIXTO/NEQUI/DAVIPLATA.
+func classifySaleTransferToClosure(sale models.Sale, closure *CashierClosure) {
+	if closure == nil || sale.TransferAmount <= 0 {
+		return
+	}
+	if !models.IsBoldQRSaleTransferSource(sale.TransferSource) {
+		classifyTransferToClosure(sale.TransferSource, sale.TransferAmount, closure)
+		return
+	}
+	nequi := sale.TransferNequi
+	if nequi < 0 {
+		nequi = 0
+	}
+	davi := sale.TransferDaviplata
+	if davi < 0 {
+		davi = 0
+	}
+	classifyTransferToClosure("NEQUI", nequi, closure)
+	classifyTransferToClosure("DAVIPLATA", davi, closure)
+	classifyTransferToClosure(sale.TransferSource, genericTransferPortion(&sale), closure)
+}

@@ -32,7 +32,7 @@ func TestPosQrHandler_PagosSinAsignar_SinSesion_401(t *testing.T) {
 
 func TestPosQrHandler_PagosSinAsignar_MinutosFueraDeRango_400(t *testing.T) {
 	h := &PosQrHandler{}
-	for _, minutos := range []string{"0", "-5", "121", "999", "abc"} {
+	for _, minutos := range []string{"0", "-5", "1441", "9999", "abc"} {
 		c, rec := newQrTestContext(http.MethodGet, "/api/pos/pagos-qr/pagos-sin-asignar?minutos="+minutos, "")
 		c.Set("userDni", "EMP-1")
 		h.PagosSinAsignar(c)

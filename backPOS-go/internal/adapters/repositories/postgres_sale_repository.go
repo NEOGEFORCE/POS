@@ -608,8 +608,17 @@ func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (
 	results["EFECTIVO"] = totalCash
 
 	// 2. Sumar transferencias agrupadas por su origen (NEQUI, DAVIPLATA, etc.)
+	//
+	// Ventas Bold QR con pago mixto: transferAmount = Nequi + Daviplata +
+	// parte QR. A la fuente BOLD sólo se le suma la parte QR (porción
+	// genérica); Nequi y Daviplata de esas filas se suman a su propia
+	// clave en el paso 2-bis. El resto de fuentes conserva el cálculo
+	// histórico.
 	rows, err := r.db.Raw(`
-		SELECT COALESCE("transferSource", 'TRANSFERENCIA') as source, SUM("transferAmount") as total
+		SELECT COALESCE("transferSource", 'TRANSFERENCIA') as source,
+		       SUM(CASE WHEN UPPER(COALESCE("transferSource", '')) LIKE '%BOLD%'
+		                THEN GREATEST("transferAmount" - COALESCE("transferNequi", 0) - COALESCE("transferDaviplata", 0), 0)
+		                ELSE "transferAmount" END) as total
 		FROM sales
 		WHERE "saleDate" >= ? AND "saleDate" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL AND "transferAmount" > 0
 		GROUP BY 1
@@ -622,6 +631,21 @@ func (r *PostgresSaleRepository) GetSalesByPaymentMethodV2(from, to time.Time) (
 			rows.Scan(&m, &a)
 			results[m] += a
 		}
+	}
+
+	// 2-bis. Partes Nequi/Daviplata de ventas Bold QR mixtas.
+	var boldNequi, boldDavi float64
+	r.db.Raw(`
+		SELECT COALESCE(SUM(COALESCE("transferNequi", 0)), 0), COALESCE(SUM(COALESCE("transferDaviplata", 0)), 0)
+		FROM sales
+		WHERE "saleDate" >= ? AND "saleDate" <= ? AND status IN ('PAID', 'CREDIT') AND deleted_at IS NULL
+		  AND "transferAmount" > 0 AND UPPER(COALESCE("transferSource", '')) LIKE '%BOLD%'
+	`, from, to).Row().Scan(&boldNequi, &boldDavi)
+	if boldNequi > 0 {
+		results["NEQUI"] += boldNequi
+	}
+	if boldDavi > 0 {
+		results["DAVIPLATA"] += boldDavi
 	}
 
 	// 3. Sumar el monto que quedó debiéndose (FIADO)
@@ -796,9 +820,12 @@ func (r *PostgresSaleRepository) GetGlobalSalesByMethod() (map[string]float64, e
 	results["NEQUI"] = totalNequi
 	results["DAVIPLATA"] = totalDaviplata
 
-	// Breakdown para otras fuentes de transferencia
+	// Breakdown para otras fuentes de transferencia. En ventas Bold QR
+	// mixtas sólo cuenta la parte QR (Nequi/Daviplata ya se sumaron
+	// arriba vía transferNequi/transferDaviplata > 0): sin esto el Nequi
+	// de una venta "NEQUI + BOLD_QR" se contaba dos veces.
 	rows, err := r.db.Table("sales").
-		Select("\"transferSource\", SUM(\"transferAmount\") as total").
+		Select("\"transferSource\", SUM(CASE WHEN UPPER(COALESCE(\"transferSource\", '')) LIKE '%BOLD%' THEN GREATEST(\"transferAmount\" - COALESCE(\"transferNequi\", 0) - COALESCE(\"transferDaviplata\", 0), 0) ELSE \"transferAmount\" END) as total").
 		Where("status IN ('PAID', 'CREDIT', 'FIADO') AND \"transferAmount\" > 0 AND \"deleted_at\" IS NULL").
 		Group("\"transferSource\"").
 		Rows()

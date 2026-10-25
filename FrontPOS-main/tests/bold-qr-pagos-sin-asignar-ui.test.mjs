@@ -311,16 +311,21 @@ test("U7b sales/new/page.tsx: notifyBoldQrApprovedOnce usa speechSynthesis + isS
         /new\s+window\.SpeechSynthesisUtterance\(/,
         "Debe instanciar SpeechSynthesisUtterance con la frase.",
     );
-    // El mute global tiene prioridad: ni chime ni voz cuando está muteado.
+    // El mute global silencia SÓLO el chime; la voz suena siempre.
     const idx = src.indexOf("const notifyBoldQrApprovedOnce");
     assert.ok(idx > 0, "notifyBoldQrApprovedOnce debe existir.");
     const end = src.indexOf("}, [", idx);
     const body = src.slice(idx, end > idx ? end : idx + 5000);
     assert.match(
         body,
-        /if\s*\(!muted\)/,
-        "El mute global debe gate chime + voz.",
+        /if\s*\(!muted\)\s*\{\s*try\s*\{\s*playNotificationSound\('success'\);[^}]*\}[^}]*\}\s*\}/,
+        "El mute global debe gate sólo el chime.",
     );
+    const muteIdx = body.indexOf("if (!muted)");
+    const speakIdx = body.indexOf("synth.speak(");
+    const muteBlockEnd = body.indexOf("}", body.indexOf("playNotificationSound('success')", muteIdx) + 40);
+    assert.ok(speakIdx > muteBlockEnd,
+        "La voz debe quedar FUERA del gate de mute (suena aun con el sistema muteado).");
     assert.match(
         body,
         /BOLD_QR_VOICE_PREFERRED_LANG/,

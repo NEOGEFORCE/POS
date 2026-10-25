@@ -104,6 +104,28 @@ function formatReceivedAt(iso: string): string {
     }
 }
 
+/**
+ * Antigüedad relativa compacta ("hace 12 min", "hace 2 h 15 min", "hace 1 d").
+ * Muestra "hace instantes" cuando pasó menos de 60 s. Esta función vive en
+ * el componente porque los otros consumidores (`GlobalBoldQrTray`) usan un
+ * helper equivalente — mantener el shape idéntico facilita que ambos
+ * componentes lean igual sin duplicar código mental.
+ */
+function formatRelativeAgo(iso: string, nowMs: number = Date.now()): string {
+    if (!iso) return "";
+    const t = new Date(iso).getTime();
+    if (!Number.isFinite(t)) return "";
+    const diff = Math.max(0, nowMs - t);
+    const minutes = Math.floor(diff / 60_000);
+    if (minutes < 1) return "hace instantes";
+    if (minutes < 60) return `hace ${minutes} min`;
+    const hours = Math.floor(minutes / 60);
+    const remMinutes = minutes % 60;
+    if (hours < 24) return remMinutes === 0 ? `hace ${hours} h` : `hace ${hours} h ${remMinutes} min`;
+    const days = Math.floor(hours / 24);
+    return `hace ${days} d`;
+}
+
 export default function BoldQrTrayPopover({
     pendings,
     unassignedPayments,
@@ -379,7 +401,7 @@ export default function BoldQrTrayPopover({
                                             <div className="flex flex-col items-center justify-center gap-2 px-6 py-4 text-center">
                                                 <HelpCircle className="h-5 w-5 text-zinc-400" aria-hidden="true" />
                                                 <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                                                    Ningún pago sin asignar en los últimos 30 min.
+                                                    Ningún pago sin asignar en las últimas 24 h.
                                                 </p>
                                             </div>
                                         ) : (
@@ -405,6 +427,13 @@ export default function BoldQrTrayPopover({
                                                                         <span className="font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
                                                                             {item.status}
                                                                         </span>
+                                                                    </p>
+                                                                    <p
+                                                                        className="text-[11px] text-zinc-400 dark:text-zinc-500 inline-flex items-center gap-1"
+                                                                        data-testid="bold-qr-unassigned-age"
+                                                                    >
+                                                                        <Clock className="h-3 w-3" aria-hidden="true" />
+                                                                        {formatRelativeAgo(item.receivedAt)}
                                                                     </p>
                                                                     {item.resumen ? (
                                                                         <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-tight">

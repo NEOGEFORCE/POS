@@ -247,6 +247,15 @@ export interface ModalPagoBoldQRProps {
      * oculta el QR. El cobro sigue en espera hasta que llegue el pago.
      */
     readonly reopened?: boolean;
+    /**
+     * Resumen legible "Efectivo $X + QR $Y" de los OTROS canales que el
+     * cajero ya acumuló antes de abrir el QR (migración 027c — pago
+     * mixto). Si está presente, el modal lo pinta como banner arriba
+     * del monto para que cajero y cliente vean que la cuenta cuadra.
+     * Cuando el cajero cobra 100% por QR el padre pasa `undefined` y
+     * el banner no se renderiza.
+     */
+    readonly mixedChannelsSummary?: string;
 }
 
 // Estado interno de la máquina. Discriminado para evitar renders en
@@ -293,6 +302,7 @@ export default function ModalPagoBoldQR({
     onEnqueueAndClose,
     onCancel,
     reopened = false,
+    mixedChannelsSummary,
 }: ModalPagoBoldQRProps): JSX.Element | null {
     const { user } = useAuth();
     const token = user?.token;
@@ -847,6 +857,16 @@ export default function ModalPagoBoldQR({
                 </header>
 
                 <div className="flex flex-col items-center gap-1.5 py-2.5">
+                    {mixedChannelsSummary ? (
+                        <div
+                            className="mb-1 inline-flex items-center gap-2 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-1.5 text-[11px] font-semibold text-sky-700 dark:text-sky-300 leading-tight max-w-full"
+                            data-testid="bold-qr-mixed-channels-summary"
+                            aria-label="Desglose del pago mixto"
+                        >
+                            <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-sky-500" aria-hidden="true" />
+                            <span className="truncate">{mixedChannelsSummary}</span>
+                        </div>
+                    ) : null}
                     <p className="text-[10px] uppercase font-semibold tracking-widest text-zinc-500 dark:text-zinc-400">
                         Digita este valor exacto en tu app
                     </p>

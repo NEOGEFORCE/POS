@@ -84,6 +84,12 @@ export interface IniciarPayload {
      * el cajero jamás pulsa "DEJAR EN ESPERA Y SEGUIR ATENDIENDO".
      */
     readonly sale_payload?: EncolarSalePayload;
+    /**
+     * ID de la venta canónica que se está editando. Cuando viene, el
+     * backend interpreta esta intención como UPDATE (reemplaza el
+     * desglose de la venta existente) y no como CREATE.
+     */
+    readonly edit_sale_id?: number;
 }
 
 export function buildIniciarPayload(args: {
@@ -94,6 +100,7 @@ export function buildIniciarPayload(args: {
     readonly client_dni?: string;
     readonly cashier_name?: string;
     readonly sale_payload?: EncolarSalePayload;
+    readonly edit_sale_id?: number | string;
 }): IniciarPayload | null;
 
 
@@ -154,6 +161,11 @@ export interface EncolarSalePayload {
     readonly employeeDni?: string;
     readonly clientDni?: string;
     readonly clientName?: string;
+    /**
+     * ID de la venta canónica que se está editando. Cuando viene, el
+     * backend interpreta la aprobación como UPDATE y no como CREATE.
+     */
+    readonly editSaleId?: number;
 }
 
 export interface EncolarPayload {
@@ -164,6 +176,7 @@ export interface EncolarPayload {
     readonly client_dni: string;
     readonly cashier_name: string;
     readonly sale_payload: EncolarSalePayload;
+    readonly edit_sale_id?: number;
 }
 
 export function buildEncolarPayload(args: {
@@ -174,9 +187,46 @@ export function buildEncolarPayload(args: {
     readonly cashierName?: string;
     readonly clientDni?: string;
     readonly salePayload: EncolarSalePayload;
+    readonly editSaleId?: number | string;
 }): EncolarPayload | null;
 
 export function generateQrClientTxId(): string;
+
+/**
+ * Construye el `salePayload` del snapshot QR con desglose mixto completo
+ * (migración 027c). Devuelve `null` si los `details` son inválidos.
+ */
+export function buildQrSaleSnapshotPayload(args: {
+    readonly details: ReadonlyArray<{
+        readonly barcode: string;
+        readonly quantity: number;
+        readonly unitPrice: number;
+        readonly costPrice?: number;
+        readonly subtotal?: number;
+    }>;
+    readonly qrAmount: number;
+    readonly breakdown?: {
+        readonly cash?: number;
+        readonly nequi?: number;
+        readonly daviplata?: number;
+        readonly credit?: number;
+        readonly totalCart?: number;
+    };
+    readonly employeeDni?: string;
+    readonly clientDni?: string;
+    readonly clientName?: string;
+    readonly editSaleId?: number | string;
+}): EncolarSalePayload | null;
+
+/**
+ * Resumen legible "Efectivo $X + QR $Y" de los canales activos del
+ * cobro mixto. Devuelve string vacío cuando no hay canales acumulados.
+ */
+export function describeMixedChannelsSummary(
+    breakdown: { cash?: number; nequi?: number; daviplata?: number; credit?: number } | null | undefined,
+    qrAmount: number,
+    formatCurrencyFn: (n: number) => string,
+): string;
 
 
 // =============================================================================
@@ -198,10 +248,12 @@ export type BoldQrAssignErrorCode =
     | "QR_AMOUNT_MISMATCH"
     | "QR_INTENT_ALREADY_TERMINAL"
     | "QR_EVENT_NOT_FOUND"
-    | "QR_INTENT_NOT_FOUND";
+    | "QR_INTENT_NOT_FOUND"
+    | "QR_EVENT_TOO_OLD"
+    | "QR_FORBIDDEN_FOR_ROLE";
 
 export const BOLD_QR_ASSIGN_ERROR_CODE: Readonly<Record<
-    "EVENT_ALREADY_ASSIGNED" | "AMOUNT_MISMATCH" | "INTENT_ALREADY_TERMINAL" | "EVENT_NOT_FOUND" | "INTENT_NOT_FOUND",
+    "EVENT_ALREADY_ASSIGNED" | "AMOUNT_MISMATCH" | "INTENT_ALREADY_TERMINAL" | "EVENT_NOT_FOUND" | "INTENT_NOT_FOUND" | "EVENT_TOO_OLD" | "FORBIDDEN_FOR_ROLE",
     BoldQrAssignErrorCode
 >>;
 

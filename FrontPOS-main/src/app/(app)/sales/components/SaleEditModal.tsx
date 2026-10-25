@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Cookies from 'js-cookie';
 import { Sale } from '@/lib/definitions';
 import { useToast } from '@/hooks/use-toast';
-import { ApiError, extractApiError } from '@/lib/api-error';
+import { ApiError, apiFetch, extractApiError } from '@/lib/api-error';
 import UniversalPaymentModal from '@/components/shared/UniversalPaymentModal';
 import { broadcastRevalidate } from '@/lib/revalidate';
 import { API_URL } from '@/lib/constants';
@@ -14,6 +14,18 @@ import {
     resolvePaymentCorrectionEndpoint,
     validateEmployeeCorrectionPayload,
 } from '@/lib/payment-correction.mjs';
+import {
+    BOLD_QR_ALREADY_PAID_SENTINEL,
+    buildEncolarPayload,
+    buildIniciarPayload,
+    buildQrSaleSnapshotPayload,
+    generateQrClientTxId,
+    isAlreadyPaidResponse,
+    type EncolarSalePayload,
+} from '@/lib/bold-qr-helpers.mjs';
+
+type QrBreakdown = { cash: number; nequi: number; daviplata: number; credit: number; totalCart: number };
+type QrPreparation = { clientTxId: string; monto: number; salePayload: EncolarSalePayload; clientDni: string };
 
 interface SaleEditModalProps {
     isOpen: boolean;
@@ -65,6 +77,116 @@ export default function SaleEditModal({
         // el turno cerrado; el backend valida y devolverá 403 en todo caso.
         return resolvePaymentCorrectionEndpoint(sale, user, { shiftOpen: true });
     }, [sale, user]);
+
+    // =================================================================
+    // QR Bold en la corrección de pago (sólo admin).
+    //
+    // El cobro QR se abre con `editSaleId` = id de esta venta: al
+    // aprobarse (webhook o asignación manual desde la bandeja global) el
+    // backend REEMPLAZA el desglose de ESTA venta, no crea otra. Los
+    // productos no cambian: el snapshot reutiliza los detalles guardados.
+    // Si el cajero ya puso parte en efectivo/Nequi/etc. en el modal, esa
+    // parte viaja en el desglose y el QR cubre sólo el resto.
+    // =================================================================
+    const qrPreparationsRef = useRef<Map<string, QrPreparation>>(new Map());
+    const canUseQr = endpoint?.actor === 'admin';
+    const editSaleId = sale ? Number.parseInt(String(sale.id), 10) : NaN;
+    const cajaId = (typeof user?.dni === 'string' && user.dni.trim()) || 'CAJA';
+
+    const buildSnapshot = useCallback((qrAmount: number, breakdown: QrBreakdown) => {
+        if (!sale || !Array.isArray(sale.details) || sale.details.length === 0) return null;
+        const details = sale.details.map((d) => ({
+            barcode: String(d.barcode || ''),
+            quantity: Number(d.quantity) || 0,
+            unitPrice: Number(d.unitPrice) || 0,
+            subtotal: Number(d.subtotal) || 0,
+        }));
+        return buildQrSaleSnapshotPayload({
+            details,
+            qrAmount,
+            breakdown: { ...breakdown, totalCart: Math.round(Number(sale.total) || breakdown.totalCart) },
+            employeeDni: user?.dni || '',
+            clientDni: sale.client?.dni || '0',
+            clientName: sale.client?.name || '',
+            editSaleId: Number.isFinite(editSaleId) ? editSaleId : undefined,
+        });
+    }, [sale, user, editSaleId]);
+
+    const prepareBoldQrIntent = useCallback(async (amount: number, ventaTempId: string, breakdown: QrBreakdown) => {
+        const temp = typeof ventaTempId === 'string' ? ventaTempId.trim() : '';
+        const monto = Math.round(Number(amount) || 0);
+        if (!temp || monto <= 0) throw new Error('Monto inválido para el cobro QR');
+        const salePayload = buildSnapshot(monto, {
+            cash: Math.max(0, Math.round(breakdown?.cash || 0)),
+            nequi: Math.max(0, Math.round(breakdown?.nequi || 0)),
+            daviplata: Math.max(0, Math.round(breakdown?.daviplata || 0)),
+            credit: Math.max(0, Math.round(breakdown?.credit || 0)),
+            totalCart: Math.max(monto, Math.round(breakdown?.totalCart || 0)),
+        });
+        if (!salePayload) throw new Error('La venta no tiene productos para cobrar por QR');
+        const clientTxId = generateQrClientTxId();
+        const clientDni = sale?.client?.dni || '';
+        const payload = buildIniciarPayload({
+            caja_id: cajaId,
+            monto,
+            venta_temp_id: temp,
+            client_tx_id: clientTxId,
+            client_dni: clientDni,
+            cashier_name: user?.name || '',
+            sale_payload: salePayload,
+        });
+        if (!payload) throw new Error('Datos inválidos para preparar el cobro QR');
+        const res = await apiFetch('/pos/pagos-qr/iniciar', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            fallbackError: 'No se pudo preparar el cobro QR',
+            timeoutMs: 10000,
+        });
+        if (isAlreadyPaidResponse(res)) {
+            toast({ title: 'YA PAGADO', description: 'Este cobro QR ya fue aprobado.' });
+            onOpenChange(false);
+            throw new Error(BOLD_QR_ALREADY_PAID_SENTINEL);
+        }
+        qrPreparationsRef.current.set(temp, { clientTxId, monto, salePayload, clientDni });
+    }, [buildSnapshot, cajaId, sale, user, toast, onOpenChange]);
+
+    // "Dejar en espera": útil para enlazar un pago ya recibido desde la
+    // bandeja global (Pagos por asignar → Asignar) sin tener el modal abierto.
+    const handleBoldQrEnqueueRequested = useCallback(async (ventaTempId: string, monto: number) => {
+        const temp = typeof ventaTempId === 'string' ? ventaTempId.trim() : '';
+        const stored = qrPreparationsRef.current.get(temp);
+        if (!temp || !stored) throw new Error('Vuelve a abrir el cobro QR antes de dejarlo en espera');
+        const payload = buildEncolarPayload({
+            ventaTempId: temp,
+            cajaId,
+            monto: Math.round(Number(monto) || stored.monto),
+            clientTxId: stored.clientTxId,
+            cashierName: user?.name || '',
+            clientDni: stored.clientDni,
+            salePayload: stored.salePayload,
+            editSaleId: Number.isFinite(editSaleId) ? editSaleId : undefined,
+        });
+        if (!payload) throw new Error('Datos inválidos para dejar en espera el cobro QR');
+        await apiFetch('/pos/pagos-qr/encolar', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+            fallbackError: 'No se pudo dejar en espera el cobro QR',
+            timeoutMs: 10000,
+        });
+        toast({
+            title: 'COBRO QR EN ESPERA',
+            description: `Cuando el pago se apruebe o lo asignes en "Pagos por asignar", se actualizará la venta #${sale?.id}.`,
+        });
+        onOpenChange(false);
+    }, [cajaId, editSaleId, sale, user, toast, onOpenChange]);
+
+    const handleBoldQrFinalized = useCallback((info: { saleId: number }) => {
+        broadcastRevalidate('SALE_MADE');
+        toast({ title: 'VENTA ACTUALIZADA', description: `El pago por QR Bold quedó registrado en la venta #${info?.saleId || sale?.id}.` });
+        setLastChange(0);
+        setShowSuccessScreen(true);
+        onSuccess(0);
+    }, [sale, toast, onSuccess]);
 
     const handleSaveEdit = async (data: {
         cash: number;
@@ -213,6 +335,9 @@ export default function SaleEditModal({
             submittingPayment={isUpdating}
             lastChange={lastChange}
             onPay={handleSaveEdit}
+            onBoldQrRequested={canUseQr ? prepareBoldQrIntent : undefined}
+            onBoldQrEnqueueRequested={canUseQr ? handleBoldQrEnqueueRequested : undefined}
+            onBoldQrFinalized={canUseQr ? handleBoldQrFinalized : undefined}
             onClientSelectorOpen={onClientSelectorOpen}
             onCloseComplete={() => {
                 if (showSuccessScreen) window.location.reload();

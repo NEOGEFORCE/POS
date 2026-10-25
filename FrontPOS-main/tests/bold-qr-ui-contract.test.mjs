@@ -358,8 +358,8 @@ test("UniversalPaymentModal expone `onBoldQrRequested` como prop opcional", asyn
     // para que el padre pre-registre la intención con el carrito actual.
     assert.match(
         src,
-        /onBoldQrRequested\?\s*:\s*\(amount:\s*number,\s*ventaTempId:\s*string\)\s*=>\s*void\s*\|\s*Promise<void>/,
-        "La prop opcional debe propagar la firma (amount, ventaTempId) y permitir Promise<void>.",
+        /onBoldQrRequested\?\s*:\s*\(\s*amount:\s*number,\s*ventaTempId:\s*string,\s*breakdown:\s*\{[\s\S]*?\}\s*,?\s*\)\s*=>\s*void\s*\|\s*Promise<void>/,
+        "La prop opcional debe propagar la firma (amount, ventaTempId, breakdown) y permitir Promise<void>.",
     );
 });
 

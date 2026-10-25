@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
     Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
     Spinner, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter
@@ -25,7 +25,7 @@ import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api-error';
 import { canCaptureHomeKey } from '@/lib/drawer-otp.mjs';
 import { describeScaleIndicator } from '@/lib/bridge-connection.mjs';
-import { buildEncolarPayload, buildIniciarPayload, generateQrClientTxId, BOLD_QR_ALREADY_PAID_SENTINEL, isAlreadyPaidError, isAlreadyPaidResponse } from '@/lib/bold-qr-helpers.mjs';
+import { buildEncolarPayload, buildIniciarPayload, buildQrSaleSnapshotPayload, generateQrClientTxId, BOLD_QR_ALREADY_PAID_SENTINEL, isAlreadyPaidError, isAlreadyPaidResponse } from '@/lib/bold-qr-helpers.mjs';
 import { countCartUnits, splitCartTabs } from '@/lib/cart-tabs.mjs';
 import {
     DropdownMenu,
@@ -73,7 +73,7 @@ export default function NewSalePage() {
         products, customers, categories,
         currentCart, carts, activeCartKey, cartKeys, cartCustomers,
         selectedCustomer, selectedCustomerDni,
-        total, editDeltaTotal, editHasChanges, editMode, isEditMode, filteredProductsGrid, filteredCustomers,
+        total, editDeltaTotal, editHasChanges, isEditMode, filteredProductsGrid, filteredCustomers,
         loading, submitting, searchQuery, setSearchQuery,
         selectedCategory, setSelectedCategory,
         selectedItemId, setSelectedItemId,
@@ -245,15 +245,17 @@ export default function NewSalePage() {
         // `BoldQrTrayApprovedInfo`; la ruta modal también la respeta
         // (mismo shape derivado del QREvent del backend).
         setQrApprovedAlert(info);
-        // Audio + voz: ambos honran el mute global (`isSoundMuted`).
-        // El chime es el fallback cuando el navegador no tiene Web
-        // Speech API, o cuando `buildVoiceAnnouncement` descarta la
-        // frase por monto inválido (defensa).
+        // Audio: el mute global (`isSoundMuted`) sólo silencia el chime.
+        // La VOZ "Transferencia recibida por X pesos" suena SIEMPRE, aun
+        // con el sistema muteado: es la confirmación de dinero recibido
+        // y el dueño la pidió audible en todo momento.
         const muted = (() => {
             try { return isSoundMuted(); } catch { return false; }
         })();
         if (!muted) {
             try { playNotificationSound('success'); } catch { /* audio no crítico */ }
+        }
+        {
             if (isSpeechSynthesisSupported()) {
                 const phrase = buildVoiceAnnouncement(info.amountCop);
                 if (phrase) {
@@ -362,6 +364,11 @@ export default function NewSalePage() {
         const wasReopened = !!normalized.ventaTempId && reopenedVentaTempIdRef.current === normalized.ventaTempId;
         reopenedVentaTempIdRef.current = null;
         if (wasReopened) return;
+        // En modo edición, limpiar el carrito "Factura EDIT-<id>" sin
+        // dejar basura y abrir uno limpio para el siguiente cliente.
+        // Esto emula el comportamiento del flujo efectivo/mixto en
+        // edición: la pestaña EDIT se cierra tras actualizar la venta
+        // (ver useNewSale.handleConfirmSale rama isEditModeLocal).
         confirmEnqueuedAndFreeCart();
     }, [notifyBoldQrApprovedOnce, confirmEnqueuedAndFreeCart, setIsPaymentDialogOpen]);
 
@@ -451,19 +458,95 @@ export default function NewSalePage() {
             totalAmount: number;
             amountPaid: number;
             change: number;
+            cashAmount: number;
             transferAmount: number;
+            transferNequi: number;
+            transferDaviplata: number;
+            creditAmount: number;
             transferSource: string;
             paymentMethod: string;
             employeeDni: string;
             clientDni: string;
             clientName: string;
+            editSaleId?: number;
         };
         cashierName: string;
         clientDni: string;
+        breakdown: { cash: number; nequi: number; daviplata: number; credit: number; totalCart: number };
     };
     const qrPreparationsRef = useRef<Map<string, QrPreparedSnapshot>>(new Map());
 
-    const buildQrSalePayloadSnapshot = useCallback((normalizedMonto: number): QrPreparedSnapshot['salePayload'] | null => {
+    // Modo edición: id numérico de la venta que estamos actualizando.
+    // Se extrae del `activeCartKey` ("Factura EDIT-<id>"). Nunca
+    // inventamos: cualquier parse fallido deja `undefined` y el flujo
+    // se comporta como una venta nueva.
+    const editSaleIdNum = useMemo(() => {
+        if (!isEditMode) return undefined;
+        const parts = activeCartKey.split('-');
+        if (parts.length < 2) return undefined;
+        const raw = parts[1].trim();
+        if (!/^[1-9]\d*$/.test(raw)) return undefined;
+        const parsed = Number.parseInt(raw, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+    }, [isEditMode, activeCartKey]);
+
+    // Referencia del pago original (sólo lectura) — se guarda en
+    // localStorage al pulsar "Agregar items" en el historial (ver
+    // `/sales/page.tsx::handleAddItems`). El UPM lo muestra como banner
+    // informativo y el pie del carrito calcula "Antes: $Y" como
+    // `total - editDeltaTotal` cuando esta data no está disponible.
+    const [originalSaleReference, setOriginalSaleReference] = useState<{
+        total: number;
+        paymentMethod: string;
+        cashAmount: number;
+        transferNequi: number;
+        transferDaviplata: number;
+        creditAmount: number;
+    } | null>(null);
+
+    useEffect(() => {
+        if (!isEditMode || !editSaleIdNum) {
+            setOriginalSaleReference(null);
+            return;
+        }
+        if (typeof window === 'undefined') return;
+        try {
+            const raw = window.localStorage.getItem(`pos-edit-original:${editSaleIdNum}`);
+            if (!raw) {
+                setOriginalSaleReference(null);
+                return;
+            }
+            const parsed = JSON.parse(raw);
+            if (!parsed || typeof parsed !== 'object') {
+                setOriginalSaleReference(null);
+                return;
+            }
+            setOriginalSaleReference({
+                total: Number(parsed.total) || 0,
+                paymentMethod: typeof parsed.paymentMethod === 'string' ? parsed.paymentMethod : '',
+                cashAmount: Number(parsed.cashAmount) || 0,
+                transferNequi: Number(parsed.transferNequi) || 0,
+                transferDaviplata: Number(parsed.transferDaviplata) || 0,
+                creditAmount: Number(parsed.creditAmount) || 0,
+            });
+        } catch {
+            setOriginalSaleReference(null);
+        }
+    }, [isEditMode, editSaleIdNum]);
+
+    // Total ORIGINAL de la factura antes de editar. Preferimos el valor
+    // persistido (venta original); si falta, caemos a `total - editDeltaTotal`
+    // (que es matemáticamente equivalente cuando no se tocó el precio).
+    const originalFacturaTotal = useMemo(() => {
+        if (!isEditMode) return 0;
+        if (originalSaleReference && originalSaleReference.total > 0) return Math.round(originalSaleReference.total);
+        return Math.round(Math.max(0, total - editDeltaTotal));
+    }, [isEditMode, originalSaleReference, total, editDeltaTotal]);
+
+    const buildQrSalePayloadSnapshot = useCallback((params: {
+        qrAmount: number;
+        breakdown: { cash: number; nequi: number; daviplata: number; credit: number; totalCart: number };
+    }): QrPreparedSnapshot['salePayload'] | null => {
         const items = currentCart;
         if (!items || items.length === 0) return null;
         const details = items.map((it: any) => {
@@ -482,24 +565,24 @@ export default function NewSalePage() {
                 subtotal,
             };
         });
-        return {
+        const snapshot = buildQrSaleSnapshotPayload({
             details,
-            totalAmount: normalizedMonto,
-            amountPaid: normalizedMonto,
-            change: 0,
-            transferAmount: normalizedMonto,
-            transferSource: 'BOLD_QR',
-            paymentMethod: 'BOLD_QR',
+            qrAmount: params.qrAmount,
+            breakdown: params.breakdown,
             employeeDni: user?.dni || '',
             clientDni: selectedCustomerDni || '0',
             clientName: selectedCustomer?.name || '',
-        };
-    }, [currentCart, user, selectedCustomerDni, selectedCustomer]);
+            editSaleId: editSaleIdNum,
+        });
+        if (!snapshot) return null;
+        return snapshot as QrPreparedSnapshot['salePayload'];
+    }, [currentCart, user, selectedCustomerDni, selectedCustomer, editSaleIdNum]);
 
-    const prepareBoldQrIntent = useCallback(async (amount: number, ventaTempId: string) => {
-        if (isEditMode) {
-            throw new Error('No se puede preparar un cobro QR en modo edición');
-        }
+    const prepareBoldQrIntent = useCallback(async (
+        amount: number,
+        ventaTempId: string,
+        breakdown: { cash: number; nequi: number; daviplata: number; credit: number; totalCart: number },
+    ) => {
         const trimmedTemp = typeof ventaTempId === 'string' ? ventaTempId.trim() : '';
         if (!trimmedTemp) {
             throw new Error('Falta el identificador temporal de la venta QR');
@@ -508,7 +591,17 @@ export default function NewSalePage() {
         if (normalizedMonto <= 0) {
             throw new Error('Monto inválido para preparar el cobro QR');
         }
-        const salePayload = buildQrSalePayloadSnapshot(normalizedMonto);
+        const normalizedBreakdown = {
+            cash: Math.max(0, Math.round(breakdown?.cash || 0)),
+            nequi: Math.max(0, Math.round(breakdown?.nequi || 0)),
+            daviplata: Math.max(0, Math.round(breakdown?.daviplata || 0)),
+            credit: Math.max(0, Math.round(breakdown?.credit || 0)),
+            totalCart: Math.max(normalizedMonto, Math.round(breakdown?.totalCart || 0)),
+        };
+        const salePayload = buildQrSalePayloadSnapshot({
+            qrAmount: normalizedMonto,
+            breakdown: normalizedBreakdown,
+        });
         if (!salePayload) {
             throw new Error('El carrito está vacío');
         }
@@ -523,6 +616,7 @@ export default function NewSalePage() {
             client_dni: clientDni,
             cashier_name: cashierName,
             sale_payload: salePayload,
+            edit_sale_id: editSaleIdNum,
         });
         if (!payload) {
             throw new Error('Datos inválidos para preparar el cobro QR');
@@ -564,13 +658,11 @@ export default function NewSalePage() {
             salePayload,
             cashierName,
             clientDni,
+            breakdown: normalizedBreakdown,
         });
-    }, [buildQrSalePayloadSnapshot, cajaId, isEditMode, selectedCustomerDni, user, qrMarkPaid, setIsPaymentDialogOpen, toast]);
+    }, [buildQrSalePayloadSnapshot, cajaId, editSaleIdNum, selectedCustomerDni, user, qrMarkPaid, setIsPaymentDialogOpen, toast]);
 
     const handleBoldQrEnqueueRequested = useCallback(async (ventaTempId: string, monto: number) => {
-        if (isEditMode) {
-            throw new Error('No se puede dejar en espera un cobro en modo edición');
-        }
         const trimmedTemp = typeof ventaTempId === 'string' ? ventaTempId.trim() : '';
         if (!trimmedTemp) {
             throw new Error('Falta el identificador temporal de la venta QR');
@@ -597,7 +689,14 @@ export default function NewSalePage() {
             cashierName = stored.cashierName;
             clientDni = stored.clientDni;
         } else {
-            const fallback = buildQrSalePayloadSnapshot(normalizedMonto);
+            // Fallback defensivo: construimos un snapshot "100% QR" sin
+            // otros canales acumulados. Esto cubre la reapertura desde
+            // la bandeja global, donde la intención ya existe en el
+            // backend y /encolar aplicará idempotencia.
+            const fallback = buildQrSalePayloadSnapshot({
+                qrAmount: normalizedMonto,
+                breakdown: { cash: 0, nequi: 0, daviplata: 0, credit: 0, totalCart: normalizedMonto },
+            });
             if (!fallback) {
                 throw new Error('El carrito está vacío');
             }
@@ -615,6 +714,7 @@ export default function NewSalePage() {
             cashierName,
             clientDni,
             salePayload,
+            editSaleId: editSaleIdNum,
         });
         if (!payload) {
             throw new Error('Datos inválidos para encolar el cobro QR');
@@ -674,7 +774,7 @@ export default function NewSalePage() {
         confirmEnqueuedAndFreeCart();
         setIsPaymentDialogOpen(false);
         void qrTrayReconnect();
-    }, [buildQrSalePayloadSnapshot, cajaId, confirmEnqueuedAndFreeCart, isEditMode, qrMarkPaid, qrTrayReconnect, selectedCustomerDni, setIsPaymentDialogOpen, toast, user]);
+    }, [buildQrSalePayloadSnapshot, cajaId, confirmEnqueuedAndFreeCart, editSaleIdNum, qrMarkPaid, qrTrayReconnect, selectedCustomerDni, setIsPaymentDialogOpen, toast, user]);
 
     // Wrapper unificado para abrir el modal de pago. En modo edición con
     // cero deltas (ninguna cantidad tocada) no tiene sentido abrir el
@@ -1314,29 +1414,14 @@ export default function NewSalePage() {
                                     <p className="text-[9px] font-medium text-zinc-900 dark:text-zinc-100 uppercase tracking-widest leading-none">
                                         {isEditMode ? "TOTAL FACTURA" : "TOTAL"}
                                     </p>
-                                    {isEditMode && editHasChanges && (
-                                        editDeltaTotal > 0 ? (
-                                            <span
-                                                className="text-[10px] font-bold text-emerald-500 font-mono mt-0.5"
-                                                aria-label={`Cobro adicional al cliente: ${formatCurrency(editDeltaTotal)} pesos`}
-                                            >
-                                                +${formatCurrency(editDeltaTotal)} adicional
-                                            </span>
-                                        ) : editDeltaTotal < 0 ? (
-                                            <span
-                                                className="text-[10px] font-bold text-rose-500 font-mono mt-0.5"
-                                                aria-label={`Devolución al cliente: ${formatCurrency(Math.abs(editDeltaTotal))} pesos`}
-                                            >
-                                                -${formatCurrency(Math.abs(editDeltaTotal))} a devolver
-                                            </span>
-                                        ) : (
-                                            <span
-                                                className="text-[10px] font-bold text-sky-500 font-mono mt-0.5"
-                                                aria-label="Ajuste sin cobro adicional (mezcla de productos por igual valor)"
-                                            >
-                                                Ajuste sin cobro
-                                            </span>
-                                        )
+                                    {isEditMode && originalFacturaTotal > 0 && (
+                                        <span
+                                            className="text-[10px] font-bold text-sky-500 font-mono mt-0.5"
+                                            data-testid="sales-edit-before-total"
+                                            aria-label={`Total original de la factura: ${formatCurrency(originalFacturaTotal)} pesos`}
+                                        >
+                                            Antes: ${formatCurrency(originalFacturaTotal)}
+                                        </span>
                                     )}
                                 </div>
                                 <div className="text-2xl font-medium text-zinc-900 dark:text-zinc-50 tabular-nums leading-none tracking-tighter flex overflow-hidden h-7 items-center">
@@ -1569,23 +1654,9 @@ export default function NewSalePage() {
             <UniversalPaymentModal 
                 isOpen={isPaymentDialogOpen}
                 onOpenChange={(open) => { if (!open && submitting) return; setIsPaymentDialogOpen(open); }}
-                title={
-                    isEditMode
-                        ? (editMode === 'charge'
-                            ? "COBRO ADICIONAL"
-                            : editMode === 'refund'
-                            ? "DEVOLUCIÓN / AJUSTE"
-                            : editMode === 'neutral'
-                            ? "AJUSTE SIN COBRO"
-                            : "Cobrar Venta")
-                        : "Cobrar Venta"
-                }
+                title={isEditMode ? "ACTUALIZAR VENTA" : "Cobrar Venta"}
                 client={selectedCustomer} 
-                totalToPay={
-                    isEditMode
-                        ? Math.abs(editDeltaTotal)
-                        : total
-                }
+                totalToPay={total}
                 // En modo edición mantenemos el flujo del modal totalmente
                 // aislado del "pendingReturn" (que es para intercambios de
                 // devolución de ventas previas). Aquí lo importante es que
@@ -1595,11 +1666,25 @@ export default function NewSalePage() {
                     isEditMode ? 0 : (pendingReturn?.totalDev || 0)
                 }
                 originalPaymentMethod={pendingReturn?.originalPaymentMethod || 'EFECTIVO'}
-                flowType={isEditMode && editMode === 'refund' ? 'out' : 'in'}
+                flowType="in"
                 showSuccessScreen={showSuccessScreen} 
                 submittingPayment={submitting} 
                 lastChange={lastChange} 
                 lastReceipt={lastReceipt}
+                // En modo edición, mostramos el pago ORIGINAL como banner
+                // informativo (sólo referencia). El flujo no suma a
+                // `totalAlreadyPaid` ni a `remainingDebt`: el PUT
+                // /sales/update/:id REEMPLAZA el desglose anterior.
+                referencePayments={
+                    isEditMode && originalSaleReference ? {
+                        method: originalSaleReference.paymentMethod || undefined,
+                        total: originalSaleReference.total,
+                        cash: originalSaleReference.cashAmount,
+                        nequi: originalSaleReference.transferNequi,
+                        daviplata: originalSaleReference.transferDaviplata,
+                        credit: originalSaleReference.creditAmount,
+                    } : null
+                }
                 onPay={async (paymentData) => {
                     await handleConfirmSale(paymentData, pendingReturn);
                 }} 
@@ -1612,17 +1697,16 @@ export default function NewSalePage() {
                 // modal; el carrito queda intacto para que el cajero
                 // cambie de método.
                 //
-                // La aprobación llega por el mismo `onPay` arriba con
-                // transferSource='BOLD_QR', así que no hay que tocar
-                // `handleConfirmSale`. En modo edición ocultamos el QR
-                // porque la ruta de corrección (/sales/update,
-                // /sales/add-items) no persiste el canal de origen;
-                // mantenemos solo canales explícitos.
-                onBoldQrRequested={isEditMode ? undefined : prepareBoldQrIntent}
-                onBoldQrEnqueueRequested={isEditMode ? undefined : handleBoldQrEnqueueRequested}
+                // La aprobación llega por el callback `onBoldQrFinalized`.
+                // En modo edición el `prepareBoldQrIntent` pasa el
+                // `editSaleId` en el snapshot para que el backend
+                // interprete la aprobación como UPDATE (actualiza la
+                // venta existente), no como CREATE.
+                onBoldQrRequested={prepareBoldQrIntent}
+                onBoldQrEnqueueRequested={handleBoldQrEnqueueRequested}
                 boldQrReopenPayload={boldQrReopenPayload ?? undefined}
                 onBoldQrReopenConsumed={handleBoldQrReopenConsumed}
-                onBoldQrFinalized={isEditMode ? undefined : handleBoldQrFinalized}
+                onBoldQrFinalized={handleBoldQrFinalized}
                 onCloseComplete={returnFocusToScanner} 
             />
             <ClientSelectionModal isOpen={isClientDialogOpen} onOpenChange={(open) => { setIsClientDialogOpen(open); if (!open) setTimeout(returnFocusToScanner, 100); }} clientSearch={clientSearch} setClientSearch={setClientSearch} filteredCustomers={filteredCustomers} handleClientSelect={handleClientSelect} selectedClientDni={selectedCustomerDni} />

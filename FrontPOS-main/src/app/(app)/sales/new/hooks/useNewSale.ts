@@ -14,7 +14,6 @@ import { syncOfflineSalesQueue } from '@/lib/offline-sync';
 import { isSoundMuted } from '@/lib/audio-utils';
 import { useAuth } from '@/lib/auth';
 import {
-    buildEditItemsPayload,
     buildStockAdjustmentMap,
     computeEditDeltaTotal,
     getEditMode,
@@ -1172,66 +1171,105 @@ export function useNewSale() {
             setSubmitting(true);
             submittingRef.current = true;
             try {
-                const editItemsPayload = buildEditItemsPayload(itemsToPay);
+                // --- Edición = venta normal ---
+                // El UPM está operando con el TOTAL NUEVO de la factura
+                // (no con el delta): el cajero cobra lo que corresponde
+                // al carrito actualizado. Enviamos PUT /sales/update/:id
+                // que REEMPLAZA el desglose anterior (details + canales)
+                // y acepta reducir el total. Shape idéntico al de
+                // /sales/register para que el backend lo digiera sin
+                // branching extra.
+                if (!itemsToPay || itemsToPay.length === 0) {
+                    toast({ variant: "destructive", title: "SIN PRODUCTOS", description: "La venta no puede quedar vacía." });
+                    setSubmitting(false);
+                    submittingRef.current = false;
+                    return;
+                }
 
-                if (editItemsPayload.length === 0) {
+                // Chequeo defensivo "sin cambios": si todo quedó igual
+                // Y no hubo redistribución de canales, no vale enviar.
+                const anyChanges = hasEditChanges(itemsToPay);
+                if (!anyChanges) {
                     toast({ variant: "destructive", title: "SIN CAMBIOS", description: "No hay diferencias respecto a la factura original." });
                     setSubmitting(false);
                     submittingRef.current = false;
                     return;
                 }
 
-                const deltaTotal = computeEditDeltaTotal(itemsToPay);
-                // 'charge' cobra al cliente, 'refund' le devuelve, 'neutral'
-                // sustituye productos por el mismo valor (sin flujo de caja).
-                const resolvedMode: 'charge' | 'refund' | 'neutral' = deltaTotal > 0
-                    ? 'charge'
-                    : deltaTotal < 0
-                    ? 'refund'
-                    : 'neutral';
-
-                // Contrato con /sales/add-items/:id: los montos viajan como
-                // MAGNITUDES POSITIVAS. El backend rechaza cualquier valor
-                // negativo y determina el signo aplicado según el delta
-                // monetario derivado de los items firmados. En 'neutral'
-                // (mezcla al mismo valor) se envían ceros aunque el modal
-                // traiga valores residuales.
-                const zeroChannels = resolvedMode === 'neutral';
+                const localTotalEdit = itemsToPay.reduce(
+                    (acc, item) => acc + roundSaleLineSubtotal(Number(item.salePrice), item.cartQuantity),
+                    0,
+                );
                 const clamp = (n: number) => (n > 0 ? n : 0);
-                const cashAmount = zeroChannels ? 0 : clamp(paymentData.cash || 0);
-                const transferNequi = zeroChannels ? 0 : clamp(paymentData.transferNequi || 0);
-                const transferDaviplata = zeroChannels ? 0 : clamp(paymentData.transferDaviplata || 0);
+                const cashAmount = clamp(paymentData.cash || 0);
+                const transferNequi = clamp(paymentData.transferNequi || 0);
+                const transferDaviplata = clamp(paymentData.transferDaviplata || 0);
                 const transferBreakdown = transferNequi + transferDaviplata;
-                const transferAmount = zeroChannels
-                    ? 0
-                    : transferBreakdown > 0
-                        ? transferBreakdown
-                        : clamp(paymentData.transfer || 0);
-                const creditAmount = zeroChannels ? 0 : clamp(paymentData.credit || 0);
+                const transferAmount = transferBreakdown > 0
+                    ? transferBreakdown
+                    : clamp(paymentData.transfer || 0);
+                const creditAmount = clamp(paymentData.credit || 0);
                 const transferSource = paymentData.transferSource || '';
 
+                // paymentMethod legible para historial — mismo criterio que
+                // /sales/register (sin "MIXTO" colapsado).
+                const paymentMethods: string[] = [];
+                if (cashAmount > 0) paymentMethods.push("EFECTIVO");
+                if (transferNequi > 0) paymentMethods.push("NEQUI");
+                if (transferDaviplata > 0) paymentMethods.push("DAVIPLATA");
+                if (transferAmount > 0 && transferNequi === 0 && transferDaviplata === 0) {
+                    paymentMethods.push(transferSource?.toUpperCase() || "TRANSFERENCIA");
+                }
+                if (creditAmount > 0) paymentMethods.push("FIADO");
+                const paymentMethod = paymentMethods.length > 0 ? paymentMethods.join(" + ") : "EFECTIVO";
+
+                if (creditAmount > 0 && (selectedCustomerDni === '0' || !selectedCustomerDni)) {
+                    toast({ variant: "destructive", title: "ERROR DE CREDITO", description: "DEBE SELECCIONAR UN CLIENTE PARA FIAR" });
+                    setSubmitting(false);
+                    submittingRef.current = false;
+                    return;
+                }
+
                 const saleId = currentKey.split('-')[1];
-                await apiFetch(`/sales/add-items/${saleId}`, {
-                    method: 'POST',
-                    body: JSON.stringify({
-                        items: editItemsPayload,
-                        cashAmount,
-                        transferAmount,
-                        transferNequi,
-                        transferDaviplata,
-                        transferSource,
-                        creditAmount,
+                const updatePayload = {
+                    clientDni: selectedCustomerDni || '0',
+                    employeeDni: user?.dni || 'ADMIN',
+                    paymentMethod,
+                    total: localTotalEdit,
+                    amountPaid: paymentData.totalPaid || (cashAmount + transferAmount + creditAmount),
+                    cashAmount,
+                    transferAmount,
+                    transferNequi,
+                    transferDaviplata,
+                    transferSource: transferAmount > 0 ? transferSource : '',
+                    creditAmount,
+                    change: paymentData.change || 0,
+                    details: itemsToPay.map(item => {
+                        const qty = Number(item.cartQuantity) || 0;
+                        const price = Number(item.salePrice) || 0;
+                        const cost = Number(item.purchasePrice || 0);
+                        return {
+                            barcode: item.barcode,
+                            quantity: qty,
+                            unitPrice: price,
+                            costPrice: cost,
+                            subtotal: roundSaleLineSubtotal(price, qty),
+                        };
                     }),
-                    fallbackError: 'ERROR AL ACTUALIZAR',
+                };
+
+                await apiFetch(`/sales/update/${saleId}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(updatePayload),
+                    fallbackError: 'ERROR AL ACTUALIZAR LA VENTA',
                     timeoutMs: 30000,
                 });
 
-                const successCopy = resolvedMode === 'refund'
-                    ? { title: 'DEVOLUCIÓN APLICADA', description: 'SE AJUSTÓ LA FACTURA Y SE REEMBOLSÓ AL CLIENTE' }
-                    : resolvedMode === 'charge'
-                    ? { title: 'COBRO ADICIONAL REGISTRADO', description: 'SE ACTUALIZÓ LA FACTURA CON LOS NUEVOS PRODUCTOS' }
-                    : { title: 'AJUSTE APLICADO', description: 'SE SUSTITUYERON PRODUCTOS SIN COBRO ADICIONAL' };
-                toast({ variant: 'success', title: successCopy.title, description: successCopy.description });
+                toast({
+                    variant: 'success',
+                    title: 'VENTA ACTUALIZADA',
+                    description: `Se reemplazó el desglose de la factura #${saleId}.`,
+                });
 
                 setLastChange(paymentData.change || 0);
                 setShowSuccessScreen(true);
@@ -1244,12 +1282,30 @@ export function useNewSale() {
                 setProducts(prev => prev.map(p => {
                     const adjustment = stockAdjustments.get(p.barcode);
                     if (adjustment === undefined) return p;
-                    // Restamos el delta: si es positivo baja el stock (más
-                    // productos vendidos); si es negativo sube (devolución).
                     return { ...p, quantity: p.quantity - adjustment };
                 }));
                 mutateProducts();
 
+                // Construir lastReceipt para el ticket con TOTAL NUEVO,
+                // pago nuevo (desglose), vueltas y cajero. Esto permite
+                // reimprimir desde la pantalla de éxito con los datos
+                // reales de la actualización.
+                setLastReceipt({
+                    date: new Date().toISOString(),
+                    clientName: selectedCustomer.name,
+                    clientDni: selectedCustomerDni,
+                    total: localTotalEdit,
+                    paymentMethod,
+                    cashAmount,
+                    transferAmount,
+                    creditAmount,
+                    change: paymentData.change || 0,
+                    employeeName: user?.name || user?.dni || undefined,
+                    saleId: /^[1-9]\d*$/.test(saleId) ? Number.parseInt(saleId, 10) : undefined,
+                    items: itemsToPay,
+                });
+
+                // Limpiar el carrito EDIT y volver a Factura 1
                 const updatedCarts = { ...carts };
                 delete updatedCarts[currentKey];
                 setCarts(updatedCarts);
@@ -1259,6 +1315,13 @@ export function useNewSale() {
                 if (newKeys.length === 0) {
                     setCarts(prevCarts => ({ ...prevCarts, 'Factura 1': [] }));
                 }
+
+                // Limpiar la referencia del pago original (localStorage)
+                try {
+                    if (typeof window !== 'undefined' && /^[1-9]\d*$/.test(saleId)) {
+                        window.localStorage.removeItem(`pos-edit-original:${saleId}`);
+                    }
+                } catch { /* no crítico */ }
 
                 broadcastRevalidate('SALE_MADE');
             } catch (err) {
@@ -1432,31 +1495,23 @@ export function useNewSale() {
                 return;
             }
 
-            const isEditMode = activeCartKey.startsWith("Factura EDIT-");
-            let endpointPath = '/sales/register';
-            let reqMethod = 'POST';
-
-            if (isEditMode) {
-                const saleId = activeCartKey.split('-')[1];
-                endpointPath = `/sales/update/${saleId}`;
-                reqMethod = 'PUT';
-            }
+            // Rama "venta nueva": el modo edición queda cubierto arriba
+            // (rama `isEditModeLocal` con PUT /sales/update/:id). No
+            // puede caerse aquí porque esa rama hace `return` antes.
+            const endpointPath = '/sales/register';
+            const reqMethod = 'POST';
 
             // Capturamos el 201 real del backend. En `/sales/register` el
             // body JSON trae el `id` entero positivo (ver json tag en
             // models.Sale.SaleID), que vamos a adjuntar al audit del
-            // pulso lateral. En modo edición (`/sales/update/:id`) o en
-            // offline (que ni siquiera entra a esta rama) no se usa el
-            // id del server y jamás fabricamos uno.
+            // pulso lateral.
             const registerResponse = await apiFetch<Record<string, unknown>>(endpointPath, {
                 method: reqMethod,
                 body: JSON.stringify(saleData),
                 fallbackError: 'ERROR AL REGISTRAR VENTA',
                 timeoutMs: 30000,
             });
-            const serverSaleId = (!isEditMode && endpointPath === '/sales/register')
-                ? extractSaleIdFromRegisterResponse(registerResponse)
-                : undefined;
+            const serverSaleId = extractSaleIdFromRegisterResponse(registerResponse);
 
             toast({ variant: 'success', title: 'VENTA REGISTRADA', description: 'TRANSACCION COMPLETADA CON EXITO' });
             finalizeLocalSale(itemsToPay, saleData, change, serverSaleId);

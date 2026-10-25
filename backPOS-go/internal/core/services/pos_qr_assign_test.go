@@ -172,7 +172,7 @@ func TestQrPaymentService_CountSameAmountPending_InputInvalido(t *testing.T) {
 
 func TestQrPaymentService_ListUnassignedWebhookEvents_MinutosFueraDeRango(t *testing.T) {
 	svc := NewQrPaymentService(nil, nil, nil)
-	for _, m := range []int{0, -1, 121, 500} {
+	for _, m := range []int{0, -1, 1441, 5000} {
 		if _, err := svc.ListUnassignedWebhookEvents(context.Background(), m); err != ErrQRInvalidInput {
 			t.Errorf("minutos=%d debe ErrQRInvalidInput, got %v", m, err)
 		}

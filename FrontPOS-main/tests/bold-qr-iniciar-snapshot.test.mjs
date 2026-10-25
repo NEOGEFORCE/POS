@@ -290,8 +290,8 @@ test("IO1 UPM: onBoldQrRequested tipa (amount, ventaTempId) => void | Promise<vo
     const src = await readSrc(upmPath);
     assert.match(
         src,
-        /onBoldQrRequested\?\s*:\s*\(amount:\s*number,\s*ventaTempId:\s*string\)\s*=>\s*void\s*\|\s*Promise<void>/,
-        "La prop debe tipar explícitamente (amount, ventaTempId) y permitir Promise<void>.",
+        /onBoldQrRequested\?\s*:\s*\(\s*amount:\s*number,\s*ventaTempId:\s*string,\s*breakdown:\s*\{[\s\S]*?\}\s*,?\s*\)\s*=>\s*void\s*\|\s*Promise<void>/,
+        "La prop debe tipar explícitamente (amount, ventaTempId, breakdown) y permitir Promise<void>.",
     );
 });
 
@@ -309,8 +309,8 @@ test("IO2 UPM.handleOpenBoldQr: await onBoldQrRequested antes de setIsBoldQrOpen
     assert.match(body, /useCallback\(async\s*\(\s*\)\s*=>/,
         "handleOpenBoldQr debe ser async para poder await al callback.");
     // Debe hacer await al callback
-    assert.match(body, /await\s+onBoldQrRequested\(amount,\s*uuid\)/,
-        "Debe hacer `await onBoldQrRequested(amount, uuid)` antes de abrir el modal.");
+    assert.match(body, /await\s+onBoldQrRequested\(amount,\s*uuid,\s*breakdown\)/,
+        "Debe hacer `await onBoldQrRequested(amount, uuid, breakdown)` antes de abrir el modal.");
     // El await debe ocurrir ANTES del setIsBoldQrOpen(true)
     const awaitIdx = body.indexOf("await onBoldQrRequested");
     const openIdx = body.indexOf("setIsBoldQrOpen(true)");
@@ -381,8 +381,8 @@ test("IO4 sales/new/page.tsx: define prepareBoldQrIntent que POSTea /iniciar", a
     // Firma (amount, ventaTempId)
     assert.match(
         src,
-        /prepareBoldQrIntent\s*=\s*useCallback\(\s*async\s*\(amount:\s*number,\s*ventaTempId:\s*string\)/,
-        "La firma debe ser async (amount: number, ventaTempId: string).",
+        /prepareBoldQrIntent\s*=\s*useCallback\(\s*async\s*\(\s*amount:\s*number,\s*ventaTempId:\s*string,\s*breakdown:/,
+        "La firma debe ser async (amount: number, ventaTempId: string, breakdown).",
     );
     const start = src.indexOf("const prepareBoldQrIntent = useCallback");
     const end = src.indexOf("}, [", start);
@@ -437,7 +437,9 @@ test("IO5 sales/new/page.tsx: UniversalPaymentModal recibe onBoldQrRequested=pre
     const src = await readSrc(salesNewPagePath);
     assert.match(
         src,
-        /onBoldQrRequested=\{isEditMode\s*\?\s*undefined\s*:\s*prepareBoldQrIntent\}/,
+        // QR habilitado también en edición (Factura EDIT-<id>): el
+        // snapshot lleva editSaleId y la aprobación actualiza esa venta.
+        /onBoldQrRequested=\{prepareBoldQrIntent\}/,
         "El UPM debe recibir prepareBoldQrIntent (snapshot durable), no un stub de telemetría.",
     );
     // El stub viejo (telemetry hook — intencionalmente vacío) no debe sobrevivir
@@ -528,7 +530,7 @@ test("sales/new/page.tsx: la rama fallback del enqueue construye snapshot desde 
     const body = src.slice(start, end);
     assert.match(
         body,
-        /buildQrSalePayloadSnapshot\(normalizedMonto\)/,
+        /buildQrSalePayloadSnapshot\(\{\s*qrAmount:\s*normalizedMonto/,
         "La rama fallback debe construir el snapshot desde el carrito actual.",
     );
 });

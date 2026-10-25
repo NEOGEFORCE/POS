@@ -90,6 +90,33 @@ export default function SalesHistoryPage() {
                 null,
                 user.dni
             );
+
+            // Persistir el pago original (sólo lectura) para que /sales/new
+            // pueda mostrarlo como "referencia" en el UPM y en el pie del
+            // carrito ("Antes: $Y"). El contenido es mínimo y legible: no
+            // guardamos details (los items ya van en el carrito con flag
+            // `isPreexisting: true`). Si localStorage falla, no bloqueamos
+            // el flujo: el modal mostrará el fallback "Antes: $(total-delta)".
+            try {
+                if (typeof window !== 'undefined') {
+                    const key = `pos-edit-original:${s.id}`;
+                    const paymentPayload = {
+                        saleId: s.id,
+                        total: Number(s.total) || 0,
+                        paymentMethod: s.paymentMethod || getPaymentDescription(s) || 'EFECTIVO',
+                        cashAmount: Number((s as any).cashAmount) || 0,
+                        transferAmount: Number((s as any).transferAmount) || 0,
+                        transferNequi: Number((s as any).transferNequi) || 0,
+                        transferDaviplata: Number((s as any).transferDaviplata) || 0,
+                        creditAmount: Number((s as any).creditAmount) || 0,
+                        transferSource: typeof (s as any).transferSource === 'string' ? (s as any).transferSource : '',
+                    };
+                    window.localStorage.setItem(key, JSON.stringify(paymentPayload));
+                }
+            } catch {
+                // localStorage puede fallar en modo privado — no es crítico.
+            }
+
             window.location.href = '/sales/new';
         } catch (error) {
             console.error("Error setting cart data:", error);

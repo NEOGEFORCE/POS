@@ -11,9 +11,12 @@
 //     evitar duplicación.
 //   - El hook `useBoldQrGlobalTray` consume `?scope=all` y SSE del
 //     mismo endpoint sin filtro de caja.
-//   - El botón sólo aparece si hay pendientes (`total > 0`) para no
-//     ensuciar el header con un badge vacío. Pero el hook sigue vivo
-//     escuchando SSE: cuando llega el primer ENQUEUED, el badge aparece.
+//   - Además de "Pendientes en todas las cajas", muestra una sección
+//     "Pagos por asignar" (migración 027c): el admin puede enlazar un
+//     pago QR huérfano con cualquier intención pendiente del mismo
+//     monto, reusando POST /pos/pagos-qr/asignar. Esto cubre el flujo
+//     "la dueña corrige una venta y asigna el pago viejo que vino por
+//     SMS tarde".
 //   - "Confirmar manual" es admin-only; el backend lo exige y el padre
 //     ya pasa el flag correcto.
 //   - Sin sonido ni voz: la bandeja global es informativa, no operativa.
@@ -32,8 +35,8 @@
 
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { Clock, QrCode, RotateCw, ShieldCheck, Store, User as UserIcon } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Clock, HelpCircle, QrCode, RotateCw, ShieldCheck, Store, User as UserIcon } from "lucide-react";
 
 import {
     AlertDialog,
@@ -55,6 +58,12 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { formatCurrency } from "@/lib/utils";
+import {
+    canAssignToPending,
+    describeAssignErrorCode,
+    extractAssignErrorCode,
+    type BoldQrUnassignedPayment,
+} from "@/lib/bold-qr-helpers.mjs";
 import {
     useBoldQrGlobalTray,
     type BoldQrGlobalPendingItem,
@@ -87,6 +96,26 @@ function formatRelativeAgo(iso: string, nowMs: number = Date.now()): string {
     return `hace ${days} d`;
 }
 
+function formatReceivedAt(iso: string): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    try {
+        return d.toLocaleTimeString("es-CO", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: true,
+        });
+    } catch {
+        return iso;
+    }
+}
+
+interface AssignPrompt {
+    readonly unassigned: BoldQrUnassignedPayment;
+    readonly pending: BoldQrGlobalPendingItem;
+}
+
 export default function GlobalBoldQrTray({
     enabled,
     canConfirmManual,
@@ -99,6 +128,8 @@ export default function GlobalBoldQrTray({
     const [manualPrompt, setManualPrompt] = useState<BoldQrGlobalPendingItem | null>(null);
     const [manualNote, setManualNote] = useState(DEFAULT_MANUAL_NOTE);
     const [manualBusy, setManualBusy] = useState(false);
+    const [assignPrompt, setAssignPrompt] = useState<AssignPrompt | null>(null);
+    const [assignBusy, setAssignBusy] = useState(false);
 
     const sortedPendings = useMemo(() => {
         return [...tray.pendings].sort((a, b) => {
@@ -108,7 +139,22 @@ export default function GlobalBoldQrTray({
         });
     }, [tray.pendings]);
 
-    const total = tray.pendings.length;
+    const sortedUnassigned = useMemo(() => {
+        return [...tray.unassignedPayments].sort((a, b) => {
+            return (b.receivedAt || "").localeCompare(a.receivedAt || "");
+        });
+    }, [tray.unassignedPayments]);
+
+    const totalPending = tray.pendings.length;
+    const totalUnassigned = tray.unassignedPayments.length;
+    const total = totalPending + totalUnassigned;
+
+    // Al abrir el popover, refrescar pagos sin asignar para no mostrar
+    // datos obsoletos del último polling.
+    useEffect(() => {
+        if (!open) return;
+        void tray.reloadUnassigned();
+    }, [open, tray]);
 
     const handleConfirmManual = useCallback(async () => {
         if (!manualPrompt || manualBusy) return;
@@ -136,9 +182,42 @@ export default function GlobalBoldQrTray({
         }
     }, [manualPrompt, manualBusy, manualNote, tray, toast]);
 
+    const handleConfirmAssign = useCallback(async () => {
+        if (!assignPrompt || assignBusy) return;
+        setAssignBusy(true);
+        try {
+            await tray.assignPaymentToIntent(
+                assignPrompt.pending.ventaTempId,
+                assignPrompt.unassigned.eventId,
+            );
+            toast({
+                variant: "success",
+                title: "PAGO ASIGNADO",
+                description: `Se enlazó $${formatCurrency(assignPrompt.unassigned.amountCop)} con el cobro ${assignPrompt.pending.ventaTempId}.`,
+            });
+            setAssignPrompt(null);
+        } catch (err) {
+            const code = extractAssignErrorCode(err);
+            const description = code
+                ? describeAssignErrorCode(code)
+                : err instanceof Error
+                    ? err.message
+                    : "No se pudo asignar el pago. Intenta nuevamente.";
+            toast({
+                variant: "destructive",
+                title: "NO SE PUDO ASIGNAR",
+                description,
+            });
+            void tray.reloadUnassigned();
+            void tray.reconnect();
+        } finally {
+            setAssignBusy(false);
+        }
+    }, [assignPrompt, assignBusy, tray, toast]);
+
     if (!enabled) return null;
-    // No mostrar nada si no hay pendientes: el hook sigue escuchando SSE
-    // y aparecerá en cuanto haya actividad.
+    // No mostrar nada si no hay actividad en ninguna lista: el hook sigue
+    // escuchando SSE y aparecerá en cuanto haya actividad.
     if (total === 0) return null;
 
     return (
@@ -162,10 +241,20 @@ export default function GlobalBoldQrTray({
                         >
                             {total}
                         </Badge>
+                        {totalUnassigned > 0 ? (
+                            <Badge
+                                variant="secondary"
+                                className="min-w-[1.25rem] px-1.5 bg-amber-500 text-white"
+                                data-testid="bold-qr-global-unassigned-badge"
+                                aria-label={`${totalUnassigned} pagos por asignar`}
+                            >
+                                {totalUnassigned}
+                            </Badge>
+                        ) : null}
                     </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                    className="flex max-h-[min(70vh,32rem)] w-[min(26rem,calc(100vw-2rem))] flex-col p-0"
+                    className="flex max-h-[min(70vh,36rem)] w-[min(28rem,calc(100vw-2rem))] flex-col p-0"
                     align="end"
                     sideOffset={8}
                 >
@@ -180,6 +269,7 @@ export default function GlobalBoldQrTray({
                                 className="h-7 w-7"
                                 onClick={() => {
                                     void tray.reconnect();
+                                    void tray.reloadUnassigned();
                                 }}
                                 aria-label="Refrescar bandeja global"
                             >
@@ -190,6 +280,7 @@ export default function GlobalBoldQrTray({
                         <CardContent className="flex min-h-0 flex-1 flex-col p-0">
                             <ScrollArea className="flex-1 min-h-0 overflow-auto overscroll-contain">
                                 <div className="flex flex-col gap-2 p-0">
+                                    {/* -------- Pendientes -------- */}
                                     <section aria-label="Cobros QR en espera a nivel global">
                                         <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-1.5">
                                             <h4 className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
@@ -199,7 +290,7 @@ export default function GlobalBoldQrTray({
                                                 variant="secondary"
                                                 className="bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                                             >
-                                                {total}
+                                                {totalPending}
                                             </Badge>
                                         </div>
                                         {tray.latestError ? (
@@ -207,57 +298,173 @@ export default function GlobalBoldQrTray({
                                                 {tray.latestError}
                                             </div>
                                         ) : null}
-                                        <ul
-                                            className="divide-y divide-zinc-200 dark:divide-white/5 pb-2"
-                                            data-testid="bold-qr-global-tray-list"
-                                        >
-                                            {sortedPendings.map((item) => (
-                                                <li
-                                                    key={item.ventaTempId}
-                                                    className="flex items-start justify-between gap-3 px-4 py-3"
-                                                >
-                                                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                                                        <p className="truncate text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
-                                                            ${formatCurrency(item.amountCop)}
-                                                        </p>
-                                                        <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
-                                                            {item.cajaId ? (
-                                                                <span className="inline-flex items-center gap-1">
-                                                                    <Store className="h-3 w-3" aria-hidden="true" />
-                                                                    <span className="font-mono">{item.cajaId}</span>
-                                                                </span>
+                                        {totalPending === 0 ? (
+                                            <div className="flex flex-col items-center justify-center gap-2 px-6 py-4 text-center">
+                                                <Clock className="h-5 w-5 text-zinc-400" aria-hidden="true" />
+                                                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                                    Ningún cobro QR en espera.
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <ul
+                                                className="divide-y divide-zinc-200 dark:divide-white/5 pb-2"
+                                                data-testid="bold-qr-global-tray-list"
+                                            >
+                                                {sortedPendings.map((item) => (
+                                                    <li
+                                                        key={item.ventaTempId}
+                                                        className="flex items-start justify-between gap-3 px-4 py-3"
+                                                    >
+                                                        <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                                            <p className="truncate text-base font-semibold tabular-nums text-zinc-900 dark:text-zinc-50">
+                                                                ${formatCurrency(item.amountCop)}
+                                                            </p>
+                                                            <p className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                                {item.cajaId ? (
+                                                                    <span className="inline-flex items-center gap-1">
+                                                                        <Store className="h-3 w-3" aria-hidden="true" />
+                                                                        <span className="font-mono">{item.cajaId}</span>
+                                                                    </span>
+                                                                ) : null}
+                                                                {item.cashierName ? (
+                                                                    <span className="inline-flex items-center gap-1">
+                                                                        <UserIcon className="h-3 w-3" aria-hidden="true" />
+                                                                        <span className="truncate max-w-[10rem]">{item.cashierName}</span>
+                                                                    </span>
+                                                                ) : null}
+                                                            </p>
+                                                            <p className="text-[11px] text-zinc-400 dark:text-zinc-500 inline-flex items-center gap-1">
+                                                                <Clock className="h-3 w-3" aria-hidden="true" />
+                                                                {formatRelativeAgo(item.queuedAt || item.createdAt)}
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex shrink-0 flex-col gap-1">
+                                                            {canConfirmManual ? (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-7 px-2 text-[11px] font-semibold uppercase border-amber-500/40 text-amber-700 dark:text-amber-300"
+                                                                    onClick={() => {
+                                                                        setManualNote(DEFAULT_MANUAL_NOTE);
+                                                                        setManualPrompt(item);
+                                                                    }}
+                                                                    data-testid="bold-qr-global-manual-confirm-button"
+                                                                >
+                                                                    Confirmar manual
+                                                                </Button>
                                                             ) : null}
-                                                            {item.cashierName ? (
-                                                                <span className="inline-flex items-center gap-1">
-                                                                    <UserIcon className="h-3 w-3" aria-hidden="true" />
-                                                                    <span className="truncate max-w-[10rem]">{item.cashierName}</span>
-                                                                </span>
-                                                            ) : null}
-                                                        </p>
-                                                        <p className="text-[11px] text-zinc-400 dark:text-zinc-500 inline-flex items-center gap-1">
-                                                            <Clock className="h-3 w-3" aria-hidden="true" />
-                                                            {formatRelativeAgo(item.queuedAt || item.createdAt)}
-                                                        </p>
-                                                    </div>
-                                                    <div className="flex shrink-0 flex-col gap-1">
-                                                        {canConfirmManual ? (
-                                                            <Button
-                                                                size="sm"
-                                                                variant="outline"
-                                                                className="h-7 px-2 text-[11px] font-semibold uppercase border-amber-500/40 text-amber-700 dark:text-amber-300"
-                                                                onClick={() => {
-                                                                    setManualNote(DEFAULT_MANUAL_NOTE);
-                                                                    setManualPrompt(item);
-                                                                }}
-                                                                data-testid="bold-qr-global-manual-confirm-button"
-                                                            >
-                                                                Confirmar manual
-                                                            </Button>
-                                                        ) : null}
-                                                    </div>
-                                                </li>
-                                            ))}
-                                        </ul>
+                                                        </div>
+                                                    </li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </section>
+
+                                    <Separator className="mx-4" />
+
+                                    {/* -------- Pagos por asignar -------- */}
+                                    <section
+                                        aria-label="Pagos por asignar en todas las cajas"
+                                        data-testid="bold-qr-global-unassigned-section"
+                                    >
+                                        <div className="flex items-center justify-between gap-2 px-4 pt-1 pb-1.5">
+                                            <h4 className="text-[11px] font-semibold uppercase tracking-widest text-amber-700 dark:text-amber-400">
+                                                Pagos por asignar
+                                            </h4>
+                                            <Badge
+                                                variant="secondary"
+                                                className={
+                                                    totalUnassigned > 0
+                                                        ? "bg-amber-500 text-white"
+                                                        : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400"
+                                                }
+                                            >
+                                                {totalUnassigned}
+                                            </Badge>
+                                        </div>
+                                        {tray.latestUnassignedError ? (
+                                            <div className="px-4 pb-2 text-[11px] text-rose-500">
+                                                {tray.latestUnassignedError}
+                                            </div>
+                                        ) : null}
+                                        {totalUnassigned === 0 ? (
+                                            <div className="flex flex-col items-center justify-center gap-2 px-6 py-4 text-center">
+                                                <HelpCircle className="h-5 w-5 text-zinc-400" aria-hidden="true" />
+                                                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                                                    Ningún pago sin asignar en las últimas 24 h.
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <ul className="divide-y divide-zinc-200 dark:divide-white/5 pb-2">
+                                                {sortedUnassigned.map((item) => {
+                                                    const matches = sortedPendings.filter((p) =>
+                                                        canAssignToPending(item, p),
+                                                    );
+                                                    return (
+                                                        <li
+                                                            key={item.eventId}
+                                                            className="flex flex-col gap-2 px-4 py-3"
+                                                            data-testid="bold-qr-global-unassigned-item"
+                                                        >
+                                                            <div className="flex items-start justify-between gap-3">
+                                                                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                                                                    <p className="truncate text-base font-semibold tabular-nums text-amber-700 dark:text-amber-300">
+                                                                        ${formatCurrency(item.amountCop)}
+                                                                    </p>
+                                                                    <p className="truncate text-[11px] text-zinc-500 dark:text-zinc-400">
+                                                                        {formatReceivedAt(item.receivedAt)}
+                                                                        {" · "}
+                                                                        <span className="font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400">
+                                                                            {item.status}
+                                                                        </span>
+                                                                    </p>
+                                                                    <p className="text-[11px] text-zinc-400 dark:text-zinc-500 inline-flex items-center gap-1">
+                                                                        <Clock className="h-3 w-3" aria-hidden="true" />
+                                                                        {formatRelativeAgo(item.receivedAt)}
+                                                                    </p>
+                                                                    {item.resumen ? (
+                                                                        <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-tight">
+                                                                            {item.resumen}
+                                                                        </p>
+                                                                    ) : null}
+                                                                </div>
+                                                                <AlertTriangle
+                                                                    className="h-4 w-4 shrink-0 text-amber-500"
+                                                                    aria-hidden="true"
+                                                                />
+                                                            </div>
+                                                            {matches.length === 0 ? (
+                                                                <p className="text-[11px] italic text-zinc-500 dark:text-zinc-400">
+                                                                    Ninguna caja tiene un cobro pendiente con este monto.
+                                                                </p>
+                                                            ) : (
+                                                                <div className="flex flex-col gap-1.5">
+                                                                    {matches.map((p) => (
+                                                                        <Button
+                                                                            key={p.ventaTempId}
+                                                                            size="sm"
+                                                                            variant="default"
+                                                                            className="h-8 w-full justify-start gap-2 px-3 text-[11px] font-semibold uppercase bg-amber-600 hover:bg-amber-500 text-white"
+                                                                            onClick={() =>
+                                                                                setAssignPrompt({
+                                                                                    unassigned: item,
+                                                                                    pending: p,
+                                                                                })
+                                                                            }
+                                                                            data-testid="bold-qr-global-assign-button"
+                                                                        >
+                                                                            <span className="truncate text-left">
+                                                                                Enlazar con {p.cashierName ? p.cashierName : p.cajaId || p.ventaTempId}
+                                                                            </span>
+                                                                        </Button>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </li>
+                                                    );
+                                                })}
+                                            </ul>
+                                        )}
                                     </section>
                                 </div>
                             </ScrollArea>
@@ -266,6 +473,8 @@ export default function GlobalBoldQrTray({
                 </PopoverContent>
             </Popover>
 
+            {/* Confirmación manual (admin): sólo tras verificar el pago
+                en la app Bold. Queda auditada con el DNI de la sesión. */}
             <AlertDialog
                 open={!!manualPrompt}
                 onOpenChange={(nextOpen) => {
@@ -328,6 +537,84 @@ export default function GlobalBoldQrTray({
                             className="bg-amber-600 hover:bg-amber-500 text-white font-bold uppercase tracking-wide rounded-xl"
                         >
                             {manualBusy ? "Confirmando…" : "Confirmar pago"}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
+
+            {/* Enlazar un pago huérfano con un pending (admin): el backend
+                exige monto exacto + rol válido. El cajero dueño del pending
+                se muestra en el diálogo para evitar que el admin enlace a
+                la venta equivocada por accidente. */}
+            <AlertDialog
+                open={!!assignPrompt}
+                onOpenChange={(nextOpen) => {
+                    if (!nextOpen && !assignBusy) setAssignPrompt(null);
+                }}
+            >
+                <AlertDialogContent
+                    data-testid="bold-qr-global-assign-confirm-dialog"
+                    className="border-2 border-amber-500/40 bg-white dark:bg-zinc-950 rounded-2xl"
+                >
+                    <AlertDialogHeader className="items-center text-center space-y-2">
+                        <div
+                            aria-hidden
+                            className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-500/20 ring-4 ring-amber-500/30"
+                        >
+                            <AlertTriangle className="h-7 w-7 text-amber-500" strokeWidth={2.5} />
+                        </div>
+                        <AlertDialogTitle className="text-xl md:text-2xl font-bold uppercase tracking-tight text-amber-700 dark:text-amber-300">
+                            Enlazar pago al cobro
+                        </AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="flex flex-col items-center gap-1 text-zinc-800 dark:text-zinc-200">
+                                <p className="text-3xl md:text-4xl font-black tabular-nums tracking-tight">
+                                    ${assignPrompt ? formatCurrency(assignPrompt.unassigned.amountCop) : ""}
+                                </p>
+                                <p className="text-[11px] uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                                    {assignPrompt
+                                        ? `${assignPrompt.unassigned.status} · ${formatReceivedAt(assignPrompt.unassigned.receivedAt)}`
+                                        : ""}
+                                </p>
+                                {assignPrompt?.unassigned.resumen ? (
+                                    <p className="text-xs text-zinc-600 dark:text-zinc-300 leading-tight max-w-sm">
+                                        {assignPrompt.unassigned.resumen}
+                                    </p>
+                                ) : null}
+                                <div className="mt-2 flex flex-col gap-0.5 text-xs text-zinc-700 dark:text-zinc-300">
+                                    <span className="font-semibold uppercase tracking-wider">
+                                        Cobro destino
+                                    </span>
+                                    <span className="font-mono text-[11px]">
+                                        {assignPrompt?.pending.ventaTempId ?? ""}
+                                    </span>
+                                    {assignPrompt?.pending.cajaId ? (
+                                        <span className="text-[11px]">
+                                            Caja: <span className="font-mono">{assignPrompt.pending.cajaId}</span>
+                                        </span>
+                                    ) : null}
+                                    {assignPrompt?.pending.cashierName ? (
+                                        <span className="text-[11px]">
+                                            Cajero: {assignPrompt.pending.cashierName}
+                                        </span>
+                                    ) : null}
+                                </div>
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel disabled={assignBusy} className="rounded-xl">
+                            Cancelar
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                void handleConfirmAssign();
+                            }}
+                            disabled={assignBusy}
+                            className="bg-amber-600 hover:bg-amber-500 text-white font-bold uppercase tracking-wide rounded-xl"
+                        >
+                            {assignBusy ? "Enlazando…" : "Confirmar enlace"}
                         </AlertDialogAction>
                     </AlertDialogFooter>
                 </AlertDialogContent>

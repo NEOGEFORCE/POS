@@ -122,7 +122,12 @@ interface UseBoldQrTrayOptions {
 }
 
 const SESSION_PREFIX = "bold-qr-notified:";
-const DEFAULT_UNASSIGNED_WINDOW_MINUTES = 30;
+// Ventana por defecto 24 h (1440 min) — migración 027c. Antes era 30 min,
+// lo que ocultaba pagos huérfanos recientes y bloqueaba al cajero/admin
+// cuando necesitaban enlazar un pago QR a una venta en edición. El
+// backend permite hasta 1440 min; mantenemos el default alineado para
+// que la bandeja muestre TODO el día operativo.
+const DEFAULT_UNASSIGNED_WINDOW_MINUTES = 1440;
 const DEFAULT_POLL_INTERVAL_MS = 20_000;
 
 function normalizePending(raw: PendientesResponse["items"]): BoldQrPendingItem[] {

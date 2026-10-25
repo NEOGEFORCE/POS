@@ -28,5 +28,5 @@ test("QR reabierto: no se reencola con el carrito actual y cerrar cierra el cobr
 test("QR reabierto: al aprobarse no libera el carrito activo", async () => {
     const page = await src("app", "(app)", "sales", "new", "page.tsx");
     assert.match(page, /reopenedVentaTempIdRef\.current = item\.ventaTempId;/);
-    assert.match(page, /if \(wasReopened\) return;\s*confirmEnqueuedAndFreeCart\(\);/);
+    assert.match(page, /if \(wasReopened\) return;(\s*\/\/[^\n]*)*\s*confirmEnqueuedAndFreeCart\(\);/);
 });

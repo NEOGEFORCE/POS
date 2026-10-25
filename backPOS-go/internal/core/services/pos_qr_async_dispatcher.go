@@ -68,6 +68,19 @@ type qrSaleCartItem struct {
 }
 
 // qrSaleTotals carga datos de pago y totales.
+//
+// EditTargetSaleID (opcional) habilita el flujo "QR en edición":
+// cuando el frontend abre un cobro QR sobre una venta ya registrada
+// (modo /sales/new?Factura EDIT-<id>), persiste este campo dentro
+// del `totals` snapshot. Al aprobarse, DispatchAutoSale invoca
+// SaleService.UpdateSaleFromQR(editSaleID, …) en lugar de CreateSale,
+// de modo que la venta #editSaleID queda ACTUALIZADA (nuevo total,
+// nuevo desglose) y no se crea una venta hermana. related_sale_id de
+// la intención queda vinculado a `editSaleID`.
+//
+// Valor 0 (omitempty) = flujo normal CreateSale. Es un entero JSON;
+// evitamos string para que un typo del cliente no se confunda con un
+// barcode u otro identificador.
 type qrSaleTotals struct {
 	TotalAmount       float64 `json:"totalAmount"`
 	AmountPaid        float64 `json:"amountPaid"`
@@ -81,6 +94,7 @@ type qrSaleTotals struct {
 	TransferSource    string  `json:"transferSource"`
 	PaymentMethod     string  `json:"paymentMethod"`
 	EmployeeDNI       string  `json:"employeeDni"`
+	EditTargetSaleID  uint64  `json:"editSaleId,omitempty"`
 }
 
 // qrSaleClient congela DNI y nombre; si viene vacío la venta queda sin
@@ -137,7 +151,7 @@ func (s *QrPaymentService) DispatchAutoSale(ctx context.Context, intent *models.
 	}
 
 	// Paso 2: decodificar snapshots → models.Sale.
-	sale, err := buildSaleFromSnapshots(claimed)
+	sale, editTargetSaleID, err := buildSaleFromSnapshots(claimed)
 	if err != nil {
 		msg := sanitizeFinalizationError(err.Error())
 		if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
@@ -147,32 +161,57 @@ func (s *QrPaymentService) DispatchAutoSale(ctx context.Context, intent *models.
 		return
 	}
 
-	// Paso 3: CreateSale canónico. Idempotente por ClientTxId.
-	if err := s.saleService.CreateSale(sale); err != nil {
-		msg := sanitizeFinalizationError(err.Error())
-		if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
-			log.Printf("[qr-pagos] MarkFinalizationFailed intent=%d: %v", claimed.ID, markErr)
+	// Paso 3: materializar la venta.
+	//
+	// Dos ramas:
+	//
+	//   a) editTargetSaleID == 0 (flujo normal): CreateSale canónico.
+	//      Idempotente por ClientTxId (migración 009).
+	//
+	//   b) editTargetSaleID > 0 (QR en edición): UpdateSaleFromQR reemplaza
+	//      el desglose de la venta #editTargetSaleID. Idempotencia la
+	//      aporta ClaimForFinalization: dos entregas del webhook pelean
+	//      por el claim y una sola gana. related_sale_id queda vinculado
+	//      a editTargetSaleID (NO al clientTxId de un INSERT nuevo).
+	var saleID uint64
+	if editTargetSaleID > 0 {
+		if err := s.saleService.UpdateSaleFromQR(uint(editTargetSaleID), sale, strings.TrimSpace(claimed.CreatedByDNI)); err != nil {
+			msg := sanitizeFinalizationError(err.Error())
+			if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
+				log.Printf("[qr-pagos] MarkFinalizationFailed update intent=%d sale=%d: %v", claimed.ID, editTargetSaleID, markErr)
+			}
+			s.publishTrayFromIntent(claimed, models.QRTrayKindError, "Fallo al actualizar la venta editada. El cajero puede reintentar desde la bandeja.")
+			return
 		}
-		s.publishTrayFromIntent(claimed, models.QRTrayKindError, "Fallo al materializar la venta. El cajero puede reintentar desde la bandeja.")
-		return
-	}
-	if sale.SaleID == 0 {
-		msg := "CreateSale devolvió saleId=0"
-		if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
-			log.Printf("[qr-pagos] MarkFinalizationFailed saleId=0 intent=%d: %v", claimed.ID, markErr)
+		saleID = editTargetSaleID
+	} else {
+		if err := s.saleService.CreateSale(sale); err != nil {
+			msg := sanitizeFinalizationError(err.Error())
+			if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
+				log.Printf("[qr-pagos] MarkFinalizationFailed intent=%d: %v", claimed.ID, markErr)
+			}
+			s.publishTrayFromIntent(claimed, models.QRTrayKindError, "Fallo al materializar la venta. El cajero puede reintentar desde la bandeja.")
+			return
 		}
-		s.publishTrayFromIntent(claimed, models.QRTrayKindError, "Resultado de venta inconsistente.")
-		return
+		if sale.SaleID == 0 {
+			msg := "CreateSale devolvió saleId=0"
+			if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
+				log.Printf("[qr-pagos] MarkFinalizationFailed saleId=0 intent=%d: %v", claimed.ID, markErr)
+			}
+			s.publishTrayFromIntent(claimed, models.QRTrayKindError, "Resultado de venta inconsistente.")
+			return
+		}
+		saleID = uint64(sale.SaleID)
 	}
 
 	// Paso 4: SUCCEEDED + emisión SSE.
-	saleID := uint64(sale.SaleID)
 	if err := s.repo.MarkFinalizationSucceeded(ctx, claimed.ID, saleID, s.clock); err != nil {
-		// La venta YA se materializó (CreateSale commiteó). Si falla
-		// la marca, lo logueamos y seguimos: el próximo barrido lo
-		// recomputará, y como CreateSale es idempotente por
-		// ClientTxId, no habrá doble venta.
-		log.Printf("[qr-pagos] MarkFinalizationSucceeded intent=%d sale=%d: %v (venta ya creada, no se duplica)", claimed.ID, saleID, err)
+		// La venta YA se materializó (CreateSale/UpdateSaleFromQR commiteó).
+		// Si falla la marca, lo logueamos y seguimos: el próximo barrido lo
+		// recomputará, y como ambos caminos son idempotentes
+		// (ClientTxId en CreateSale, ClaimForFinalization en UpdateSaleFromQR),
+		// no habrá doble venta ni doble aplicación.
+		log.Printf("[qr-pagos] MarkFinalizationSucceeded intent=%d sale=%d: %v (venta ya cerrada, no se duplica)", claimed.ID, saleID, err)
 	}
 
 	// Hidratar el intent con el saleId para los eventos SSE.
@@ -252,25 +291,29 @@ func (s *QrPaymentService) sweepFinalizationOnce(ctx context.Context) {
 // buildSaleFromSnapshots traduce los JSONB del intent a un models.Sale
 // listo para SaleService.CreateSale. Valida que el ClientTxId esté
 // presente y que el carrito tenga al menos un item.
-func buildSaleFromSnapshots(intent *models.QrPaymentIntent) (*models.Sale, error) {
+//
+// Devuelve también `editTargetSaleID`. Si > 0, el dispatcher debe
+// invocar UpdateSaleFromQR(editTargetSaleID, …) en lugar de CreateSale
+// — modo "QR en edición".
+func buildSaleFromSnapshots(intent *models.QrPaymentIntent) (*models.Sale, uint64, error) {
 	if intent == nil {
-		return nil, errors.New("intent nil")
+		return nil, 0, errors.New("intent nil")
 	}
 	cartRaw := strings.TrimSpace(intent.CartSnapshot)
 	if cartRaw == "" {
-		return nil, errors.New("cart_snapshot vacío")
+		return nil, 0, errors.New("cart_snapshot vacío")
 	}
 	var cart []qrSaleCartItem
 	if err := json.Unmarshal([]byte(cartRaw), &cart); err != nil {
-		return nil, fmt.Errorf("cart_snapshot inválido: %w", err)
+		return nil, 0, fmt.Errorf("cart_snapshot inválido: %w", err)
 	}
 	if len(cart) == 0 {
-		return nil, errors.New("cart_snapshot sin items")
+		return nil, 0, errors.New("cart_snapshot sin items")
 	}
 	var totals qrSaleTotals
 	if raw := strings.TrimSpace(intent.TotalsSnapshot); raw != "" {
 		if err := json.Unmarshal([]byte(raw), &totals); err != nil {
-			return nil, fmt.Errorf("totals_snapshot inválido: %w", err)
+			return nil, 0, fmt.Errorf("totals_snapshot inválido: %w", err)
 		}
 	}
 	var client qrSaleClient
@@ -282,7 +325,7 @@ func buildSaleFromSnapshots(intent *models.QrPaymentIntent) (*models.Sale, error
 	}
 	clientTx := strings.TrimSpace(intent.SaleClientTxID)
 	if clientTx == "" {
-		return nil, errors.New("sale_client_tx_id vacío")
+		return nil, 0, errors.New("sale_client_tx_id vacío")
 	}
 
 	// Construir models.Sale canónico. EmployeeDNI viene de totals o del
@@ -332,12 +375,22 @@ func buildSaleFromSnapshots(intent *models.QrPaymentIntent) (*models.Sale, error
 	if sale.TransferAmount == 0 && sale.CashAmount == 0 && sale.CreditAmount == 0 {
 		sale.TransferAmount = float64(intent.AmountCOP)
 	}
+	// Pago mixto (B): transferAmount = Nequi + Daviplata + parte QR. La
+	// parte QR es la porción genérica y SIEMPRE viaja como BOLD_QR, sin
+	// importar lo que haya mandado el cliente, para que el cierre la
+	// cuente en el bolsillo Bold (y Nequi/Daviplata en el suyo, una vez).
+	if genericTransferPortion(sale) > 0.5 {
+		sale.TransferSource = models.PaymentSourceBoldQR
+	}
+	// paymentMethod canónico derivado de los canales reales (el snapshot
+	// es sólo una pista): "EFECTIVO + BOLD_QR", "NEQUI + BOLD_QR", etc.
+	sale.PaymentMethod = deriveSalePaymentMethod(sale)
 
 	details := make([]models.SaleDetail, 0, len(cart))
 	for _, item := range cart {
 		barcode := strings.TrimSpace(item.Barcode)
 		if barcode == "" || item.Quantity <= 0 {
-			return nil, errors.New("cart item inválido")
+			return nil, 0, errors.New("cart item inválido")
 		}
 		sub := item.Subtotal
 		if sub == 0 {
@@ -352,7 +405,7 @@ func buildSaleFromSnapshots(intent *models.QrPaymentIntent) (*models.Sale, error
 		})
 	}
 	sale.SaleDetails = details
-	return sale, nil
+	return sale, totals.EditTargetSaleID, nil
 }
 
 // finalizationSecretsPattern detecta accidentes donde el token/firma

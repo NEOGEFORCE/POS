@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -421,8 +422,11 @@ func containsBusinessError(msg string) bool {
 		"insuficiente",
 		"debe seleccionar",
 		"supera su límite",
-		"no encontrado",
+		"no encontrad",
 		"formato",
+		"abonos ya registrados",
+		"cambiar el cliente",
+		"la venta cambió",
 	}
 	for _, e := range businessErrors {
 		if strings.Contains(strings.ToLower(msg), e) {
@@ -449,9 +453,14 @@ func (h *SaleHandler) Update(c *gin.Context) {
 	role := strings.ToLower(c.GetString("role"))
 	isAdmin := role == "admin" || role == "administrador" || role == "superadmin"
 
+	// Snapshot "antes" del pago para auditoría. Fallamos silenciosamente
+	// si el GetByID falla aquí: la auditoría no debe bloquear la mutación
+	// (si el servicio no encuentra la venta, retornará su propio error).
+	before, _ := h.service.GetSale(uint(id))
+
 	if err := h.service.UpdateSale(uint(id), &newSale, dniStr, isAdmin); err != nil {
 		msg := err.Error()
-		if containsBusinessError(msg) || strings.Contains(msg, "administradores") || strings.Contains(msg, "disminuir") {
+		if containsBusinessError(msg) || strings.Contains(msg, "administradores") {
 			SendError(c, http.StatusBadRequest, ErrBadRequest, msg, nil)
 			return
 		}
@@ -459,7 +468,43 @@ func (h *SaleHandler) Update(c *gin.Context) {
 		return
 	}
 
-	h.auditService.Log(dniStr, nameStr, "UPDATE_SALE", "SALES", fmt.Sprintf("Venta %d actualizada", id), "Edición de venta", "{}", c.ClientIP(), c.Request.UserAgent(), true)
+	// Changes antes/después del desglose de pago para la auditoría crítica.
+	changesPayload := map[string]interface{}{
+		"saleId": id,
+	}
+	if before != nil {
+		changesPayload["before"] = map[string]interface{}{
+			"totalAmount":       before.TotalAmount,
+			"cashAmount":        before.CashAmount,
+			"transferAmount":    before.TransferAmount,
+			"transferNequi":     before.TransferNequi,
+			"transferDaviplata": before.TransferDaviplata,
+			"transferSource":    before.TransferSource,
+			"creditAmount":      before.CreditAmount,
+			"debtPending":       before.DebtPending,
+			"paymentMethod":     before.PaymentMethod,
+			"clientDni":         before.ClientDNI,
+			"status":            before.Status,
+		}
+	}
+	changesPayload["after"] = map[string]interface{}{
+		"totalAmount":       newSale.TotalAmount,
+		"cashAmount":        newSale.CashAmount,
+		"transferAmount":    newSale.TransferAmount,
+		"transferNequi":     newSale.TransferNequi,
+		"transferDaviplata": newSale.TransferDaviplata,
+		"transferSource":    newSale.TransferSource,
+		"creditAmount":      newSale.CreditAmount,
+		"debtPending":       newSale.DebtPending,
+		"paymentMethod":     newSale.PaymentMethod,
+		"clientDni":         newSale.ClientDNI,
+		"status":            newSale.Status,
+	}
+	changesJSON, _ := json.Marshal(changesPayload)
+	h.auditService.Log(dniStr, nameStr, "UPDATE_SALE", "SALES",
+		fmt.Sprintf("Venta %d actualizada (REEMPLAZO de desglose)", id),
+		fmt.Sprintf("El admin %s reemplazó el desglose de pago de la venta #%d.", nameStr, id),
+		string(changesJSON), c.ClientIP(), c.Request.UserAgent(), true)
 
 	go func() {
 		defer func() {

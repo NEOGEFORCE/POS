@@ -47,7 +47,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"strconv"
@@ -187,6 +189,9 @@ func (h *PosQrHandler) Iniciar(c *gin.Context) {
 				"error": serr.Error(),
 				"code":  models.ErrCodeQRBadRequest,
 			})
+			return
+		}
+		if !h.validateQRSnapshotOrAbort(c, snaps, body.Monto, dni) {
 			return
 		}
 		out, err := h.svc.InitiateWithSnapshot(c.Request.Context(), services.InitiateWithSnapshotInput{
@@ -799,6 +804,9 @@ type encolarSalePayloadView struct {
 	DebtPending       float64 `json:"debtPending,omitempty"`
 	ClientDNI         string  `json:"clientDni,omitempty"`
 	ClientName        string  `json:"clientName,omitempty"`
+	// EditSaleID (A2): venta existente que el QR debe ACTUALIZAR en vez
+	// de crear una nueva. Entero > 0; omitido = venta nueva.
+	EditSaleID uint64 `json:"editSaleId,omitempty"`
 }
 
 // Encolar maneja POST /api/pos/pagos-qr/encolar.
@@ -840,6 +848,14 @@ func (h *PosQrHandler) Encolar(c *gin.Context) {
 			"error": perr.Error(),
 			"code":  models.ErrCodeQRBadRequest,
 		})
+		return
+	}
+	// Validación B (pago mixto QR): la suma de canales + la parte QR
+	// debe cuadrar con el total del carrito y éste con la suma de
+	// details. Si no cuadra, 400 claro en vez de dejar que el
+	// dispatcher falle tarde con `pago insuficiente`. Si trae editSaleId
+	// (A2) también valida que la venta sea editable por el actor.
+	if !h.validateQRSnapshotOrAbort(c, snaps, body.Monto, dni) {
 		return
 	}
 
@@ -944,7 +960,7 @@ func extractQRSnapshotsFromPayload(raw json.RawMessage, fallbackClientDNI, fallb
 	}
 	out.Totals = []byte(view.Totals)
 	if len(bytes.TrimSpace(out.Totals)) == 0 {
-		built, _ := json.Marshal(map[string]interface{}{
+		totalsMap := map[string]interface{}{
 			"totalAmount":       view.TotalAmount,
 			"amountPaid":        view.AmountPaid,
 			"change":            view.Change,
@@ -957,7 +973,11 @@ func extractQRSnapshotsFromPayload(raw json.RawMessage, fallbackClientDNI, fallb
 			"transferSource":    view.TransferSource,
 			"paymentMethod":     view.PaymentMethod,
 			"employeeDni":       view.EmployeeDNI,
-		})
+		}
+		if view.EditSaleID > 0 {
+			totalsMap["editSaleId"] = view.EditSaleID
+		}
+		built, _ := json.Marshal(totalsMap)
 		out.Totals = built
 	}
 	out.Client = []byte(view.Client)
@@ -981,6 +1001,160 @@ func extractQRSnapshotsFromPayload(raw json.RawMessage, fallbackClientDNI, fallb
 		}
 	}
 	return out, nil
+}
+
+// qrSnapshotFlatView replica los campos escalares que /sales/new emite
+// en `sale_payload.totals` cuando el pago es MIXTO (QR + efectivo /
+// Nequi / Daviplata / fiado). El handler lo parsea una vez para
+// validar que las partes cuadran con el total del carrito y con el
+// monto QR del body `monto`. NO reemplaza la escritura del JSONB
+// opaco: sólo lo audita.
+type qrSnapshotFlatView struct {
+	TotalAmount       float64 `json:"totalAmount"`
+	CashAmount        float64 `json:"cashAmount"`
+	TransferAmount    float64 `json:"transferAmount"`
+	TransferNequi     float64 `json:"transferNequi"`
+	TransferDaviplata float64 `json:"transferDaviplata"`
+	CreditAmount      float64 `json:"creditAmount"`
+}
+
+// qrSnapshotDetailView replica los campos mínimos de cada línea del
+// carrito para validar la suma de subtotales == totalAmount.
+type qrSnapshotDetailView struct {
+	Quantity  float64 `json:"quantity"`
+	UnitPrice float64 `json:"unitPrice"`
+	Subtotal  float64 `json:"subtotal"`
+}
+
+// validateQRPaymentBreakdown chequea las reglas B (pago mixto QR):
+//
+//  1. La suma de details.subtotal (o quantity*unitPrice como fallback)
+//     debe empatar con totalAmount (tolerancia 1 COP).
+//  2. La suma del desglose de pago cash + nequi + davi + credit +
+//     qrAmount debe empatar con totalAmount (tolerancia 1 COP). Es
+//     decir, los canales reportados + la parte QR cubren el carrito.
+//  3. transferNequi + transferDaviplata nunca exceden transferAmount
+//     (que el frontend reporta como Nequi + Daviplata + parte QR).
+//
+// `qrAmountCOP` es `body.monto` (parte del QR, parámetro oficial del
+// POST). Si el frontend manda un snapshot sin breakdown explícito
+// (cash=nequi=davi=credit=0), tratamos la venta como "sólo QR" y
+// esperamos totalAmount == qrAmount.
+//
+// Un desvío fuera de la tolerancia devuelve un error en español listo
+// para 400. La función es pura (sin BD, sin logs) y la cubren tests
+// de tabla.
+func validateQRPaymentBreakdown(totals []byte, cart []byte, qrAmountCOP int64) error {
+	if len(bytes.TrimSpace(totals)) == 0 {
+		return errors.New("totals vacío en el snapshot")
+	}
+	var flat qrSnapshotFlatView
+	if err := json.Unmarshal(totals, &flat); err != nil {
+		return errors.New("totals inválido en el snapshot")
+	}
+	if flat.CashAmount < 0 || flat.TransferAmount < 0 || flat.TransferNequi < 0 ||
+		flat.TransferDaviplata < 0 || flat.CreditAmount < 0 {
+		return errors.New("los montos del pago no pueden ser negativos")
+	}
+	// (1) suma de details == totalAmount (±1 COP).
+	if len(bytes.TrimSpace(cart)) > 0 {
+		var details []qrSnapshotDetailView
+		if err := json.Unmarshal(cart, &details); err == nil && len(details) > 0 {
+			var sumDetails float64
+			for _, d := range details {
+				sub := d.Subtotal
+				if sub == 0 {
+					sub = d.Quantity * d.UnitPrice
+				}
+				sumDetails += sub
+			}
+			if math.Abs(sumDetails-flat.TotalAmount) > 1.0 {
+				return fmt.Errorf("totalAmount (%.2f) no cuadra con la suma de los detalles (%.2f); diferencia %.2f COP",
+					flat.TotalAmount, sumDetails, flat.TotalAmount-sumDetails)
+			}
+		}
+	}
+	// (2) Nequi+Daviplata no excede TransferAmount (si TransferAmount>0).
+	// Tolerancia 1 COP para redondeo. Fuera de tolerancia es incoherente.
+	if flat.TransferAmount > 0 {
+		if flat.TransferNequi+flat.TransferDaviplata-flat.TransferAmount > 1.0 {
+			return fmt.Errorf("transferNequi + transferDaviplata (%.2f) exceden transferAmount (%.2f)",
+				flat.TransferNequi+flat.TransferDaviplata, flat.TransferAmount)
+		}
+	}
+	// (3) suma cash + nequi + davi + credit + qrAmount == totalAmount.
+	//
+	// transferAmount en el contrato del frontend es (Nequi + Daviplata +
+	// parte QR). Para no doble-contar, la suma del desglose es:
+	//     cash + nequi + daviplata + credit + qrAmount
+	// y la parte QR = transferAmount - (nequi + daviplata).
+	//
+	// Si el snapshot no reporta breakdown mixto (todos los canales
+	// escalares en 0) tratamos el QR como pago único y comparamos
+	// contra qrAmount directamente.
+	totalBreakdown := flat.CashAmount + flat.TransferNequi + flat.TransferDaviplata + flat.CreditAmount + float64(qrAmountCOP)
+	if math.Abs(totalBreakdown-flat.TotalAmount) > 1.0 {
+		return fmt.Errorf("los pagos no cuadran: cash %.2f + nequi %.2f + daviplata %.2f + crédito %.2f + QR %d = %.2f, pero el total del carrito es %.2f",
+			flat.CashAmount, flat.TransferNequi, flat.TransferDaviplata, flat.CreditAmount, qrAmountCOP,
+			totalBreakdown, flat.TotalAmount)
+	}
+	// (4) La parte QR declarada en el snapshot (transferAmount - Nequi -
+	// Daviplata) debe ser exactamente el monto de la intención: el
+	// emparejamiento por monto del webhook usa `monto`, y el dispatcher
+	// persiste la porción genérica como BOLD_QR. Si difieren, la venta
+	// quedaría con un Bold distinto del que realmente entró.
+	if flat.TransferAmount > 0 || qrAmountCOP > 0 {
+		qrPart := flat.TransferAmount - flat.TransferNequi - flat.TransferDaviplata
+		if math.Abs(qrPart-float64(qrAmountCOP)) > 1.0 {
+			return fmt.Errorf("la parte QR del pago (transferAmount - nequi - daviplata = %.2f) no coincide con el monto del cobro QR (%d)",
+				qrPart, qrAmountCOP)
+		}
+	}
+	return nil
+}
+
+// validateQRSnapshotOrAbort aplica las validaciones B (desglose) y A2
+// (editSaleId) sobre el snapshot de /iniciar y /encolar. Si alguna falla,
+// responde 400 QR_BAD_REQUEST con el mensaje en español y devuelve false.
+func (h *PosQrHandler) validateQRSnapshotOrAbort(c *gin.Context, snaps qrSnapshotsBundle, monto int64, actor string) bool {
+	if verr := validateQRPaymentBreakdown(snaps.Totals, snaps.Cart, monto); verr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": verr.Error(), "code": models.ErrCodeQRBadRequest})
+		return false
+	}
+	editSaleID, eerr := extractEditSaleIDFromTotals(snaps.Totals)
+	if eerr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": eerr.Error(), "code": models.ErrCodeQRBadRequest})
+		return false
+	}
+	if editSaleID > 0 {
+		if verr := h.svc.ValidateQREditTarget(editSaleID, actor); verr != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": verr.Error(), "code": models.ErrCodeQRBadRequest})
+			return false
+		}
+	}
+	return true
+}
+
+// extractEditSaleIDFromTotals lee `editSaleId` del totals snapshot ya
+// armado (A2). 0 = venta nueva. Un valor no entero/negativo es error.
+func extractEditSaleIDFromTotals(totals []byte) (uint64, error) {
+	if len(bytes.TrimSpace(totals)) == 0 {
+		return 0, nil
+	}
+	var view struct {
+		EditSaleID *json.Number `json:"editSaleId"`
+	}
+	if err := json.Unmarshal(totals, &view); err != nil {
+		return 0, errors.New("editSaleId inválido")
+	}
+	if view.EditSaleID == nil {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(view.EditSaleID.String(), 10, 32)
+	if err != nil || n == 0 {
+		return 0, errors.New("editSaleId debe ser un número de venta válido")
+	}
+	return n, nil
 }
 
 // =========================================================================
@@ -1286,7 +1460,7 @@ func (h *PosQrHandler) PagosSinAsignar(c *gin.Context) {
 	}
 	if minutos < models.QRUnassignedMinutosMin || minutos > models.QRUnassignedMinutosMax {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "minutos fuera de rango (1..120)",
+			"error": "minutos fuera de rango (1..1440)",
 			"code":  models.ErrCodeQRBadRequest,
 		})
 		return
@@ -1386,12 +1560,13 @@ func (h *PosQrHandler) Asignar(c *gin.Context) {
 	device := c.Request.UserAgent()
 
 	out, err := h.svc.AssignEventToIntent(c.Request.Context(), services.AssignEventInput{
-		VentaTempID: body.VentaTempID,
-		EventID:     body.EventID,
-		ActorDNI:    dni,
-		ActorName:   name,
-		IP:          ip,
-		Device:      device,
+		VentaTempID:  body.VentaTempID,
+		EventID:      body.EventID,
+		ActorDNI:     dni,
+		ActorName:    name,
+		ActorIsAdmin: actorIsAdmin(c),
+		IP:           ip,
+		Device:       device,
 	})
 	if err != nil {
 		var paidErr *services.IntentAlreadyPaidError

@@ -3,6 +3,8 @@ package services
 import (
 	"math"
 	"strings"
+
+	"backPOS-go/internal/core/domain/models"
 )
 
 // Este archivo contiene lógica PURA para reconciliar el desglose
@@ -125,6 +127,26 @@ func ReconcileTransferBreakdown(transferAmount, transferNequi, transferDaviplata
 			TransferDaviplata:       transferDaviplata,
 			AdjustedByNormalization: true,
 			SourceUsed:              "normalized",
+		}
+	}
+
+	// Caso 2-bis: pago mixto con Bold QR (QR + Nequi y/o Daviplata).
+	// transferAmount = Nequi + Daviplata + parte QR. El residual NO es
+	// ruido: es la parte QR, que vive como porción genérica con
+	// transferSource='BOLD_QR'. Sólo aplica si el desglose no excede el
+	// total (si excede, cae a la normalización estándar de abajo).
+	if (transferNequi > 0 || transferDaviplata > 0) &&
+		models.IsBoldQRSaleTransferSource(transferSource) &&
+		transferNequi+transferDaviplata <= transferAmount+TransferBreakdownTolerance {
+		amount := transferAmount
+		if transferNequi+transferDaviplata > amount {
+			amount = transferNequi + transferDaviplata
+		}
+		return TransferBreakdown{
+			TransferAmount:    roundTransferMoney(amount),
+			TransferNequi:     roundTransferMoney(transferNequi),
+			TransferDaviplata: roundTransferMoney(transferDaviplata),
+			SourceUsed:        "explicit",
 		}
 	}
 

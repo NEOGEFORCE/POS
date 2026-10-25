@@ -293,16 +293,23 @@ const (
 	// pueda asignarlo manualmente a una intención. Más allá de este
 	// umbral se asume que ya es tarde para correlacionar sin riesgo
 	// de cerrar una venta con un cobro antiguo que corresponde a
-	// otra operación.
+	// otra operación. Se aplica cuando el actor es un cajero regular.
 	QRAssignmentWindow = 60 * time.Minute
+
+	// QRAssignmentWindowAdmin extiende la ventana a 24 h cuando el
+	// actor es admin/administrador/superadmin. Soluciona el caso del
+	// dueño que recibe un pago QR real, no lo asigna al momento y
+	// más tarde (hasta 24 h después) necesita vincularlo a la venta
+	// que estaba corrigiendo. Siempre viaja con auditoría por DNI.
+	QRAssignmentWindowAdmin = 24 * time.Hour
 
 	// QRUnassignedMinutosMin / Max acotan el parámetro `minutos` del
 	// endpoint GET /pagos-sin-asignar. 1 min es el mínimo útil (nada
-	// más estrecho tendría sentido operativo); 120 min cubre toda la
-	// ventana en la que el matcher podría haber dejado un evento sin
-	// correlacionar.
+	// más estrecho tendría sentido operativo); 1440 min (24 h) cubre
+	// toda la jornada operativa — un pago huérfano del mediodía debe
+	// seguir visible por la tarde cuando el dueño lo busca.
 	QRUnassignedMinutosMin = 1
-	QRUnassignedMinutosMax = 120
+	QRUnassignedMinutosMax = 1440
 )
 
 // bridgeSenderDigitRe captura números y el prefijo + de números

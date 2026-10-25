@@ -346,6 +346,7 @@ export function classifyStreamEvent(event) {
  *   client_dni?: string;
  *   cashier_name?: string;
  *   sale_payload?: object;
+ *   edit_sale_id?: number;
  * }} args
  * @returns {object | null}
  */
@@ -357,6 +358,7 @@ export function buildIniciarPayload({
     client_dni,
     cashier_name,
     sale_payload,
+    edit_sale_id,
 } = {}) {
     const normalizedMonto = typeof monto === "number" && Number.isFinite(monto)
         ? Math.floor(monto)
@@ -404,6 +406,22 @@ export function buildIniciarPayload({
             if (!Number.isFinite(up) || up < 0) return null;
         }
         out.sale_payload = sale_payload;
+    }
+    // edit_sale_id: entero positivo opcional. Si viene, el backend
+    // interpreta este /iniciar como edición de la venta canónica
+    // existente (en vez de crear una nueva). Nunca inventamos: cualquier
+    // valor no entero > 0 se descarta y el payload sale sin el campo.
+    if (edit_sale_id !== undefined && edit_sale_id !== null) {
+        let normalizedEdit = NaN;
+        if (typeof edit_sale_id === "number" && Number.isFinite(edit_sale_id) && Number.isInteger(edit_sale_id) && edit_sale_id > 0) {
+            normalizedEdit = edit_sale_id;
+        } else if (typeof edit_sale_id === "string" && /^[1-9]\d*$/.test(edit_sale_id.trim())) {
+            const parsed = Number.parseInt(edit_sale_id.trim(), 10);
+            if (Number.isFinite(parsed) && parsed > 0) normalizedEdit = parsed;
+        }
+        if (Number.isFinite(normalizedEdit)) {
+            out.edit_sale_id = normalizedEdit;
+        }
     }
     return out;
 }
@@ -561,7 +579,7 @@ export function buildEncolarPayload(input) {
         const up = typeof d.unitPrice === "number" ? d.unitPrice : NaN;
         if (!Number.isFinite(up) || up < 0) return null;
     }
-    return {
+    const out = {
         venta_temp_id: ventaTempId,
         caja_id: cajaId,
         monto,
@@ -570,6 +588,21 @@ export function buildEncolarPayload(input) {
         cashier_name: cashierName,
         sale_payload: salePayload,
     };
+    // edit_sale_id opcional, mismo contrato que /iniciar.
+    const editIdRaw = input.editSaleId;
+    if (editIdRaw !== undefined && editIdRaw !== null) {
+        let normalizedEdit = NaN;
+        if (typeof editIdRaw === "number" && Number.isFinite(editIdRaw) && Number.isInteger(editIdRaw) && editIdRaw > 0) {
+            normalizedEdit = editIdRaw;
+        } else if (typeof editIdRaw === "string" && /^[1-9]\d*$/.test(editIdRaw.trim())) {
+            const parsed = Number.parseInt(editIdRaw.trim(), 10);
+            if (Number.isFinite(parsed) && parsed > 0) normalizedEdit = parsed;
+        }
+        if (Number.isFinite(normalizedEdit)) {
+            out.edit_sale_id = normalizedEdit;
+        }
+    }
+    return out;
 }
 
 /**
@@ -619,6 +652,13 @@ export const BOLD_QR_ASSIGN_ERROR_CODE = Object.freeze({
     INTENT_ALREADY_TERMINAL: "QR_INTENT_ALREADY_TERMINAL",
     EVENT_NOT_FOUND: "QR_EVENT_NOT_FOUND",
     INTENT_NOT_FOUND: "QR_INTENT_NOT_FOUND",
+    // Nuevo (migración 027c — ventana de asignación 24 h):
+    // El backend puede rechazar la asignación cuando el evento quedó
+    // fuera de la ventana permitida para el rol del actor. En cajeros
+    // se usa típicamente 60 min; admin puede llegar hasta 24 h. El UI
+    // debe pedir al cajero que escale al administrador.
+    EVENT_TOO_OLD: "QR_EVENT_TOO_OLD",
+    FORBIDDEN_FOR_ROLE: "QR_FORBIDDEN_FOR_ROLE",
 });
 
 const VALID_UNASSIGNED_STATUSES = new Set(["AMBIGUOUS", "UNMATCHED"]);
@@ -776,6 +816,10 @@ export function describeAssignErrorCode(code) {
             return "El pago ya no existe en el servidor. Refresca la bandeja.";
         case BOLD_QR_ASSIGN_ERROR_CODE.INTENT_NOT_FOUND:
             return "El cobro pendiente ya no existe. Refresca la bandeja.";
+        case BOLD_QR_ASSIGN_ERROR_CODE.EVENT_TOO_OLD:
+            return "Este pago quedó fuera de la ventana permitida para tu rol. Pídele a un administrador que lo enlace.";
+        case BOLD_QR_ASSIGN_ERROR_CODE.FORBIDDEN_FOR_ROLE:
+            return "Tu rol no puede enlazar pagos tan antiguos. Pídele a un administrador.";
         default:
             return "No se pudo asignar el pago. Intenta nuevamente.";
     }
@@ -1040,3 +1084,173 @@ export function listBoldQrPaidKeys(storage) {
     }
     return out;
 }
+
+
+// =============================================================================
+// Snapshot QR + pago mixto (migración 027c)
+//
+// `buildQrSaleSnapshotPayload` construye el `salePayload` que viaja al
+// backend como snapshot durable del carrito tanto en `/iniciar` como en
+// `/encolar`. Es la pieza clave para el **pago mixto QR**: el cajero
+// puede acumular efectivo/Nequi/Daviplata/fiado ANTES de abrir el QR y
+// el QR cobra sólo el restante. El snapshot debe llevar TODO el
+// desglose (no solo el monto del QR), para que la aprobación backend
+// cierre la venta con los canales reales.
+//
+// Reglas duras:
+//   - `totalAmount` es el total del CARRITO (suma de details), nunca el
+//     monto del QR. Esto es la fuente de verdad financiera.
+//   - `transferAmount` = `transferNequi + transferDaviplata + qrAmount`.
+//     El backend ya desglosa Nequi y Daviplata por campo propio; la
+//     porción QR se mete en el genérico (transferAmount - Nequi - Davi).
+//   - `transferSource` es `"BOLD_QR"` cuando hay porción QR; cuando el
+//     cajero cobró 100% por otros canales sin QR (caso imposible en
+//     este snapshot, pero defensivo) devolvemos lo que el consumidor
+//     pase.
+//   - `paymentMethod` se compone concatenando los canales activos para
+//     que la fila de ventas quede legible en el historial.
+//   - `editSaleId` es opcional: cuando viene, el backend interpreta la
+//     aprobación como UPDATE (actualiza la venta existente), no como
+//     CREATE. Nunca inventamos: cualquier valor no entero > 0 se omite.
+//
+// La entrada `details` debe traer `barcode`, `quantity > 0` y
+// `unitPrice >= 0` para cada línea. Si la validación falla, devolvemos
+// `null` para que el llamador aborte sin tocar red.
+//
+// @typedef {{ barcode: string; quantity: number; unitPrice: number; costPrice?: number; subtotal?: number }} SnapshotDetail
+// @typedef {{ cash?: number; nequi?: number; daviplata?: number; credit?: number; totalCart?: number }} MixedBreakdown
+//
+// @param {{
+//   details: SnapshotDetail[];
+//   qrAmount: number;
+//   breakdown?: MixedBreakdown;
+//   employeeDni?: string;
+//   clientDni?: string;
+//   clientName?: string;
+//   editSaleId?: number | string;
+// }} args
+// @returns {object | null}
+// =============================================================================
+export function buildQrSaleSnapshotPayload({
+    details,
+    qrAmount,
+    breakdown,
+    employeeDni,
+    clientDni,
+    clientName,
+    editSaleId,
+} = {}) {
+    if (!Array.isArray(details) || details.length === 0) return null;
+    const normalizedDetails = [];
+    let computedTotal = 0;
+    for (const d of details) {
+        if (!d || typeof d !== "object") return null;
+        const barcode = typeof d.barcode === "string" ? d.barcode.trim() : "";
+        if (!barcode) return null;
+        const qty = typeof d.quantity === "number" ? d.quantity : NaN;
+        if (!Number.isFinite(qty) || qty <= 0) return null;
+        const up = typeof d.unitPrice === "number" ? d.unitPrice : NaN;
+        if (!Number.isFinite(up) || up < 0) return null;
+        const sub = typeof d.subtotal === "number" && Number.isFinite(d.subtotal) ? d.subtotal : qty * up;
+        const cost = typeof d.costPrice === "number" && Number.isFinite(d.costPrice) ? d.costPrice : 0;
+        computedTotal += sub;
+        normalizedDetails.push({
+            barcode,
+            quantity: qty,
+            unitPrice: up,
+            costPrice: cost,
+            subtotal: sub,
+        });
+    }
+    const normalizedQr = typeof qrAmount === "number" && Number.isFinite(qrAmount) && qrAmount > 0
+        ? Math.round(qrAmount)
+        : 0;
+    const cash = typeof breakdown?.cash === "number" && Number.isFinite(breakdown.cash) && breakdown.cash > 0
+        ? Math.round(breakdown.cash)
+        : 0;
+    const nequi = typeof breakdown?.nequi === "number" && Number.isFinite(breakdown.nequi) && breakdown.nequi > 0
+        ? Math.round(breakdown.nequi)
+        : 0;
+    const daviplata = typeof breakdown?.daviplata === "number" && Number.isFinite(breakdown.daviplata) && breakdown.daviplata > 0
+        ? Math.round(breakdown.daviplata)
+        : 0;
+    const credit = typeof breakdown?.credit === "number" && Number.isFinite(breakdown.credit) && breakdown.credit > 0
+        ? Math.round(breakdown.credit)
+        : 0;
+    // Total REAL del carrito. Si el llamador trae `totalCart` lo preferimos
+    // (defensa: puede incluir redondeos de línea distintos a la suma cruda
+    // de `qty * price`), si no, usamos la suma calculada.
+    const totalCart = typeof breakdown?.totalCart === "number" && Number.isFinite(breakdown.totalCart) && breakdown.totalCart > 0
+        ? Math.round(breakdown.totalCart)
+        : Math.round(computedTotal);
+    const amountPaid = cash + nequi + daviplata + credit + normalizedQr;
+    const transferAmount = nequi + daviplata + normalizedQr;
+    // paymentMethod legible para el historial. Si hay QR siempre figura;
+    // los demás canales se concatenan según su presencia real.
+    const parts = [];
+    if (cash > 0) parts.push("EFECTIVO");
+    if (nequi > 0) parts.push("NEQUI");
+    if (daviplata > 0) parts.push("DAVIPLATA");
+    if (normalizedQr > 0) parts.push("BOLD_QR");
+    if (credit > 0) parts.push("FIADO");
+    const paymentMethod = parts.length > 0 ? parts.join(" + ") : "BOLD_QR";
+    const out = {
+        details: normalizedDetails,
+        totalAmount: totalCart,
+        amountPaid,
+        change: 0,
+        cashAmount: cash,
+        transferAmount,
+        transferNequi: nequi,
+        transferDaviplata: daviplata,
+        creditAmount: credit,
+        transferSource: "BOLD_QR",
+        paymentMethod,
+        employeeDni: typeof employeeDni === "string" ? employeeDni : "",
+        clientDni: typeof clientDni === "string" && clientDni ? clientDni : "0",
+        clientName: typeof clientName === "string" ? clientName : "",
+    };
+    if (editSaleId !== undefined && editSaleId !== null) {
+        let normalizedEdit = NaN;
+        if (typeof editSaleId === "number" && Number.isFinite(editSaleId) && Number.isInteger(editSaleId) && editSaleId > 0) {
+            normalizedEdit = editSaleId;
+        } else if (typeof editSaleId === "string" && /^[1-9]\d*$/.test(editSaleId.trim())) {
+            const parsed = Number.parseInt(editSaleId.trim(), 10);
+            if (Number.isFinite(parsed) && parsed > 0) normalizedEdit = parsed;
+        }
+        if (Number.isFinite(normalizedEdit)) {
+            out.editSaleId = normalizedEdit;
+        }
+    }
+    return out;
+}
+
+/**
+ * Resumen legible de los canales NO-QR del snapshot. Lo consume la
+ * vista QR del `UniversalPaymentModal`/`ModalPagoBoldQR` para mostrar
+ * al cliente/cajero "Efectivo $X + QR $Y" sin tener que reimplementar
+ * el formateo en cada componente. Devuelve `""` cuando no hay desglose
+ * previo (el cliente paga 100% por QR).
+ *
+ * @param {{ cash?: number; nequi?: number; daviplata?: number; credit?: number }} breakdown
+ * @param {number} qrAmount
+ * @param {(n: number) => string} formatCurrencyFn
+ * @returns {string}
+ */
+export function describeMixedChannelsSummary(breakdown, qrAmount, formatCurrencyFn) {
+    if (!breakdown || typeof breakdown !== "object") return "";
+    const parts = [];
+    const cash = typeof breakdown.cash === "number" && breakdown.cash > 0 ? Math.round(breakdown.cash) : 0;
+    const nequi = typeof breakdown.nequi === "number" && breakdown.nequi > 0 ? Math.round(breakdown.nequi) : 0;
+    const daviplata = typeof breakdown.daviplata === "number" && breakdown.daviplata > 0 ? Math.round(breakdown.daviplata) : 0;
+    const credit = typeof breakdown.credit === "number" && breakdown.credit > 0 ? Math.round(breakdown.credit) : 0;
+    const qr = typeof qrAmount === "number" && qrAmount > 0 ? Math.round(qrAmount) : 0;
+    const fmt = typeof formatCurrencyFn === "function" ? formatCurrencyFn : (n) => String(n);
+    if (cash > 0) parts.push(`Efectivo $${fmt(cash)}`);
+    if (nequi > 0) parts.push(`Nequi $${fmt(nequi)}`);
+    if (daviplata > 0) parts.push(`Daviplata $${fmt(daviplata)}`);
+    if (credit > 0) parts.push(`Fiado $${fmt(credit)}`);
+    if (qr > 0) parts.push(`QR $${fmt(qr)}`);
+    return parts.join(" + ");
+}
+
