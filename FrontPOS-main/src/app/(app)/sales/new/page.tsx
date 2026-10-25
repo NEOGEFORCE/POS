@@ -467,6 +467,27 @@ export default function NewSalePage() {
         }
     }, [editingPendingId, restoreCartFromQr, qrDismissIntent, qrTrayReconnect, toast]);
 
+    // Llegada desde la bandeja global (dashboard u otra pantalla) con
+    // `?editarQr=<ventaTempId>`: se procesa UNA vez cuando el catálogo ya
+    // cargó (restoreCartFromQr necesita los productos) y se limpia la URL
+    // para que recargar la página no repita la edición.
+    const editarQrHandledRef = useRef(false);
+    useEffect(() => {
+        if (editarQrHandledRef.current || typeof window === 'undefined') return;
+        const params = new URLSearchParams(window.location.search);
+        const temp = (params.get('editarQr') || '').trim();
+        if (!temp) {
+            editarQrHandledRef.current = true;
+            return;
+        }
+        if (products.length === 0) return; // esperar catálogo
+        editarQrHandledRef.current = true;
+        params.delete('editarQr');
+        const qs = params.toString();
+        window.history.replaceState(null, '', window.location.pathname + (qs ? `?${qs}` : ''));
+        void handleEditPending({ ventaTempId: temp } as BoldQrPendingItem);
+    }, [products.length, handleEditPending]);
+
     const handleBoldQrReopenConsumed = useCallback(() => {
         // Contrato de un solo uso: el UPM consumió el payload y abrió
         // el QR. Limpiamos inmediatamente para que al cerrar y abrir

@@ -30,3 +30,12 @@ test("useNewSale: restoreCartFromQr reabre ventas editadas como Factura EDIT-<id
     assert.match(src, /const restoreCartFromQr = useCallback/);
     assert.match(src, /`Factura EDIT-\$\{editId\}`/);
 });
+
+test("bandeja global (dashboard): Editar lleva a /sales/new?editarQr= y la página lo procesa", async () => {
+    const tray = await readFile(path.join(root, "..", "..", "..", "..", "components", "shared", "GlobalBoldQrTray.tsx"), "utf8");
+    assert.match(tray, /data-testid="bold-qr-global-edit-button"/);
+    assert.match(tray, /\/sales\/new\?editarQr=\$\{encodeURIComponent\(item\.ventaTempId\)\}/);
+    const page = await read("page.tsx");
+    assert.match(page, /params\.get\('editarQr'\)/);
+    assert.match(page, /window\.history\.replaceState/);
+});

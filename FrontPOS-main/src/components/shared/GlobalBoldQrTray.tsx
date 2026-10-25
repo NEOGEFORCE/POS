@@ -131,6 +131,7 @@ export default function GlobalBoldQrTray({
     const [manualBusy, setManualBusy] = useState(false);
     const [assignPrompt, setAssignPrompt] = useState<AssignPrompt | null>(null);
     const [assignBusy, setAssignBusy] = useState(false);
+    const [editConfirmId, setEditConfirmId] = useState<string | null>(null);
 
     const sortedPendings = useMemo(() => {
         return [...tray.pendings].sort((a, b) => {
@@ -340,6 +341,40 @@ export default function GlobalBoldQrTray({
                                                             </p>
                                                         </div>
                                                         <div className="flex shrink-0 flex-col gap-1">
+                                                            {/* Editar: lleva a /sales/new, cancela el QR y
+                                                                reabre la venta en una factura. */}
+                                                            {editConfirmId === item.ventaTempId ? (
+                                                                <div className="flex flex-col gap-1" data-testid="bold-qr-global-edit-confirm">
+                                                                    <p className="max-w-[9.5rem] text-[10px] leading-tight text-amber-700 dark:text-amber-300">
+                                                                        Se cancela el QR y la venta se abre en Nueva venta.
+                                                                    </p>
+                                                                    <Button
+                                                                        size="sm"
+                                                                        className="h-7 px-2 text-[11px] font-semibold uppercase bg-amber-600 hover:bg-amber-500 text-white"
+                                                                        onClick={() => {
+                                                                            setEditConfirmId(null);
+                                                                            setOpen(false);
+                                                                            window.location.href = `/sales/new?editarQr=${encodeURIComponent(item.ventaTempId)}`;
+                                                                        }}
+                                                                        data-testid="bold-qr-global-edit-confirm-button"
+                                                                    >
+                                                                        Sí, editar
+                                                                    </Button>
+                                                                    <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px]" onClick={() => setEditConfirmId(null)}>
+                                                                        No
+                                                                    </Button>
+                                                                </div>
+                                                            ) : (
+                                                                <Button
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-7 px-2 text-[11px] font-semibold uppercase"
+                                                                    onClick={() => setEditConfirmId(item.ventaTempId)}
+                                                                    data-testid="bold-qr-global-edit-button"
+                                                                >
+                                                                    Editar
+                                                                </Button>
+                                                            )}
                                                             {canConfirmManual ? (
                                                                 <Button
                                                                     size="sm"
