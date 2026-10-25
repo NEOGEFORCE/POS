@@ -448,3 +448,36 @@ func genericTransferPortion(sale *models.Sale) float64 {
 	}
 	return generic
 }
+
+// ApplyQRPaymentToSale es el camino "enlazar pago a venta existente": el
+// materializador QR lo invoca cuando el snapshot trae editSaleId +
+// linkPaymentOnly. A diferencia de UpdateSaleFromQR NO toca productos,
+// stock ni precios: sólo REEMPLAZA el desglose de pago con el que armó el
+// servidor (efectivo − monto QR, transferencia + monto QR como BOLD_QR).
+//
+// Mismas reglas de permiso que UpdateSaleFromQR (venta viva, actor admin).
+// Idempotente por valores absolutos: reaplicar el mismo snapshot deja la
+// venta igual. Si la venta cambió y ya no cubre el total, UpdateSalePayment
+// devuelve error y el dispatcher marca FAILED.
+func (s *SaleService) ApplyQRPaymentToSale(saleID uint, payment *models.Sale, actorDNI string) error {
+	if payment == nil {
+		return errors.New("datos de pago vacíos")
+	}
+	if _, err := s.CheckQREditTarget(saleID, actorDNI); err != nil {
+		return err
+	}
+	existing, err := s.saleRepo.GetByID(saleID)
+	if err != nil || existing == nil {
+		return fmt.Errorf("la venta #%d a enlazar no existe", saleID)
+	}
+	update := &models.Sale{
+		ClientDNI:         existing.ClientDNI,
+		CashAmount:        payment.CashAmount,
+		TransferAmount:    payment.TransferAmount,
+		TransferNequi:     payment.TransferNequi,
+		TransferDaviplata: payment.TransferDaviplata,
+		TransferSource:    models.PaymentSourceBoldQR,
+		CreditAmount:      payment.CreditAmount,
+	}
+	return s.UpdateSalePayment(saleID, update)
+}

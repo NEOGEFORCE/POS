@@ -95,6 +95,22 @@ type qrSaleTotals struct {
 	PaymentMethod     string  `json:"paymentMethod"`
 	EmployeeDNI       string  `json:"employeeDni"`
 	EditTargetSaleID  uint64  `json:"editSaleId,omitempty"`
+	// LinkPaymentOnly (enlace de pago a venta existente): con editSaleId,
+	// sólo se reemplaza el desglose de pago; productos y stock no se tocan.
+	// Lo arma SIEMPRE el servidor (LinkEventToSale), nunca el cliente.
+	LinkPaymentOnly bool `json:"linkPaymentOnly,omitempty"`
+}
+
+// snapshotIsLinkPaymentOnly lee el flag linkPaymentOnly del totals snapshot.
+func snapshotIsLinkPaymentOnly(intent *models.QrPaymentIntent) bool {
+	if intent == nil || strings.TrimSpace(intent.TotalsSnapshot) == "" {
+		return false
+	}
+	var t qrSaleTotals
+	if err := json.Unmarshal([]byte(intent.TotalsSnapshot), &t); err != nil {
+		return false
+	}
+	return t.LinkPaymentOnly
 }
 
 // qrSaleClient congela DNI y nombre; si viene vacío la venta queda sin
@@ -175,7 +191,13 @@ func (s *QrPaymentService) DispatchAutoSale(ctx context.Context, intent *models.
 	//      a editTargetSaleID (NO al clientTxId de un INSERT nuevo).
 	var saleID uint64
 	if editTargetSaleID > 0 {
-		if err := s.saleService.UpdateSaleFromQR(uint(editTargetSaleID), sale, strings.TrimSpace(claimed.CreatedByDNI)); err != nil {
+		var applyErr error
+		if snapshotIsLinkPaymentOnly(claimed) {
+			applyErr = s.saleService.ApplyQRPaymentToSale(uint(editTargetSaleID), sale, strings.TrimSpace(claimed.CreatedByDNI))
+		} else {
+			applyErr = s.saleService.UpdateSaleFromQR(uint(editTargetSaleID), sale, strings.TrimSpace(claimed.CreatedByDNI))
+		}
+		if err := applyErr; err != nil {
 			msg := sanitizeFinalizationError(err.Error())
 			if markErr := s.repo.MarkFinalizationFailed(ctx, claimed.ID, msg, s.clock); markErr != nil {
 				log.Printf("[qr-pagos] MarkFinalizationFailed update intent=%d sale=%d: %v", claimed.ID, editTargetSaleID, markErr)

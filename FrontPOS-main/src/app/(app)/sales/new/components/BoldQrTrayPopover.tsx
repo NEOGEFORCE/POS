@@ -51,6 +51,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import LinkPaymentToSale from "@/components/shared/LinkPaymentToSale";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -474,6 +475,15 @@ export default function BoldQrTrayPopover({
                                                                     ))}
                                                                 </div>
                                                             )}
+                                                            {/* Enlazar a una venta YA registrada (admin):
+                                                                cuando no hay cobro vivo del mismo monto. */}
+                                                            {canConfirmManual ? (
+                                                                <LinkPaymentToSale
+                                                                    eventId={item.eventId}
+                                                                    amountCop={item.amountCop}
+                                                                    onLinked={onReloadUnassigned}
+                                                                />
+                                                            ) : null}
                                                         </li>
                                                     );
                                                 })}

@@ -890,6 +890,10 @@ func main() {
 			posQrAdmin.Use(middlewares.RoleMiddleware("admin"))
 			{
 				posQrAdmin.POST("/confirmar-manual", posQrHandler.ConfirmarManual)
+				// Enlazar un pago sin asignar a una venta ya registrada
+				// (sugerencias por monto y hora). Sólo admin.
+				posQrAdmin.GET("/pagos-sin-asignar/:eventId/ventas", posQrHandler.VentasCandidatas)
+				posQrAdmin.POST("/enlazar-venta", posQrHandler.EnlazarVenta)
 			}
 
 			// ================================================================
