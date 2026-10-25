@@ -83,12 +83,30 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "go test fallo" }
         & go vet ./internal/... ./cmd/api ./migrations
         if ($LASTEXITCODE -ne 0) { throw "go vet fallo" }
-        $migrationStatus = @(& go run ./cmd/migrate status 2>&1)
-        $migrationExitCode = $LASTEXITCODE
-        $migrationStatus | ForEach-Object { Write-Host $_ }
-        if ($migrationExitCode -ne 0) { throw "migrate status fallo; no se aplico ninguna migracion" }
-        if ($migrationStatus -match '^\s*PENDIENTE\b') {
-            throw "Esquema de produccion desactualizado: migrate status reporta migraciones PENDIENTES. No se detuvo el servicio ni se aplicaron migraciones."
+        # Verificacion de esquema contra la base de la TIENDA (no la del .env
+        # local, que en este PC apunta a la base de desarrollo 127.0.0.1 y
+        # reportaba todo PENDIENTE). Se consulta schema_migrations en el PC de
+        # produccion por WinRM, igual que hacer_respaldo.ps1. Solo lectura.
+        $localVersions = @(Get-ChildItem (Join-Path $backend "migrations\sql") -Filter "*.sql" |
+            ForEach-Object { if ($_.Name -match '^(\d{3})_') { [int]$Matches[1] } } | Sort-Object -Unique)
+        if ($localVersions.Count -eq 0) { throw "No se encontraron migraciones locales" }
+        if ([string]::IsNullOrWhiteSpace($env:POS_DB_PASSWORD)) { throw "Falta POS_DB_PASSWORD para verificar el esquema de produccion" }
+        $remoteVersionsRaw = Invoke-Command -ComputerName $ServiceComputer -ArgumentList $env:POS_DB_PASSWORD -ScriptBlock {
+            param($pass)
+            $psql = 'C:\Program Files\PostgreSQL\18\bin\psql.exe'
+            if (-not (Test-Path $psql)) { throw "psql no existe en el PC de produccion" }
+            $env:PGPASSWORD = $pass
+            try {
+                $r = & $psql -h localhost -U postgres -d sistemapos -t -A -c 'SELECT version FROM schema_migrations ORDER BY version' 2>&1
+                if ($LASTEXITCODE -ne 0) { throw ("consulta schema_migrations fallo: " + $r) }
+                return $r
+            } finally { $env:PGPASSWORD = '' }
+        }
+        $remoteVersions = @($remoteVersionsRaw | ForEach-Object { "$_".Trim() } | Where-Object { $_ -match '^\d+$' } | ForEach-Object { [int]$_ })
+        $pending = @($localVersions | Where-Object { $remoteVersions -notcontains $_ })
+        Write-Host ("Esquema produccion: {0} migraciones aplicadas; ultima local {1:D3}" -f $remoteVersions.Count, ($localVersions | Select-Object -Last 1))
+        if ($pending.Count -gt 0) {
+            throw ("Esquema de produccion desactualizado: migraciones PENDIENTES " + (($pending | ForEach-Object { '{0:D3}' -f $_ }) -join ', ') + ". No se detuvo el servicio ni se aplicaron migraciones.")
         }
     } finally { Pop-Location }
 
