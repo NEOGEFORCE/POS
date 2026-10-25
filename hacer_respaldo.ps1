@@ -192,6 +192,10 @@ try {
         $backups | Select-Object -First ($backups.Count - $Keep) | ForEach-Object { Remove-Item $_.FullName -Recurse -Force }
     }
     Write-Host "Respaldo verificado. Dump: $([math]::Round((Get-Item $dumpFile).Length / 1MB, 2)) MB" -ForegroundColor Green
+    # robocopy devuelve 1..7 cuando copia con éxito; ese valor quedaba en
+    # $LASTEXITCODE y desplegar_a_produccion.ps1 lo leía como "el respaldo no
+    # termino correctamente", abortando un despliegue con respaldo válido.
+    $global:LASTEXITCODE = 0
 } catch {
     Remove-Item $destination -Recurse -Force -ErrorAction SilentlyContinue
     throw

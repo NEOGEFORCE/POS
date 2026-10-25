@@ -1007,7 +1007,9 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		// propio en realCashFlow no estamos duplicando: realCashFlow.cash,
 		// nequi, daviplata y boldQr son saldos independientes y el frontend
 		// los pinta en tarjetas separadas, no suma TRANSFERENCIA aparte.
-		saldoBoldQrReal := globalSalesByMethod["BOLD_QR"] + globalCollectedByMethod["BOLD_QR"] - globalPaidByMethod["BOLD_QR"]
+		// Egresos por Bold descuentan también el 4×1000 que cobra Bold
+		// (ver bold_gmf.go).
+		saldoBoldQrReal := globalSalesByMethod["BOLD_QR"] + globalCollectedByMethod["BOLD_QR"] - WithBoldGMF(globalPaidByMethod["BOLD_QR"])
 
 		result := DashboardOverview{
 			TotalSalesAmount:    totalSalesAmount,
@@ -1067,13 +1069,14 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				Cash:      normalizedSales["EFECTIVO"] - dayExpensesByMethod["EFECTIVO"] - todayReturns,
 				Nequi:     normalizedSales["NEQUI"] - dayExpensesByMethod["NEQUI"],
 				Daviplata: normalizedSales["DAVIPLATA"] - dayExpensesByMethod["DAVIPLATA"],
-				BoldQr:    normalizedSales["BOLD_QR"] - dayExpensesByMethod["BOLD_QR"],
+				BoldQr:    normalizedSales["BOLD_QR"] - WithBoldGMF(dayExpensesByMethod["BOLD_QR"]),
 			},
 			// TodayCashFlowDetail (B2): detalle por canal del widget
 			// "Flujo Hoy". Función pura y testeable
 			// (today_cash_flow_detail.go) que NO duplica abonos
-			// (consume `normalizedSales` que ya los incluye).
-			TodayCashFlowDetail: BuildTodayCashFlowDetail(normalizedSales, dayExpensesByMethod, todayReturns),
+			// (consume `normalizedSales` que ya los incluye). La salida
+			// Bold incluye el 4×1000 para cuadrar con la cuenta Bold.
+			TodayCashFlowDetail: BuildTodayCashFlowDetail(normalizedSales, withBoldGMFBucket(dayExpensesByMethod), todayReturns),
 			// CÁLCULO DE SALDOS (Bóveda Estricta y Restauración Digital)
 			VaultBalance: bovedaBilletes,
 			CoinsSavings: totalMonedasAcumuladas,
@@ -2586,7 +2589,7 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 						// con descripciones genéricas, pero
 						// IsBoldQRPaymentSource exige la marca "BOLD".
 						if models.IsBoldQRPaymentSource(p) {
-							totals["BOLD_QR"] -= num
+							totals["BOLD_QR"] -= WithBoldGMF(num) // incluye 4×1000
 						} else if strings.Contains(p, "NEQUI") {
 							totals["NEQUI"] -= num
 						} else if strings.Contains(p, "DAVIPLATA") || strings.Contains(p, "DAVI") {
@@ -2599,8 +2602,8 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 					}
 				} else if models.IsBoldQRPaymentSource(method) {
 					// Egreso pagado por el QR Bre-B de Bold: descuenta del saldo
-					// Bold QR, no del efectivo.
-					totals["BOLD_QR"] -= (exp.Amount + exp.TaxAmount)
+					// Bold QR, no del efectivo, más el 4×1000 que cobra Bold.
+					totals["BOLD_QR"] -= WithBoldGMF(exp.Amount + exp.TaxAmount)
 				} else if method == "NEQUI" {
 					totals["NEQUI"] -= (exp.Amount + exp.TaxAmount)
 				} else if method == "DAVIPLATA" || method == "DAVI" {
