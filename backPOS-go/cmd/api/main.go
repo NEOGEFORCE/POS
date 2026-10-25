@@ -870,6 +870,9 @@ func main() {
 				posQr.GET("/estado", posQrHandler.Estado)
 				posQr.GET("/stream", posQrHandler.Stream)
 				posQr.POST("/cancelar", posQrHandler.Cancelar)
+				// Editar un cobro en espera: lo cancela y devuelve sus
+				// productos para reabrir la venta en el carrito.
+				posQr.POST("/editar", posQrHandler.Editar)
 				// Flujo asíncrono (migración 027).
 				posQr.POST("/encolar", posQrHandler.Encolar)
 				posQr.GET("/pendientes", posQrHandler.Pendientes)

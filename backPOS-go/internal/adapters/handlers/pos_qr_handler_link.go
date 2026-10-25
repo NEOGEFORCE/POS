@@ -122,3 +122,38 @@ func (h *PosQrHandler) EnlazarVenta(c *gin.Context) {
 		"status":    out.Status,
 	})
 }
+
+type editarPayload struct {
+	VentaTempID string `json:"venta_temp_id"`
+}
+
+// Editar maneja POST /api/pos/pagos-qr/editar {venta_temp_id}: cancela el
+// cobro QR en espera y devuelve sus productos para reabrir la venta.
+func (h *PosQrHandler) Editar(c *gin.Context) {
+	dni := actorDNI(c)
+	if dni == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "sesión requerida", "code": ErrUnauthorized})
+		return
+	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, models.QRIntentIniciarMaxBodyBytes)
+	var body editarPayload
+	if err := c.ShouldBindJSON(&body); err != nil || strings.TrimSpace(body.VentaTempID) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "venta_temp_id es obligatorio", "code": models.ErrCodeQRBadRequest})
+		return
+	}
+	out, err := h.svc.EditPending(c.Request.Context(), strings.TrimSpace(body.VentaTempID), dni)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrQRInvalidInput):
+			c.JSON(http.StatusBadRequest, gin.H{"error": "venta_temp_id inválido", "code": models.ErrCodeQRBadRequest})
+		case errors.Is(err, services.ErrQRNoSnapshot):
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "code": models.ErrCodeQRBadRequest})
+		case errors.Is(err, services.ErrQRIntentNotPending), errors.Is(err, services.ErrQRIntentNotFound):
+			c.JSON(http.StatusConflict, gin.H{"error": "Este cobro ya se pagó, venció o fue cancelado. Revise el historial.", "code": models.ErrCodeQRIntentAlreadyTerminal})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "No se pudo reabrir el cobro.", "code": models.ErrCodeQRRequestFailed})
+		}
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "venta": out})
+}

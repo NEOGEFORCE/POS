@@ -73,6 +73,13 @@ export interface BoldQrTrayPopoverProps {
     readonly latestError: string | null;
     readonly latestUnassignedError: string | null;
     readonly onReopen: (item: BoldQrPendingItem) => void;
+    /**
+     * "Editar": cancela el cobro en espera y reabre su venta en una factura
+     * para quitar/agregar productos antes de cobrar de nuevo.
+     */
+    readonly onEdit?: (item: BoldQrPendingItem) => void | Promise<void>;
+    /** ventaTempId que se está reabriendo (deshabilita el botón). */
+    readonly editingVentaTempId?: string | null;
     readonly onDismiss: (ventaTempId: string) => void;
     readonly onReconnect: () => void | Promise<void>;
     readonly onReloadUnassigned: () => void | Promise<void>;
@@ -133,6 +140,8 @@ export default function BoldQrTrayPopover({
     latestError,
     latestUnassignedError,
     onReopen,
+    onEdit,
+    editingVentaTempId = null,
     onDismiss,
     onReconnect,
     onReloadUnassigned,
@@ -143,6 +152,7 @@ export default function BoldQrTrayPopover({
     const { toast } = useToast();
     const [open, setOpen] = useState(false);
     const [assignPrompt, setAssignPrompt] = useState<AssignPrompt | null>(null);
+    const [editConfirmId, setEditConfirmId] = useState<string | null>(null);
     const [assignBusy, setAssignBusy] = useState(false);
     const [manualPrompt, setManualPrompt] = useState<BoldQrPendingItem | null>(null);
     const [manualNote, setManualNote] = useState(DEFAULT_MANUAL_NOTE);
@@ -342,6 +352,47 @@ export default function BoldQrTrayPopover({
                                                             >
                                                                 Reabrir QR
                                                             </Button>
+                                                            {onEdit ? (
+                                                                editConfirmId === item.ventaTempId ? (
+                                                                    <div className="flex flex-col gap-1" data-testid="bold-qr-edit-confirm">
+                                                                        <p className="max-w-[9.5rem] text-[10px] leading-tight text-amber-700 dark:text-amber-300">
+                                                                            Se cancela el QR. Si el cliente ya pagó, el pago quedará por asignar.
+                                                                        </p>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            className="h-7 px-2 text-[11px] font-semibold uppercase bg-amber-600 hover:bg-amber-500 text-white"
+                                                                            disabled={editingVentaTempId !== null}
+                                                                            onClick={() => {
+                                                                                setEditConfirmId(null);
+                                                                                setOpen(false);
+                                                                                void onEdit(item);
+                                                                            }}
+                                                                            data-testid="bold-qr-edit-confirm-button"
+                                                                        >
+                                                                            Sí, editar
+                                                                        </Button>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            variant="ghost"
+                                                                            className="h-7 px-2 text-[11px]"
+                                                                            onClick={() => setEditConfirmId(null)}
+                                                                        >
+                                                                            No
+                                                                        </Button>
+                                                                    </div>
+                                                                ) : (
+                                                                    <Button
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="h-7 px-2 text-[11px] font-semibold uppercase"
+                                                                        disabled={editingVentaTempId !== null}
+                                                                        onClick={() => setEditConfirmId(item.ventaTempId)}
+                                                                        data-testid="bold-qr-edit-button"
+                                                                    >
+                                                                        {editingVentaTempId === item.ventaTempId ? "Abriendo…" : "Editar"}
+                                                                    </Button>
+                                                                )
+                                                            ) : null}
                                                             {showManual ? (
                                                                 <Button
                                                                     size="sm"

@@ -75,3 +75,28 @@ func TestPosQrHandler_RutasEnlaceSoloAdmin(t *testing.T) {
 		}
 	}
 }
+
+func TestPosQrHandler_Editar_Validaciones(t *testing.T) {
+	h := &PosQrHandler{}
+	c, rec := newQrTestContext(http.MethodPost, "/api/pos/pagos-qr/editar", `{"venta_temp_id":"temp-x-123456"}`)
+	h.Editar(c)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("sin sesión debe 401, got %d", rec.Code)
+	}
+	c, rec = newQrTestContext(http.MethodPost, "/api/pos/pagos-qr/editar", `{}`)
+	c.Set("userDni", "EMP-1")
+	h.Editar(c)
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("sin venta_temp_id debe 400, got %d", rec.Code)
+	}
+}
+
+func TestPosQrHandler_RutaEditarRegistrada(t *testing.T) {
+	bts, err := os.ReadFile(filepath.Join("..", "..", "..", "cmd", "api", "main.go"))
+	if err != nil {
+		t.Skipf("no se pudo leer main.go: %v", err)
+	}
+	if !strings.Contains(string(bts), `posQr.POST("/editar", posQrHandler.Editar)`) {
+		t.Error("main.go debe registrar POST /pos/pagos-qr/editar")
+	}
+}

@@ -692,6 +692,70 @@ export function useNewSale() {
         reloadScale();
     }, [cartKeys, handleCartSwitch, reloadScale]);
 
+    /**
+     * restoreCartFromQr — "Editar" un cobro QR en espera.
+     *
+     * El backend ya CANCELÓ la intención (POST /pos/pagos-qr/editar) y
+     * devolvió sus productos. Abrimos una factura con ellos y la dejamos
+     * activa para que el cajero quite/agregue y vuelva a cobrar por el total
+     * correcto. Si el QR venía de editar una venta registrada, se reabre
+     * como "Factura EDIT-<id>" para que el cobro siga actualizando esa venta.
+     * El precio se toma del catálogo actual; si el producto no está (p.ej.
+     * "0000 VARIOS"), se usa el precio guardado en el cobro.
+     */
+    const restoreCartFromQr = useCallback((venta: {
+        items: ReadonlyArray<{ barcode: string; quantity: number; unitPrice: number }>;
+        clientDni?: string;
+        editSaleId?: number;
+    }): string | null => {
+        if (!venta || !Array.isArray(venta.items) || venta.items.length === 0) return null;
+        const byBarcode = new Map(products.map((p) => [p.barcode, p]));
+        const editId = typeof venta.editSaleId === 'number' && venta.editSaleId > 0 ? venta.editSaleId : 0;
+        const stamp = Date.now();
+        const items: CartItem[] = venta.items.map((it, idx) => {
+            const base = byBarcode.get(it.barcode);
+            const item = {
+                ...(base || {
+                    barcode: it.barcode,
+                    productName: it.barcode === '0000' ? 'VARIOS / VENTA RAPIDA' : it.barcode,
+                    salePrice: it.unitPrice,
+                    purchasePrice: 0,
+                    quantity: 0,
+                    categoryId: 0,
+                    marginPercentage: 0,
+                    isWeighted: false,
+                }),
+                cartQuantity: it.quantity,
+                cartItemId: `qr_${stamp}_${idx}_${it.barcode}`,
+            } as CartItem;
+            if (it.barcode === '0000') item.salePrice = it.unitPrice;
+            if (editId) {
+                item.isPreexisting = true;
+                item.originalQuantity = it.quantity;
+            }
+            return item;
+        });
+        let key: string;
+        if (editId) {
+            key = `Factura EDIT-${editId}`;
+        } else {
+            let nextNum = 1;
+            while (cartKeys.includes(`Factura ${nextNum}`)) nextNum++;
+            key = `Factura ${nextNum}`;
+        }
+        const clientDni = venta.clientDni && venta.clientDni !== '0' ? venta.clientDni : '0';
+        setCartKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+        setCarts((prev) => ({ ...prev, [key]: items }));
+        setCartCustomers((prev) => ({ ...prev, [key]: clientDni }));
+        setActiveCartKey(key);
+        activeCartKeyRef.current = key;
+        setSelectedCustomerDni(clientDni);
+        setSelectedItemId(null);
+        registerAuditLog('CART_RESTORE', 'VENTAS', `Cobro QR en espera reabierto para editar en ${key} (${items.length} productos).`, true);
+        setTimeout(returnFocusToScanner, 50);
+        return key;
+    }, [products, cartKeys, returnFocusToScanner]);
+
     const updateQuantity = useCallback((cartItemId: string, delta: number) => {
         setCarts(prev => {
             const currentKey = activeCartKeyRef.current;
@@ -1805,6 +1869,7 @@ export function useNewSale() {
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight,
         // Flujo asíncrono QR (migración 027)
         confirmEnqueuedAndFreeCart,
+        restoreCartFromQr,
     };
 }
 

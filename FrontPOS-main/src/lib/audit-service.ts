@@ -3,6 +3,7 @@
 export type AuditAction = 
     | 'CART_ITEM_REMOVE' 
     | 'CART_CLEAR' 
+    | 'CART_RESTORE'
     | 'SALE_CANCEL' 
     | 'PRICE_GUARD_TRIGGER'
     | 'AUTH_BYPASS_USED';

@@ -96,6 +96,7 @@ export default function NewSalePage() {
         updateQuantity, removeFromCart, addToCart, addMiscItem, setCartItemQuantity, updateCartItem,
         handleCodeSubmit, handleScaleSync, handleConfirmSale, confirmManualWeight,
         confirmEnqueuedAndFreeCart,
+        restoreCartFromQr,
         setOriginalCustomerDniBeforeSplit, setRemainingItemsAfterSplit, setSplitItemsToPay
     } = useNewSale();
 
@@ -410,6 +411,61 @@ export default function NewSalePage() {
         setBoldQrReopenPayload({ ventaTempId: item.ventaTempId, monto: Math.round(item.amountCop || 0) });
         setIsPaymentDialogOpen(true);
     }, [qrIsPaid, qrDismissIntent, toast, setIsPaymentDialogOpen]);
+
+    // "Editar" un cobro QR en espera: el backend lo CANCELA (un pago por
+    // ese monto ya no lo aprueba) y devuelve sus productos; los abrimos en
+    // una factura para quitar/agregar y volver a cobrar por el total nuevo.
+    const [editingPendingId, setEditingPendingId] = useState<string | null>(null);
+    const handleEditPending = useCallback(async (item: BoldQrPendingItem) => {
+        const temp = typeof item?.ventaTempId === 'string' ? item.ventaTempId.trim() : '';
+        if (!temp || editingPendingId) return;
+        setEditingPendingId(temp);
+        try {
+            const res = await apiFetch<{ venta?: {
+                items?: Array<{ barcode: string; quantity: number; unitPrice: number }>;
+                clientDni?: string; editSaleId?: number;
+                cashAmount?: number; transferNequi?: number; transferDaviplata?: number; creditAmount?: number;
+            } }>('/pos/pagos-qr/editar', {
+                method: 'POST',
+                body: JSON.stringify({ venta_temp_id: temp }),
+                fallbackError: 'No se pudo reabrir el cobro',
+                timeoutMs: 10000,
+            });
+            const venta = res?.venta;
+            const key = venta?.items?.length ? restoreCartFromQr({
+                items: venta.items,
+                clientDni: venta.clientDni,
+                editSaleId: venta.editSaleId,
+            }) : null;
+            qrDismissIntent(temp);
+            void qrTrayReconnect();
+            if (!key) {
+                toast({ variant: 'destructive', title: 'COBRO CANCELADO', description: 'No llegaron productos; vuelva a armar la venta.' });
+                return;
+            }
+            const otros = [
+                venta?.cashAmount ? `efectivo $${formatCurrency(venta.cashAmount)}` : '',
+                venta?.transferNequi ? `Nequi $${formatCurrency(venta.transferNequi)}` : '',
+                venta?.transferDaviplata ? `Daviplata $${formatCurrency(venta.transferDaviplata)}` : '',
+                venta?.creditAmount ? `fiado $${formatCurrency(venta.creditAmount)}` : '',
+            ].filter(Boolean).join(', ');
+            toast({
+                title: 'VENTA REABIERTA',
+                description: `El QR quedó cancelado. Edite ${key} y cobre de nuevo.` +
+                    (otros ? ` Ya había recibido: ${otros}; regístrelo otra vez al cobrar.` : ''),
+                duration: 9000,
+            });
+        } catch (err) {
+            toast({
+                variant: 'destructive',
+                title: 'NO SE PUDO EDITAR',
+                description: err instanceof Error ? err.message : 'Intente de nuevo.',
+            });
+            void qrTrayReconnect();
+        } finally {
+            setEditingPendingId(null);
+        }
+    }, [editingPendingId, restoreCartFromQr, qrDismissIntent, qrTrayReconnect, toast]);
 
     const handleBoldQrReopenConsumed = useCallback(() => {
         // Contrato de un solo uso: el UPM consumió el payload y abrió
@@ -1192,6 +1248,8 @@ export default function NewSalePage() {
                                     latestError={qrTrayError}
                                     latestUnassignedError={qrUnassignedError}
                                     onReopen={handleReopenPending}
+                                    onEdit={handleEditPending}
+                                    editingVentaTempId={editingPendingId}
                                     onDismiss={qrDismissIntent}
                                     onReconnect={qrTrayReconnect}
                                     onReloadUnassigned={qrReloadUnassigned}
