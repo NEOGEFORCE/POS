@@ -131,8 +131,15 @@ try {
     )
 
     Write-Host "[2/3] Artefactos de produccion sin secretos..." -ForegroundColor Yellow
+    # Solo lo necesario para restaurar: server.exe, out/ y los archivos
+    # sueltos de la raiz (nssm, scripts, configuracion sin secretos). Se
+    # excluyen despliegues y respaldos viejos (.rollback ~3 GB, etc.) y las
+    # copias de codigo fuente, que ya se respaldan en [1/3] y viven en git.
+    # Antes se copiaba la carpeta entera (~4,2 GB, ~40 min por la red).
     Invoke-RobocopyChecked -Source $ProductionShare -Destination (Join-Path $destination "produccion") -ExtraArgs @(
-        "/XD", ".deploy-staging",
+        "/XD", ".deploy-staging", ".rollback", ".predeploy-backups", ".release-backups",
+        ".staging", ".staging-*", ".bridge-backup", ".db-backups", ".dbbackup",
+        "backPOS-go", "FrontPOS-main", "lector-balanza-portatil", "logs", "out.pre-*", "_paquete_bd",
         "/XF", ".env", ".env.*", "*.key", "*.pem", "*.pfx"
     )
 
