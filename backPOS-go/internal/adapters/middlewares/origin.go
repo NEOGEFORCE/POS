@@ -6,7 +6,9 @@ import (
 )
 
 // IsPrivateOrigin acepta solicitudes sin Origin y orígenes HTTP(S) cuyo host
-// sea localhost, loopback o una dirección privada real.
+// sea localhost, loopback, una dirección privada real o una dirección de
+// Tailscale (rango CGNAT 100.64.0.0/10), que sólo es alcanzable por
+// dispositivos de la misma red Tailscale.
 func IsPrivateOrigin(origin string) bool {
 	if origin == "" {
 		return true
@@ -20,5 +22,11 @@ func IsPrivateOrigin(origin string) bool {
 		return true
 	}
 	ip := net.ParseIP(hostname)
-	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
+	return ip != nil && (ip.IsLoopback() || ip.IsPrivate() || tailscaleCGNAT.Contains(ip))
 }
+
+// tailscaleCGNAT es el rango que Tailscale asigna a los equipos de la red.
+var tailscaleCGNAT = func() *net.IPNet {
+	_, n, _ := net.ParseCIDR("100.64.0.0/10")
+	return n
+}()
