@@ -727,11 +727,12 @@ export default function UniversalPaymentModal({
     () => !!onBoldQrRequested
       && flowType === "in"
       && !isReturnExchange
-      && !isAbono
+      // Abonos de fiado sí admiten QR: el servidor registra el abono al
+      // aprobarse (pos_qr_abono.go). Sólo si el padre conecta el QR.
       && !isRefund
       && remainingDebt > 0.5
       && !submittingPayment,
-    [onBoldQrRequested, flowType, isReturnExchange, isAbono, isRefund, remainingDebt, submittingPayment],
+    [onBoldQrRequested, flowType, isReturnExchange, isRefund, remainingDebt, submittingPayment],
   );
 
   const handleOpenBoldQr = useCallback(async () => {

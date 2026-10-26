@@ -63,6 +63,7 @@ import (
 
 	"backPOS-go/internal/adapters/repositories"
 	"backPOS-go/internal/core/domain/models"
+	"backPOS-go/internal/core/ports"
 	"backPOS-go/internal/infrastructure/sse"
 )
 
@@ -221,8 +222,12 @@ type QrPaymentService struct {
 	// tests verifica que CreateSale nunca se llame en el camino de la
 	// tx del repo QR (evita deadlock sobre stock_movements).
 	saleService *SaleService
-	clock       func() time.Time
-	warnedNoKey sync.Once
+	// clientService + saleRepo: abonos de fiado por QR (pos_qr_abono.go).
+	// Nil en tests: el abono por QR queda deshabilitado.
+	clientService *ClientService
+	abonoSaleRepo ports.SaleRepository
+	clock         func() time.Time
+	warnedNoKey   sync.Once
 }
 
 // NewQrPaymentService construye el servicio. La `AuditService` puede ser

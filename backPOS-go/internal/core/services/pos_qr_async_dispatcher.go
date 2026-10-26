@@ -99,6 +99,10 @@ type qrSaleTotals struct {
 	// sólo se reemplaza el desglose de pago; productos y stock no se tocan.
 	// Lo arma SIEMPRE el servidor (LinkEventToSale), nunca el cliente.
 	LinkPaymentOnly bool `json:"linkPaymentOnly,omitempty"`
+	// AbonoClientDNI (abono de fiado por QR): el pago aprobado se registra
+	// como abono a la cartera de este cliente (ClientService.PayCredit) en
+	// lugar de crear o editar una venta. Ver pos_qr_abono.go.
+	AbonoClientDNI string `json:"abonoClientDni,omitempty"`
 }
 
 // snapshotIsLinkPaymentOnly lee el flag linkPaymentOnly del totals snapshot.
@@ -167,6 +171,13 @@ func (s *QrPaymentService) DispatchAutoSale(ctx context.Context, intent *models.
 	}
 
 	// Paso 2: decodificar snapshots → models.Sale.
+	//
+	// Abono de fiado por QR: no hay venta que crear; se registra el abono
+	// a la cartera del cliente (pos_qr_abono.go).
+	if abonoDNI := snapshotAbonoClientDNI(claimed); abonoDNI != "" {
+		s.dispatchAbono(ctx, claimed, abonoDNI)
+		return
+	}
 	sale, editTargetSaleID, err := buildSaleFromSnapshots(claimed)
 	if err != nil {
 		msg := sanitizeFinalizationError(err.Error())

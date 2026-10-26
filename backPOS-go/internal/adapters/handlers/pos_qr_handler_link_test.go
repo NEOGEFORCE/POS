@@ -100,3 +100,30 @@ func TestPosQrHandler_RutaEditarRegistrada(t *testing.T) {
 		t.Error("main.go debe registrar POST /pos/pagos-qr/editar")
 	}
 }
+
+func TestAbonoQR_HelpersDeValidacion(t *testing.T) {
+	if got := extractAbonoClientDNIFromTotals([]byte(`{"abonoClientDni":"123"}`)); got != "123" {
+		t.Errorf("dni = %q", got)
+	}
+	if got := extractAbonoClientDNIFromTotals([]byte(`{"abonoClientDni":"0"}`)); got != "" {
+		t.Errorf("consumidor final no es abono: %q", got)
+	}
+	if extraChannelsInTotals([]byte(`{"totalAmount":20000,"transferAmount":20000}`)) {
+		t.Error("solo QR no tiene canales extra")
+	}
+	if !extraChannelsInTotals([]byte(`{"totalAmount":20000,"cashAmount":5000,"transferAmount":15000}`)) {
+		t.Error("efectivo + QR sí tiene canal extra")
+	}
+	// El sale_payload plano conserva abonoClientDni en el totals snapshot.
+	raw := []byte(`{"details":[{"barcode":"ABONO","quantity":1,"unitPrice":20000,"subtotal":20000}],"totalAmount":20000,"transferAmount":20000,"transferSource":"DAVIPLATA","abonoClientDni":"123"}`)
+	snaps, err := extractQRSnapshotsFromPayload(raw, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if extractAbonoClientDNIFromTotals(snaps.Totals) != "123" {
+		t.Errorf("abonoClientDni perdido: %s", snaps.Totals)
+	}
+	if err := validateQRPaymentBreakdown(snaps.Totals, snaps.Cart, 20000); err != nil {
+		t.Errorf("abono por QR completo debe validar: %v", err)
+	}
+}

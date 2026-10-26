@@ -135,6 +135,9 @@ func main() {
 	// venta/stock. Sin este wiring, intenciones APROBADAS no cierran
 	// venta automáticamente y quedan como legacy sincrónico.
 	posQrService.WithSaleService(saleService)
+	// Abono de fiado por QR/llave Daviplata: el pago aprobado se registra
+	// como abono a la cartera del cliente (pos_qr_abono.go).
+	posQrService.WithAbonos(clientService, saleRepo)
 	// Sweeper de finalización: cada 20 s busca intenciones APROBADAS
 	// cuya materialización no está cerrada y las despacha. Idempotente
 	// contra reconexiones y reinicios del binario (CreateSale es

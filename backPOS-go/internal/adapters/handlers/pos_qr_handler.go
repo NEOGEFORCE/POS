@@ -807,6 +807,8 @@ type encolarSalePayloadView struct {
 	// EditSaleID (A2): venta existente que el QR debe ACTUALIZAR en vez
 	// de crear una nueva. Entero > 0; omitido = venta nueva.
 	EditSaleID uint64 `json:"editSaleId,omitempty"`
+	// AbonoClientDNI: el cobro QR es un abono de fiado de este cliente.
+	AbonoClientDNI string `json:"abonoClientDni,omitempty"`
 }
 
 // Encolar maneja POST /api/pos/pagos-qr/encolar.
@@ -977,6 +979,9 @@ func extractQRSnapshotsFromPayload(raw json.RawMessage, fallbackClientDNI, fallb
 		if view.EditSaleID > 0 {
 			totalsMap["editSaleId"] = view.EditSaleID
 		}
+		if strings.TrimSpace(view.AbonoClientDNI) != "" {
+			totalsMap["abonoClientDni"] = strings.TrimSpace(view.AbonoClientDNI)
+		}
 		built, _ := json.Marshal(totalsMap)
 		out.Totals = built
 	}
@@ -1132,7 +1137,43 @@ func (h *PosQrHandler) validateQRSnapshotOrAbort(c *gin.Context, snaps qrSnapsho
 			return false
 		}
 	}
+	// Abono de fiado por QR: debe ser sólo QR (los demás canales se
+	// registran como abono aparte) y no puede mezclarse con edición.
+	if abonoDNI := extractAbonoClientDNIFromTotals(snaps.Totals); abonoDNI != "" {
+		if editSaleID > 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "un abono por QR no puede editar una venta", "code": models.ErrCodeQRBadRequest})
+			return false
+		}
+		if extraChannelsInTotals(snaps.Totals) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "el abono por QR debe cobrarse completo por QR; registra el efectivo como otro abono", "code": models.ErrCodeQRBadRequest})
+			return false
+		}
+	}
 	return true
+}
+
+// extractAbonoClientDNIFromTotals lee `abonoClientDni` del totals snapshot.
+func extractAbonoClientDNIFromTotals(totals []byte) string {
+	var v struct {
+		AbonoClientDNI string `json:"abonoClientDni"`
+	}
+	if len(bytes.TrimSpace(totals)) == 0 || json.Unmarshal(totals, &v) != nil {
+		return ""
+	}
+	dni := strings.TrimSpace(v.AbonoClientDNI)
+	if dni == "0" || dni == "0000" {
+		return ""
+	}
+	return dni
+}
+
+// extraChannelsInTotals reporta si el snapshot trae canales distintos del QR.
+func extraChannelsInTotals(totals []byte) bool {
+	var f qrSnapshotFlatView
+	if json.Unmarshal(totals, &f) != nil {
+		return false
+	}
+	return f.CashAmount > 0.5 || f.TransferNequi > 0.5 || f.TransferDaviplata > 0.5 || f.CreditAmount > 0.5
 }
 
 // extractEditSaleIDFromTotals lee `editSaleId` del totals snapshot ya

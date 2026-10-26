@@ -167,6 +167,8 @@ export interface EncolarSalePayload {
      * backend interpreta la aprobación como UPDATE y no como CREATE.
      */
     readonly editSaleId?: number;
+    /** Abono de fiado por QR: DNI del cliente que abona (ver pos_qr_abono.go). */
+    readonly abonoClientDni?: string;
 }
 
 export interface EncolarPayload {

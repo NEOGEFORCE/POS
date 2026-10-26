@@ -13,7 +13,8 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Customer } from '@/lib/definitions';
 import Cookies from 'js-cookie';
-import { extractApiError } from '@/lib/api-error';
+import { apiFetch, extractApiError } from '@/lib/api-error';
+import { BOLD_QR_ALREADY_PAID_SENTINEL, buildIniciarPayload, generateQrClientTxId, isAlreadyPaidResponse } from '@/lib/bold-qr-helpers.mjs';
 import { broadcastRevalidate, setupSyncListener } from '@/lib/revalidate';
 import { normalizeText } from '@/lib/utils';
 import { useAuth } from '@/lib/auth';
@@ -173,6 +174,62 @@ export default function CustomersPage() {
   }, [customers]);
 
   // La logica de suma ahora la maneja el UniversalPaymentModal
+
+  // Abono de fiado por QR / llave Daviplata: se abre un cobro QR marcado como
+  // abono del cliente; cuando llega el SMS el servidor registra el abono
+  // (pos_qr_abono.go). El abono por QR va completo por QR: si ya se agregó
+  // efectivo u otro canal, se registra ese abono aparte.
+  const prepareAbonoQrIntent = useCallback(async (
+    amount: number,
+    ventaTempId: string,
+    breakdown: { cash: number; nequi: number; daviplata: number; credit: number; totalCart: number },
+  ) => {
+    if (!payingClient?.dni) throw new Error('Selecciona el cliente que abona');
+    const monto = Math.round(Number(amount) || 0);
+    if (monto <= 0) throw new Error('Monto inválido para el abono por QR');
+    if ((breakdown?.cash || 0) > 0 || (breakdown?.nequi || 0) > 0 || (breakdown?.daviplata || 0) > 0) {
+      throw new Error('El abono por QR debe ir completo por QR. Registra primero el efectivo como otro abono.');
+    }
+    const payload = buildIniciarPayload({
+      caja_id: (typeof user?.dni === 'string' && user.dni.trim()) || 'CAJA',
+      monto,
+      venta_temp_id: ventaTempId,
+      client_tx_id: generateQrClientTxId(),
+      client_dni: payingClient.dni,
+      cashier_name: user?.name || '',
+      sale_payload: {
+        details: [{ barcode: 'ABONO', quantity: 1, unitPrice: monto, subtotal: monto }],
+        totalAmount: monto,
+        amountPaid: monto,
+        transferAmount: monto,
+        transferSource: 'DAVIPLATA',
+        paymentMethod: 'DAVIPLATA',
+        employeeDni: user?.dni || '',
+        clientDni: payingClient.dni,
+        clientName: payingClient.name || '',
+        abonoClientDni: payingClient.dni,
+      },
+    });
+    if (!payload) throw new Error('Datos inválidos para el abono por QR');
+    const res = await apiFetch('/pos/pagos-qr/iniciar', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      fallbackError: 'No se pudo preparar el abono por QR',
+      timeoutMs: 10000,
+    });
+    if (isAlreadyPaidResponse(res)) {
+      toast({ title: 'YA PAGADO', description: 'Este abono por QR ya fue registrado.' });
+      throw new Error(BOLD_QR_ALREADY_PAID_SENTINEL);
+    }
+  }, [payingClient, user, toast]);
+
+  const handleAbonoQrFinalized = useCallback(() => {
+    toast({ title: 'ABONO REGISTRADO', description: 'El abono por QR Daviplata quedó aplicado a la cuenta del cliente.' });
+    setLastChange(0);
+    setShowSuccessScreen(true);
+    loadCustomers();
+    broadcastRevalidate('CUSTOMER_UPDATE');
+  }, [toast, loadCustomers]);
 
   const handlePayCredit = async (paymentData: {
     cash: number;
@@ -358,6 +415,8 @@ export default function CustomersPage() {
         submittingPayment={submittingPayment}
         lastChange={lastChange}
         onPay={handlePayCredit}
+        onBoldQrRequested={prepareAbonoQrIntent}
+        onBoldQrFinalized={handleAbonoQrFinalized}
         showCreditTab={false}
         isAbono={true}
       />
