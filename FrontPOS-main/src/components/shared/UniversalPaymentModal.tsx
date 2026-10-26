@@ -571,8 +571,9 @@ export default function UniversalPaymentModal({
       // el cajero vea de inmediato los montos acumulados en el pill del header.
       if (initialPaidAmounts?.credit && initialPaidAmounts.credit > 0) setActivePaymentTab('credit');
       else if (presetNequi > 0 && presetDaviplata === 0) setActivePaymentTab('NEQUI');
-      else if (presetDaviplata > 0 && presetNequi === 0) setActivePaymentTab('DAVIPLATA');
-      else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0 && initialPaidAmounts?.transferSource) {
+      else if (presetDaviplata > 0 && presetNequi === 0) setActivePaymentTab(typeof onBoldQrRequested === 'function' ? 'cash' : 'DAVIPLATA');
+      else if (initialPaidAmounts?.transfer && initialPaidAmounts.transfer > 0 && initialPaidAmounts?.transferSource
+        && !(typeof onBoldQrRequested === 'function' && initialPaidAmounts.transferSource === 'DAVIPLATA')) {
         setActivePaymentTab(initialPaidAmounts.transferSource as any);
       } else setActivePaymentTab('cash');
 
@@ -1556,6 +1557,11 @@ export default function UniversalPaymentModal({
     { id: 'credit' as const, label: 'Fiado', icon: <Users size={18} className="md:w-6 md:h-6" /> }
   ]
     .filter(tab => tab.id !== 'credit' || showCreditTab)
+    // Daviplata se confirma SOLO por QR/llave (SMS del 85888) cuando el
+    // flujo QR está disponible: se oculta el botón manual para que nadie
+    // cierre una venta sin que el pago haya llegado (2026-10-26). Donde no
+    // hay QR (abonos, devoluciones, corrección por empleado) sigue manual.
+    .filter(tab => tab.id !== 'DAVIPLATA' || typeof onBoldQrRequested !== 'function')
     .filter(tab => !isRefund || tab.id === 'cash');
   // Nota: BOLD_QR vive como botón independiente dentro de la grilla de
   // métodos (ver `<button aria-label={BOLD_QR_METHOD_LABEL}>` abajo). NO
