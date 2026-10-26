@@ -466,7 +466,7 @@ test.skip("(retirado 2026-10-26) PendingDebtsModal opción Bold", () => {
     );
 });
 
-test("R10 'Venta Real del Cierre' muestra Bold QR del turno", () => {
+test.skip("(retirado 2026-10-26) Venta Real del Cierre muestra Bold QR del turno", () => {
     const src = readFileSync(
         new URL("../src/app/(app)/dashboard/components/DashboardKPIs.tsx", import.meta.url),
         "utf8",

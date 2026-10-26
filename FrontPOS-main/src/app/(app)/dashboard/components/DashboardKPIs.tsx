@@ -2,7 +2,7 @@
 
 import { 
     ShoppingCart, Wallet, CreditCard, ArrowDownRight, HandCoins, ChevronRight, TrendingUp, DollarSign,
-    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark, Banknote, RotateCcw, Trash2, QrCode
+    PlusCircle, MinusCircle, Smartphone, Coins, Info, LineChart, Package, Landmark, Banknote, RotateCcw, Trash2
 } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 
@@ -247,13 +247,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                                 <Smartphone size={10} className="text-rose-500" />
                                 <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">DAVI: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.DAVIPLATA || 0)}</span></span>
                             </div>
-                            {/* Bold QR / Bre-B del turno (shiftSalesByMethod.BOLD_QR = ventas + abonos por QR) */}
-                            {(data.shiftSalesByMethod?.BOLD_QR || 0) > 0 ? (
-                            <div className="flex items-center gap-1">
-                                <QrCode size={10} className="text-cyan-500" />
-                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">QR (ANT.): <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.BOLD_QR || 0)}</span></span>
-                            </div>
-                            ) : null}
+                            {/* Bold se retiró (2026-10-26): no se muestra línea aparte. */}
                             <div className="flex items-center gap-1">
                                 <Wallet size={10} className="text-blue-500" />
                                 <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">FIADOS: <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.FIADO || 0)}</span></span>
