@@ -826,7 +826,7 @@ export default function ModalPagoBoldQR({
             <section
                 aria-labelledby="bold-qr-modal-title"
                 aria-describedby="bold-qr-modal-description"
-                className="relative w-[calc(100vw-1rem)] max-w-[520px] max-h-full overflow-y-auto overscroll-contain bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/5 rounded-2xl p-4 md:p-5 shadow-[0_18px_60px_rgb(0,0,0,0.24)]"
+                className="relative w-[calc(100vw-1rem)] max-w-[520px] max-h-full overflow-y-auto overscroll-contain [scrollbar-width:none] [&::-webkit-scrollbar]:hidden bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-white/5 rounded-2xl p-4 md:p-5 shadow-[0_18px_60px_rgb(0,0,0,0.24)]"
             >
                 <button
                     type="button"
@@ -857,7 +857,7 @@ export default function ModalPagoBoldQR({
                     </p>
                 </header>
 
-                <div className="flex flex-col items-center gap-1.5 py-2.5">
+                <div className="flex flex-col items-center gap-1 py-1.5">
                     {mixedChannelsSummary ? (
                         <div
                             className="mb-1 inline-flex items-center gap-2 rounded-xl bg-sky-500/10 border border-sky-500/30 px-3 py-1.5 text-[11px] font-semibold text-sky-700 dark:text-sky-300 leading-tight max-w-full"
@@ -889,7 +889,9 @@ export default function ModalPagoBoldQR({
                     <div
                         className="relative flex items-center justify-center rounded-xl border border-zinc-200 bg-white overflow-hidden shadow-[0_8px_24px_rgb(0,0,0,0.12)]"
                         style={{
-                            width: `min(68vw, ${BOLD_QR_PREFERRED_SIDE_PX}px)`,
+                            // El QR se achica con la altura de la pantalla para que
+                            // monto + QR + llave + botones quepan sin scroll.
+                            width: `min(68vw, ${BOLD_QR_PREFERRED_SIDE_PX}px, 34vh)`,
                             maxWidth: "100%",
                             minWidth: `min(${BOLD_QR_CSS_MIN}, 100%)`,
                             aspectRatio: "1 / 1",
@@ -935,11 +937,11 @@ export default function ModalPagoBoldQR({
                     </div>
                 </div>
                 {DAVIPLATA_KEY ? (
-                    <div className="mt-3 text-center" data-testid="daviplata-key">
-                        <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                    <div className="mt-1.5 text-center" data-testid="daviplata-key">
+                        <p className="text-[10px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
                             O envía por Bre-B a la llave
                         </p>
-                        <p className="font-mono text-2xl md:text-3xl font-bold tabular-nums tracking-wider text-zinc-900 dark:text-white select-all">
+                        <p className="font-mono text-2xl font-bold leading-tight tabular-nums tracking-wider text-zinc-900 dark:text-white select-all">
                             {DAVIPLATA_KEY}
                         </p>
                     </div>
