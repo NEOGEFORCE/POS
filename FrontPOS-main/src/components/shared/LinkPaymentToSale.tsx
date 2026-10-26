@@ -94,7 +94,7 @@ export default function LinkPaymentToSale({ eventId, amountCop, onLinked }: Prop
                 fallbackError: "No se pudo enlazar el pago",
                 timeoutMs: 15000,
             });
-            toast({ title: "PAGO ENLAZADO", description: `$${formatCurrency(amountCop)} quedó como Bold en la venta #${saleId}.` });
+            toast({ title: "PAGO ENLAZADO", description: `$${formatCurrency(amountCop)} quedó como Daviplata en la venta #${saleId}.` });
             setOpen(false);
             setItems(null);
             await onLinked?.();

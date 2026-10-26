@@ -963,26 +963,21 @@ func (s *QrPaymentService) IngestBridgeWebhook(ctx context.Context, rawBody []by
 		return nil, ErrQRWebhookUnauthorized
 	}
 
-	// 2) Clasificar el formato por `app`. `co.bold` sigue siendo el
-	// camino original; `sms` activa la validación de remitente contra
-	// el allowlist. Cualquier otro valor se ignora sin loguear.
+	// 2) Formato: sólo SMS. Desde 2026-10-26 el cobro QR es Daviplata
+	// (remitente 85888); los avisos de Bold (push `co.bold` o SMS de Bold)
+	// ya no se aceptan.
 	appPackage := strings.ToLower(strings.TrimSpace(payload.App))
 	isSMS := appPackage == models.QRBridgeAppSMS
-	isBold := appPackage == boldAndroidPackage
-	if !isSMS && !isBold {
+	if !isSMS {
 		return nil, ErrQRWebhookRejected
 	}
 
-	// 3) Para SMS: validar remitente contra allowlist ANTES de leer
-	// el texto. Si no empata, descartamos sin exponer el mensaje al
-	// log. Para co.bold se mantiene el flujo histórico (sin remitente).
-	remitenteNorm := ""
-	if isSMS {
-		if !isAllowedSMSSender(payload.Remitente) {
-			return nil, ErrQRWebhookRejected
-		}
-		remitenteNorm = models.NormalizeBridgeSender(payload.Remitente)
+	// 3) Remitente: el código corto de Daviplata, o la allowlist
+	// configurada en el servidor (BOLD_SMS_SENDERS, por compatibilidad).
+	if !isDaviplataSender(payload.Remitente) && !isAllowedSMSSender(payload.Remitente) {
+		return nil, ErrQRWebhookRejected
 	}
+	remitenteNorm := models.NormalizeBridgeSender(payload.Remitente)
 
 	// 4) Validar la ventana temporal cuando el payload entrega
 	// recibido_ms. Reloj del celular puede adelantarse unos segundos;
@@ -1000,16 +995,10 @@ func (s *QrPaymentService) IngestBridgeWebhook(ctx context.Context, rawBody []by
 		}
 	}
 
-	// 5) Buscar el monto. Si no se encuentra o hay negadores →
-	// rechazar silenciosamente SIN loguear el texto.
+	// 5) Monto: sólo pagos RECIBIDOS de Daviplata (QR o llave). Compras
+	// PSE y cualquier otro SMS se ignoran sin loguear el texto.
 	notificationText := bridgeNotificationText(payload)
-	// Sólo pagos por el QR de Bold: el SMS de Bold (remitente 890412)
-	// dice "Recibiste una transferencia QR Bold por valor de $X". Otros
-	// SMS del mismo remitente (avisos, retiros, códigos) se ignoran.
-	if isSMS && !isBoldQRTransferSMS(notificationText) {
-		return nil, ErrQRWebhookRejected
-	}
-	amount, ok := extractCOPFromMessage(notificationText)
+	amount, _, ok := extractDaviplataPayment(notificationText)
 	if !ok || !models.IsValidQRAmountCOP(amount) {
 		return nil, ErrQRWebhookRejected
 	}

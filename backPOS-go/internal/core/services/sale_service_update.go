@@ -476,7 +476,7 @@ func (s *SaleService) ApplyQRPaymentToSale(saleID uint, payment *models.Sale, ac
 		TransferAmount:    payment.TransferAmount,
 		TransferNequi:     payment.TransferNequi,
 		TransferDaviplata: payment.TransferDaviplata,
-		TransferSource:    models.PaymentSourceBoldQR,
+		TransferSource:    payment.TransferSource,
 		CreditAmount:      payment.CreditAmount,
 	}
 	return s.UpdateSalePayment(saleID, update)

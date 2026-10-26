@@ -171,7 +171,6 @@ const PendingDebtsModal = ({ isOpen, onOpenChange, debts, onSettle }: PendingDeb
                                       // deuda cobrando desde el saldo del
                                       // canal Bold. El backend ya acepta
                                       // `paymentSource` libre en /expenses/settle.
-                                      { id: 'BOLD_QR', label: 'Bold', icon: <img src="/logos/bold.png" className="h-4 w-4 object-contain rounded-full" alt="" aria-hidden="true" />, color: 'cyan' }
                                     ].map((source) => (
                                       <Button
                                         key={source.id}

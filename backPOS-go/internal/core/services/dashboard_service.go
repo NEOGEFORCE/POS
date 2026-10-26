@@ -1131,7 +1131,7 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 			// la liquidez se subestimaba cada vez que había pagos QR
 			// pendientes de llegar a otro bolsillo. saldoBoldQrReal
 			// usa la misma fórmula que `realCashFlow.boldQr`.
-			TotalLiquidity: bovedaFisicaAcumulada + saldoNequiReal + saldoDaviplataReal + saldoBoldQrReal,
+			TotalLiquidity: bovedaFisicaAcumulada + saldoNequiReal + saldoDaviplataReal,
 
 			EstimatedNetProfit:   estimatedNetProfit,
 			InventoryCostValue:   inventoryCostValue,

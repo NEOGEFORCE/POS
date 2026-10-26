@@ -89,7 +89,7 @@ export interface BoldQrTrayPopoverProps {
     readonly onConfirmManual?: (ventaTempId: string, nota: string) => Promise<void>;
 }
 
-const DEFAULT_MANUAL_NOTE = "Verificado en app Bold, SMS no llegó";
+const DEFAULT_MANUAL_NOTE = "Verificado en app Daviplata, SMS no llegó";
 
 interface AssignPrompt {
     readonly unassigned: BoldQrUnassignedPayment;

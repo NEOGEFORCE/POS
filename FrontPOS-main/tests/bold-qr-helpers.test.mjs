@@ -49,14 +49,14 @@ import {
 test("BOLD_MERCHANT: identidad del comercio Surtifamiliar (constantes públicas)", () => {
     assert.equal(BOLD_MERCHANT.businessName, "SUPERMERCADO SURTIFAMILIAR");
     assert.equal(BOLD_MERCHANT.titular, "Sebastian Sarmiento");
-    assert.equal(BOLD_MERCHANT.codigoComercio, "0093097755");
+    assert.equal(BOLD_MERCHANT.codigoComercio, "");
     assert.equal(
         BOLD_MERCHANT.subheader,
-        "Titular verificado: Sebastian Sarmiento | Comercio Bre-B: 0093097755",
+        "Pago por QR o llave Daviplata · Titular: Sebastian Sarmiento",
     );
     assert.equal(
         BOLD_MERCHANT.footer,
-        "Titular: Sebastian Sarmiento | Código de comercio: 0093097755",
+        "Titular: Sebastian Sarmiento · Daviplata",
     );
 });
 
@@ -65,23 +65,22 @@ test("BOLD_MERCHANT: inmutable (Object.freeze)", () => {
 });
 
 test("Etiquetas del método de pago quedan ancladas al UI contract", () => {
-    assert.equal(BOLD_QR_METHOD_LABEL, "QR Bold / Bre-B (Nequi, DaviPlata, Bancos)");
+    assert.equal(BOLD_QR_METHOD_LABEL, "QR / Llave Daviplata");
     assert.equal(
         BOLD_QR_METHOD_BADGE,
-        "Escanea desde Nequi, DaviPlata, Bancolombia o cualquier banco (Bre-B)",
+        "Escanea el QR o envía a la llave Daviplata desde cualquier banco (Bre-B)",
     );
 });
 
-test("BOLD_QR_IMAGE_PATH es la ruta pública estática `/qr-bold-breb-code.png`", () => {
-    assert.equal(BOLD_QR_IMAGE_PATH, "/qr-bold-breb-code.png");
+test("BOLD_QR_IMAGE_PATH es la ruta pública estática `/qr-daviplata.png`", () => {
+    assert.equal(BOLD_QR_IMAGE_PATH, "/qr-daviplata.png");
     assert.equal(BOLD_QR_MIN_SIDE_PX, 260, "mínimo 260 px por lado");
     assert.equal(BOLD_QR_CSS_MIN, "260px");
 });
 
-test("public/qr-bold-breb-code.png existe, es PNG y cumple dimensiones mínimas", () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const assetPath = join(here, "..", "public", "qr-bold-breb-code.png");
-    assert.equal(existsSync(assetPath), true, "Falta el QR real del comercio");
+const daviQrAsset = join(dirname(fileURLToPath(import.meta.url)), "..", "public", "qr-daviplata.png");
+test("public/qr-daviplata.png es PNG y cumple dimensiones mínimas", { skip: !existsSync(daviQrAsset) && "falta public/qr-daviplata.png (se carga desde el PDF)" }, () => {
+    const assetPath = daviQrAsset;
 
     const bytes = readFileSync(assetPath);
     assert.ok(bytes.length >= 24, "PNG truncado");

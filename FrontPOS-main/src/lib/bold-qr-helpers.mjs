@@ -41,24 +41,32 @@
 export const BOLD_MERCHANT = Object.freeze({
     businessName: "SUPERMERCADO SURTIFAMILIAR",
     titular: "Sebastian Sarmiento",
-    codigoComercio: "0093097755",
-    subheader: "Titular verificado: Sebastian Sarmiento | Comercio Bre-B: 0093097755",
-    footer: "Titular: Sebastian Sarmiento | Código de comercio: 0093097755",
+    codigoComercio: "",
+    subheader: "Pago por QR o llave Daviplata · Titular: Sebastian Sarmiento",
+    footer: "Titular: Sebastian Sarmiento · Daviplata",
 });
 
-/** Etiqueta exacta del método de pago en la UI del cobro real. */
-export const BOLD_QR_METHOD_LABEL = "QR Bold / Bre-B (Nequi, DaviPlata, Bancos)";
+/**
+ * Cobro QR por DAVIPLATA (desde 2026-10-26; Bold se retiró por el 4×1000).
+ * Los nombres `BOLD_QR_*` se conservan para no reescribir todo el flujo
+ * asíncrono; el contenido visible es Daviplata.
+ */
+export const BOLD_QR_METHOD_LABEL = "QR / Llave Daviplata";
 
 /** Badge auxiliar debajo del encabezado. */
-export const BOLD_QR_METHOD_BADGE = "Escanea desde Nequi, DaviPlata, Bancolombia o cualquier banco (Bre-B)";
+export const BOLD_QR_METHOD_BADGE = "Escanea el QR o envía a la llave Daviplata desde cualquier banco (Bre-B)";
 
 /**
- * Ruta REFERIDA del QR en el bundle público. Documentada por contrato:
- * el archivo debe quedar en `public/qr-bold-breb-code.png`, medir 561×561 px
- * y conservar la quiet zone blanca. Si falta, el modal debe mostrar un error
- * UX honesto, nunca un placeholder financiero.
+ * Llave Bre-B de Daviplata que se muestra bajo el QR. Se completa con la que
+ * aparece en el PDF del QR (vacía = no se muestra).
  */
-export const BOLD_QR_IMAGE_PATH = "/qr-bold-breb-code.png";
+export const DAVIPLATA_KEY = "";
+
+/**
+ * Imagen del QR de Daviplata en el bundle público (`public/qr-daviplata.png`).
+ * Si falta, el modal muestra un error UX honesto, nunca un QR inventado.
+ */
+export const BOLD_QR_IMAGE_PATH = "/qr-daviplata.png";
 export const BOLD_QR_MIN_SIDE_PX = 260;
 
 /** Dimensión nativa del recorte QR-only, sin reescalado al generarlo. */

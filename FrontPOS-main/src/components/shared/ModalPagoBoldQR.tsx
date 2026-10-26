@@ -94,6 +94,7 @@ import {
     BOLD_QR_ASSET_SIDE_PX,
     BOLD_QR_CSS_MIN,
     BOLD_QR_IMAGE_PATH,
+    DAVIPLATA_KEY,
     BOLD_QR_METHOD_BADGE,
     BOLD_QR_PREFERRED_SIDE_PX,
     BOLD_QR_STATUS,
@@ -894,7 +895,7 @@ export default function ModalPagoBoldQR({
                             aspectRatio: "1 / 1",
                         }}
                         role="img"
-                        aria-label={`Código QR Bold / Bre-B para pagar $${formatCurrency(monto)}`}
+                        aria-label={`Código QR Daviplata para pagar $${formatCurrency(monto)}`}
                     >
                         {!qrImageMissing ? (
                             // eslint-disable-next-line @next/next/no-img-element
@@ -902,7 +903,7 @@ export default function ModalPagoBoldQR({
                                 src={BOLD_QR_IMAGE_PATH}
                                 width={BOLD_QR_ASSET_SIDE_PX}
                                 height={BOLD_QR_ASSET_SIDE_PX}
-                                alt="QR estático Bold/Bre-B"
+                                alt="QR Daviplata"
                                 className="block h-full w-full object-contain"
                                 decoding="sync"
                                 onError={() => setQrImageMissing(true)}
@@ -924,7 +925,7 @@ export default function ModalPagoBoldQR({
                                     Pide al administrador cargar
                                     <br />
                                     <code className="font-mono text-[11px] text-zinc-700 dark:text-zinc-200">
-                                        /qr-bold-breb-code.png
+                                        /qr-daviplata.png
                                     </code>
                                     <br />
                                     antes de usar este método.
@@ -933,6 +934,11 @@ export default function ModalPagoBoldQR({
                         )}
                     </div>
                 </div>
+                {DAVIPLATA_KEY ? (
+                    <p className="mt-2 text-center text-sm font-semibold text-zinc-800 dark:text-zinc-100" data-testid="daviplata-key">
+                        Llave Daviplata: <span className="font-mono tabular-nums">{DAVIPLATA_KEY}</span>
+                    </p>
+                ) : null}
 
                 {/* Advertencia opcional: hay otra intención pendiente con
                     el MISMO monto en curso (misma u otra caja). Si pagan al

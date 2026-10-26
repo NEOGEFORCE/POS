@@ -374,8 +374,8 @@ func TestDispatchAutoSale_EditSaleID_ActualizaMismaVentaEIdempotente(t *testing.
 	if asFloat(t, u["transferAmount"]) != 16000 || asFloat(t, u["cashAmount"]) != 0 {
 		t.Errorf("desglose no reemplazado: %+v", u)
 	}
-	if u["transferSource"] != "BOLD_QR" || u["paymentMethod"] != "BOLD_QR" {
-		t.Errorf("source/método: %v / %v, want BOLD_QR", u["transferSource"], u["paymentMethod"])
+	if u["transferSource"] != "DAVIPLATA" || u["paymentMethod"] != "DAVIPLATA" || asFloat(t, u["transferDaviplata"]) != 16000 {
+		t.Errorf("source/método: %v / %v, want DAVIPLATA (QR Daviplata)", u["transferSource"], u["paymentMethod"])
 	}
 	for _, st := range h.f.stmts {
 		if strings.HasPrefix(strings.TrimSpace(st.SQL), `INSERT INTO "sales"`) {
@@ -493,12 +493,12 @@ func TestBuildSaleFromSnapshots_MixtoQR6kEfectivo10k(t *testing.T) {
 	if sale.TotalAmount != 16000 || sale.CashAmount != 10000 || sale.TransferAmount != 6000 {
 		t.Errorf("total/cash/transfer = %v/%v/%v, want 16000/10000/6000", sale.TotalAmount, sale.CashAmount, sale.TransferAmount)
 	}
-	if sale.TransferSource != "BOLD_QR" || sale.PaymentMethod != "EFECTIVO + BOLD_QR" {
-		t.Errorf("source=%q método=%q", sale.TransferSource, sale.PaymentMethod)
+	if sale.TransferSource != "DAVIPLATA" || sale.PaymentMethod != "EFECTIVO + DAVIPLATA" || sale.TransferDaviplata != 6000 {
+		t.Errorf("source=%q método=%q davi=%v", sale.TransferSource, sale.PaymentMethod, sale.TransferDaviplata)
 	}
 }
 
-func TestBuildSaleFromSnapshots_ParteQRSiempreBoldAunqueClienteMandeNequi(t *testing.T) {
+func TestBuildSaleFromSnapshots_ParteQRVaADaviplataYConservaNequi(t *testing.T) {
 	sale, _, err := buildSaleFromSnapshots(&models.QrPaymentIntent{
 		ID: 1, AmountCOP: 5000, CartSnapshot: `[{"barcode":"A","quantity":1,"unitPrice":8000,"subtotal":8000}]`,
 		TotalsSnapshot: `{"totalAmount":8000,"transferAmount":8000,"transferNequi":3000,"transferSource":"NEQUI"}`,
@@ -507,16 +507,16 @@ func TestBuildSaleFromSnapshots_ParteQRSiempreBoldAunqueClienteMandeNequi(t *tes
 	if err != nil {
 		t.Fatalf("buildSaleFromSnapshots: %v", err)
 	}
-	if sale.TransferSource != "BOLD_QR" {
-		t.Errorf("la parte QR ($5.000) debe viajar como BOLD_QR, got %q", sale.TransferSource)
+	if sale.TransferNequi != 3000 || sale.TransferDaviplata != 5000 || sale.TransferSource != "DAVIPLATA" {
+		t.Errorf("nequi=%v davi=%v source=%q, want 3000/5000/DAVIPLATA", sale.TransferNequi, sale.TransferDaviplata, sale.TransferSource)
 	}
-	if sale.PaymentMethod != "NEQUI + BOLD_QR" {
-		t.Errorf("paymentMethod=%q, want 'NEQUI + BOLD_QR'", sale.PaymentMethod)
+	if sale.PaymentMethod != "NEQUI + DAVIPLATA" {
+		t.Errorf("paymentMethod=%q, want 'NEQUI + DAVIPLATA'", sale.PaymentMethod)
 	}
 }
 
 // Edición con pago mixto vía QR: la venta queda con total 16.000, efectivo
-// 10.000 y Bold 6.000 (caso "enviaron por QR y el resto en efectivo").
+// 10.000 y Daviplata 6.000 (caso "enviaron por QR y el resto en efectivo").
 func TestDispatchAutoSale_EditMixto_GuardaCadaParteEnSuCanal(t *testing.T) {
 	totals := strings.Replace(totalsMixto, `"employeeDni":"ADMIN-1"`, `"employeeDni":"ADMIN-1","editSaleId":500`, 1)
 	h := newEditHarness(t, &editScenario{sale: sale500(), actorRole: "admin", intentCreator: "ADMIN-1",
@@ -530,7 +530,7 @@ func TestDispatchAutoSale_EditMixto_GuardaCadaParteEnSuCanal(t *testing.T) {
 	if asFloat(t, u["totalAmount"]) != 16000 || asFloat(t, u["cashAmount"]) != 10000 || asFloat(t, u["transferAmount"]) != 6000 {
 		t.Errorf("desglose = %+v", u)
 	}
-	if u["transferSource"] != "BOLD_QR" || u["paymentMethod"] != "EFECTIVO + BOLD_QR" {
+	if u["transferSource"] != "DAVIPLATA" || u["paymentMethod"] != "EFECTIVO + DAVIPLATA" || asFloat(t, u["transferDaviplata"]) != 6000 {
 		t.Errorf("source/método = %v / %v", u["transferSource"], u["paymentMethod"])
 	}
 	if asFloat(t, u["change"]) != 0 {

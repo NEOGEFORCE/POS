@@ -93,6 +93,16 @@ func classifySaleTransferToClosure(sale models.Sale, closure *CashierClosure) {
 	if closure == nil || sale.TransferAmount <= 0 {
 		return
 	}
+	src := strings.ToUpper(strings.TrimSpace(sale.TransferSource))
+	// Ventas QR Daviplata (desde 2026-10-26) con desglose explícito
+	// Nequi + Daviplata: cada parte a su bolsillo; el resto, si lo hay,
+	// por la fuente declarada.
+	if (src == "DAVIPLATA" || src == "NEQUI") && sale.TransferNequi > 0 && sale.TransferDaviplata > 0 {
+		classifyTransferToClosure("NEQUI", sale.TransferNequi, closure)
+		classifyTransferToClosure("DAVIPLATA", sale.TransferDaviplata, closure)
+		classifyTransferToClosure(sale.TransferSource, genericTransferPortion(&sale), closure)
+		return
+	}
 	if !models.IsBoldQRSaleTransferSource(sale.TransferSource) {
 		classifyTransferToClosure(sale.TransferSource, sale.TransferAmount, closure)
 		return

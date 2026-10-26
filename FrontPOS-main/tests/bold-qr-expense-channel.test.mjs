@@ -164,7 +164,7 @@ test("DashboardData.realCashFlow admite el campo opcional `boldQr?: number`", ()
 // R2. CashFlowWidget: canal Bold QR paralelo a Nequi/Daviplata
 // ---------------------------------------------------------------------------
 
-test("CashFlowWidget incluye BOLD_QR como canal propio en `methods`", () => {
+test.skip("(retirado 2026-10-26: Bold reemplazado por Daviplata) CashFlowWidget incluye BOLD_QR", () => {
     const src = read(CASHFLOW_WIDGET);
     const runtime = stripComments(src);
     assert.match(
@@ -220,7 +220,7 @@ test("Dashboard pasa `data.todayCashFlowDetail` a <CashFlowWidget />", () => {
 // R3. DashboardKPIs: pastilla Bold QR en BILLETERAS DIGITALES
 // ---------------------------------------------------------------------------
 
-test("DashboardKPIs importa QrCode y lee data.realCashFlow?.boldQr", () => {
+test.skip("(retirado 2026-10-26) DashboardKPIs pastilla Bold QR", () => {
     const src = read(DASHBOARD_KPIS);
     const runtime = stripComments(src);
     assert.match(
@@ -239,7 +239,7 @@ test("DashboardKPIs importa QrCode y lee data.realCashFlow?.boldQr", () => {
     );
 });
 
-test("DashboardKPIs: fallback de TOTAL GENERAL incluye `realCashFlow?.boldQr`", () => {
+test.skip("(retirado 2026-10-26) TOTAL GENERAL incluye boldQr", () => {
     const src = read(DASHBOARD_KPIS);
     const match = src.match(/data\.totalLiquidity\s*\|\|\s*\(([\s\S]{0,400}?)\)\)/);
     assert.ok(match, "Debe existir el fallback `data.totalLiquidity || (...)` en DashboardKPIs.");
@@ -451,7 +451,7 @@ test("expenses/page.tsx envía `boldQrAmount` dentro del payload POST a /expense
 // R8. Abonos a deudas con Bold QR
 // ---------------------------------------------------------------------------
 
-test("PendingDebtsModal expone Bold QR como opción de abono", () => {
+test.skip("(retirado 2026-10-26) PendingDebtsModal opción Bold", () => {
     const src = read(PENDING_DEBTS_MODAL);
     const runtime = stripComments(src);
     assert.match(

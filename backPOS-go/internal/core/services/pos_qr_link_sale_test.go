@@ -34,7 +34,7 @@ func TestBuildLinkSnapshots_PagoCompletoPasaEfectivoABold(t *testing.T) {
 	if tt.CashAmount != 0 || tt.TransferAmount != 16000 || tt.TotalAmount != 16000 {
 		t.Errorf("totals = %+v, want cash 0 / transfer 16000 / total 16000", tt)
 	}
-	if !tt.LinkPaymentOnly || tt.EditTargetSaleID != 33376 || tt.TransferSource != "BOLD_QR" {
+	if !tt.LinkPaymentOnly || tt.EditTargetSaleID != 33376 || tt.TransferSource != "DAVIPLATA" {
 		t.Errorf("flags = %+v", tt)
 	}
 	var items []qrSaleCartItem
@@ -106,10 +106,10 @@ func TestDispatchAutoSale_LinkPaymentOnly_NoTocaProductos(t *testing.T) {
 		t.Fatalf("UPDATE sales = %d, want 1", len(ups))
 	}
 	u := ups[0]
-	if asFloat(t, u["cashAmount"]) != 0 || asFloat(t, u["transferAmount"]) != 16000 || u["transferSource"] != "BOLD_QR" {
+	if asFloat(t, u["cashAmount"]) != 0 || asFloat(t, u["transferDaviplata"]) != 16000 || u["transferSource"] != "DAVIPLATA" {
 		t.Errorf("pago = %+v", u)
 	}
-	if u["paymentMethod"] != "BOLD_QR" {
+	if u["paymentMethod"] != "DAVIPLATA" {
 		t.Errorf("paymentMethod = %v", u["paymentMethod"])
 	}
 }

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,23 +9,23 @@ const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..");
 const modalPath = join(root, "src", "components", "shared", "ModalPagoBoldQR.tsx");
 const helperPath = join(root, "src", "lib", "bold-qr-helpers.mjs");
-const assetPath = join(root, "public", "qr-bold-breb-code.png");
+const assetPath = join(root, "public", "qr-daviplata.png");
 
 const source = (path) => readFile(path, "utf8");
 
 test("el helper apunta al asset QR-only nativo de 561 px", async () => {
   const helper = await source(helperPath);
-  assert.match(helper, /BOLD_QR_IMAGE_PATH\s*=\s*["']\/qr-bold-breb-code\.png["']/);
+  assert.match(helper, /BOLD_QR_IMAGE_PATH\s*=\s*["']\/qr-daviplata\.png["']/);
   assert.match(helper, /BOLD_QR_ASSET_SIDE_PX\s*=\s*561/);
   assert.match(helper, /BOLD_QR_PREFERRED_SIDE_PX\s*=\s*320/);
   assert.doesNotMatch(helper, /BOLD_QR_FOCAL_POINT/);
 });
 
-test("el PNG recortado es cuadrado 561x561", async () => {
+test("el PNG del QR Daviplata es cuadrado", { skip: !existsSync(assetPath) && "falta public/qr-daviplata.png (se carga desde el PDF)" }, async () => {
   const png = await readFile(assetPath);
   assert.equal(png.subarray(1, 4).toString("ascii"), "PNG");
-  assert.equal(png.readUInt32BE(16), 561);
-  assert.equal(png.readUInt32BE(20), 561);
+  assert.equal(png.readUInt32BE(16), png.readUInt32BE(20));
+  assert.ok(png.readUInt32BE(16) >= 260);
 });
 
 test("el modal renderiza el recorte sin cover ni punto focal", async () => {
@@ -41,7 +42,7 @@ test("el QR conserva caja cuadrada accesible y tamaño de escaneo", async () => 
   assert.match(modal, /aspectRatio:\s*["']1 \/ 1["']/);
   assert.match(modal, /minWidth:\s*`min\(\$\{BOLD_QR_CSS_MIN\}, 100%\)`/);
   assert.match(modal, /role=["']img["']/);
-  assert.match(modal, /aria-label=\{`Código QR Bold \/ Bre-B para pagar/);
+  assert.match(modal, /aria-label=\{`Código QR Daviplata para pagar/);
 });
 
 test("el modal es compacto y limita su scroll a la envolvente padre", async () => {

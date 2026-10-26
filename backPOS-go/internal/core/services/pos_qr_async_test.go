@@ -458,8 +458,8 @@ func TestBuildSaleFromSnapshots_FallbackClienteYMetodo(t *testing.T) {
 	if sale.ClientDNI != "0000" {
 		t.Errorf("sin client_snapshot debe caer a 0000, got %s", sale.ClientDNI)
 	}
-	if sale.PaymentMethod != "BOLD_QR" {
-		t.Errorf("sin paymentMethod debe caer a BOLD_QR, got %s", sale.PaymentMethod)
+	if sale.PaymentMethod != "DAVIPLATA" || sale.TransferDaviplata != 5000 {
+		t.Errorf("sin paymentMethod la parte QR cae a DAVIPLATA, got %s / davi %v", sale.PaymentMethod, sale.TransferDaviplata)
 	}
 	if sale.EmployeeDNI != "EMP-9" {
 		t.Errorf("sin employeeDni debe caer a CreatedByDNI, got %s", sale.EmployeeDNI)

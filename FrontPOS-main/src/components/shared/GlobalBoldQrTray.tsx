@@ -80,7 +80,7 @@ export interface GlobalBoldQrTrayProps {
     readonly canConfirmManual: boolean;
 }
 
-const DEFAULT_MANUAL_NOTE = "Verificado en app Bold, SMS no llegó";
+const DEFAULT_MANUAL_NOTE = "Verificado en app Daviplata, SMS no llegó";
 
 function formatRelativeAgo(iso: string, nowMs: number = Date.now()): string {
     if (!iso) return "";

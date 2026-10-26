@@ -13,6 +13,7 @@ export const BOLD_MERCHANT: BoldMerchantInfo;
 export const BOLD_QR_METHOD_LABEL: string;
 export const BOLD_QR_METHOD_BADGE: string;
 export const BOLD_QR_IMAGE_PATH: string;
+export const DAVIPLATA_KEY: string;
 export const BOLD_QR_MIN_SIDE_PX: number;
 export const BOLD_QR_ASSET_SIDE_PX: number;
 export const BOLD_QR_CSS_MIN: string;

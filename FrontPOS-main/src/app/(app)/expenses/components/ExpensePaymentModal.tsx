@@ -467,7 +467,11 @@ export function ExpensePaymentModal({
                   // egresos pagados desde el saldo de Bold para que se
                   // descuente del canal correcto en el dashboard, igual
                   // que con Nequi o Daviplata.
-                  { id: 'BOLD_QR' as const, label: 'Bold', logo: '/logos/bold.png' },
+                  // Bold se retiró como canal de pago (2026-10-26). Se
+                  // conserva sólo si el egreso que se edita ya lo tenía.
+                  ...(boldQrPaid > 0 || (initialBoldQr || 0) > 0
+                    ? [{ id: 'BOLD_QR' as const, label: 'Bold', logo: '/logos/bold.png' }]
+                    : []),
                   // La pestaña "Préstamo" sólo aparece cuando el padre entrega
                   // `loanOption?.enabled = true`. Es la última de la lista para
                   // dejar claro que es un canal especial — no sale de la caja.

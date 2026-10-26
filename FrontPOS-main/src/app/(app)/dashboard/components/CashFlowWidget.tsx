@@ -27,11 +27,8 @@ export default function CashFlowWidget({ data }: CashFlowWidgetProps) {
         { key: 'EFECTIVO', label: 'Efectivo', icon: Coins, color: 'emerald' },
         { key: 'NEQUI', label: 'Nequi', icon: Smartphone, color: 'purple' },
         { key: 'DAVIPLATA', label: 'Daviplata', icon: Smartphone, color: 'rose' },
-        // Bold QR / Bre-B — canal propio para que los ingresos del QR y
-        // los egresos pagados desde Bold se contabilicen y descuenten como
-        // los demás canales. El backend expone sus montos como la clave
-        // "BOLD_QR" dentro de todayCashFlow.income / .expense (ver informe).
-        { key: 'BOLD_QR', label: 'Bold QR', icon: QrCode, color: 'cyan' },
+        // Bold se retiró (2026-10-26): el QR es de Daviplata y entra al
+        // canal DAVIPLATA. La clave BOLD_QR queda sólo para histórico.
     ];
 
     return (

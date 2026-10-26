@@ -9,42 +9,32 @@ import (
 )
 
 // =============================================================================
-// B3 — TotalLiquidity debe incluir saldoBoldQrReal
+// TotalLiquidity sin Bold (2026-10-26)
 // =============================================================================
 //
-// Antes del fix la liquidez total del dashboard sumaba sólo bóveda +
-// saldoNequiReal + saldoDaviplataReal. Al ignorar el saldo real de Bold QR,
-// cada vez que había plata entrada vía QR que todavía no se trasladaba a
-// otro bolsillo la métrica subestimaba cuánta plata hay disponible.
-//
-// No es trivial correr GetOverview en test unitario (depende de muchos
-// repos), así que esta prueba es una aserción textual sobre el código: la
-// línea de TotalLiquidity debe mencionar `saldoBoldQrReal`. Es la misma
-// técnica que el proyecto usa en otros tests "guardian" para asegurar que
-// un fix sensible no se revierta por descuido.
+// Bold se retiró como canal de cobro: el QR es de Daviplata y sus ventas
+// entran al saldo Daviplata. El saldo Bold histórico ya no forma parte de la
+// liquidez de la tienda, así que TotalLiquidity = bóveda + Nequi + Daviplata.
+// Guardián textual: si alguien vuelve a sumar saldoBoldQrReal, el total
+// general se inflaría con plata que ya no se maneja en el POS.
 
-func TestTotalLiquidityIncluyeSaldoBoldQrReal(t *testing.T) {
-	path := filepath.Join("dashboard_service.go")
-	src, err := os.ReadFile(path)
+func TestTotalLiquidityNoSumaSaldoBold(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("dashboard_service.go"))
 	if err != nil {
 		t.Fatalf("no se pudo leer dashboard_service.go: %v", err)
 	}
-
-	// Busca la asignación de TotalLiquidity: debe incluir
-	// `saldoBoldQrReal` en el mismo renglón o próximo.
 	re := regexp.MustCompile(`TotalLiquidity:\s*[^,\n]+`)
 	matches := re.FindAll(src, -1)
 	if len(matches) == 0 {
-		t.Fatalf("no se encontró asignación de TotalLiquidity en dashboard_service.go")
+		t.Fatalf("no se encontró asignación de TotalLiquidity")
 	}
-	found := false
 	for _, m := range matches {
-		if strings.Contains(string(m), "saldoBoldQrReal") {
-			found = true
-			break
+		s := string(m)
+		if strings.Contains(s, "saldoBoldQrReal") {
+			t.Fatalf("TotalLiquidity no debe sumar el saldo Bold: %q", s)
 		}
-	}
-	if !found {
-		t.Fatalf("TotalLiquidity ya no suma saldoBoldQrReal. Match actual: %q", string(matches[0]))
+		if !strings.Contains(s, "saldoDaviplataReal") {
+			t.Fatalf("TotalLiquidity debe incluir Daviplata: %q", s)
+		}
 	}
 }

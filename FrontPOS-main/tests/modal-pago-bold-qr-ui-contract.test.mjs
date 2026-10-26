@@ -95,7 +95,7 @@ test("ModalPagoBoldQR: muestra el nombre del negocio (coincide con lo que ve el 
 });
 
 test("ModalPagoBoldQR: badge con el texto exacto del sprint", () => {
-    const badge = "Escanea desde Nequi, DaviPlata, Bancolombia o cualquier banco (Bre-B)";
+    const badge = "Escanea el QR o envía a la llave Daviplata desde cualquier banco (Bre-B)";
     assert.ok(
         helpersSrc.includes(badge),
         "El helper expone el badge con texto exacto",
@@ -121,11 +121,11 @@ test("ModalPagoBoldQR: muestra el monto gigante + instrucción 'Digita este valo
 
 test("ModalPagoBoldQR: subtítulo y pie con 'Sebastian Sarmiento' y '0093097755'", () => {
     assert.ok(
-        helpersSrc.includes("Titular verificado: Sebastian Sarmiento | Comercio Bre-B: 0093097755"),
+        helpersSrc.includes("Pago por QR o llave Daviplata · Titular: Sebastian Sarmiento"),
         "subtítulo exacto en helper",
     );
     assert.ok(
-        helpersSrc.includes("Titular: Sebastian Sarmiento | Código de comercio: 0093097755"),
+        helpersSrc.includes("Titular: Sebastian Sarmiento · Daviplata"),
         "pie exacto en helper",
     );
     assert.ok(
@@ -144,7 +144,7 @@ test("ModalPagoBoldQR: imagen /qr-bold-breb-code.png (ruta estática, min 260x26
         "usa la constante del helper, no un literal hardcoded",
     );
     assert.ok(
-        helpersSrc.includes('"/qr-bold-breb-code.png"'),
+        helpersSrc.includes('"/qr-daviplata.png"'),
         "la constante del helper es el literal exigido",
     );
     assert.ok(

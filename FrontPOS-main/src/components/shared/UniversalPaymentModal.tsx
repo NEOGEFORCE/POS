@@ -1767,7 +1767,7 @@ export default function UniversalPaymentModal({
                   }}
                   disabled={!canUseBoldQr}
                   aria-label={BOLD_QR_METHOD_LABEL}
-                  title={canUseBoldQr ? BOLD_QR_METHOD_LABEL : "Sin saldo pendiente para QR Bold"}
+                  title={canUseBoldQr ? BOLD_QR_METHOD_LABEL : "Sin saldo pendiente para QR Daviplata"}
                   className={`col-span-2 md:col-span-1 h-11 md:h-14 px-2 md:px-4 rounded-2xl flex items-center justify-center md:justify-start gap-2 md:gap-3 border transition-all group ${
                     canUseBoldQr
                       ? "bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-500/20 active:scale-[0.98]"
@@ -1778,9 +1778,9 @@ export default function UniversalPaymentModal({
                     <QrCode size={18} className="md:w-6 md:h-6" aria-hidden />
                   </div>
                   <span className="text-[11px] md:text-[12px] font-semibold uppercase tracking-wider leading-tight text-left">
-                    QR Bold / Bre-B
+                    QR / Llave Daviplata
                     <span className="hidden md:block text-[10px] font-medium normal-case tracking-normal opacity-80">
-                      Nequi · DaviPlata · Bancos
+                      Desde cualquier banco (Bre-B)
                     </span>
                   </span>
                 </button>

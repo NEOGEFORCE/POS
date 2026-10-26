@@ -397,15 +397,20 @@ func buildSaleFromSnapshots(intent *models.QrPaymentIntent) (*models.Sale, uint6
 	if sale.TransferAmount == 0 && sale.CashAmount == 0 && sale.CreditAmount == 0 {
 		sale.TransferAmount = float64(intent.AmountCOP)
 	}
-	// Pago mixto (B): transferAmount = Nequi + Daviplata + parte QR. La
-	// parte QR es la porción genérica y SIEMPRE viaja como BOLD_QR, sin
-	// importar lo que haya mandado el cliente, para que el cierre la
-	// cuente en el bolsillo Bold (y Nequi/Daviplata en el suyo, una vez).
-	if genericTransferPortion(sale) > 0.5 {
-		sale.TransferSource = models.PaymentSourceBoldQR
+	// Pago mixto: transferAmount = Nequi + Daviplata + parte QR. Desde
+	// 2026-10-26 el QR es de Daviplata: la parte QR se suma al bolsillo
+	// Daviplata (cierre, dashboard y saldo la cuentan ahí, una sola vez).
+	if generic := genericTransferPortion(sale); generic > 0.5 {
+		sale.TransferDaviplata += generic
+	}
+	switch {
+	case sale.TransferDaviplata > 0:
+		sale.TransferSource = "DAVIPLATA"
+	case sale.TransferNequi > 0:
+		sale.TransferSource = "NEQUI"
 	}
 	// paymentMethod canónico derivado de los canales reales (el snapshot
-	// es sólo una pista): "EFECTIVO + BOLD_QR", "NEQUI + BOLD_QR", etc.
+	// es sólo una pista): "DAVIPLATA", "EFECTIVO + DAVIPLATA", etc.
 	sale.PaymentMethod = deriveSalePaymentMethod(sale)
 
 	details := make([]models.SaleDetail, 0, len(cart))

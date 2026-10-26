@@ -182,7 +182,7 @@ export default function SaleEditModal({
 
     const handleBoldQrFinalized = useCallback((info: { saleId: number }) => {
         broadcastRevalidate('SALE_MADE');
-        toast({ title: 'VENTA ACTUALIZADA', description: `El pago por QR Bold quedó registrado en la venta #${info?.saleId || sale?.id}.` });
+        toast({ title: 'VENTA ACTUALIZADA', description: `El pago por QR Daviplata quedó registrado en la venta #${info?.saleId || sale?.id}.` });
         setLastChange(0);
         setShowSuccessScreen(true);
         onSuccess(0);
