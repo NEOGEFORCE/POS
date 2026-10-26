@@ -69,6 +69,6 @@ test("las acciones son anchas, simétricas y no vuelven al footer apretado", asy
 test("el fallback honesto referencia el nuevo asset", async () => {
   const modal = await source(modalPath);
   assert.match(modal, /QR_IMAGE_MISSING/);
-  assert.match(modal, /\/qr-bold-breb-code\.png/);
+  assert.match(modal, /\/qr-daviplata\.png/);
   assert.match(modal, /onError=\{\(\) => setQrImageMissing\(true\)\}/);
 });

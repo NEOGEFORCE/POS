@@ -40,10 +40,10 @@
  */
 export const BOLD_MERCHANT = Object.freeze({
     businessName: "SUPERMERCADO SURTIFAMILIAR",
-    titular: "Sebastian Sarmiento",
+    titular: "Jaider Sebastian Sarmiento",
     codigoComercio: "",
-    subheader: "Pago por QR o llave Daviplata · Titular: Sebastian Sarmiento",
-    footer: "Titular: Sebastian Sarmiento · Daviplata",
+    subheader: "Pago por QR o llave Daviplata · Titular: Jaider Sebastian Sarmiento",
+    footer: "Titular: Jaider Sebastian Sarmiento · Daviplata",
 });
 
 /**
@@ -60,7 +60,7 @@ export const BOLD_QR_METHOD_BADGE = "Escanea el QR o envía a la llave Daviplata
  * Llave Bre-B de Daviplata que se muestra bajo el QR. Se completa con la que
  * aparece en el PDF del QR (vacía = no se muestra).
  */
-export const DAVIPLATA_KEY = "";
+export const DAVIPLATA_KEY = "0026916221";
 
 /**
  * Imagen del QR de Daviplata en el bundle público (`public/qr-daviplata.png`).

@@ -11,9 +11,9 @@
 //   - Builder de payload para POST /api/pos/pagos-qr/iniciar.
 //   - Constantes públicas (merchant verificado + ruta QR).
 //
-// ACTIVO /qr-bold-breb-code.png:
+// ACTIVO /qr-daviplata.png:
 // -----------------------------------------------------------------------------
-// La imagen real entregada por el comercio vive en `public/qr-bold-breb-code.png`.
+// La imagen real entregada por el comercio vive en `public/qr-daviplata.png`.
 // Este guardián valida existencia, firma PNG y dimensiones mínimas sin intentar
 // decodificar, regenerar ni sustituir el QR financiero.
 // =============================================================================
@@ -48,15 +48,15 @@ import {
 
 test("BOLD_MERCHANT: identidad del comercio Surtifamiliar (constantes públicas)", () => {
     assert.equal(BOLD_MERCHANT.businessName, "SUPERMERCADO SURTIFAMILIAR");
-    assert.equal(BOLD_MERCHANT.titular, "Sebastian Sarmiento");
+    assert.equal(BOLD_MERCHANT.titular, "Jaider Sebastian Sarmiento");
     assert.equal(BOLD_MERCHANT.codigoComercio, "");
     assert.equal(
         BOLD_MERCHANT.subheader,
-        "Pago por QR o llave Daviplata · Titular: Sebastian Sarmiento",
+        "Pago por QR o llave Daviplata · Titular: Jaider Sebastian Sarmiento",
     );
     assert.equal(
         BOLD_MERCHANT.footer,
-        "Titular: Sebastian Sarmiento · Daviplata",
+        "Titular: Jaider Sebastian Sarmiento · Daviplata",
     );
 });
 

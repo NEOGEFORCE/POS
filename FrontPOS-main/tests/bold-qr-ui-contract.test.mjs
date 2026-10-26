@@ -6,7 +6,7 @@
 //
 //   R1. `ModalPagoBoldQR` existe en src/components/shared/, usa shadcn
 //       exclusivamente (Dialog / Button / Alert), no HeroUI.
-//   R2. El modal referencia `/qr-bold-breb-code.png` por contrato y maneja
+//   R2. El modal referencia `/qr-daviplata.png` por contrato y maneja
 //       `onError` para bloquear UX insegura (bandera `QR_IMAGE_MISSING`)
 //       sin generar placeholder financiero.
 //   R3. El modal invoca EXACTAMENTE los endpoints del contrato
@@ -120,7 +120,7 @@ test("ModalPagoBoldQR importa los helpers puros del contrato Bold", async () => 
 // R2. QR image missing — bandera UX honesta, sin placeholder financiero
 // ---------------------------------------------------------------------------
 
-test("ModalPagoBoldQR referencia /qr-bold-breb-code.png vía la constante del helper", async () => {
+test("ModalPagoBoldQR referencia /qr-daviplata.png vía la constante del helper", async () => {
     const src = await readSrc(modalPath);
     // No hardcodeamos el string — tomamos la constante BOLD_QR_IMAGE_PATH.
     assert.match(src, /src=\{BOLD_QR_IMAGE_PATH\}/,
@@ -153,8 +153,8 @@ test("ModalPagoBoldQR muestra el bloqueador UX QR_IMAGE_MISSING cuando onError s
     const src = await readSrc(modalPath);
     assert.match(src, /QR_IMAGE_MISSING/,
         "Debe exponer el literal 'QR_IMAGE_MISSING' para que el cajero vea el estado.");
-    assert.match(src, /qr-bold-breb-code\.png/,
-        "El texto UX debe mencionar la ruta exacta `/qr-bold-breb-code.png`.");
+    assert.match(src, /qr-daviplata\.png/,
+        "El texto UX debe mencionar la ruta exacta `/qr-daviplata.png`.");
     assert.match(src, /administrador/i,
         "Debe pedir al administrador cargar la imagen antes de usar este método.");
 });

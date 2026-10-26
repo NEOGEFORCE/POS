@@ -12,10 +12,10 @@
 //   - Badge "Escanea desde Nequi, DaviPlata, Bancolombia o cualquier
 //     banco (Bre-B)".
 //   - Monto gigante + instrucción "Digita este valor exacto en tu app".
-//   - Ruta QR `/qr-bold-breb-code.png` con mínimo 260x260 y fallback honesto
+//   - Ruta QR `/qr-daviplata.png` con mínimo 260x260 y fallback honesto
 //     si el archivo falta en `public/`.
 //   - Subtítulo "Titular verificado: Sebastian Sarmiento | Comercio
-//     Bre-B: 0093097755" y pie "Titular: Sebastian Sarmiento | Código
+//     Bre-B: 0093097755" y pie "Titular: Jaider Sebastian Sarmiento | Código
 //     de comercio: 0093097755" vivos como strings en el JSX.
 //   - Chime Web Audio en aprobación: usa `playNotificationSound('success')`.
 //   - Auto-cierre tras 1500 ms y disparo único de `onApproved`.
@@ -121,11 +121,11 @@ test("ModalPagoBoldQR: muestra el monto gigante + instrucción 'Digita este valo
 
 test("ModalPagoBoldQR: subtítulo y pie con 'Sebastian Sarmiento' y '0093097755'", () => {
     assert.ok(
-        helpersSrc.includes("Pago por QR o llave Daviplata · Titular: Sebastian Sarmiento"),
+        helpersSrc.includes("Pago por QR o llave Daviplata · Titular: Jaider Sebastian Sarmiento"),
         "subtítulo exacto en helper",
     );
     assert.ok(
-        helpersSrc.includes("Titular: Sebastian Sarmiento · Daviplata"),
+        helpersSrc.includes("Titular: Jaider Sebastian Sarmiento · Daviplata"),
         "pie exacto en helper",
     );
     assert.ok(
@@ -138,7 +138,7 @@ test("ModalPagoBoldQR: subtítulo y pie con 'Sebastian Sarmiento' y '0093097755'
 // QR estático: ruta y fallback honesto
 // ---------------------------------------------------------------------------
 
-test("ModalPagoBoldQR: imagen /qr-bold-breb-code.png (ruta estática, min 260x260)", () => {
+test("ModalPagoBoldQR: imagen /qr-daviplata.png (ruta estática, min 260x260)", () => {
     assert.ok(
         modalSrc.includes("BOLD_QR_IMAGE_PATH"),
         "usa la constante del helper, no un literal hardcoded",
@@ -163,7 +163,7 @@ test("ModalPagoBoldQR: fallback cuando la imagen no carga NO es un placeholder f
         "label textual que marca el bloqueo operativo",
     );
     assert.ok(
-        modalSrc.includes("/qr-bold-breb-code.png"),
+        modalSrc.includes("/qr-daviplata.png"),
         "ruta exacta documentada en el panel vacío",
     );
     // Fuera de los comentarios de cabecera, nadie debe inyectar un QR

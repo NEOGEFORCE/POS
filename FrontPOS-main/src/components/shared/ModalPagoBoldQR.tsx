@@ -37,7 +37,7 @@
 //     justo mientras el cajero intenta cerrar el modal.
 //   * NUNCA pasa el token en la URL del SSE: queda sólo en el header
 //     Authorization (contrato copiado de GlobalSyncProvider).
-//   * NUNCA inventa un QR si la imagen /qr-bold-breb-code.png no carga:
+//   * NUNCA inventa un QR si la imagen /qr-daviplata.png no carga:
 //     muestra un error UX honesto y bloquea el botón "DEJAR EN ESPERA Y
 //     SEGUIR ATENDIENDO" para que el cajero regrese y elija otro flujo.
 //     No se genera placeholder financiero.
@@ -935,9 +935,14 @@ export default function ModalPagoBoldQR({
                     </div>
                 </div>
                 {DAVIPLATA_KEY ? (
-                    <p className="mt-2 text-center text-sm font-semibold text-zinc-800 dark:text-zinc-100" data-testid="daviplata-key">
-                        Llave Daviplata: <span className="font-mono tabular-nums">{DAVIPLATA_KEY}</span>
-                    </p>
+                    <div className="mt-3 text-center" data-testid="daviplata-key">
+                        <p className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500 dark:text-zinc-400">
+                            O envía por Bre-B a la llave
+                        </p>
+                        <p className="font-mono text-2xl md:text-3xl font-bold tabular-nums tracking-wider text-zinc-900 dark:text-white select-all">
+                            {DAVIPLATA_KEY}
+                        </p>
+                    </div>
                 ) : null}
 
                 {/* Advertencia opcional: hay otra intención pendiente con
