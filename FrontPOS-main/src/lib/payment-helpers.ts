@@ -41,7 +41,9 @@ export const getPaymentDescription = (sale: Sale | null | undefined): string => 
     if (otherTransfer > 0.5) {
         const rawSource = (sale.transferSource || "").toUpperCase().trim();
         const forbiddenSources = new Set(["", "MIXTO", "NEQUI", "DAVIPLATA"]);
-        const label = forbiddenSources.has(rawSource) ? "TRANSFERENCIA" : rawSource;
+        let label = forbiddenSources.has(rawSource) ? "TRANSFERENCIA" : rawSource;
+        // Bold se retiró (2026-10-26): ventas viejas por Bold se muestran como "QR".
+        if (label.includes("BOLD")) label = "QR";
         if (!parts.includes(label)) parts.push(label);
     }
 
@@ -53,7 +55,7 @@ export const getPaymentDescription = (sale: Sale | null | undefined): string => 
     // antiguas corruptas o con solo totales). Respetamos lo que vino del
     // backend: si decia "MIXTO", mostramos "MIXTO" sin desglose, porque es
     // la unica informacion disponible.
-    const legacy = (sale.paymentMethod || "").toUpperCase().trim();
+    const legacy = (sale.paymentMethod || "").toUpperCase().trim().replace(/BOLD[_\s-]?QR|BOLD/g, "QR");
     return legacy || "EFECTIVO";
 };
 

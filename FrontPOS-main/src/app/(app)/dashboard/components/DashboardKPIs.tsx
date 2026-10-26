@@ -251,7 +251,7 @@ export default function DashboardKPIs({ data, onOpenDebts }: DashboardKPIsProps)
                             {(data.shiftSalesByMethod?.BOLD_QR || 0) > 0 ? (
                             <div className="flex items-center gap-1">
                                 <QrCode size={10} className="text-cyan-500" />
-                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">BOLD (ANT.): <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.BOLD_QR || 0)}</span></span>
+                                <span className="text-[8.5px] font-medium uppercase text-gray-500 dark:text-zinc-500 dark:text-zinc-400">QR (ANT.): <span className="text-zinc-900 dark:text-zinc-100">${formatCurrency(data.shiftSalesByMethod?.BOLD_QR || 0)}</span></span>
                             </div>
                             ) : null}
                             <div className="flex items-center gap-1">

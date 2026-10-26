@@ -293,8 +293,8 @@ test("ExpensePaymentModal mantiene estado dedicado `boldQrPaid` y pestaña `BOLD
     );
     assert.match(
         runtime,
-        /id:\s*['"]BOLD_QR['"][\s\S]{0,160}label:\s*['"]Bold['"][\s\S]{0,60}logo:\s*['"]\/logos\/bold\.png['"]/,
-        "El rail de métodos debe exponer `{ id: 'BOLD_QR', label: 'Bold', logo: '/logos/bold.png' }`.",
+        /id:\s*['"]BOLD_QR['"][\s\S]{0,160}label:\s*['"]QR['"][\s\S]{0,60}logo:\s*['"]\/logos\/bold\.png['"]/,
+        "El rail de métodos debe exponer `{ id: 'BOLD_QR', label: 'QR', logo: '/logos/bold.png' }` (sólo egresos viejos).",
     );
 });
 

@@ -12,5 +12,5 @@ test("ExpensePaymentModal: Bold cobra 4x1000 igual que Nequi", async () => {
     assert.match(src, /const isBold = activePaymentTab === 'BOLD_QR';/);
     assert.match(src, /Math\.round\(\(nequiPaid \+ boldQrPaid\) \* 0\.004\)/);
     assert.match(src, /const finalTax = Math\.round\(\(finalNequi \+ finalBoldQr\) \* 0\.004\);/);
-    assert.match(src, /GMF 4X1000\{isBold \? " \(BOLD\)" : ""\}/);
+    assert.match(src, /GMF 4X1000\{isBold \? " \(QR\)" : ""\}/);
 });

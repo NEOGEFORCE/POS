@@ -241,7 +241,7 @@ export function buildTicketText(data, width = "58mm", options) {
     out.push(sep);
     out.push(row("TOTAL A PAGAR", money(data.total)));
     out.push(sep);
-    out.push(row("PAGO", (data.paymentMethod || "EFECTIVO").toString().toUpperCase()));
+    out.push(row("PAGO", (data.paymentMethod || "EFECTIVO").toString().toUpperCase().replace(/BOLD[_\s-]?QR|BOLD/g, "QR")));
     if (data.received !== undefined) out.push(row("RECIBIDO", money(data.received)));
     if (data.change !== undefined) out.push(row("CAMBIO", money(data.change)));
     if (data.note) {

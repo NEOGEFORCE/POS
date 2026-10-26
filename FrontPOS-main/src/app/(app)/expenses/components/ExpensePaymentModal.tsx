@@ -470,7 +470,7 @@ export function ExpensePaymentModal({
                   // Bold se retiró como canal de pago (2026-10-26). Se
                   // conserva sólo si el egreso que se edita ya lo tenía.
                   ...(boldQrPaid > 0 || (initialBoldQr || 0) > 0
-                    ? [{ id: 'BOLD_QR' as const, label: 'Bold', logo: '/logos/bold.png' }]
+                    ? [{ id: 'BOLD_QR' as const, label: 'QR', logo: '/logos/bold.png' }]
                     : []),
                   // La pestaña "Préstamo" sólo aparece cuando el padre entrega
                   // `loanOption?.enabled = true`. Es la última de la lista para
@@ -588,7 +588,7 @@ export function ExpensePaymentModal({
                       )}
                       {boldQrPaid > 0 && (
                         <div className="px-2.5 py-1.5 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl flex items-center gap-1.5 shadow-sm">
-                           <img src="/logos/bold.png" className="h-4 w-4 object-contain rounded-full" alt="Bold" />
+                           <img src="/logos/bold.png" className="h-4 w-4 object-contain rounded-full" alt="QR" />
                            <span className="text-[10px] font-medium text-cyan-600 dark:text-cyan-400 uppercase tracking-widest">${formatCurrency(boldQrPaid)}</span>
                            <button type="button" onClick={() => setBoldQrPaid(0)} className="text-gray-400 hover:text-rose-500 transition-colors ml-1" title="Quitar Bold"><X size={12} /></button>
                         </div>
@@ -641,7 +641,7 @@ export function ExpensePaymentModal({
                         </div>
                         {isGmfChannel && visualTax > 0 && (
                           <p className="text-[10px] md:text-[11px] font-medium text-rose-500 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1">
-                            + ${formatCurrency(visualTax)} <span className="opacity-70">GMF 4X1000{isBold ? " (BOLD)" : ""}</span>
+                            + ${formatCurrency(visualTax)} <span className="opacity-70">GMF 4X1000{isBold ? " (QR)" : ""}</span>
                           </p>
                         )}
                       </div>

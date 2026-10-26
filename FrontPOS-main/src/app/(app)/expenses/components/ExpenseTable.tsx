@@ -86,6 +86,8 @@ const formatPaymentSourceForDisplay = (source?: string) => {
   // identifique como cargo contra el préstamo, no como salida real.
   cleanSource = cleanSource.replace(/\bPRESTAMO\b/g, 'PRÉSTAMO');
   cleanSource = cleanSource.replace(/\bPREST\.?\b/g, 'PRÉSTAMO');
+  // Bold se retiró (2026-10-26): egresos viejos con Bold se muestran como "QR".
+  cleanSource = cleanSource.replace(/\bBOLD[_\s-]?QR\b|\bBOLD\b/g, 'QR');
 
   return cleanSource;
 };

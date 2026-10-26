@@ -1,4 +1,4 @@
-﻿"use client"
+"use client"
 import UniversalPaymentModal from "@/components/shared/UniversalPaymentModal"
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
@@ -383,7 +383,7 @@ export default function DevolucionesPage() {
                       </div>
                       <div className="text-right">
                         <p className="text-sm font-bold text-emerald-600 dark:text-emerald-500">{fmt(sale.total)}</p>
-                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">{sale.paymentMethod}</p>
+                        <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-widest">{(sale.paymentMethod || "").replace(/BOLD[_\s-]?QR|BOLD/g, "QR")}</p>
                       </div>
                     </div>
                   ))}
@@ -410,7 +410,7 @@ export default function DevolucionesPage() {
                 </div>
                 <div>
                   <h3 className="font-bold text-white uppercase tracking-widest text-sm">Devolución / Cambio</h3>
-                  <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-widest">Factura #{currentSale?.id} • {currentSale?.paymentMethod}</p>
+                  <p className="text-[10px] text-zinc-400 font-medium uppercase tracking-widest">Factura #{currentSale?.id} • {(currentSale?.paymentMethod || "").replace(/BOLD[_\s-]?QR|BOLD/g, "QR")}</p>
                 </div>
               </div>
               <Button isIconOnly variant="light" onPress={nuevaDevolucion} className="text-zinc-400 hover:text-white">
@@ -487,7 +487,7 @@ export default function DevolucionesPage() {
               <div className="flex-1 flex flex-col items-center">
                 {refundBloqueado && (
                   <span className="text-[10px] font-bold uppercase tracking-widest text-rose-500 animate-pulse">
-                    ⚠️ Reembolso bloqueado (Pago fue {currentSale?.paymentMethod})
+                    ⚠️ Reembolso bloqueado (Pago fue {(currentSale?.paymentMethod || "").replace(/BOLD[_\s-]?QR|BOLD/g, "QR")})
                   </span>
                 )}
               </div>
