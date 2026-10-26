@@ -1069,14 +1069,14 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 				Cash:      normalizedSales["EFECTIVO"] - dayExpensesByMethod["EFECTIVO"] - todayReturns,
 				Nequi:     normalizedSales["NEQUI"] - dayExpensesByMethod["NEQUI"],
 				Daviplata: normalizedSales["DAVIPLATA"] - dayExpensesByMethod["DAVIPLATA"],
-				BoldQr:    normalizedSales["BOLD_QR"] - WithBoldGMF(dayExpensesByMethod["BOLD_QR"]),
+				BoldQr:    normalizedSales["BOLD_QR"] - dayExpensesByMethod["BOLD_QR"] - boldGMFNotRecorded(dayExpensesRaw),
 			},
 			// TodayCashFlowDetail (B2): detalle por canal del widget
 			// "Flujo Hoy". Función pura y testeable
 			// (today_cash_flow_detail.go) que NO duplica abonos
 			// (consume `normalizedSales` que ya los incluye). La salida
 			// Bold incluye el 4×1000 para cuadrar con la cuenta Bold.
-			TodayCashFlowDetail: BuildTodayCashFlowDetail(normalizedSales, withBoldGMFBucket(dayExpensesByMethod), todayReturns),
+			TodayCashFlowDetail: BuildTodayCashFlowDetail(normalizedSales, withBoldGMFBucket(dayExpensesByMethod, boldGMFNotRecorded(dayExpensesRaw)), todayReturns),
 			// CÁLCULO DE SALDOS (Bóveda Estricta y Restauración Digital)
 			VaultBalance: bovedaBilletes,
 			CoinsSavings: totalMonedasAcumuladas,
@@ -2602,8 +2602,13 @@ func (s *DashboardService) GetDetailedShiftReport(employeeDni string) (*Detailed
 					}
 				} else if models.IsBoldQRPaymentSource(method) {
 					// Egreso pagado por el QR Bre-B de Bold: descuenta del saldo
-					// Bold QR, no del efectivo, más el 4×1000 que cobra Bold.
-					totals["BOLD_QR"] -= WithBoldGMF(exp.Amount + exp.TaxAmount)
+					// Bold QR, no del efectivo. El 4×1000 de Bold ya viene en
+					// TaxAmount desde 2026-10-25; en egresos anteriores se calcula.
+					if exp.TaxAmount >= 0.5 {
+						totals["BOLD_QR"] -= (exp.Amount + exp.TaxAmount)
+					} else {
+						totals["BOLD_QR"] -= WithBoldGMF(exp.Amount)
+					}
 				} else if method == "NEQUI" {
 					totals["NEQUI"] -= (exp.Amount + exp.TaxAmount)
 				} else if method == "DAVIPLATA" || method == "DAVI" {

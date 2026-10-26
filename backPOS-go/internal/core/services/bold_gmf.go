@@ -1,6 +1,10 @@
 package services
 
-import "math"
+import (
+	"math"
+
+	"backPOS-go/internal/core/domain/models"
+)
 
 // =============================================================================
 // 4×1000 (GMF) de Bold sobre los egresos
@@ -34,12 +38,30 @@ func WithBoldGMF(amount float64) float64 {
 }
 
 // withBoldGMFBucket devuelve una copia del mapa de egresos por canal donde
-// BOLD_QR incluye el 4×1000. No muta el original (lo usan otros cálculos).
-func withBoldGMFBucket(buckets map[string]float64) map[string]float64 {
+// BOLD_QR suma el 4×1000 que NO quedó registrado como impuesto del egreso
+// (`missingGMF`, ver boldGMFNotRecorded). No muta el original.
+func withBoldGMFBucket(buckets map[string]float64, missingGMF float64) map[string]float64 {
 	out := make(map[string]float64, len(buckets))
 	for k, v := range buckets {
 		out[k] = v
 	}
-	out["BOLD_QR"] = WithBoldGMF(out["BOLD_QR"])
+	out["BOLD_QR"] += missingGMF
 	return out
+}
+
+// boldGMFNotRecorded suma el 4×1000 de la parte Bold de los egresos que NO lo
+// tienen registrado en TaxAmount. Desde 2026-10-25 el modal de egresos guarda
+// el 4×1000 de Bold como impuesto (igual que Nequi) y ExpenseChannelBuckets ya
+// lo incluye en BOLD_QR; los egresos anteriores no lo tienen y se completa
+// aquí. Así ningún egreso paga el 4×1000 dos veces ni se queda sin él.
+func boldGMFNotRecorded(expenses []models.Expense) float64 {
+	var total float64
+	for i := range expenses {
+		e := &expenses[i]
+		if !isOperationalExpense(e) || e.TaxAmount >= 0.5 {
+			continue
+		}
+		total += BoldGMF(parseExpenseChannelsFull(e).BoldQR)
+	}
+	return total
 }

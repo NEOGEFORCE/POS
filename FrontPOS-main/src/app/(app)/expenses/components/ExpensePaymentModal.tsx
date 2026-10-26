@@ -166,8 +166,12 @@ export function ExpensePaymentModal({
 
   const visualActualPayment = currentDialogVal > 0 ? actualPayment : remainingDebt;
   const isNequi = activePaymentTab === 'NEQUI';
-  const visualTax = isNequi ? Math.round(visualActualPayment * 0.004) : 0;
-  const totalTaxAccumulated = Math.round(nequiPaid * 0.004);
+  // Bold también cobra 4x1000 sobre lo que sale de la cuenta: se calcula y
+  // registra igual que Nequi (impuesto del egreso, visible en la tabla).
+  const isBold = activePaymentTab === 'BOLD_QR';
+  const isGmfChannel = isNequi || isBold;
+  const visualTax = isGmfChannel ? Math.round(visualActualPayment * 0.004) : 0;
+  const totalTaxAccumulated = Math.round((nequiPaid + boldQrPaid) * 0.004);
   const totalTaxPreview = totalTaxAccumulated + visualTax;
 
   const handleAddPayment = useCallback(() => {
@@ -322,7 +326,7 @@ export function ExpensePaymentModal({
       else finalPaymentSource = 'CAJA';
     }
 
-    const finalTax = Math.round(finalNequi * 0.004);
+    const finalTax = Math.round((finalNequi + finalBoldQr) * 0.004);
 
     try {
       await onPay({
@@ -631,9 +635,9 @@ export function ExpensePaymentModal({
                             className={`w-full max-w-[280px] font-medium text-3xl md:text-5xl tracking-tight ${theme.text} bg-transparent tabular-nums text-center focus:outline-none tracking-tighter leading-none`}
                           />
                         </div>
-                        {isNequi && visualTax > 0 && (
+                        {isGmfChannel && visualTax > 0 && (
                           <p className="text-[10px] md:text-[11px] font-medium text-rose-500 mt-2 md:mt-3 uppercase tracking-widest animate-in fade-in slide-in-from-bottom-1">
-                            + ${formatCurrency(visualTax)} <span className="opacity-70">GMF 4X1000</span>
+                            + ${formatCurrency(visualTax)} <span className="opacity-70">GMF 4X1000{isBold ? " (BOLD)" : ""}</span>
                           </p>
                         )}
                       </div>

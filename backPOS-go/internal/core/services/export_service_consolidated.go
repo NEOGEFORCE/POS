@@ -217,6 +217,7 @@ func parseExpenseChannelsFull(e *models.Expense) ChannelAmounts {
 			}
 		}
 		if a.Total() > 0 {
+			addDigitalTax(&a, tax)
 			return a
 		}
 	}
@@ -307,6 +308,15 @@ func parseExpenseChannelsFull(e *models.Expense) ChannelAmounts {
 				case rawBoldQR > 0:
 					a.BoldQR += tax
 				}
+			} else if rawNequi > 0 && rawBoldQR > 0 {
+				// Nequi y Bold cobran cada uno su 4×1000: el impuesto se
+				// reparte según lo que salió de cada canal.
+				nequiTax := math.Round(rawNequi * 0.004)
+				if nequiTax > tax {
+					nequiTax = tax
+				}
+				a.Nequi += nequiTax
+				a.BoldQR += tax - nequiTax
 			} else {
 				switch {
 				case rawNequi > 0:
@@ -1275,4 +1285,27 @@ func ConsolidatePaymentsForGeneralReport(rawPayments []models.CreditPayment) []m
 		})
 	}
 	return result
+}
+
+// addDigitalTax asigna el 4×1000 (TaxAmount) de un egreso mixto al canal
+// digital que lo cobró: Nequi y Bold lo cobran cada uno sobre su parte; si
+// sólo hay uno de los dos, todo el impuesto va a ese canal. Sin Nequi ni
+// Bold, el impuesto no se asigna (comportamiento histórico).
+func addDigitalTax(a *ChannelAmounts, tax float64) {
+	if a == nil || tax <= 0 {
+		return
+	}
+	switch {
+	case a.Nequi > 0 && a.BoldQR > 0:
+		nequiTax := math.Round(a.Nequi * 0.004)
+		if nequiTax > tax {
+			nequiTax = tax
+		}
+		a.Nequi += nequiTax
+		a.BoldQR += tax - nequiTax
+	case a.Nequi > 0:
+		a.Nequi += tax
+	case a.BoldQR > 0:
+		a.BoldQR += tax
+	}
 }
