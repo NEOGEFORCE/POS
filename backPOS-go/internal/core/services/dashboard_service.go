@@ -995,6 +995,12 @@ func (s *DashboardService) GetOverview(ctx context.Context, startDateStr string,
 		bovedaFisicaAcumulada := bovedaBilletes + totalMonedasAcumuladas
 		saldoNequiReal := globalSalesByMethod["NEQUI"] + globalCollectedByMethod["NEQUI"] - globalPaidByMethod["NEQUI"]
 		saldoDaviplataReal := globalSalesByMethod["DAVIPLATA"] + globalCollectedByMethod["DAVIPLATA"] - globalPaidByMethod["DAVIPLATA"]
+		// Punto de partida fijo de Daviplata (ver daviplataBaselineBalance):
+		// saldo real confirmado por el dueño + movimientos posteriores. Las
+		// ventas anteriores al corte no se vuelven a sumar.
+		if v, ok := daviplataBaselineBalance(s.saleRepo); ok {
+			saldoDaviplataReal = v
+		}
 		// Saldo "cuánto hay" en Bold QR: ventas acumuladas con el QR +
 		// abonos recibidos − egresos pagados desde Bold QR. Mismo patrón que
 		// Nequi/Daviplata (ver pos_qr_async_dispatcher.go para la fuente de
