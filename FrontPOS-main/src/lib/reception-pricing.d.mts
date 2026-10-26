@@ -97,3 +97,12 @@ export function parseSubtotalEdit(
 ): SubtotalEditResult;
 
 export function unitMultiplier(unit: string | null | undefined): number;
+
+
+export function resolveOrderBasePrice(
+  orderCost: unknown,
+  productGross: unknown,
+  ivaPct: unknown,
+  icuiPct: unknown,
+  ibuaPct: unknown,
+): number;

@@ -272,3 +272,31 @@ export function parseSubtotalEdit(text, effectiveQty) {
 export function unitMultiplier(unit) {
   return unit === 'LB' ? 0.5 : 1;
 }
+
+
+/**
+ * Convierte el costo unitario de un PEDIDO a BASE pre-impuestos.
+ *
+ * Los pedidos guardan `unit_cost`/`estimated_price` de dos formas según cuándo
+ * se crearon: los antiguos (jul–ago 2026) como BASE y los actuales (sugerido
+ * de reabastecimiento, desde products.purchasePrice) como BRUTO con impuestos.
+ * Tomarlo siempre como base dejaba el SUBT. con el total ya gravado y la
+ * recepción volvía a sumar IVA/ICUI/IBUA (2026-10-26, factura RAMO).
+ *
+ * Regla: se elige la interpretación cuyo BRUTO resultante queda más cerca del
+ * costo bruto vigente del producto. Sin costo del pedido, cae al bruto del
+ * producto. Sin impuestos, base y bruto coinciden.
+ */
+export function resolveOrderBasePrice(orderCost, productGross, ivaPct, icuiPct, ibuaPct) {
+  const cost = toFiniteNonNegative(orderCost);
+  if (cost === 0) {
+    return grossToBasePrice(productGross, ivaPct, icuiPct, ibuaPct);
+  }
+  const factor = 1 + sumTaxRate(ivaPct, icuiPct, ibuaPct) / PCT;
+  if (factor <= 1) return cost;
+  const gross = toFinitePositive(productGross);
+  if (gross === 0) return cost;
+  const asGrossDistance = Math.abs(cost - gross);           // pedido guardó bruto
+  const asBaseDistance = Math.abs(cost * factor - gross);   // pedido guardó base
+  return asGrossDistance <= asBaseDistance ? cost / factor : cost;
+}

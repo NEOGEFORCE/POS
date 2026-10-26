@@ -116,12 +116,11 @@ test('addToReceive convierte products.purchasePrice gross a base exactamente una
   );
 });
 
-test('loadOrderIntoList respeta unitCost/unit_cost como base y cae al gross del producto', async () => {
+test('loadOrderIntoList interpreta el costo del pedido (base o bruto) con resolveOrderBasePrice', async () => {
   const src = await readSource(receivePage);
-  // resolveBasePrice(explicitOrderCost, p.purchasePrice, iva, icui, ibua)
-  const orderCall = /resolveBasePrice\s*\(\s*explicitOrderCost\s*,\s*p\.purchasePrice/;
+  const orderCall = /resolveOrderBasePrice\s*\(\s*explicitOrderCost\s*,\s*p\.purchasePrice/;
   assert.ok(
     orderCall.test(src),
-    'loadOrderIntoList debe usar resolveBasePrice(explicitOrderCost, p.purchasePrice, …).',
+    'loadOrderIntoList debe usar resolveOrderBasePrice(explicitOrderCost, p.purchasePrice, …).',
   );
 });

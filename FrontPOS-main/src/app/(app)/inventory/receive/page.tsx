@@ -17,6 +17,7 @@ import {
     calculateMarginFromGross,
     grossToBasePrice,
     resolveBasePrice,
+    resolveOrderBasePrice,
     resolveEffectivePercentage,
 } from '@/lib/reception-pricing.mjs';
 import { persistAlias } from '@/lib/alias-persistence.mjs';
@@ -1427,22 +1428,17 @@ export default function ReceiveInventoryPage() {
                     const icui = Number(p.icui || 0);
                     const ibua = Number(p.ibua || 0);
                     // CONTRATO FISCAL (ver src/lib/reception-pricing.mjs):
-                    //   • item.unit_cost / item.unitCost: cuando la orden de
-                    //     compra confirmada trae un costo, YA es la base
-                    //     pre-impuestos (así se guardó al confirmar el pedido).
-                    //   • p.purchasePrice: cuando el fallback apunta al
-                    //     producto maestro, es el BRUTO persistido con impuestos
-                    //     y hay que descomponerlo a base EXACTAMENTE UNA VEZ.
+                    //   • item.unit_cost / item.unitCost del pedido puede venir como
+                    //     BASE (pedidos antiguos) o BRUTO con impuestos (sugerido
+                    //     de reabastecimiento actual, desde products.purchasePrice).
+                    //     Tomarlo siempre como base dejaba el SUBT. con el total ya
+                    //     gravado y la recepción volvía a sumar los impuestos
+                    //     (2026-10-26, factura RAMO). resolveOrderBasePrice elige la
+                    //     lectura que cuadra con el costo vigente del producto.
                     const explicitOrderCost = item.unit_cost !== undefined && item.unit_cost !== null
                         ? item.unit_cost
                         : item.unitCost;
-                    const basePrice = resolveBasePrice(
-                        explicitOrderCost,
-                        p.purchasePrice,
-                        iva,
-                        icui,
-                        ibua,
-                    );
+                    const basePrice = resolveOrderBasePrice(explicitOrderCost, p.purchasePrice, iva, icui, ibua);
 
                     const newLineId = Math.random().toString(36).substring(2, 9) + Date.now().toString(36).substring(4);
                     const neto = basePrice * (1 + iva/100 + icui/100 + ibua/100);
