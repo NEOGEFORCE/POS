@@ -20,7 +20,7 @@ func (f *fakeDaviNet) DaviplataNetSince(since time.Time) (float64, error) {
 func TestDaviplataBaselineBalance_SumaMovimientosDesdeElCorte(t *testing.T) {
 	f := &fakeDaviNet{net: 21900 - 5000}
 	got, ok := daviplataBaselineBalance(f)
-	if !ok || got != 311055+16900 {
+	if !ok || got != DaviplataBaselineAmount+16900 {
 		t.Fatalf("saldo = %v ok=%v, want 327955", got, ok)
 	}
 	if !f.since.Equal(DaviplataBaselineAt) {
