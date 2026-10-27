@@ -203,25 +203,13 @@ test("ModalPagoBoldQR POSTea EXACTAMENTE /pos/pagos-qr/iniciar al abrir", async 
         "El body de /iniciar debe venir del helper puro buildIniciarPayload.");
 });
 
-test("ModalPagoBoldQR NO llama /pos/pagos-qr/confirmar-manual (ruta retirada en migración 027)", async () => {
+test("ModalPagoBoldQR: confirmación manual sólo para admin (2026-10-27)", async () => {
     const src = await readSrc(modalPath);
-    const runtime = await readWithoutComments(modalPath);
-    // El endpoint quedó admin-only en el backend; el modal del cajero
-    // no lo invoca, no lo nombra como literal runtime, ni expone un
-    // botón "Confirmar manual" en la UI.
-    assert.doesNotMatch(
-        runtime,
-        /\/pos\/pagos-qr\/confirmar-manual/,
-        "La ruta /pos/pagos-qr/confirmar-manual NO debe estar en el runtime del modal del cajero.",
-    );
-    assert.ok(
-        !src.includes("Confirmar manual"),
-        "El texto 'Confirmar manual' no debe aparecer en el bundle del cajero.",
-    );
-    assert.ok(
-        !src.includes("handleConfirmManual"),
-        "El handler handleConfirmManual quedó retirado por la migración 027.",
-    );
+    // El backend la exige admin; el modal la muestra sólo con isAdmin.
+    assert.match(src, /\/pos\/pagos-qr\/confirmar-manual/);
+    assert.match(src, /const isAdmin = isAdminUser\(user\)/);
+    assert.match(src, /isAdmin && \(isWaiting \|\| isManualGate\)/,
+        "El botón de confirmación manual sólo se pinta para admin.");
 });
 
 test("ModalPagoBoldQR POSTea /pos/pagos-qr/encolar a través del callback onEnqueueAndClose del padre", async () => {

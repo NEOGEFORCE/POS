@@ -116,18 +116,10 @@ describe("Guard estático: el modal del cajero NO contiene Confirmar manual", ()
         );
     });
 
-    test("No aparece la ruta /pos/pagos-qr/confirmar-manual", () => {
-        assert.ok(
-            !src.includes("/pos/pagos-qr/confirmar-manual"),
-            "El modal del cajero NO debe llamar /pos/pagos-qr/confirmar-manual (admin-only ahora)",
-        );
-    });
-
-    test("No queda el handler handleConfirmManual", () => {
-        assert.ok(
-            !src.includes("handleConfirmManual"),
-            "El handler handleConfirmManual debió eliminarse del modal del cajero",
-        );
+    test("La confirmación manual del modal es SOLO para admin (2026-10-27)", () => {
+        assert.ok(src.includes("/pos/pagos-qr/confirmar-manual"), "El modal llama /confirmar-manual para el admin");
+        assert.match(src, /isAdmin && \(isWaiting \|\| isManualGate\)/, "El botón sólo se pinta si isAdmin");
+        assert.match(src, /const isAdmin = isAdminUser\(user\)/);
     });
 
     test("Sí aparece el nuevo botón 'Dejar en espera'", () => {

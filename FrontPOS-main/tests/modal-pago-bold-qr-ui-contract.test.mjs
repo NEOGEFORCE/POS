@@ -320,7 +320,6 @@ test("ModalPagoBoldQR y helpers: no exponen BOLD_BRIDGE_TOKEN ni BOLD_SECRET_KEY
 test("ModalPagoBoldQR: botones 'DEJAR EN ESPERA Y SEGUIR ATENDIENDO' y 'Cancelar y cambiar' presentes", () => {
     // El cajero NO ve el flujo manual retirado por la migración 027.
     assert.ok(!modalSrc.includes("Confirmar manual"), "El texto 'Confirmar manual' debe estar fuera del bundle.");
-    assert.ok(!modalSrc.includes("handleConfirmManual"), "El handler quedó retirado.");
     // El botón primario del flujo asíncrono tiene copy EXACTO en mayúsculas.
     assert.ok(
         modalSrc.includes("DEJAR EN ESPERA Y SEGUIR ATENDIENDO"),
@@ -339,11 +338,9 @@ test("ModalPagoBoldQR: botones 'DEJAR EN ESPERA Y SEGUIR ATENDIENDO' y 'Cancelar
     assert.match(modalSrc, /["']\/pos\/pagos-qr\/iniciar["']/);
     // Cancelar llama POST /pos/pagos-qr/cancelar.
     assert.match(modalSrc, /["']\/pos\/pagos-qr\/cancelar["']/);
-    // La ruta /confirmar-manual quedó retirada del bundle del cajero.
-    assert.ok(
-        !modalSrc.includes("/pos/pagos-qr/confirmar-manual"),
-        "La ruta /pos/pagos-qr/confirmar-manual quedó admin-only en backend y NO debe estar aquí.",
-    );
+    // /confirmar-manual sólo se expone al admin (2026-10-27).
+    assert.match(modalSrc, /isAdmin && \(isWaiting \|\| isManualGate\)/,
+        "La confirmación manual del modal debe estar condicionada a isAdmin.");
 });
 
 test("ModalPagoBoldQR: onEnqueueAndClose recibe (ventaTempId, monto) exactos de las props", () => {

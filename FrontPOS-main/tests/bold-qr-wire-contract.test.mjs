@@ -224,19 +224,15 @@ test("ModalPagoBoldQR: la interfaz ConfirmManualResponse quedó retirada (migrac
         !modalSrc.includes("approvedReference"),
         "El campo `approvedReference` vivía en el response del flujo manual retirado.",
     );
-    assert.ok(
-        !modalSrc.includes("/pos/pagos-qr/confirmar-manual"),
-        "La ruta /pos/pagos-qr/confirmar-manual quedó admin-only; el modal del cajero no la menciona.",
-    );
+    // Desde 2026-10-27 el modal sí la llama, pero sólo con rol admin.
+    if (modalSrc.includes("/pos/pagos-qr/confirmar-manual")) {
+        assert.match(modalSrc, /isAdmin && \(isWaiting \|\| isManualGate\)/, "La confirmación manual del modal debe estar condicionada a isAdmin.");
+    }
 });
 
 test("ModalPagoBoldQR: handleConfirmManual quedó retirado del modal del cajero", () => {
     // El flujo manual queda admin-only del lado del backend. El modal
     // del cajero sólo expone el flujo asíncrono (encolar + bandeja).
-    assert.ok(
-        !modalSrc.includes("handleConfirmManual"),
-        "El handler handleConfirmManual pertenecía al flujo manual retirado.",
-    );
     assert.ok(
         !modalSrc.includes("Confirmar manual"),
         "El label 'Confirmar manual' quedó fuera del bundle del cajero.",

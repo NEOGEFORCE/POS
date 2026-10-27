@@ -789,7 +789,7 @@ func (s *QrPaymentService) ConfirmManual(ctx context.Context, ventaTempID, actor
 	if s.audit != nil {
 		details := fmt.Sprintf("venta=%s intentId=%d monto=%d note=%s",
 			intent.VentaTempID, intent.ID, intent.AmountCOP, sanitize(note))
-		human := fmt.Sprintf("Confirmación manual de cobro QR Bold por $%d (venta temp %s).",
+		human := fmt.Sprintf("Confirmación manual de cobro QR Daviplata por $%d (venta temp %s).",
 			intent.AmountCOP, intent.VentaTempID)
 		changes, _ := json.Marshal(map[string]interface{}{
 			"before": map[string]string{"status": models.QRIntentStatusPending},
@@ -806,6 +806,9 @@ func (s *QrPaymentService) ConfirmManual(ctx context.Context, ventaTempID, actor
 
 	// SSE tras commit.
 	s.publishIntentSnapshot(intent)
+	// Materializar de inmediato (venta, edición o abono) en vez de esperar
+	// el barrido periódico. Idempotente por ClaimForFinalization.
+	s.triggerAutoSale(intent)
 
 	return &ConfirmManualOutput{
 		VentaTempID:       intent.VentaTempID,

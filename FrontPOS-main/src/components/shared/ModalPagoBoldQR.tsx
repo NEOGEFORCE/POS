@@ -86,6 +86,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { apiFetch, ApiError } from "@/lib/api-error";
 import { API_URL } from "@/lib/constants";
 import { useAuth } from "@/lib/auth";
+import { isAdminUser } from "@/lib/auth-helpers.mjs";
 import { playNotificationSound } from "@/lib/audio-utils";
 import { computeSSERetryDelay, parseSSEBlock } from "@/lib/resilience-policy.mjs";
 import { formatCurrency } from "@/lib/utils";
@@ -312,6 +313,14 @@ export default function ModalPagoBoldQR({
     const [qrImageMissing, setQrImageMissing] = useState<boolean>(false);
     const [enqueueBusy, setEnqueueBusy] = useState<boolean>(false);
     const [cancelBusy, setCancelBusy] = useState<boolean>(false);
+    // Confirmación manual (sólo admin): el pago llegó a Daviplata pero el
+    // SMS no se reenvió. El backend exige rol admin y audita con su DNI.
+    const isAdmin = isAdminUser(user);
+    const [manualOpen, setManualOpen] = useState<boolean>(false);
+    const [manualNote, setManualNote] = useState<string>("Verificado en app Daviplata, SMS no llegó");
+    const [manualBusy, setManualBusy] = useState<boolean>(false);
+    const [manualDone, setManualDone] = useState<boolean>(false);
+    const [manualError, setManualError] = useState<string>("");
     // 900 s = 15 min por contrato de la migración 027. El tick del
     // reloj (`msUntilExpiry`) actualiza el valor real al montar; este
     // es sólo el valor placeholder antes del primer tick.
@@ -775,6 +784,30 @@ export default function ModalPagoBoldQR({
     // Si falla, igual cerramos la UI (el backend reconciliará con la
     // expiración de 15 min); el cajero no debe quedar atrapado.
     // ------------------------------------------------------------------
+    // POST /pos/pagos-qr/confirmar-manual (sólo admin). Al aprobarse, el
+    // servidor registra la venta/abono y el SSE APROBADO cierra este modal
+    // por el flujo normal.
+    const handleConfirmManual = useCallback(async () => {
+        const nota = manualNote.trim();
+        if (manualBusy || !nota) return;
+        setManualBusy(true);
+        setManualError("");
+        try {
+            await apiFetch("/pos/pagos-qr/confirmar-manual", {
+                method: "POST",
+                body: JSON.stringify({ venta_temp_id: ventaTempId, nota }),
+                fallbackError: "No se pudo confirmar el pago",
+                timeoutMs: 10000,
+            });
+            setManualDone(true);
+            setManualOpen(false);
+        } catch (err) {
+            setManualError(err instanceof Error ? err.message : "No se pudo confirmar el pago");
+        } finally {
+            setManualBusy(false);
+        }
+    }, [manualBusy, manualNote, ventaTempId]);
+
     const handleCancel = useCallback(() => {
         if (cancelBusy) return;
         if (approvedFiredRef.current) return;
@@ -807,6 +840,7 @@ export default function ModalPagoBoldQR({
             .catch(() => undefined)
             .finally(() => setCancelBusy(false));
     }, [cancelBusy, ventaTempId, onCancel, onOpenChange, reopened]);
+
 
     if (!isOpen) return null;
 
@@ -1053,6 +1087,52 @@ export default function ModalPagoBoldQR({
                 </div>
 
                 <footer className="grid gap-2 border-t border-zinc-200 dark:border-white/10 pt-3 mt-2">
+                    {isAdmin && (isWaiting || isManualGate) && phase.kind !== "EXPIRED" && !isApproved ? (
+                        manualDone ? (
+                            <p className="flex items-center justify-center gap-2 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400" data-testid="qr-manual-done">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                                Pago confirmado manualmente. Registrando…
+                            </p>
+                        ) : manualOpen ? (
+                            <div className="grid gap-1.5 rounded-xl border border-amber-500/40 bg-amber-500/5 p-2.5" data-testid="qr-manual-confirm-panel">
+                                <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 leading-tight">
+                                    Solo confirma si ya viste en la app Daviplata que llegaron ${formatCurrency(monto)}.
+                                </p>
+                                <label htmlFor="qr-manual-note" className="text-[10px] uppercase tracking-widest text-zinc-500">Nota (obligatoria)</label>
+                                <input
+                                    id="qr-manual-note"
+                                    value={manualNote}
+                                    onChange={(e) => setManualNote(e.target.value)}
+                                    maxLength={200}
+                                    className="h-9 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 text-xs text-zinc-900 dark:text-zinc-100"
+                                />
+                                {manualError ? <p className="text-[11px] text-rose-500" role="alert">{manualError}</p> : null}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <Button variant="outline" className="h-9 text-xs" disabled={manualBusy} onClick={() => setManualOpen(false)}>
+                                        No
+                                    </Button>
+                                    <Button
+                                        className="h-9 text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white"
+                                        disabled={manualBusy || !manualNote.trim()}
+                                        onClick={() => void handleConfirmManual()}
+                                        data-testid="qr-manual-confirm-submit"
+                                    >
+                                        {manualBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : "Sí, confirmar pago"}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : (
+                            <Button
+                                variant="outline"
+                                className="h-9 w-full rounded-xl border-amber-500/50 text-amber-700 dark:text-amber-300 text-[11px] font-bold uppercase tracking-wide"
+                                onClick={() => { setManualError(""); setManualOpen(true); }}
+                                data-testid="qr-manual-confirm-button"
+                            >
+                                <ShieldCheck className="h-4 w-4 mr-1.5" aria-hidden="true" />
+                                Confirmar pago manualmente (admin)
+                            </Button>
+                        )
+                    ) : null}
                     <div className="text-[10px] text-zinc-500 dark:text-zinc-400 flex items-center justify-center gap-1.5 text-center leading-tight">
                         <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-500" aria-hidden="true" />
                         {BOLD_MERCHANT.footer}
