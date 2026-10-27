@@ -804,11 +804,16 @@ func (s *QrPaymentService) ConfirmManual(ctx context.Context, ventaTempID, actor
 		s.audit.Log(actorDNI, actorName, "APPROVE_MANUAL", "POS_QR", details, human, string(changes), ip, device, true)
 	}
 
-	// SSE tras commit.
-	s.publishIntentSnapshot(intent)
-	// Materializar de inmediato (venta, edición o abono) en vez de esperar
-	// el barrido periódico. Idempotente por ClaimForFinalization.
-	s.triggerAutoSale(intent)
+	// NO publicamos APROBADO aquí: igual que el SMS, el frame APROBADO
+	// sólo sale del dispatcher DESPUÉS de registrar la venta/abono
+	// (con saleId). Publicarlo antes hacía que el modal mostrara
+	// "esperando conciliación" e ignorara el frame bueno.
+	// Idempotente por ClaimForFinalization.
+	if s.saleService != nil {
+		s.triggerAutoSale(intent)
+	} else {
+		s.publishIntentSnapshot(intent)
+	}
 
 	return &ConfirmManualOutput{
 		VentaTempID:       intent.VentaTempID,
