@@ -152,6 +152,21 @@ export default function CustomersPage() {
     return cleanup;
   }, [loadCustomers]);
 
+  // ZERO-F5 también dentro del modal de abonos: `payingClient` es una copia
+  // tomada al abrir. Cuando la lista se recarga (SSE CUSTOMER_UPDATE tras un
+  // abono por QR, otra caja, etc.) se sincroniza la deuda mostrada. Si la
+  // deuda llegó a 0 fuera de este modal, se muestra la pantalla de éxito.
+  useEffect(() => {
+    if (!payingClient) return;
+    const fresh = customers.find(c => c.dni === payingClient.dni);
+    if (!fresh || Number(fresh.currentCredit) === Number(payingClient.currentCredit)) return;
+    setPayingClient(fresh);
+    if (payCreditDialogOpen && !submittingPayment && !showSuccessScreen && (Number(fresh.currentCredit) || 0) <= 0) {
+      setLastChange(0);
+      setShowSuccessScreen(true);
+    }
+  }, [customers, payingClient, payCreditDialogOpen, submittingPayment, showSuccessScreen]);
+
   // Logica de Filtrado y Paginacion
   const filteredCustomers = useMemo(() => {
     return customers.filter(c =>
