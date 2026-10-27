@@ -1,3 +1,0 @@
--- ARCHIVO LEGACY NO EJECUTABLE.
--- Fuente canónica: migrations/sql/006_supplier_multi_days.sql
--- Use exclusivamente: go run ./cmd/migrate status|up --confirm

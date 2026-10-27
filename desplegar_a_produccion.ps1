@@ -21,8 +21,8 @@ if (-not $ConfirmDeploy) {
 }
 
 $root = $PSScriptRoot
-$backend = Join-Path $root "backPOS-go"
-$frontend = Join-Path $root "FrontPOS-main"
+$backend = Join-Path $root "backPOS"
+$frontend = Join-Path $root "FrontPOS"
 $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $stagingRoot = Join-Path $ProductionShare ".deploy-staging\$timestamp"
 $rollbackRoot = Join-Path $ProductionShare ".rollback\$timestamp"

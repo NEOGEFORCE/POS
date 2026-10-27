@@ -78,11 +78,11 @@ FLUJO_DESGLOSADO_actual.xlsx
 
 
 # Versioned application migrations are source code, not database dumps
-!backPOS-go/migrations/sql/
-!backPOS-go/migrations/sql/*.sql
+!backPOS/migrations/sql/
+!backPOS/migrations/sql/*.sql
 
 # Artefactos de despliegue (binarios compilados y scripts de ventana)
-backPOS-go/.deploy/
+backPOS/.deploy/
 
 # Python local environment and orchestrator cache
 .venv/
@@ -99,7 +99,7 @@ __pycache__/
 scratch_*.txt
 
 # Internal sprint handoff notes (may describe intentionally incomplete work)
-FrontPOS-main/docs/SPRINT_*_PENDIENTES.md
+FrontPOS/docs/SPRINT_*_PENDIENTES.md
 
 
 # Salidas sueltas de test/lint capturadas a mano y capturas de pagos
@@ -112,3 +112,7 @@ pago QR.jpeg
 # Plantillas de configuración sin secretos (sí se versionan)
 !.env.example
 !**/.env.example
+
+# Backend y frontend viven en sus propios repos (NEOGEFORCE/backPOS y NEOGEFORCE/frontPOS)
+/backPOS/
+/FrontPOS/

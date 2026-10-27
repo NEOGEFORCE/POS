@@ -1,3 +1,0 @@
--- ARCHIVO LEGACY NO EJECUTABLE.
--- Fuente canónica: migrations/sql/005_enable_rls.sql
--- Use exclusivamente: go run ./cmd/migrate status|up --confirm

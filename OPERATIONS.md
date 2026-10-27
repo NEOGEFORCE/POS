@@ -8,7 +8,7 @@ Estos scripts preparan una operación reproducible, pero **no autorizan ni ejecu
 build_prod.bat
 ```
 
-Genera `backPOS-go/server.exe` y el export estático del frontend. No copia archivos ni reinicia servicios.
+Genera `backPOS/server.exe` y el export estático del frontend. No copia archivos ni reinicia servicios.
 
 ## Respaldo verificable
 
@@ -228,7 +228,7 @@ pantalla muestra "sin dato" en esas señales, que es intencional.
 
 ## Migraciones
 
-El despliegue sólo ejecuta `migrate status`, que es lectura. Nunca ejecuta `migrate up`. La migración 011 debe revisarse y aplicarse por separado siguiendo `backPOS-go/MIGRATIONS.md`, con respaldo y `--confirm`.
+El despliegue sólo ejecuta `migrate status`, que es lectura. Nunca ejecuta `migrate up`. La migración 011 debe revisarse y aplicarse por separado siguiendo `backPOS/MIGRATIONS.md`, con respaldo y `--confirm`.
 
 ## Recuperación manual
 
@@ -250,7 +250,7 @@ La migración `016_label_generator_and_cash_drawer.sql` crea cinco tablas:
 validada por `go test ./migrations` pero NO está aplicada.** Antes de usar
 en producción las rutas `/api/labels/*` y `/api/cash-drawer/open`, el
 operador debe aplicar la migración durante una ventana aprobada siguiendo
-`backPOS-go/MIGRATIONS.md`.
+`backPOS/MIGRATIONS.md`.
 
 - Modelos Go: `internal/core/domain/models/labels.go` — definidos fuera de
   `schemaModels()` a propósito para no alterar el checksum de la migración
@@ -334,7 +334,7 @@ El módulo QR está implementado, pero su activación productiva requiere una ve
 El QR real suministrado por el comercio está versionado en:
 
 ```text
-FrontPOS-main/public/qr-bold-breb.png
+FrontPOS/public/qr-bold-breb.png
 ```
 
 La UI lo sirve como `/qr-bold-breb.png`. No reemplazarlo por un QR generado, un placeholder ni una captura diferente sin validar previamente en la aplicación bancaria que el titular mostrado sea Sebastian Sarmiento y que corresponda al comercio Bre-B `0093097755`.

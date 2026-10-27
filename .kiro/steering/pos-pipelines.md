@@ -9,9 +9,9 @@ en una sola sesión.
 | Agente | Rol | Escribe en |
 |---|---|---|
 | `pos-researcher` | Investiga en modo lectura | nada |
-| `pos-go-backend` | Implementa y prueba el backend | `backPOS-go/**` |
-| `pos-next-frontend` | Implementa y prueba la UI (usa MCP shadcn) | `FrontPOS-main/**` |
-| `pos-db-migrations` | Escribe migraciones SQL, no las aplica | `backPOS-go/migrations/**` |
+| `pos-go-backend` | Implementa y prueba el backend | `backPOS/**` |
+| `pos-next-frontend` | Implementa y prueba la UI (usa MCP shadcn) | `FrontPOS/**` |
+| `pos-db-migrations` | Escribe migraciones SQL, no las aplica | `backPOS/migrations/**` |
 | `pos-reviewer` | Corre build y tests, dictamina | nada |
 | `pos-orchestrator` | Descompone y reparte | coordina |
 

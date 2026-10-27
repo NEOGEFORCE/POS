@@ -4,7 +4,7 @@ param(
     [switch]$ConfirmServiceStopped,
     [Parameter(Mandatory = $true)]
     [string]$ExpectedTarget,
-    [string]$BackendPath = (Join-Path $PSScriptRoot 'backPOS-go'),
+    [string]$BackendPath = (Join-Path $PSScriptRoot 'backPOS'),
     [string]$BackupScript = (Join-Path $PSScriptRoot 'respaldar_base_datos.ps1'),
     [string]$BackupRoot = $(if ($env:POS_DB_BACKUP_ROOT) { $env:POS_DB_BACKUP_ROOT } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'POS-Backups\Database' }),
     [string]$PgDumpPath = $env:POS_PG_DUMP,
